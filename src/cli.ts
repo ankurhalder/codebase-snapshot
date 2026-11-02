@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { loadConfigFile, resolveConfig } from "./config.js";
 import { generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
-import type { CliOptions, Mode, MonolithContentMode, OutputFormat } from "./types.js";
+import type { CliOptions, Manifest, Mode, MonolithContentMode, OutputFormat } from "./types.js";
 
 const VERSION = "1.0.0";
 

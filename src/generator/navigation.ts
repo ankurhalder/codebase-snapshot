@@ -31,7 +31,8 @@ export function generateNavigation(manifest: Manifest): string {
   const filePartMap = new Map<string, string>();
   for (const part of manifest.parts) {
     for (const f of part.files) {
-      filePartMap.set(f.relativePath, part.filename);
+      const filePath = typeof f === "string" ? f : (f as any).relativePath;
+      filePartMap.set(filePath, part.filename);
     }
   }
 
