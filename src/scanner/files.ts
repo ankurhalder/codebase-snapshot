@@ -73,7 +73,7 @@ export function collectFiles(
     relativeFiles = walkDirectory(cwd, cwd);
   }
 
-  const defaultIgnoredDirs = [
+  const defaultIgnoredPaths = [
     "node_modules/",
     ".git/",
     "dist/",
@@ -84,12 +84,20 @@ export function collectFiles(
     "out/",
     "snapshot/",
     "snapshot.tmp/",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
   ];
 
   return relativeFiles
     .filter((file) => {
-      for (const dir of defaultIgnoredDirs) {
-        if (file.startsWith(dir) || file.includes(`/${dir}`)) return false;
+      for (const p of defaultIgnoredPaths) {
+        if (p.endsWith("/")) {
+          if (file.startsWith(p) || file.includes(`/${p}`)) return false;
+        } else {
+          if (file === p || file.endsWith(`/${p}`)) return false;
+        }
       }
       for (const pattern of excludePatterns) {
         if (file.includes(pattern)) return false;
