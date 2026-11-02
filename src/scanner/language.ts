@@ -45,3 +45,4 @@ export function detectLanguage(filePath: string): string {
   const ext = path.posix.extname(base).toLowerCase();
   return LANGUAGE_BY_EXTENSION[ext] ?? "text";
 }
+

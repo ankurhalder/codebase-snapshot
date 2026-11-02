@@ -42,3 +42,4 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     pattern: /(?:api_?key|secret_?key|auth_?token|client_?secret|access_?token|refresh_?token)\s*[:=]\s*["'][A-Za-z0-9-_]{16,}["']/i,
   },
 ];
+

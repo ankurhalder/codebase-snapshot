@@ -112,3 +112,4 @@ export function validateSnapshot(config: ResolvedSnapshotConfig): ValidationResu
     errors,
   };
 }
+

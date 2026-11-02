@@ -48,3 +48,4 @@ export function generateNavigation(manifest: Manifest): string {
   lines.push("");
   return lines.join("\n");
 }
+

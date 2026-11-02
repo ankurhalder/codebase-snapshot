@@ -79,3 +79,4 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
     frontmatterKeys: Array.from(new Set(frontmatterKeys)).sort(),
   };
 }
+

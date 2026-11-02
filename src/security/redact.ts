@@ -27,3 +27,4 @@ export function scanAndRedactSecrets(
 
   return { redacted: redactedLines.join("\n"), findings };
 }
+

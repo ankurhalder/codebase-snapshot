@@ -148,3 +148,4 @@ export function classifyKind(filePath: string, kinds: KindRule[]): string {
   }
   return "other";
 }
+

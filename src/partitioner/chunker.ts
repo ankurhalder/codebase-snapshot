@@ -70,6 +70,14 @@ function createPart(index: number, files: FileEntry[]): PartitionedPart {
   const lines = markdown.split("\n").length;
   const bytes = Buffer.byteLength(markdown, "utf8");
 
+  const mappedFiles = files.map((f) => ({
+    relativePath: f.relativePath,
+    bytes: f.sizeBytes,
+    lines: f.lines,
+    layer: f.layer,
+    kind: f.kind,
+  }));
+
   const metadata: PartMetadata = {
     index,
     filename,
@@ -77,13 +85,8 @@ function createPart(index: number, files: FileEntry[]): PartitionedPart {
     lines,
     fileCount: files.length,
     layersCovered,
-    files: files.map((f) => ({
-      relativePath: f.relativePath,
-      bytes: f.sizeBytes,
-      lines: f.lines,
-      layer: f.layer,
-      kind: f.kind,
-    })),
+    files: mappedFiles,
+    includedFiles: mappedFiles,
   };
 
   return {
@@ -124,3 +127,4 @@ function renderFileMarkdown(file: FileEntry): string {
     "",
   ].join("\n");
 }
+

@@ -50,3 +50,4 @@ export function generateReadme(manifest: Manifest): string {
 
   return lines.join("\n");
 }
+

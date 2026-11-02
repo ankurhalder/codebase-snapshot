@@ -129,3 +129,4 @@ function walkDirectory(dir: string, baseDir: string): string[] {
 
   return results;
 }
+

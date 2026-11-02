@@ -39,3 +39,4 @@ export function truncatePreview(
     includedLines: headLines + tailLines + 1,
   };
 }
+

@@ -53,6 +53,14 @@ export interface FileEntry {
   content?: string;
 }
 
+export interface PartFileEntry {
+  relativePath: string;
+  bytes: number;
+  lines: number;
+  layer: string;
+  kind: string;
+}
+
 export interface PartMetadata {
   index: number;
   filename: string;
@@ -60,13 +68,8 @@ export interface PartMetadata {
   lines: number;
   fileCount: number;
   layersCovered: string[];
-  files: Array<{
-    relativePath: string;
-    bytes: number;
-    lines: number;
-    layer: string;
-    kind: string;
-  }>;
+  files: PartFileEntry[];
+  includedFiles?: PartFileEntry[];
 }
 
 export interface SecretRule {
@@ -187,3 +190,4 @@ export interface ValidationResult {
   drift: ValidationDrift;
   errors: string[];
 }
+

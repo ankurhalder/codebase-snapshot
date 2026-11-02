@@ -62,3 +62,4 @@ export const NEXTJS_KINDS: KindRule[] = [
     },
   },
 ];
+

@@ -15,6 +15,13 @@
   ],
   "author": "Ankur Halder <ankur.halder12345@gmail.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ankurhalder/codebase-snapshot.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -53,3 +60,4 @@
     "node": ">=18.0.0"
   }
 }
+

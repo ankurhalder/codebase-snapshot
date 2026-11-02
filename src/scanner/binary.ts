@@ -63,3 +63,4 @@ export function isBinaryFile(absolutePath: string): boolean {
     return false;
   }
 }
+

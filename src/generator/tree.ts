@@ -41,3 +41,4 @@ export function generateProjectTree(filePaths: string[]): string {
   lines.push("```", "");
   return lines.join("\n");
 }
+
