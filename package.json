@@ -1,0 +1,55 @@
+{
+  "name": "@ankurhalder/codebase-snapshot",
+  "version": "1.0.0",
+  "description": "Production-grade LLM codebase snapshot generator, auditor, and AST partitioner",
+  "keywords": [
+    "codebase",
+    "snapshot",
+    "llm",
+    "ai",
+    "context",
+    "ast",
+    "audit",
+    "codebase-snapshot",
+    "code-analysis"
+  ],
+  "author": "Ankur Halder <ankur.halder12345@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "codebase-snapshot": "./dist/cli.js",
+    "snap": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
