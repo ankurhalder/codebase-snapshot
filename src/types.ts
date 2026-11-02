@@ -72,6 +72,7 @@ export interface PartMetadata {
   filename: string;
   bytes: number;
   byteSize: number;
+  sha256: string;
   lines: number;
   fileCount: number;
   layersCovered: string[];
@@ -106,6 +107,18 @@ export interface ManifestTotals {
 export interface ManifestArtifact {
   byteSize: number;
   sha256: string;
+}
+
+export interface ManifestIndexes {
+  routes: Array<{ path: string; methods: string[]; part: string }>;
+  components: Array<{ path: string; symbols: string[]; part: string; layer: string }>;
+  handlers: Array<{ path: string; exports: string[]; part: string }>;
+  features: Array<{ name: string; files: number }>;
+  imports: {
+    byFile: Array<{ path: string; imports: string[]; exports: string[] }>;
+    centralFiles: Array<{ path: string; importedByCount: number }>;
+  };
+  directives: Array<{ path: string; directives: string[] }>;
 }
 
 export interface Manifest {
@@ -150,6 +163,7 @@ export interface Manifest {
   };
   layers: Record<string, number>;
   kinds: Record<string, number>;
+  indexes?: ManifestIndexes;
   parts: PartMetadata[];
   files: FileEntry[];
   skipped: SkipRecord[];

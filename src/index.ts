@@ -177,8 +177,6 @@ export async function generateSnapshot(
     });
   }
 
-  const partitioned = partitionFiles(files, config.maxPartBytes);
-
   const fingerprint = crypto
     .createHash("sha256")
     .update(
@@ -190,6 +188,8 @@ export async function generateSnapshot(
         .join("\n")
     )
     .digest("hex");
+
+  const partitioned = partitionFiles(files, config.maxPartBytes, fingerprint);
 
   const manifest: Manifest = {
     schemaVersion: SCHEMA_VERSION,
@@ -239,6 +239,33 @@ export async function generateSnapshot(
     },
     layers: layerCounts,
     kinds: kindCounts,
+    indexes: {
+      routes: files
+        .filter((f) => f.kind === "route")
+        .map((f) => ({
+          path: f.relativePath,
+          methods: ((f.summary as any)?.routeHandlers as string[]) || [],
+          part: f.part,
+        })),
+      components: files
+        .filter((f) => f.kind === "component")
+        .map((f) => ({
+          path: f.relativePath,
+          symbols: ((f.summary as any)?.reactComponents as string[]) || [],
+          part: f.part,
+          layer: f.layer,
+        })),
+      handlers: files
+        .filter((f) => f.kind === "handler" || f.kind === "server-action")
+        .map((f) => ({
+          path: f.relativePath,
+          exports: ((f.summary as any)?.exports as string[]) || [],
+          part: f.part,
+        })),
+      features: [],
+      imports: { byFile: [], centralFiles: [] },
+      directives: [],
+    },
     parts: partitioned.map((p) => p.metadata),
     files: files.map((f) => ({
       path: f.relativePath,
@@ -281,9 +308,15 @@ export async function generateSnapshot(
     fs.writeFileSync(path.join(partsDir, part.filename), part.markdown, "utf8");
   }
 
+  const projectTree = generateProjectTree(files.map((f) => f.relativePath));
   fs.writeFileSync(
     path.join(reportsDir, "project-tree.md"),
-    generateProjectTree(files.map((f) => f.relativePath)),
+    projectTree,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(targetTmpDir, "project-tree.md"),
+    projectTree,
     "utf8"
   );
 
