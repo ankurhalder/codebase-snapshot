@@ -64,6 +64,16 @@ function parseArgs(args: string[]): CliOptions {
       mode = "validate";
     } else if (arg === "report") {
       mode = "report";
+    } else if (arg.startsWith("--mode=")) {
+      const m = arg.slice(7);
+      if (m === "validate" || m === "check") mode = "validate";
+      else if (m === "report") mode = "report";
+      else if (m === "generate") mode = "generate";
+    } else if (arg === "--mode" && args[i + 1]) {
+      const m = args[++i];
+      if (m === "validate" || m === "check") mode = "validate";
+      else if (m === "report") mode = "report";
+      else if (m === "generate") mode = "generate";
     } else if (arg === "init") {
       runInit();
       process.exit(0);
@@ -145,6 +155,35 @@ async function main() {
     process.exit(result.valid ? 0 : 1);
   }
 
+  if (cliOptions.mode === "report") {
+    const manifestPath = path.join(resolved.cwd, resolved.outDir, "manifest.json");
+    if (!fs.existsSync(manifestPath)) {
+      console.error(`❌ Manifest not found at ${manifestPath}. Run generate first.`);
+      process.exit(1);
+    }
+    const manifest: Manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const val = validateSnapshot(resolved);
+
+    if (cliOptions.format === "json") {
+      console.log(JSON.stringify({ manifest, validation: val }, null, 2));
+    } else {
+      console.log(`\n📊 Codebase Snapshot Report (${resolved.cwd})`);
+      console.log(`   - Generated at:   ${manifest.generatedAt}`);
+      console.log(`   - Fingerprint:    ${manifest.fingerprint || manifest.contentFingerprint}`);
+      console.log(`   - Files included: ${manifest.counts.totalFiles}`);
+      console.log(`   - Total lines:    ${manifest.counts.totalLines.toLocaleString()}`);
+      console.log(`   - Total size:     ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`);
+      console.log(`   - Total parts:    ${manifest.counts.partsCount}`);
+      console.log(`   - Integrity:      ${val.valid ? "✅ Clean (no drift)" : "❌ Drift detected"}`);
+      console.log(`   - Warnings:       ${manifest.warnings?.length || 0}`);
+      console.log("\n   Layers:");
+      for (const [layer, count] of Object.entries(manifest.layers)) {
+        console.log(`     - ${layer.padEnd(16)}: ${count} files`);
+      }
+    }
+    process.exit(val.valid ? 0 : 1);
+  }
+
   const start = performance.now();
   console.log(`📸 Generating snapshot for: ${resolved.cwd}`);
   console.log(`   Branch: ${resolved.branch} | Part budget: ${(resolved.maxPartBytes / 1024).toFixed(0)} KB`);
@@ -163,6 +202,7 @@ async function main() {
       console.log(`   - Parts written: ${manifest.counts.partsCount} under ${resolved.outDir}/parts/`);
       console.log(`   - Reports:       ${resolved.outDir}/reports/ (project-tree, navigation, audit)`);
       console.log(`   - Manifest:      ${resolved.outDir}/manifest.json`);
+      console.log(`   - Fingerprint:   ${manifest.fingerprint}`);
     }
   } catch (err: any) {
     console.error(`❌ Failed to generate snapshot: ${err.message}`);

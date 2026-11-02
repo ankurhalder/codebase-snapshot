@@ -37,10 +37,14 @@ export interface SkipRecord {
 }
 
 export interface FileEntry {
+  path: string;
   relativePath: string;
   sizeBytes: number;
+  bytes: number;
   lines: number;
   hashSha256: string;
+  sha256: string;
+  part: string;
   layer: string;
   kind: string;
   language: string;
@@ -54,8 +58,10 @@ export interface FileEntry {
 }
 
 export interface PartFileEntry {
+  path: string;
   relativePath: string;
   bytes: number;
+  sizeBytes: number;
   lines: number;
   layer: string;
   kind: string;
@@ -65,11 +71,12 @@ export interface PartMetadata {
   index: number;
   filename: string;
   bytes: number;
+  byteSize: number;
   lines: number;
   fileCount: number;
   layersCovered: string[];
-  files: PartFileEntry[];
-  includedFiles?: PartFileEntry[];
+  files: string[];
+  includedFiles: PartFileEntry[];
 }
 
 export interface SecretRule {
@@ -84,12 +91,33 @@ export interface SecretFinding {
   path?: string;
 }
 
+export interface ManifestTotals {
+  candidateFiles: number;
+  includedFiles: number;
+  fullFiles: number;
+  summaryOnlyFiles: number;
+  skippedFiles: number;
+  totalSourceBytes: number;
+  totalContentBytes: number;
+  partCount: number;
+  warningCount: number;
+}
+
+export interface ManifestArtifact {
+  byteSize: number;
+  sha256: string;
+}
+
 export interface Manifest {
   schemaVersion: string;
   generatedAt: string;
   generator: {
     name: string;
     version: string;
+    script?: string;
+    mode?: string;
+    maxPartBytes?: number;
+    largeFileBytes?: number;
   };
   git: {
     branch: string;
@@ -109,11 +137,23 @@ export interface Manifest {
     largeFileCount: number;
     truncatedPreviewCount: number;
   };
+  totals: ManifestTotals;
+  fingerprint: string;
+  contentFingerprint: string;
+  validation: {
+    status: "passed" | "failed";
+    errors: string[];
+  };
+  artifacts: {
+    fullJson: ManifestArtifact | null;
+    fullMarkdown: ManifestArtifact | null;
+  };
   layers: Record<string, number>;
   kinds: Record<string, number>;
   parts: PartMetadata[];
   files: FileEntry[];
   skipped: SkipRecord[];
+  warnings: string[];
 }
 
 export interface LayerRule {

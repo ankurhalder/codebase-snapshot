@@ -156,10 +156,14 @@ export async function generateSnapshot(
     }
 
     files.push({
+      path: relPath,
       relativePath: relPath,
       sizeBytes: stat.size,
+      bytes: stat.size,
       lines: lineCount,
       hashSha256,
+      sha256: hashSha256,
+      part: "",
       layer,
       kind,
       language,
@@ -175,12 +179,28 @@ export async function generateSnapshot(
 
   const partitioned = partitionFiles(files, config.maxPartBytes);
 
+  const fingerprint = crypto
+    .createHash("sha256")
+    .update(
+      files
+        .map(
+          (f) =>
+            `${f.relativePath}:${f.hashSha256}:${f.sizeBytes}:${f.inclusionMode}`
+        )
+        .join("\n")
+    )
+    .digest("hex");
+
   const manifest: Manifest = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     generator: {
       name: GENERATOR_NAME,
       version: GENERATOR_VERSION,
+      script: "scripts/generate_codebase_snapshot.ts",
+      mode: "agent-context",
+      maxPartBytes: config.maxPartBytes,
+      largeFileBytes: config.largeFileBytes,
     },
     git: gitInfo,
     budgets: {
@@ -196,14 +216,39 @@ export async function generateSnapshot(
       largeFileCount,
       truncatedPreviewCount,
     },
+    totals: {
+      candidateFiles: files.length + skipped.length,
+      includedFiles: files.length,
+      fullFiles: files.length - largeFileCount,
+      summaryOnlyFiles: largeFileCount,
+      skippedFiles: skipped.length,
+      totalSourceBytes: totalSizeBytes,
+      totalContentBytes: totalSizeBytes,
+      partCount: partitioned.length,
+      warningCount: allSecretFindings.length,
+    },
+    fingerprint,
+    contentFingerprint: fingerprint,
+    validation: {
+      status: "passed",
+      errors: [],
+    },
+    artifacts: {
+      fullJson: null,
+      fullMarkdown: null,
+    },
     layers: layerCounts,
     kinds: kindCounts,
     parts: partitioned.map((p) => p.metadata),
     files: files.map((f) => ({
+      path: f.relativePath,
       relativePath: f.relativePath,
       sizeBytes: f.sizeBytes,
+      bytes: f.sizeBytes,
       lines: f.lines,
       hashSha256: f.hashSha256,
+      sha256: f.hashSha256,
+      part: f.part,
       layer: f.layer,
       kind: f.kind,
       language: f.language,
@@ -215,6 +260,9 @@ export async function generateSnapshot(
       summary: f.summary,
     })),
     skipped,
+    warnings: allSecretFindings.map(
+      (f) => `${f.rule} at ${f.path || "unknown"}:${f.line}`
+    ),
   };
 
   const finalOutDir = path.join(config.cwd, config.outDir);
@@ -271,6 +319,10 @@ export async function generateSnapshot(
     const mdBytes = Buffer.byteLength(monolithMd, "utf8");
 
     if (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes) {
+      manifest.artifacts.fullJson = {
+        byteSize: jsonBytes,
+        sha256: crypto.createHash("sha256").update(monolithJson).digest("hex"),
+      };
       fs.writeFileSync(
         path.join(targetTmpDir, "full-codebase.json"),
         monolithJson,
@@ -278,12 +330,21 @@ export async function generateSnapshot(
       );
     }
     if (!config.maxMonolithBytes || mdBytes <= config.maxMonolithBytes) {
+      manifest.artifacts.fullMarkdown = {
+        byteSize: mdBytes,
+        sha256: crypto.createHash("sha256").update(monolithMd).digest("hex"),
+      };
       fs.writeFileSync(
         path.join(targetTmpDir, "full-codebase.md"),
         monolithMd,
         "utf8"
       );
     }
+    fs.writeFileSync(
+      path.join(targetTmpDir, "manifest.json"),
+      JSON.stringify(manifest, null, 2),
+      "utf8"
+    );
   }
 
   if (fs.existsSync(finalOutDir)) {

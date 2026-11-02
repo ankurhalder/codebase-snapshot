@@ -44,6 +44,9 @@ export function partitionFiles(
 
 function createPart(index: number, files: FileEntry[]): PartitionedPart {
   const filename = `part-${String(index).padStart(3, "0")}.md`;
+  for (const f of files) {
+    f.part = filename;
+  }
   const layersCovered = Array.from(new Set(files.map((f) => f.layer))).sort();
 
   const fileHeaders = files.map(
@@ -71,8 +74,10 @@ function createPart(index: number, files: FileEntry[]): PartitionedPart {
   const bytes = Buffer.byteLength(markdown, "utf8");
 
   const mappedFiles = files.map((f) => ({
+    path: f.relativePath,
     relativePath: f.relativePath,
     bytes: f.sizeBytes,
+    sizeBytes: f.sizeBytes,
     lines: f.lines,
     layer: f.layer,
     kind: f.kind,
@@ -82,10 +87,11 @@ function createPart(index: number, files: FileEntry[]): PartitionedPart {
     index,
     filename,
     bytes,
+    byteSize: bytes,
     lines,
     fileCount: files.length,
     layersCovered,
-    files: mappedFiles,
+    files: files.map((f) => f.relativePath),
     includedFiles: mappedFiles,
   };
 
