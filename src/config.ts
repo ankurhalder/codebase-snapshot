@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
@@ -365,6 +366,44 @@ function readConfigExport(exported: unknown, file: string): SnapshotConfig {
 }
 
 /**
+ * Bumped for every module-config load (`snapshot.config.ts|js|mjs|cjs`).
+ *
+ * ESM caches a module per specifier, so a second `import()` of the same file
+ * returned the module evaluated on the first load. `generate --watch` therefore
+ * kept applying the config it started with, and a config that became invalid
+ * mid-watch silently re-used the last good object instead of reporting the error
+ * a cold start reports. A distinct query string makes each load a fresh module.
+ */
+let moduleConfigLoadToken = 0;
+
+/**
+ * Imports a module config without re-using an earlier evaluation of it.
+ *
+ * The query string covers `.mjs`, `.ts` and `.js` in an ES-module package. A
+ * CommonJS file (`.cjs`, or `.js` in a CommonJS package) is additionally evicted
+ * from the require cache, which is keyed by filename and ignores the query, so
+ * without the eviction the custom loader would still hand back stale exports.
+ * Failures are left to the caller: `import()` below reports them the same way a
+ * first load does.
+ */
+async function importConfigModule(
+  fullPath: string
+): Promise<Record<string, unknown> & { default?: unknown }> {
+  try {
+    const requireFromConfig = createRequire(fullPath);
+    delete requireFromConfig.cache[requireFromConfig.resolve(fullPath)];
+  } catch {
+    // Best effort: an extension `require.resolve` cannot handle is still import()ed
+    // below, and a genuine problem there is reported by that import.
+  }
+
+  const url = pathToFileURL(fullPath);
+  moduleConfigLoadToken += 1;
+  url.searchParams.set("codebaseSnapshotLoad", String(moduleConfigLoadToken));
+  return (await import(url.href)) as Record<string, unknown> & { default?: unknown };
+}
+
+/**
  * Loads the first usable config file from `cwd`.
  *
  * Every failure is reported through `warnings` instead of being swallowed by an
@@ -405,10 +444,9 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
 
     try {
       // `pathToFileURL` handles drive letters, spaces, `#` and `%` correctly;
-      // naive `file://${fullPath}` concatenation does not.
-      const imported = (await import(pathToFileURL(fullPath).href)) as {
-        default?: unknown;
-      } & Record<string, unknown>;
+      // naive `file://${fullPath}` concatenation does not. The import goes
+      // through a cache-busting helper so a reload sees the file on disk now.
+      const imported = await importConfigModule(fullPath);
       const config = readConfigExport(imported.default ?? imported, fullPath);
       return { config, file: fullPath, warnings, errors };
     } catch (err) {
