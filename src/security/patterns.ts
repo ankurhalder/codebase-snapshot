@@ -83,8 +83,21 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
       /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|-----BEGIN (?:RSA |OPENSSH |EC |PGP |DSA |ENCRYPTED )?PRIVATE KEY-----/,
   },
   {
+    // JWT: `header.payload[.signature]`, base64url, optionally `=`-padded.
+    //
+    // Both the header and the payload of a real JWT start with `eyJ` — the
+    // base64url of `{"` — and requiring that twice is the discriminator that
+    // keeps this rule away from ordinary source: a lone `eyJ…` header in prose, an
+    // `eyJ`-prefixed identifier and plain base64 all stay untouched.
+    //
+    // The signature is optional (an `alg: none` token has none) and may be much
+    // shorter than ten characters — `eyJ….eyJ….abc123` is the shape that used to
+    // reach `parts/*.md` unwrapped. Padding is accepted so a padded token is
+    // masked whole instead of half-matched. Quantifiers stay bounded (1024, as
+    // before) so an `eyJ`-dense line cannot go quadratic.
     rule: "jwt-token",
-    pattern: /eyJ[A-Za-z0-9_-]{10,1024}\.eyJ[A-Za-z0-9_-]{10,1024}\.[A-Za-z0-9_-]{10,1024}/,
+    pattern:
+      /eyJ[A-Za-z0-9_-]{8,1024}={0,2}\.eyJ[A-Za-z0-9_-]{8,1024}={0,2}(?:\.[A-Za-z0-9_-]{1,1024}={0,2})?/,
   },
   {
     rule: "aws-access-key-id",
