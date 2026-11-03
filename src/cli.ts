@@ -689,6 +689,12 @@ function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
   } else {
     warn("❌ Snapshot validation failed:");
     for (const error of result.errors) warn(`  - ${error}`);
+    // Every other drift class listed its paths; this one printed only a count,
+    // so a terminal user could not tell which file was unreadable without
+    // switching to --format json.
+    for (const unreadable of result.drift.unreadable.slice(0, 20)) {
+      warn(`  - unreadable: ${unreadable}`);
+    }
     for (const drift of result.drift.hashMismatches.slice(0, 20)) {
       warn(`  - modified: ${drift.path}`);
     }

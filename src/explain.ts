@@ -7,7 +7,13 @@ import { isBinaryFile, decodeText } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { escapeControls } from "./terminal.js";
-import type { Manifest, ResolvedSnapshotConfig, TextEncoding } from "./types.js";
+import type {
+  Manifest,
+  ResolvedSnapshotConfig,
+  SkipReason,
+  SkipRecord,
+  TextEncoding,
+} from "./types.js";
 
 export interface ExplainResult {
   /** Path relative to the configured cwd, POSIX separators. */
@@ -61,6 +67,44 @@ function findRuleMatch<T extends { match: unknown }>(
   return rules.find((rule) =>
     matchRule(relativePath, rule.match as string | RegExp | ((value: string) => boolean))
   );
+}
+
+/**
+ * Reasons whose ancestor record must not be inherited.
+ *
+ * A directory that a `.gitignore` excluded is never descended, so the *file*
+ * inside it is absent from `skipped[]` while the directory carries the honest
+ * record; reporting that record is strictly more useful than `not-discovered`.
+ * A built-in ignore is different: `docs/cli.md` documents `not-discovered` with
+ * its exact detail string for a file under `node_modules`, and the walker does
+ * record `node_modules` itself as `default-ignore`, so inheriting there would
+ * quietly change a documented answer that agents already key on.
+ */
+const NON_INHERITED_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>(["default-ignore"]);
+
+/**
+ * The nearest recorded skip whose path is a proper directory ancestor of `target`.
+ *
+ * `collectFiles` records a skipped directory but never its contents, so the only
+ * evidence for a file inside an ignored tree is the ancestor's record. The
+ * longest matching prefix wins, which is the closest explanation to the file.
+ */
+function findRecordedAncestor(
+  skipped: readonly SkipRecord[],
+  relative: string,
+  maskedPath: string
+): SkipRecord | undefined {
+  let nearest: SkipRecord | undefined;
+  for (const record of skipped) {
+    const ancestorPath = record.path;
+    if (ancestorPath.length === 0) continue;
+    const isAncestor =
+      relative.startsWith(`${ancestorPath}/`) || maskedPath.startsWith(`${ancestorPath}/`);
+    if (!isAncestor) continue;
+    if (NON_INHERITED_REASONS.has(record.reason)) continue;
+    if (!nearest || ancestorPath.length > nearest.path.length) nearest = record;
+  }
+  return nearest;
 }
 
 /** Reads the last written manifest, tolerating its absence. */
@@ -120,8 +164,20 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
       result.reason = "missing";
       result.detail = "no such file or directory, relative to the configured cwd";
     } else {
-      result.reason = "not-discovered";
-      result.detail = "exists but is not tracked or is otherwise not a candidate";
+      // A file inside an ignored directory has no record of its own -- the walk
+      // never descended -- so answer with the nearest ancestor's record instead
+      // of the vague `not-discovered`. The ancestor is named so the answer stays
+      // traceable to the rule that actually removed it.
+      const ancestor = findRecordedAncestor(collection.skipped, relative, maskedPath);
+      if (ancestor) {
+        result.reason = ancestor.reason;
+        result.detail = ancestor.detail
+          ? `${ancestor.detail} (inherited from the skipped directory \`${ancestor.path}\`)`
+          : `inside the skipped directory \`${ancestor.path}\``;
+      } else {
+        result.reason = "not-discovered";
+        result.detail = "exists but is not tracked or is otherwise not a candidate";
+      }
     }
     return result;
   }
