@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { detectPreset } from "./presets/index.js";
+import { detectPreset, getPreset, unknownPresetMessage } from "./presets/index.js";
 import { globToRegExp } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
@@ -125,6 +125,8 @@ export function normalizeResolvedConfig(
       config.includeMonolith === true
     ),
     include: resolveInclude(config.include),
+    preset: typeof config.preset === "string" ? config.preset : "generic",
+    presetExclude: Array.isArray(config.presetExclude) ? config.presetExclude : [],
     layersMode: config.layersMode === "replace" ? "replace" : "merge",
     budgets:
       config.budgets && typeof config.budgets === "object"
@@ -176,6 +178,16 @@ export interface ConfigLoadResult {
   file: string | null;
   /** Why a candidate config file was ignored. Never silently discarded. */
   warnings: string[];
+  /**
+   * Config files that exist but could not be read.
+   *
+   * These are fatal: a config that fails to parse used to be skipped in favour of
+   * the defaults, which meant a typo silently produced a snapshot with none of the
+   * developer's settings applied. A config that is merely unsupported on this Node
+   * version (a `.ts` file below Node 22.6) stays a warning — nothing is wrong with
+   * the file, and the message already says what to do.
+   */
+  errors: string[];
 }
 
 /** True when this Node can `import()` a `.ts` file natively (type stripping). */
@@ -213,6 +225,7 @@ function parseJsonish(raw: string, file: string): SnapshotConfig {
  */
 export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadResult> {
   const warnings: string[] = [];
+  const errors: string[] = [];
 
   for (const filename of CONFIG_FILENAMES) {
     const fullPath = path.join(cwd, filename);
@@ -224,9 +237,12 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
           config: parseJsonish(fs.readFileSync(fullPath, "utf8"), fullPath),
           file: fullPath,
           warnings,
+          errors,
         };
       } catch (err) {
-        warnings.push((err as Error).message);
+        const message = (err as Error).message;
+        warnings.push(message);
+        errors.push(message);
         continue;
       }
     }
@@ -247,12 +263,16 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       } & SnapshotConfig;
       const config = imported.default ?? imported;
       if (!config || typeof config !== "object") {
-        warnings.push(`${fullPath} does not export a configuration object.`);
+        const message = `${fullPath} does not export a configuration object.`;
+        warnings.push(message);
+        errors.push(message);
         continue;
       }
-      return { config, file: fullPath, warnings };
+      return { config, file: fullPath, warnings, errors };
     } catch (err) {
-      warnings.push(`Could not load ${fullPath}: ${(err as Error).message}`);
+      const message = `Could not load ${fullPath}: ${(err as Error).message}`;
+      warnings.push(message);
+      errors.push(message);
       continue;
     }
   }
@@ -263,14 +283,16 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       const parsed = parseJsonish(fs.readFileSync(pkgJsonPath, "utf8"), pkgJsonPath);
       const snapshotKey = (parsed as unknown as { snapshot?: unknown }).snapshot;
       if (snapshotKey && typeof snapshotKey === "object") {
-        return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings };
+        return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings, errors };
       }
     } catch (err) {
-      warnings.push((err as Error).message);
+      const message = (err as Error).message;
+      warnings.push(message);
+      errors.push(message);
     }
   }
 
-  return { config: null, file: null, warnings };
+  return { config: null, file: null, warnings, errors };
 }
 
 export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null> {
@@ -417,12 +439,16 @@ function boundedBytes(
       `${label} must be a byte count such as 120000, "120k" or "1.5mb" (received ${describeBytes(value)}).`
     );
   }
-  if (parsed <= 0) return fallback;
+  // A non-positive value is a mistake, not a request for the default: treating
+  // `maxPartBytes: 0` as "use 300 KB" silently ignored the setting while
+  // `maxPartBytes: 1000` threw.
+  if (parsed <= 0) {
+    throw new Error(`${label} must be a positive byte count (received ${describeBytes(value)}).`);
+  }
   if (parsed < minimum) {
     throw new Error(`${label} must be at least ${minimum} bytes (received ${describeBytes(value)}).`);
   }
-  return parsed;
-}
+  return parsed;}
 
 function optionalBytes(
   value: ByteSize | null | undefined,
@@ -526,7 +552,14 @@ export function resolveConfig(
   baseDir?: string
 ): ResolvedSnapshotConfig {
   const cwd = resolveCandidateCwd(userConfig ?? null, cliOptions, baseDir);
-  const preset = detectPreset(cwd);
+
+  // A forced preset must exist: silently falling back would leave the developer
+  // believing their layers are in effect when they are not.
+  const forcedPreset = userConfig?.preset;
+  if (forcedPreset !== undefined && !getPreset(forcedPreset)) {
+    throw new Error(unknownPresetMessage(forcedPreset));
+  }
+  const preset = detectPreset(cwd, forcedPreset);
   const layersMode = resolveLayersMode(userConfig?.layersMode);
 
   // `merge` (the default) keeps the preset's rules and lets user rules win by
@@ -585,6 +618,8 @@ export function resolveConfig(
     includeSensitiveFiles:
       cliOptions?.includeSensitiveFiles ?? userConfig?.includeSensitiveFiles ?? false,
     include: resolveInclude(userConfig?.include),
+    preset: preset.presetName,
+    presetExclude: [...preset.exclude],
     artifacts,
     layersMode,
     budgets,

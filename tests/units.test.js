@@ -8,9 +8,11 @@ import {
   DEFAULT_SECRET_PATTERNS,
   anchorForPath,
   countLines,
+  DEFAULT_ANSWERS,
   defineConfig,
   detectLanguage,
   detectPreset,
+  listPresetNames,
   generateProjectTree,
   globToRegExp,
   isBinaryBuffer,
@@ -23,11 +25,16 @@ import {
   matchRule,
   matchesExclude,
   parseByteSize,
+  profileForPath,
+  renderConfig,
+  renderMinimalConfig,
   resolveConfig,
+  runInit,
   scanAndRedactSecrets,
   summarizeJson,
   summarizeMarkdown,
   summarizeTypeScriptSource,
+  summarizeWithProfile,
   supportsTypeScriptImports,
   truncatePreview,
   truncateToBytes,
@@ -358,17 +365,86 @@ test("resolveConfig strips stateful flags from custom patterns", () => {
 
 test("detectPreset recognises the shipped presets", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preset-"));
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { next: "15.0.0" } }));
+  const setPackage = (deps, extra = {}) =>
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ ...extra, dependencies: deps }));
+
+  setPackage({ next: "15.0.0" });
   assert.equal(detectPreset(dir).presetName, "nextjs");
 
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { vite: "6.0.0" } }));
-  assert.equal(detectPreset(dir).presetName, "vite");
+  setPackage({ nuxt: "3.0.0" });
+  assert.equal(detectPreset(dir).presetName, "nuxt");
 
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { express: "4.0.0" } }));
-  assert.equal(detectPreset(dir).presetName, "node");
+  setPackage({ "@sveltejs/kit": "2.0.0" });
+  assert.equal(detectPreset(dir).presetName, "sveltekit");
 
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: {} }));
-  assert.equal(detectPreset(dir).presetName, "default");
+  setPackage({ astro: "4.0.0" });
+  assert.equal(detectPreset(dir).presetName, "astro");
+
+  setPackage({ "@angular/core": "17.0.0" });
+  assert.equal(detectPreset(dir).presetName, "angular");
+
+  setPackage({ react: "18.0.0", vite: "6.0.0" });
+  assert.equal(detectPreset(dir).presetName, "react-vite");
+
+  setPackage({ vue: "3.0.0", vite: "6.0.0" });
+  assert.equal(detectPreset(dir).presetName, "vue-vite");
+
+  setPackage({ "@nestjs/core": "10.0.0" });
+  assert.equal(detectPreset(dir).presetName, "nest");
+
+  setPackage({ express: "4.0.0" });
+  assert.equal(detectPreset(dir).presetName, "node-express");
+
+  // A workspace root is a monorepo, not just another package.
+  setPackage({}, { workspaces: ["packages/*"] });
+  assert.equal(detectPreset(dir).presetName, "monorepo");
+
+  setPackage({});
+  assert.equal(detectPreset(dir).presetName, "node-lib");
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  const fixture = (prefix, files) => {
+    const made = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(made, name), body);
+    return made;
+  };
+
+  const go = fixture("preset-go-", { "go.mod": "module example.com/app\n" });
+  assert.equal(detectPreset(go).presetName, "go");
+  fs.rmSync(go, { recursive: true, force: true });
+
+  const rust = fixture("preset-rs-", { "Cargo.toml": '[package]\nname = "x"\n' });
+  assert.equal(detectPreset(rust).presetName, "rust");
+  fs.rmSync(rust, { recursive: true, force: true });
+
+  const django = fixture("preset-py-", { "manage.py": "print('x')\n" });
+  assert.equal(detectPreset(django).presetName, "python-django");
+  fs.rmSync(django, { recursive: true, force: true });
+
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "preset-empty-"));
+  assert.equal(detectPreset(empty).presetName, "generic");
+  fs.rmSync(empty, { recursive: true, force: true });
+});
+
+test("the preset registry exposes every preset and honours a forced preset", () => {
+  const names = listPresetNames();
+  for (const expected of [
+    "nextjs", "nuxt", "sveltekit", "remix", "astro", "angular", "solid",
+    "vue-vite", "react-vite", "nest", "node-express", "node-lib",
+    "python-django", "python-fastapi", "python-lib", "go", "rust",
+    "java-spring", "dotnet", "php-laravel", "ruby-rails",
+    "monorepo", "docs", "infra", "generic",
+  ]) {
+    assert.ok(names.includes(expected), `missing preset ${expected}`);
+  }
+  assert.ok(names.length >= 25, `expected at least 25 presets, got ${names.length}`);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preset-force-"));
+  fs.writeFileSync(path.join(dir, "go.mod"), "module x\n");
+
+  assert.equal(detectPreset(dir).presetName, "go");
+  assert.equal(detectPreset(dir, "react-vite").presetName, "react-vite", "a forced preset wins");
+  assert.throws(() => resolveConfig({ cwd: dir, preset: "nope" }), /Unknown preset/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -383,6 +459,7 @@ test("loadConfigFile reads json, mjs and ts configs and reports failures", async
   const detailed = await loadConfigFileDetailed(broken);
   assert.equal(detailed.config, null);
   assert.ok(detailed.warnings.length > 0, "a broken config must be reported, not swallowed");
+  assert.ok(detailed.errors.length > 0, "a broken config is fatal, not a silent fallback to defaults");
 
   if (supportsTypeScriptImports()) {
     const tsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-ts-"));
@@ -525,3 +602,271 @@ test("jwt rule is not quadratic on an eyJ-dense line", () => {
 function ruleFlagsWithoutState(rules) {
   return rules.filter((rule) => /[gy]/.test(rule.pattern.flags)).map((rule) => rule.rule);
 }
+
+// ------------------------------------------------------------ language profiles
+
+test("language profiles extract structure for Python", () => {
+  const { summary, quality } = summarizeWithProfile(
+    "app/models.py",
+    [
+      "import os",
+      "from django.db import models",
+      "class User(models.Model):",
+      "    def save(self):",
+      "        pass",
+      "def create_user(name):",
+      "    return name",
+      "@app.get('/health')",
+      "def health():",
+      "    return 'ok'",
+      "MAX_RETRIES = 3",
+    ].join("\n")
+  );
+
+  assert.equal(quality, "heuristic");
+  assert.ok(summary.imports.includes("os"));
+  assert.ok(summary.imports.includes("django.db"));
+  assert.ok(summary.classes.includes("User"));
+  assert.ok(summary.functions.includes("create_user"));
+  assert.ok(summary.routeHandlers.includes("health"), "a route decorator marks a handler");
+  assert.ok(summary.variables.includes("MAX_RETRIES"));
+  assert.ok(summary.exports.includes("create_user"));
+  assert.ok(!summary.functions.includes("save"), "methods are not module functions");
+});
+
+test("language profiles extract structure for Go", () => {
+  const { summary, quality } = summarizeWithProfile(
+    "internal/server/handler.go",
+    [
+      "package server",
+      "import (",
+      '    "net/http"',
+      '    "github.com/gin-gonic/gin"',
+      ")",
+      "type Server struct {",
+      "    Port int",
+      "}",
+      "type Handler interface {",
+      "    Handle()",
+      "}",
+      "func NewServer() *Server {",
+      "    return nil",
+      "}",
+      "func (s *Server) Start() {}",
+      "const MaxRetries = 3",
+    ].join("\n")
+  );
+
+  assert.equal(quality, "heuristic");
+  assert.ok(summary.imports.includes("net/http"));
+  assert.ok(summary.imports.includes("github.com/gin-gonic/gin"));
+  assert.ok(summary.classes.includes("Server"));
+  assert.ok(summary.interfaces.includes("Handler"));
+  assert.ok(summary.functions.includes("NewServer"));
+  assert.ok(summary.functions.includes("Start"), "methods on a receiver are functions");
+  assert.ok(summary.exports.includes("NewServer"), "capitalised identifiers are exported");
+  assert.ok(!summary.exports.includes("handle"));
+});
+
+test("language profiles extract structure for Rust", () => {
+  const { summary } = summarizeWithProfile(
+    "src/lib.rs",
+    [
+      "use std::collections::HashMap;",
+      "pub struct Config {",
+      "    pub name: String,",
+      "}",
+      "pub trait Runner {",
+      "    fn run(&self);",
+      "}",
+      "pub fn start() {}",
+      "fn private_helper() {}",
+      "pub enum Mode { Fast }",
+    ].join("\n")
+  );
+
+  assert.ok(summary.imports.includes("std::collections::HashMap"));
+  assert.ok(summary.classes.includes("Config"));
+  assert.ok(summary.interfaces.includes("Runner"));
+  assert.ok(summary.enums.includes("Mode"));
+  assert.ok(summary.exports.includes("start"));
+  assert.ok(!summary.exports.includes("private_helper"), "non-pub items are not exported");
+});
+
+test("language profiles extract structure for C#, PHP, Ruby and Java", () => {
+  const cs = summarizeWithProfile(
+    "Controllers/UserController.cs",
+    ["using System.Linq;", "public class UserController {", "    public User Get(int id) { return null; }", "}"].join("\n")
+  ).summary;
+  assert.ok(cs.imports.includes("System.Linq"));
+  assert.ok(cs.classes.includes("UserController"));
+  assert.ok(cs.functions.includes("Get"));
+
+  const php = summarizeWithProfile(
+    "app/Models/User.php",
+    ["namespace App\\Models;", "use Illuminate\\Database\\Eloquent\\Model;", "class User extends Model {", "    public function save() {}", "}"].join("\n")
+  ).summary;
+  assert.ok(php.imports.some((entry) => entry.includes("Model")));
+  assert.ok(php.classes.includes("User"));
+
+  const ruby = summarizeWithProfile(
+    "app/models/user.rb",
+    ["require 'json'", "class User", "  def save", "  end", "end"].join("\n")
+  ).summary;
+  assert.ok(ruby.imports.includes("json"));
+  assert.ok(ruby.classes.includes("User"));
+
+  const java = summarizeWithProfile(
+    "src/main/java/UserService.java",
+    ["import java.util.List;", "public class UserService {", "    public List find() { return null; }", "}"].join("\n")
+  ).summary;
+  assert.ok(java.imports.includes("java.util.List"));
+  assert.ok(java.classes.includes("UserService"));
+});
+
+test("Vue/Svelte script blocks are parsed with the real compiler", () => {
+  const sfc = [
+    "<template><div /></template>",
+    '<script setup lang="ts">',
+    'import { ref } from "vue";',
+    "const count = ref(0);",
+    "export function increment() { count.value++; }",
+    "</script>",
+  ].join("\n");
+
+  const { summary, quality } = summarizeWithProfile("src/components/Counter.vue", sfc);
+  assert.equal(quality, "ast", "the script block is real TypeScript");
+  assert.ok(summary.imports.includes("vue"));
+  assert.ok(summary.functions.includes("increment"));
+  assert.ok(summary.exports.includes("Counter"));
+});
+
+test("a template-only component still gets an index entry", () => {
+  const { summary, quality } = summarizeWithProfile("src/Logo.vue", "<template><svg /></template>");
+  assert.equal(quality, "heuristic");
+  assert.ok(summary.exports.includes("Logo"));
+});
+
+// In Astro the leading `---` fence *is* the component script, and most real
+// components have no <script> tag at all — so parsing only <script> blocks made
+// the common case fall back to heuristic.
+test("Astro frontmatter is parsed as TypeScript, not as markup", () => {
+  const astro = [
+    "---",
+    'import Layout from "../layouts/Base.astro";',
+    'const title: string = "Hello";',
+    "export function greet(name: string) {",
+    "  return `hi ${name}`;",
+    "}",
+    "---",
+    "<Layout><h1>{title}</h1></Layout>",
+  ].join("\n");
+
+  const { summary, quality } = summarizeWithProfile("src/pages/index.astro", astro);
+  assert.equal(quality, "ast", "the --- fence is the component script");
+  assert.ok(summary.imports.length > 0, "imports come from the frontmatter");
+  assert.ok(summary.functions.includes("greet"), "frontmatter functions are extracted");
+  assert.ok(summary.exports.includes("index"), "the component is still indexed");
+});
+
+test("an Astro <script> tag still works without frontmatter", () => {
+  const { summary, quality } = summarizeWithProfile(
+    "src/pages/plain.astro",
+    "<h1>Hi</h1>\n<script>\nexport function ping() { return 1; }\n</script>\n"
+  );
+  assert.equal(quality, "ast");
+  assert.ok(summary.functions.includes("ping"));
+});
+
+test("files no profile claims are left alone", () => {
+  assert.equal(profileForPath("notes.txt"), null);
+  assert.equal(profileForPath("Makefile"), null);
+  assert.equal(summarizeWithProfile("notes.txt", "hello"), null);
+  assert.equal(profileForPath("app.module.ts"), null, "TypeScript is handled by the compiler, not a profile");
+  assert.equal(profileForPath("main.py").id, "python");
+});
+
+// ---------------------------------------------------------------------- wizard
+
+const quietIO = {
+  input: { isTTY: false },
+  output: { isTTY: false, write() {} },
+};
+
+test("the generated config exposes every setting at its default", () => {
+  const text = renderConfig(DEFAULT_ANSWERS);
+
+  for (const key of [
+    "preset:", "branch:", "outDir:", "tmpDir:", "maxPartBytes:", "largeFileBytes:",
+    "previewHeadLines:", "previewTailLines:", "budgets:", "include:", "excludePatterns:",
+    "layersMode:", "layers:", "kinds:", "includeSensitiveFiles:", "secrets:",
+    "customPatterns:", "disableDefaultPatterns:", "artifacts:", "maxMonolithBytes:", "hooks:",
+  ]) {
+    assert.ok(text.includes(key), `config should mention ${key}`);
+  }
+
+  // Every artifact by name, so nobody has to guess what is available.
+  for (const artifact of ["readme", "manifest", "parts", "navigation", "projectTree", "audit", "monolith"]) {
+    assert.ok(new RegExp(`\\b${artifact}:`).test(text), `config should mention artifact ${artifact}`);
+  }
+
+  assert.ok(text.includes('import { defineConfig } from "@ankurhalder/codebase-snapshot"'));
+  assert.ok(text.includes("// ── Size"), "sections are grouped for scanning");
+});
+
+test("the minimal config writes only what differs from the defaults", () => {
+  const terse = renderMinimalConfig({ ...DEFAULT_ANSWERS, maxPartBytes: "120k" });
+  assert.ok(terse.includes("maxPartBytes"));
+  assert.ok(!terse.includes("previewHeadLines"), "defaults must not appear in the minimal form");
+  assert.ok(!terse.includes("layersMode"));
+
+  const blank = renderMinimalConfig(DEFAULT_ANSWERS);
+  assert.ok(blank.includes("defineConfig({})"), "no changes means an empty config");
+});
+
+test("runInit writes a config from flags without a TTY", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-"));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x", version: "1.0.0" }));
+  fs.writeFileSync(path.join(dir, "go.mod"), "module x\n");
+
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO, maxPartBytes: "120k" });
+  assert.equal(result.written, true);
+  assert.equal(result.preset, "go", "the detected preset is used");
+  assert.ok(result.configText.includes('maxPartBytes: "120k"'));
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(pkg.scripts.snapshot, "codebase-snapshot generate");
+  assert.equal(pkg.scripts["snapshot:validate"], "codebase-snapshot validate");
+  assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));
+
+  await assert.rejects(() => runInit({ cwd: dir, yes: true, io: quietIO }), /already exists/);
+  const forced = await runInit({ cwd: dir, yes: true, io: quietIO, force: true });
+  assert.equal(forced.written, true, "--force overwrites");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("runInit --dry-run renders without touching the disk", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-dry-"));
+  fs.writeFileSync(path.join(dir, "Cargo.toml"), '[package]\nname = "x"\n');
+
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO, dryRun: true });
+  assert.equal(result.written, false);
+  assert.equal(result.preset, "rust");
+  assert.ok(result.configText.includes('preset: "rust"'));
+  assert.equal(fs.existsSync(result.configPath), false);
+  assert.equal(fs.existsSync(path.join(dir, ".gitignore")), false);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("runInit honours the artifact selection", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-art-"));
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO, onlyArtifacts: ["parts"] });
+
+  assert.ok(/parts: true/.test(result.configText));
+  assert.ok(/audit: false/.test(result.configText));
+  assert.ok(/readme: false/.test(result.configText));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});

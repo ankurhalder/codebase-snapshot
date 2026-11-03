@@ -67,10 +67,11 @@ function readAllText(root) {
     .join("\n");
 }
 
-function runCli(cliArgs) {
+function runCli(cliArgs, options = {}) {
   const result = spawnSync(process.execPath, [BIN, ...cliArgs], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    ...options,
   });
   return {
     code: result.status ?? 1,
@@ -482,6 +483,231 @@ test("CLI rejects unknown flags, unknown commands and bad numbers", () => {
   assert.equal(runCli(["generate", "--format", "yaml"]).code, 2);
   assert.equal(runCli(["generate", "extra"]).code, 2);
   assert.equal(runCli(["--version"]).code, 0);
+});
+
+// These flags only configure `init`; they are not runtime overrides. Accepting
+// them on `generate` used to be a silent no-op: the run detected its own preset
+// while the developer believed --preset had been applied.
+test("CLI rejects init-only flags on non-init commands", () => {
+  for (const flag of [
+    ["--preset", "nextjs"],
+    ["--include", "src/**"],
+    ["--exclude", "**/*.test.ts"],
+    ["--yes"],
+    ["--minimal"],
+    ["--force"],
+  ]) {
+    const result = runCli(["generate", ...flag]);
+    assert.equal(result.code, 2, `generate ${flag.join(" ")} must be a usage error`);
+    assert.match(result.stderr, /only valid with `init`/);
+  }
+  // ...but they stay valid for init itself.
+  const dir = makeRepo("cli-init-only-", { "package.json": '{"name":"fixture"}' });
+  const init = runCli(["init", "--preset", "go", "--yes", "--cwd", dir]);
+  assert.equal(init.code, 0, init.stderr);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A mistyped outDir/tmpDir is a plausible mistake; destroying the directory it
+// names is not an acceptable outcome. The swap renames the previous output aside
+// and deletes it, and the scratch dir is deleted outright, so both must refuse to
+// touch a directory containing anything this generator did not write.
+test("generate refuses to replace a directory holding user files", () => {
+  for (const [label, config] of [
+    ["outDir", { outDir: "src" }],
+    ["tmpDir", { tmpDir: "src" }],
+  ]) {
+    const keep = "export const keep = 1;\n";
+    const dir = makeRepo(`cli-safety-${label}-`, {
+      "package.json": '{"name":"fixture"}',
+      "src/keep.ts": keep,
+      "snapshot.config.json": JSON.stringify(config),
+    });
+    const result = runCli(["generate", "--cwd", dir]);
+    assert.equal(result.code, 1, `${label}=src must be refused, got exit ${result.code}`);
+    assert.match(result.stderr, /Refusing to replace/);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "src", "keep.ts"), "utf8"),
+      keep,
+      `${label}=src must leave the source tree intact`
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generate refuses when outDir already exists as a file", () => {
+  const dir = makeRepo("cli-safety-file-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    snapshot: "user content that must survive\n",
+  });
+  const result = runCli(["generate", "--cwd", dir]);
+  assert.equal(result.code, 1, `expected exit 1, got ${result.code}`);
+  assert.equal(fs.readFileSync(path.join(dir, "snapshot"), "utf8"), "user content that must survive\n");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("generate accepts an existing empty outDir and re-runs over its own output", () => {
+  const dir = makeRepo("cli-safety-empty-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+  });
+  fs.mkdirSync(path.join(dir, "snapshot"));
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0, "an empty outDir is replaceable");
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0, "its own output is replaceable");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// generate resolves outDir against cwd, so the readers must too — otherwise an
+// absolute --out-dir produces "<cwd>\<absolute path>" and reports a missing
+// manifest immediately after a successful generate.
+test("an absolute --out-dir is honoured by generate, validate, report and explain", () => {
+  const dir = makeRepo("cli-abs-out-", {
+    "package.json": '{"name":"fixture"}',
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "abs-out-"));
+  const out = path.join(outside, "result");
+
+  assert.equal(runCli(["generate", "--cwd", dir, "--out-dir", out]).code, 0);
+  assert.ok(fs.existsSync(path.join(out, "manifest.json")), "generate must write to the absolute path");
+  assert.equal(runCli(["validate", "--cwd", dir, "--out-dir", out]).code, 0, "validate must find it");
+  assert.equal(runCli(["report", "--cwd", dir, "--out-dir", out]).code, 0, "report must find it");
+  const explained = runCli(["explain", "src/a.ts", "--cwd", dir, "--out-dir", out]);
+  assert.equal(explained.code, 0);
+  assert.doesNotMatch(explained.stdout, /not in the last snapshot/, "explain must read the manifest");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(outside, { recursive: true, force: true });
+});
+
+// docs/configuration.md promises an error listing every valid preset.
+test("init rejects an unknown preset instead of falling back to detection", () => {
+  const dir = makeRepo("cli-init-badpreset-", { "package.json": '{"name":"fixture"}' });
+  const result = runCli(["init", "--yes", "--preset", "nope-9000", "--cwd", dir]);
+  assert.equal(result.code, 2, `expected usage error (2), got ${result.code}`);
+  assert.match(result.stderr, /Unknown preset "nope-9000"/);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot.config.ts")), false, "no config must be written");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Ownership must not be inferred from filenames: `README.md` is both an artifact
+// name and a very common *user* filename, so a name allowlist treated
+// `--out-dir docs` (holding only docs/README.md) as a previous snapshot and
+// replaced the user's documentation.
+test("generate refuses a directory that merely looks like an artifact name", () => {
+  const userDoc = "# user documentation\n";
+  for (const [label, args, configFile, configBody] of [
+    ["outDir", ["--out-dir", "docs"], null, null],
+    ["tmpDir", [], "snapshot.config.json", JSON.stringify({ tmpDir: "scratch" })],
+  ]) {
+    const target = label === "outDir" ? "docs" : "scratch";
+    const files = {
+      "package.json": '{"name":"fixture"}',
+      "a.ts": "export const a = 1;\n",
+      [`${target}/README.md`]: userDoc,
+    };
+    if (configFile) files[configFile] = configBody;
+    const dir = makeRepo(`cli-own-name-${label}-`, files);
+
+    const result = runCli(["generate", "--cwd", dir, ...args]);
+    assert.equal(result.code, 1, `${label}=${target} must be refused, got ${result.code}`);
+    assert.equal(
+      fs.readFileSync(path.join(dir, target, "README.md"), "utf8"),
+      userDoc,
+      `${label}=${target}: user README must survive`
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// hooks.afterGenerate is documented as the way to write your own artifacts into
+// the output directory. Any ownership check that rejects unknown files makes that
+// feature break reruns forever.
+test("a hook-written artifact does not block later runs", () => {
+  const dir = makeRepo("cli-hook-rerun-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "snapshot.config.mjs":
+      'import * as fs from "node:fs";\n' +
+      "export default {\n" +
+      '  hooks: { afterGenerate: () => fs.writeFileSync("snapshot/custom-report.txt", "x") },\n' +
+      "};\n",
+  });
+  for (const run of [1, 2, 3]) {
+    // Run from inside the repo so the hook's relative path resolves the way it
+    // does for a developer typing `snap` in their project.
+    const result = runCli(["generate"], { cwd: dir });
+    assert.equal(result.code, 0, `run ${run} must succeed: ${result.stderr}`);
+    assert.ok(fs.existsSync(path.join(dir, "snapshot", "custom-report.txt")));
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A directory of user assets may well contain a manifest.json with a
+// schemaVersion. Ownership must require *our* generator identity, or that
+// directory gets replaced by a snapshot.
+test("generate refuses a directory whose manifest.json is not ours", () => {
+  const userAsset = '{"schemaVersion":"1.0","name":"my user assets","files":["logo.svg"]}';
+  const dir = makeRepo("cli-own-foreign-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "assets/manifest.json": userAsset,
+    "assets/logo.svg": "<svg/>\n",
+  });
+
+  const result = runCli(["generate", "--cwd", dir, "--out-dir", "assets"]);
+  assert.equal(result.code, 1, `expected refusal, got ${result.code}`);
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "manifest.json"), "utf8"), userAsset);
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "logo.svg"), "utf8"), "<svg/>\n");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// `maxPartBytes: 0` used to be swallowed as "use the 300 KB default" while
+// `maxPartBytes: 1000` threw, so a clearly wrong setting silently did nothing.
+test("a non-positive budget in the config is an error, not a silent default", () => {
+  for (const value of [0, -100]) {
+    const dir = makeRepo(`cli-budget-neg-`, {
+      "package.json": '{"name":"fixture"}',
+      "a.ts": "export const a = 1;\n",
+      "snapshot.config.json": JSON.stringify({ maxPartBytes: value }),
+    });
+    const result = runCli(["generate", "--cwd", dir]);
+    assert.notEqual(result.code, 0, `maxPartBytes: ${value} must not be accepted`);
+    assert.match(result.stderr, /positive byte count/);
+    assert.equal(fs.existsSync(path.join(dir, "snapshot")), false, "nothing must be written");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A parseable file is not necessarily a snapshot; the text report used to die
+// with a raw TypeError out of the formatter.
+test("report rejects a manifest that is not a snapshot", () => {
+  const dir = makeRepo("cli-report-foreign-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "snapshot/manifest.json": '{"schemaVersion":"1.0","name":"not a snapshot"}',
+  });
+  const result = runCli(["report", "--cwd", dir]);
+  assert.equal(result.code, 1, `expected exit 1, got ${result.code}`);
+  assert.match(result.stderr, /is not a snapshot manifest/);
+  assert.doesNotMatch(result.stderr, /TypeError/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A config that exists but cannot be read must fail, not fall back to defaults:
+// a silent fallback produces a snapshot with none of the developer's settings.
+test("CLI fails when an existing config cannot be parsed", () => {
+  const dir = makeRepo("cli-broken-config-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a=1;\n",
+    "snapshot.config.json": "{ this is not json",
+  });
+  const result = runCli(["generate", "--cwd", dir]);
+  assert.equal(result.code, 1, `expected exit 1, got ${result.code}: ${result.stderr}`);
+  assert.match(result.stderr, /could not be read/);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot")), false, "no snapshot must be written");
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("CLI --dry-run writes nothing", () => {
@@ -1149,5 +1375,84 @@ test("math: monolith carries the full file even when the part budget truncates",
     40000 + 'export const big = "";\n'.length,
     "the monolith must hold the whole file, not the truncated part body"
   );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------------- summary quality
+
+test("summaries record how they were produced", () => {
+  const dir = makeRepo("quality-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "b.py": "def hello():\n    pass\n",
+    "c.json": '{"a":1}',
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+  const byPath = new Map(manifest.files.map((file) => [file.relativePath, file]));
+
+  assert.equal(byPath.get("a.ts").summaryQuality, "ast");
+  assert.equal(byPath.get("b.py").summaryQuality, "heuristic");
+  assert.equal(byPath.get("c.json").summaryQuality, "structural");
+
+  // The part must not present a line-scan as if it were a parse.
+  const partText = fs.readFileSync(path.join(dir, "snapshot", "parts", "part-001.md"), "utf8");
+  assert.match(partText, /- Summary Quality: heuristic/);
+  assert.match(partText, /- Summary Quality: ast/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a Python file is summarized, redacted and budgeted like any other", () => {
+  const dir = makeRepo("python-", {
+    "package.json": '{"name":"fixture"}',
+    "app.py": 'import os\nAPI_KEY = "sk-proj-AAAAAAAAAAAAAAAAAAAA"\ndef main():\n    return os.getcwd()\n',
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+  const entry = manifest.files.find((file) => file.relativePath === "app.py");
+
+  assert.ok(entry, "the .py file must be included");
+  assert.equal(entry.summaryQuality, "heuristic");
+  assert.ok(entry.summary.imports.includes("os"));
+  assert.ok(entry.summary.functions.includes("main"));
+
+  const text = fs.readFileSync(path.join(dir, "snapshot", "parts", "part-001.md"), "utf8");
+  assert.ok(!text.includes("AKIA") && !text.includes("sk-proj-AAAAAAAA"), "secrets stay redacted");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------- preset ecosystem
+
+test("the detected preset contributes its ecosystem ignores", () => {
+  const dir = makeRepo("presetignore-", {
+    "manage.py": "print('x')\n",
+    "app/views.py": "def home():\n    pass\n",
+    "__pycache__/module.cpython-311.pyc": "compiled\n",
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+
+  assert.equal(manifest.config.preset, "python-django");
+  const dropped = manifest.skipped.find((entry) => entry.path.includes("__pycache__"));
+  assert.ok(dropped, "__pycache__ must be skipped by the python preset");
+  assert.equal(dropped.reason, "excluded");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------------------------ init CLI
+
+test("CLI init writes a config in non-interactive mode", () => {
+  const dir = makeRepo("cli-init-", {
+    "package.json": '{"name":"fixture","version":"1.0.0"}',
+    "go.mod": "module example.com/app\n",
+  });
+
+  const result = runCli(["init", "--cwd", dir, "--yes", "--max-part-bytes", "120k"]);
+  assert.equal(result.code, 0, result.stderr);
+
+  const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
+  assert.ok(configName, "a config file must be written");
+
+  const text = fs.readFileSync(path.join(dir, configName), "utf8");
+  assert.ok(text.includes('preset: "go"'));
+  assert.ok(text.includes('maxPartBytes: "120k"'));
+  assert.ok(text.includes("artifacts:"), "the full annotated config is written by default");
   fs.rmSync(dir, { recursive: true, force: true });
 });

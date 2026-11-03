@@ -11,8 +11,40 @@ AST structures, and partitions your repository into **hard byte-bounded**, LLM-r
 
 ---
 
+## ⚡ Set up a repository
+
+```bash
+npm create codebase-snapshot
+```
+
+Detects the project type, asks a handful of questions with real defaults, and
+writes a `snapshot.config.mjs` that lists **every setting at its default** — so
+the config doubles as the documentation. Works for 25 project shapes including
+Next.js, Nuxt, SvelteKit, Astro, Vue, React, NestJS, Django, FastAPI, Go, Rust,
+Java, .NET, PHP, Ruby, monorepos and infra repos.
+
+Non-interactive, with every answer as a flag:
+
+```bash
+npx @ankurhalder/codebase-snapshot init --preset react-vite --max-part-bytes 120k --yes
+```
+
+---
+
 ## ✨ Features
 
+- **25 project presets** — detection reads the repository once and picks the most
+  specific match: Next.js, Nuxt, SvelteKit, Remix, Astro, Angular, Solid, Vue,
+  React, NestJS, Express/ Fastify, Python (Django / FastAPI / library), Go, Rust,
+  Java/Spring, .NET, Laravel, Rails, monorepos, infra and docs.
+- **Structural summaries beyond TypeScript** — imports, declarations and exports
+  for Python, Go, Rust, Java/Kotlin/Scala, C#, PHP, Ruby and C/C++, plus the
+  script block of Vue/Svelte/Astro components through the real TypeScript
+  compiler. Every summary is labelled `ast`, `structural` or `heuristic`.
+- **Interactive setup** — `npm create codebase-snapshot` walks every tunable
+  parameter and writes a self-documenting config.
+- **Per-ecosystem ignores** — `__pycache__`, `.venv`, `target`, `.gradle`,
+  `bin`/`obj`, `vendor`, `.svelte-kit` and friends are recognised per preset.
 - **Hard byte budgeting** — every `part-XXX.md` is guaranteed to stay under `maxPartBytes`. A single
   oversized file is byte-truncated and marked rather than emitted whole.
 - **Bounded redaction** — masks only the matched span (not the whole line), and masks multi-line PEM

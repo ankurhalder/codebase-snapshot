@@ -38,6 +38,81 @@ export default {
 };
 ```
 
+## Project presets
+
+A preset is a detected project shape: layers, kinds, ecosystem ignores and a
+recommended part budget. Detection reads the repository **once** and the first
+matching preset wins, ordered by specificity — so a Next.js app inside a pnpm
+workspace is still a Next.js project.
+
+| Preset | Detected from |
+| :--- | :--- |
+| `nextjs` | `next.config.*`, or `next` |
+| `nuxt` | `nuxt.config.*`, or `nuxt` |
+| `sveltekit` | `svelte.config.*`, `@sveltejs/kit` |
+| `remix` | `@remix-run/*` |
+| `astro` | `astro.config.*`, `astro` |
+| `angular` | `angular.json`, `@angular/core` |
+| `solid` | `solid-js` |
+| `vue-vite` | `vue` + vite |
+| `react-vite` | `react` + vite |
+| `nest` | `@nestjs/core` |
+| `node-express` | `express`, `fastify`, `koa` |
+| `node-lib` | any `package.json` |
+| `python-django` | `manage.py`, or django in the manifest |
+| `python-fastapi` | fastapi / flask in the manifest |
+| `python-lib` | `pyproject.toml`, `setup.py`, `.py` files |
+| `go` | `go.mod` |
+| `rust` | `Cargo.toml` |
+| `java-spring` | `pom.xml`, `build.gradle` |
+| `dotnet` | `*.csproj`, `*.sln` |
+| `php-laravel` | `artisan`, `composer.json` |
+| `ruby-rails` | `Gemfile`, `config.ru` |
+| `monorepo` | `pnpm-workspace.yaml`, `workspaces`, `nx.json`, `turbo.json` |
+| `infra` | `*.tf`, `Chart.yaml`, `docker-compose.yml` |
+| `docs` | mostly Markdown, no `package.json` |
+| `generic` | anything else |
+
+Force one when detection is wrong:
+
+```javascript
+export default {
+  preset: "react-vite",
+};
+```
+
+An unknown name is an error listing every valid preset — never a silent fallback.
+Each preset also contributes ignore patterns the generic list cannot know
+(`__pycache__`, `target`, `vendor`, `bin`/`obj`, …). The resolved preset is
+recorded in `manifest.config.preset`, so changing it shows up as config drift.
+
+---
+
+## Interactive setup
+
+```bash
+npm create codebase-snapshot        # or: npx @ankurhalder/codebase-snapshot init
+```
+
+Detects the project, asks seven questions with real defaults, and writes the
+config. It never prompts when either end is not a TTY: every answer has a flag.
+
+| Flag | Question it answers |
+| :--- | :--- |
+| `--preset <name>` | project type |
+| `--include <globs>` / `--exclude <globs>` | scope |
+| `--max-part-bytes <size>` | part size |
+| `--skip-artifacts` / `--only-artifacts` | artifacts |
+| `--include-sensitive-files` | safety |
+| `--minimal` | write only what differs from the defaults |
+| `--yes` | accept everything, do not prompt |
+| `--force` | overwrite an existing config |
+| `--dry-run` | print the config, write nothing |
+
+The generated config lists **every setting at its current value**, commented and
+grouped. That is deliberate: most people never open the documentation, and a
+config that only records their changes cannot tell them what else exists.
+Deleting any line is safe — the defaults are real.
 ## Classification: layers and kinds
 
 ```javascript
@@ -60,7 +135,11 @@ Rules are evaluated in order, **first match wins**, with an `other` fallback.
 `layersMode: "merge"` (the default) keeps the detected preset's rules and lets
 yours win by being evaluated first. `"replace"` discards the preset entirely.
 
-Presets are auto-detected: **nextjs** → **vite** → **node** → **default**.
+Presets are auto-detected by specificity: the first match in descending priority wins,
+and `generic` is the fallback. There are 25 of them — see the table above. A framework
+that depends on `vite` still resolves to `react-vite` / `vue-vite` because those detectors
+outrank `node-lib`, and a Next.js app inside a pnpm workspace is still `nextjs`, not
+`monorepo`.
 
 ## Sizing: byte budgets
 
@@ -149,6 +228,13 @@ export default {
 and `outDir`/`tmpDir` may not contain each other. Writes are atomic: the previous
 snapshot survives until the new one is fully in place.
 
+Both directories are also **refused if they already exist and this generator did
+not write them** — a typo such as `outDir: "src"` would otherwise replace your
+source tree. Ownership is proved by a `.codebase-snapshot` marker (plus a
+parseable `manifest.json` for older output), never by filenames, so an existing
+`docs/README.md` is never mistaken for a previous snapshot. An empty directory,
+or one holding only `.gitkeep`/`.gitignore`/`.DS_Store`, is always accepted.
+
 ## Hooks
 
 ```javascript
@@ -163,6 +249,16 @@ export default {
 
 A throwing hook becomes a warning on the manifest — it never loses a snapshot
 that was already written.
+
+A hook may write its own files into the output directory. That is safe across
+reruns: ownership of the directory is established by a `.codebase-snapshot`
+marker written before any artifact, not by the set of filenames present, so
+custom artifacts never look like someone else's data.
+
+Note that a hook runs in the **process** working directory, so with
+`snap --cwd elsewhere` a relative path resolves against your shell's directory,
+not the target repo. Use the absolute paths on `manifest` (or resolve against
+`outDir` yourself) when passing `--cwd`.
 
 ---
 

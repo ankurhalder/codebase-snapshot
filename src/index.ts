@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { summarizeWithProfile } from "./ast/profiles/index.js";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
 import { summarizeTypeScriptSource } from "./ast/ts-parser.js";
 import {
@@ -22,7 +23,7 @@ import { generateProjectTree } from "./generator/tree.js";
 import { anchorForPath, partitionFiles, renumberParts } from "./partitioner/chunker.js";
 import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
-import { detectPreset } from "./presets/index.js";
+import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
 import {
   isBinaryBuffer,
   isBinaryExtension,
@@ -34,18 +35,21 @@ import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
 import type {
   FileEntry,
+  JsonSummary,
   Manifest,
   ManifestIndexes,
+  MarkdownSummary,
   ResolvedArtifacts,
   ResolvedSnapshotConfig,
   SecretFinding,
   SkipRecord,
   SnapshotConfig,
   SourceSummary,
+  SummaryQuality,
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "2.0.0";
+export const GENERATOR_VERSION = "2.1.0";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -58,7 +62,7 @@ export interface GenerateOptions {
   dryRun?: boolean;
 }
 
-const SUMMARY_EXTENSIONS = [
+const TS_EXTENSIONS = [
   ".ts",
   ".mts",
   ".cts",
@@ -67,29 +71,32 @@ const SUMMARY_EXTENSIONS = [
   ".mjs",
   ".cjs",
   ".jsx",
-  ".json",
-  ".jsonc",
-  ".md",
-  ".mdx",
 ];
 
-function summarizeFile(
-  relativePath: string,
-  redactedContent: string
-): FileEntry["summary"] | undefined {
+interface SummaryOutcome {
+  summary: SourceSummary | JsonSummary | MarkdownSummary;
+  quality: SummaryQuality;
+}
+
+function summarizeFile(relativePath: string, redactedContent: string): SummaryOutcome | undefined {
   const lower = relativePath.toLowerCase();
-  if (!SUMMARY_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
-    return undefined;
-  }
+
   if (lower.endsWith(".json") || lower.endsWith(".jsonc")) {
-    return summarizeJson(redactedContent);
+    return { summary: summarizeJson(redactedContent), quality: "structural" };
   }
   if (lower.endsWith(".md") || lower.endsWith(".mdx")) {
-    return summarizeMarkdown(redactedContent);
+    return { summary: summarizeMarkdown(redactedContent), quality: "structural" };
   }
+
   // Summaries are built from the REDACTED text: a secret inside a Markdown
   // heading used to be masked in the body but emitted verbatim in the summary.
-  return summarizeTypeScriptSource(relativePath, redactedContent);
+  if (TS_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
+    return { summary: summarizeTypeScriptSource(relativePath, redactedContent), quality: "ast" };
+  }
+
+  // Every other language goes through the heuristic profile registry.
+  const profiled = summarizeWithProfile(relativePath, redactedContent);
+  return profiled ? { summary: profiled.summary, quality: profiled.quality } : undefined;
 }
 
 function isSourceSummary(summary: FileEntry["summary"]): summary is SourceSummary {
@@ -294,6 +301,101 @@ export function resolveSafeOutputDirs(config: {
 }
 
 /**
+ * Placeholder files that may sit in an otherwise-empty output directory.
+ *
+ * They are tolerated, but they are *not* evidence that the directory is ours —
+ * ownership is decided by {@link isOwnOutput}.
+ */
+const PLACEHOLDER_ENTRIES = new Set([".gitkeep", ".gitignore", ".DS_Store"]);
+
+/**
+ * Marks a directory as written by this generator.
+ *
+ * Written first, before any artifact, so a crash mid-run still leaves proof of
+ * ownership. `manifest.json` cannot serve this purpose alone because
+ * `--skip-artifacts manifest` is a supported combination.
+ */
+const OWNERSHIP_MARKER = ".codebase-snapshot";
+
+function writeOwnershipMarker(dir: string): void {
+  const marker = {
+    generator: GENERATOR_NAME,
+    version: GENERATOR_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+  };
+  fs.writeFileSync(path.join(dir, OWNERSHIP_MARKER), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+}
+
+/**
+ * True when `dir` is a snapshot this generator wrote.
+ *
+ * Filenames alone are not evidence: `README.md` is both an artifact name and an
+ * extremely common *user* filename, so an allowlist of artifact names treated
+ * `--out-dir docs` (containing only `docs/README.md`) as a previous snapshot and
+ * replaced the user's documentation. Ownership therefore requires either our
+ * marker or a manifest that actually parses as one of ours. Extra files are then
+ * expected, not suspicious — `hooks.afterGenerate` is documented to write its
+ * own artifacts into the output directory.
+ */
+function isOwnOutput(dir: string): boolean {
+  if (fs.existsSync(path.join(dir, OWNERSHIP_MARKER))) return true;
+
+  const manifestPath = path.join(dir, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      generator?: unknown;
+      schemaVersion?: unknown;
+      files?: unknown;
+    };
+    // It has to be *our* manifest, not merely a document that happens to have a
+    // schemaVersion: a directory of user assets can easily contain one, and
+    // treating that as a previous snapshot deleted it.
+    const generator = parsed.generator as { name?: unknown } | null | undefined;
+    return (
+      typeof parsed.schemaVersion === "string" &&
+      Array.isArray(parsed.files) &&
+      typeof generator === "object" &&
+      generator !== null &&
+      generator.name === GENERATOR_NAME
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuses to replace a directory that this generator did not write.
+ *
+ * `swapIntoPlace` renames the previous output aside and deletes it, and the
+ * scratch directory is deleted outright before every run. Path checks alone
+ * cannot make that safe: `outDir: "src"` is a plausible typo, and it used to
+ * delete the developer's entire source tree and exit 0.
+ */
+export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): void {
+  if (!fs.existsSync(target)) return;
+
+  if (!fs.statSync(target).isDirectory()) {
+    throw new Error(
+      `Refusing to write into ${label} ${target}: it exists but is not a directory.`
+    );
+  }
+
+  const entries = fs.readdirSync(target);
+  const meaningful = entries.filter((name) => !PLACEHOLDER_ENTRIES.has(name));
+  if (meaningful.length === 0) return;
+  if (isOwnOutput(target)) return;
+
+  const preview = meaningful.slice(0, 5).join(", ");
+  const more = meaningful.length > 5 ? `, and ${meaningful.length - 5} more` : "";
+  throw new Error(
+    `Refusing to replace ${label} ${target}: it exists, is not empty, and does not look like ` +
+      `a snapshot this generator wrote (found ${preview}${more}). Point ${label} at a new or ` +
+      `empty directory, or delete it yourself first.`
+  );
+}
+
+/**
  * Moves `tmpDir` into place, keeping the previous output until the new one is
  * fully in place. Falls back to a recursive copy across devices (EXDEV).
  */
@@ -436,7 +538,7 @@ export function generateSnapshot(
 
   const collection = collectFiles(config.cwd, {
     includePatterns: config.include,
-    excludePatterns: config.excludePatterns,
+    excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
   });
 
@@ -520,8 +622,11 @@ export function generateSnapshot(
     }
 
     let summary: FileEntry["summary"];
+    let summaryQuality: SummaryQuality | undefined;
     try {
-      summary = summarizeFile(relativePath, redacted);
+      const outcome = summarizeFile(relativePath, redacted);
+      summary = outcome?.summary;
+      summaryQuality = outcome?.quality;
       if (isSourceSummary(summary) && summary.parseErrors) {
         warnings.push(
           `Parse errors in ${relativePath} (${summary.parseErrors}); its summary is incomplete.`
@@ -550,6 +655,7 @@ export function generateSnapshot(
       includedLines,
       includedBytes: Buffer.byteLength(finalContent, "utf8"),
       summary,
+      summaryQuality,
       content: finalContent,
     });
   }
@@ -603,6 +709,7 @@ export function generateSnapshot(
       includeSensitiveFiles: config.includeSensitiveFiles,
       artifacts: { ...config.artifacts },
       include: [...config.include],
+      preset: config.preset,
       layersMode: config.layersMode,
       budgets: { default: config.budgets.default, byLayer: { ...config.budgets.byLayer } },
       excludePatterns: [...config.excludePatterns],
@@ -703,10 +810,19 @@ export function generateSnapshot(
   }
 
   const { outDir, tmpDir } = resolveSafeOutputDirs(config);
+
+  // Checked before anything is mutated: the scratch directory is deleted
+  // outright below, and the swap replaces outDir wholesale.
+  assertReplaceable(tmpDir, "tmpDir");
+  assertReplaceable(outDir, "outDir");
+
   const { artifacts } = config;
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
+  // First thing written: if this run crashes, the next one can still tell that
+  // the leftover scratch directory is ours and may be cleared.
+  writeOwnershipMarker(tmpDir);
 
   const partsDir = path.join(tmpDir, "parts");
   const reportsDir = path.join(tmpDir, "reports");
@@ -770,6 +886,8 @@ export {
   resolveConfig,
   loadConfigFile,
   detectPreset,
+  getPreset,
+  listPresetNames,
   scanAndRedactSecrets,
   detectLanguage,
   isBinaryExtension,
@@ -791,6 +909,14 @@ export type { ExplainResult } from "./explain.js";
 export { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 export type { ManifestDiff } from "./diff.js";
 export { stripJsonComments } from "./ast/structured.js";
+export { runInit } from "./wizard/init.js";
+export type { InitOptions, InitResult } from "./wizard/init.js";
+export { DEFAULT_ANSWERS, renderConfig, renderMinimalConfig } from "./wizard/config-template.js";
+export type { WizardAnswers } from "./wizard/config-template.js";
+export { PromptCancelled, isInteractive } from "./wizard/prompts.js";
+export { PRESETS } from "./presets/index.js";
+export { LANGUAGE_PROFILES, profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
+export type { HeuristicResult, LanguageProfile } from "./ast/profiles/index.js";
 export { renumberParts } from "./partitioner/chunker.js";
 export { collectFiles, isSensitivePath, matchesExclude, globToRegExp } from "./scanner/files.js";
 export {
