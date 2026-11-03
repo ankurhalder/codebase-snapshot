@@ -122,3 +122,20 @@ jobs:
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # `npm create codebase-snapshot` is advertised in the changelog and README
+      # and lives in packages/create, but nothing ever published it — so the
+      # command resolved to a 404 while `docs/install.md` told people to run it.
+      # Guarded on the registry so re-running a release (or re-dispatching this
+      # workflow) is idempotent instead of failing with "cannot publish over".
+      - name: Publish create-codebase-snapshot (skip if this version exists)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync("packages/create/package.json","utf8")).version)')"
+          if npm view "create-codebase-snapshot@$VERSION" version >/dev/null 2>&1; then
+            echo "create-codebase-snapshot@$VERSION is already on the registry; nothing to do"
+            exit 0
+          fi
+          npm publish packages/create --access public --provenance
