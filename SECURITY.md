@@ -56,6 +56,12 @@ per-snapshot id and the entries it wrote — not by a filename and not by a mani
 `outDir`/`tmpDir` may not be the working directory, an ancestor, or the filesystem root, and
 may not contain one another.
 
+The marker is **evidence, not authentication**. It is unsigned and carries no secret, so anyone
+who can write a marker and a stub manifest with a matching digest can satisfy the check — but
+anyone who can write those files can also delete the directory by hand. The guard exists to stop
+the tool from deleting a directory *it* did not create; it is not a defence against an attacker
+who already has write access to the output path.
+
 Reports we want to hear about: any path configuration that deletes or overwrites files the tool
 did not create.
 

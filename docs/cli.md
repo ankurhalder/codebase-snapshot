@@ -242,7 +242,7 @@ narrowest cases of the same rule.
 | `--format <text\|json>` | enum | `text` | every command | `json` writes a pure JSON payload to stdout. |
 | `--dry-run` | flag | off | generate, init | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
-| `--no-config` | flag | off | generate, validate, report, explain | Ignore every `snapshot.config.*` file and run on the built-in defaults. |
+| `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |
 | `--preset <name>` | name | detected | *init only* | Force a preset instead of detecting one. |
 | `--include <globs>` | list | unset | *init only* | Allow-list recorded in the generated config. |
 | `--exclude <globs>` | list | unset | *init only* | Exclude globs recorded in the generated config. |
@@ -297,7 +297,7 @@ npx @ankurhalder/codebase-snapshot generate --out-dir .context --max-part-bytes 
 npx @ankurhalder/codebase-snapshot generate --only-artifacts parts,manifest
 
 # One file per part, with everything else left alone
-npx @ankurhalder/codebase-snapshot validate
+npx @ankurhalder/codebase-snapshot generate --only-artifacts parts
 
 # Why is this file missing?
 npx @ankurhalder/codebase-snapshot explain src/generated/schema.ts
