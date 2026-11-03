@@ -16,6 +16,7 @@ import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
+import { escapeControls } from "./terminal.js";
 
 const VERSION = GENERATOR_VERSION;
 
@@ -464,12 +465,26 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
 
 class HelpRequested extends Error {}
 
+/**
+ * Escape repository-derived text at the terminal boundary.
+ *
+ * `escapeControls` rewrites every C0/C1/bidi control, including `\n`; split on
+ * newlines first so multi-line renderers keep their layout and only the
+ * interpolated values are re-spelled. Already-escaped text is unchanged.
+ */
+function escapeForTerminal(message: string): string {
+  return message
+    .split("\n")
+    .map((line) => escapeControls(line))
+    .join("\n");
+}
+
 function info(message: string): void {
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${escapeForTerminal(message)}\n`);
 }
 
 function warn(message: string): void {
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${escapeForTerminal(message)}\n`);
 }
 
 function emit(format: OutputFormat, payload: unknown, textRenderer: () => void): void {
