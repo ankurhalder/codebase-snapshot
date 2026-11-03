@@ -56,10 +56,11 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
   {
     name: "docs",
     priority: 22,
-    detect: (context) => {
-      const markdown = Array.from(context.files).filter((file) => /\.mdx?$/i.test(file)).length;
-      return markdown >= 3 && !hasFile(context, "package.json");
-    },
+    // The count is `PresetContext.markdownCount`, which includes `docs/*.md`
+    // up to two directories down (bounded in the context builder). Counting
+    // only the root turned every real documentation repository — README.md plus
+    // the pages under `docs/` — into `generic`.
+    detect: (context) => context.markdownCount >= 3 && !hasFile(context, "package.json"),
     layers: [
       layer("content", "content/", "docs/"),
       layer("assets", "assets/", "static/", "public/"),
