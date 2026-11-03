@@ -159,19 +159,19 @@ jobs:
       matrix:
         include:
           - client: npm
-            install_cmd: npm install -D ./pkg.tgz
+            install_cmd: npm install -D "./$TARBALL"
             exec_cmd: npx snap
           - client: yarn-classic
-            install_cmd: npx --yes yarn@1.22.22 add -D ./pkg.tgz
+            install_cmd: npx --yes yarn@1.22.22 add -D "./$TARBALL"
             exec_cmd: npx --yes yarn@1.22.22 snap
           - client: yarn-berry-pnp
-            install_cmd: corepack yarn add -D ./pkg.tgz
+            install_cmd: corepack yarn add -D "./$TARBALL"
             exec_cmd: corepack yarn snap
           - client: pnpm
-            install_cmd: npx --yes pnpm@10 add -D ./pkg.tgz
+            install_cmd: npx --yes pnpm@10 add -D "./$TARBALL"
             exec_cmd: npx --yes pnpm@10 exec snap
           - client: bun
-            install_cmd: npx --yes bun@1.4 add -d ./pkg.tgz
+            install_cmd: npx --yes bun@1.4 add -d "./$TARBALL"
             exec_cmd: npx --yes bun@1.4 run snap
     env:
       # corepack otherwise blocks on an interactive download prompt.
@@ -194,13 +194,20 @@ jobs:
 
       # Pack the exact artifact that would be published, then install it from a
       # local path so CI never depends on the registry copy being up to date.
+      #
+      # The tarball keeps its versioned name instead of being renamed to a fixed
+      # `pkg.tgz`. yarn classic caches `file:` dependencies keyed by the relative
+      # path, so a stable name plus a warm cache can install a *previous*
+      # version's content from a fresh tarball — observed serving 2.0.0 while the
+      # packed tarball was 2.1.0. A versioned name makes that impossible.
       - name: Pack the tarball
         run: |
           set -euo pipefail
           echo "PACKAGE_VERSION=$(npm pkg get version | tr -d '"')" >> "$GITHUB_ENV"
-          npm pack --pack-destination "$RUNNER_TEMP"
+          TARBALL="$(npm pack --pack-destination "$RUNNER_TEMP" | tail -1)"
+          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/consumer"
-          mv "$RUNNER_TEMP"/*.tgz "$RUNNER_TEMP/consumer/pkg.tgz"
+          mv "$RUNNER_TEMP/$TARBALL" "$RUNNER_TEMP/consumer/$TARBALL"
 
       # Berry's default linker is strict PnP: there is no node_modules directory,
       # and the runtime `typescript` dependency has to resolve through .pnp.cjs.
