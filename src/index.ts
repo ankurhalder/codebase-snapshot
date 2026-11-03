@@ -1058,11 +1058,25 @@ function swapOnce(stagingDir: string, outDir: string): void {
     try {
       fs.renameSync(stagingDir, outDir);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "EXDEV") {
-        fs.cpSync(stagingDir, outDir, { recursive: true });
+      if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+      // Across devices a rename is impossible, so the snapshot has to be copied. Copying straight
+      // into `outDir` was the bug: when the copy failed halfway — a full disk is the usual way —
+      // `outDir` was left holding a *partial* snapshot whose `.codebase-snapshot` marker said
+      // "complete" and whose inventory named files that were never written. Copy beside the target
+      // and rename that into place instead; the rename is same-device, and a rename either lands
+      // whole or not at all.
+      const partialDir = `${outDir}.partial-${process.pid}-${Date.now()}`;
+      try {
+        fs.cpSync(stagingDir, partialDir, { recursive: true });
+        fs.renameSync(partialDir, outDir);
         fs.rmSync(stagingDir, { recursive: true, force: true });
-      } else {
-        throw err;
+      } catch (copyErr) {
+        try {
+          fs.rmSync(partialDir, { recursive: true, force: true });
+        } catch {
+          // The copy error is the one that explains the failure; a cleanup error must not mask it.
+        }
+        throw copyErr;
       }
     }
     if (hadPrevious) fs.rmSync(backupDir, { recursive: true, force: true });
@@ -1110,18 +1124,40 @@ function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
 /**
  * Runs `hooks.afterGenerate`, downgrading a throwing hook to a warning.
  *
- * The snapshot is already written by this point; losing a good artefact because
- * user code threw would be the worse outcome.
+ * The snapshot is already written by this point; losing a good artefact because user code threw
+ * would be the worse outcome. Two further rules:
+ *
+ *  - **stdout is the payload channel.** A hook is user code and user code prints: a single log
+ *    line from a hook in `--format json` mode produced a document no parser could read. Everything
+ *    a hook writes to stdout is redirected to stderr for the duration of the call.
+ *  - **a returned promise is tracked, never awaited.** This is a synchronous API, so the promise
+ *    cannot be awaited here; the caller attaches a rejection handler, which records the failure as
+ *    a warning and re-ships the manifest and marker. Left alone, a rejected async hook became an
+ *    unhandled rejection that killed the process *after* it had printed "Snapshot generated …
+ *    Integrity: passed" and written its JSON payload.
  */
-function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): void {
+function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): Promise<unknown> | null {
   const hook = config.hooks.afterGenerate;
-  if (!hook) return;
+  if (!hook) return null;
+
+  const stdoutWrite = process.stdout.write.bind(process.stdout);
+  const stderrWrite = process.stderr.write.bind(process.stderr);
+  let returned: unknown;
+
   try {
-    hook(manifest);
+    process.stdout.write = stderrWrite as typeof process.stdout.write;
+    returned = hook(manifest);
   } catch (err) {
     manifest.warnings.push(`hooks.afterGenerate failed: ${(err as Error).message}`);
     manifest.totals.warningCount = manifest.warnings.length;
+    return null;
+  } finally {
+    process.stdout.write = stdoutWrite;
   }
+
+  const thenable = returned as { then?: unknown } | null | undefined;
+  if (!thenable || typeof thenable.then !== "function") return null;
+  return Promise.resolve(returned);
 }
 
 /**
@@ -1671,17 +1707,36 @@ export function generateSnapshot(
     stagingDir = null;
 
     const warningsBeforeHook = manifest.warnings.length;
-    runAfterGenerate(config, manifest);
+    const pendingHook = runAfterGenerate(config, manifest);
 
     // The hook runs against the finished snapshot and may write its own
     // artifacts. A warning it produced can only reach the shipped manifest by
     // writing that manifest again — atomically, so a crash cannot truncate it.
-    if (artifacts.manifest && manifest.warnings.length !== warningsBeforeHook) {
-      writeManifestAtomically(path.join(outDir, "manifest.json"), manifest);
+    // The marker is rewritten after the hook for the same reason: its inventory
+    // must include what the hook added, or the next run refuses the directory.
+    const shipHookState = (): void => {
+      if (artifacts.manifest && manifest.warnings.length !== warningsBeforeHook) {
+        writeManifestAtomically(path.join(outDir, "manifest.json"), manifest);
+      }
+      writeOwnershipMarker(outDir, markerPayload(outDir, "complete", snapshotId, createdAt));
+    };
+    shipHookState();
+
+    if (pendingHook) {
+      // The hook is still running. A rejection cannot be awaited from here, so it is recorded and
+      // re-shipped when it lands — never left to become an unhandled rejection.
+      pendingHook.catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
+        manifest.totals.warningCount = manifest.warnings.length;
+        try {
+          shipHookState();
+        } catch {
+          // The run already succeeded and the failure is recorded in memory; a write error here
+          // must not turn a warning into a crash.
+        }
+      });
     }
-    // Final evidence: records hook artifacts and the manifest as shipped, so the
-    // next run recognises this directory as its own.
-    writeOwnershipMarker(outDir, markerPayload(outDir, "complete", snapshotId, createdAt));
 
     return manifest;
   } catch (err) {
