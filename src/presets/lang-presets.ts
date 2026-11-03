@@ -74,7 +74,8 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
   },
   {
     name: "python-lib",
-    priority: 52,
+    // Below node-lib: a Node repo with a stray .py file is still a Node repo.
+    priority: 30,
     detect: (context) =>
       hasFile(context, "pyproject.toml") ||
       hasFile(context, "setup.py") ||

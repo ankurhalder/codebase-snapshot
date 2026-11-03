@@ -3,7 +3,9 @@ import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 import { explainPath, renderExplainText } from "./explain.js";
-import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig, supportsTypeScriptImports } from "./config.js";
+import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig } from "./config.js";
+import { runInit } from "./wizard/init.js";
+import { PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
 import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
@@ -46,6 +48,12 @@ const CLI_OPTIONS = {
   mode: { type: "string" },
   "dry-run": { type: "boolean" },
   watch: { type: "boolean" },
+  preset: { type: "string" },
+  include: { type: "string" },
+  exclude: { type: "string" },
+  yes: { type: "boolean" },
+  minimal: { type: "boolean" },
+  force: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -85,6 +93,14 @@ Options:
   --format <text|json>          CLI output format (default: text)
   --dry-run                     Compute the snapshot without writing anything
   --watch                       Re-generate whenever the repository changes
+
+  init only:
+  --preset <name>               Force a project preset instead of detecting one
+  --include <globs>             Comma-separated allow-list
+  --exclude <globs>             Comma-separated exclude patterns
+  --minimal                     Write only the settings that differ from defaults
+  --yes                         Accept every default without prompting
+  --force                       Overwrite an existing config
   -h, --help                    Display this help message
   -v, --version                 Display version
 
@@ -99,6 +115,14 @@ interface ParsedInvocation {
   format: OutputFormat;
   dryRun: boolean;
   watch: boolean;
+  preset?: string;
+  /** The size exactly as typed, so the generated config can keep `120k`. */
+  maxPartBytesRaw?: string;
+  include?: string;
+  exclude?: string;
+  yes: boolean;
+  minimal: boolean;
+  force: boolean;
   cwd: string;
   outDir?: string;
   includeMonolith?: boolean;
@@ -266,6 +290,14 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     format: rawFormat as OutputFormat,
     dryRun: values["dry-run"] === true,
     watch: values.watch === true,
+    preset: values.preset === undefined ? undefined : String(values.preset),
+    maxPartBytesRaw:
+      values["max-part-bytes"] === undefined ? undefined : String(values["max-part-bytes"]),
+    include: values.include === undefined ? undefined : String(values.include),
+    exclude: values.exclude === undefined ? undefined : String(values.exclude),
+    yes: values.yes === true,
+    minimal: values.minimal === true,
+    force: values.force === true,
     cwd: values.cwd === undefined ? process.cwd() : path.resolve(String(values.cwd)),
     outDir: values["out-dir"] === undefined ? undefined : String(values["out-dir"]),
     includeMonolith: values["include-monolith"] === true ? true : undefined,
@@ -307,34 +339,54 @@ function emit(format: OutputFormat, payload: unknown, textRenderer: () => void):
   textRenderer();
 }
 
-function runInit(cwd: string): number {
-  const targetName = supportsTypeScriptImports() ? "snapshot.config.ts" : "snapshot.config.mjs";
-  const targetPath = path.join(cwd, targetName);
-  if (fs.existsSync(targetPath)) {
-    warn(`❌ ${targetName} already exists in ${cwd}.`);
+function splitList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
+  try {
+    const result = await runInit({
+      cwd: invocation.cwd,
+      preset: invocation.preset,
+      maxPartBytes: invocation.maxPartBytesRaw ?? invocation.maxPartBytes,
+      include: splitList(invocation.include),
+      exclude: splitList(invocation.exclude),
+      skipArtifacts: invocation.skipArtifacts,
+      includeSensitiveFiles: invocation.includeSensitiveFiles,
+      yes: invocation.yes,
+      minimal: invocation.minimal,
+      force: invocation.force,
+      dryRun: invocation.dryRun,
+    });
+
+    if (invocation.format === "json") {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+
+    if (!result.written) {
+      info(result.configText);
+      return 0;
+    }
+
+    info(`✅ Created ${path.basename(result.configPath)} (preset: ${result.preset})`);
+    if (result.scripts.length > 0) info(`   Added npm scripts: ${result.scripts.join(", ")}`);
+    if (result.gitignoreEntries.length > 0) {
+      info(`   Added to .gitignore: ${result.gitignoreEntries.join(", ")}`);
+    }
+    for (const note of result.notes) info(`   ⚠ ${note}`);
+    info("");
+    info("   Next:  npm run snapshot");
+    return 0;
+  } catch (err) {
+    if (err instanceof PromptCancelled) {
+      warn("❌ Cancelled.");
+      return 1;
+    }
+    warn(`❌ ${(err as Error).message}`);
     return 1;
   }
-
-  const importPath = JSON.stringify(GENERATOR_NAME);
-  const starter = `import { defineConfig } from ${importPath};
-
-export default defineConfig({
-  branch: "main",
-  outDir: "snapshot",
-  maxPartBytes: 300 * 1024,
-  largeFileBytes: 200 * 1024,
-  excludePatterns: [],
-});
-`;
-
-  fs.writeFileSync(targetPath, starter, "utf8");
-  info(`✅ Created ${targetName} in ${cwd}`);
-  if (targetName.endsWith(".mjs")) {
-    info(
-      "   (a .ts config needs Node >= 22.6 to import natively; this Node writes a .mjs instead)"
-    );
-  }
-  return 0;
 }
 
 function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
@@ -377,7 +429,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (invocation.command === "init") {
-    return runInit(invocation.cwd);
+    return await runInitCommand(invocation);
   }
 
   const loaded = await loadConfigFileDetailed(invocation.cwd);

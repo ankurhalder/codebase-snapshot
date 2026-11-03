@@ -1209,3 +1209,24 @@ test("the detected preset contributes its ecosystem ignores", () => {
   assert.equal(dropped.reason, "excluded");
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ------------------------------------------------------------------ init CLI
+
+test("CLI init writes a config in non-interactive mode", () => {
+  const dir = makeRepo("cli-init-", {
+    "package.json": '{"name":"fixture","version":"1.0.0"}',
+    "go.mod": "module example.com/app\n",
+  });
+
+  const result = runCli(["init", "--cwd", dir, "--yes", "--max-part-bytes", "120k"]);
+  assert.equal(result.code, 0, result.stderr);
+
+  const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
+  assert.ok(configName, "a config file must be written");
+
+  const text = fs.readFileSync(path.join(dir, configName), "utf8");
+  assert.ok(text.includes('preset: "go"'));
+  assert.ok(text.includes('maxPartBytes: "120k"'));
+  assert.ok(text.includes("artifacts:"), "the full annotated config is written by default");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

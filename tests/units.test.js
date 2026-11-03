@@ -8,6 +8,7 @@ import {
   DEFAULT_SECRET_PATTERNS,
   anchorForPath,
   countLines,
+  DEFAULT_ANSWERS,
   defineConfig,
   detectLanguage,
   detectPreset,
@@ -25,7 +26,10 @@ import {
   matchesExclude,
   parseByteSize,
   profileForPath,
+  renderConfig,
+  renderMinimalConfig,
   resolveConfig,
+  runInit,
   scanAndRedactSecrets,
   summarizeJson,
   summarizeMarkdown,
@@ -748,4 +752,89 @@ test("files no profile claims are left alone", () => {
   assert.equal(summarizeWithProfile("notes.txt", "hello"), null);
   assert.equal(profileForPath("app.module.ts"), null, "TypeScript is handled by the compiler, not a profile");
   assert.equal(profileForPath("main.py").id, "python");
+});
+
+// ---------------------------------------------------------------------- wizard
+
+const quietIO = {
+  input: { isTTY: false },
+  output: { isTTY: false, write() {} },
+};
+
+test("the generated config exposes every setting at its default", () => {
+  const text = renderConfig(DEFAULT_ANSWERS);
+
+  for (const key of [
+    "preset:", "branch:", "outDir:", "tmpDir:", "maxPartBytes:", "largeFileBytes:",
+    "previewHeadLines:", "previewTailLines:", "budgets:", "include:", "excludePatterns:",
+    "layersMode:", "layers:", "kinds:", "includeSensitiveFiles:", "secrets:",
+    "customPatterns:", "disableDefaultPatterns:", "artifacts:", "maxMonolithBytes:", "hooks:",
+  ]) {
+    assert.ok(text.includes(key), `config should mention ${key}`);
+  }
+
+  // Every artifact by name, so nobody has to guess what is available.
+  for (const artifact of ["readme", "manifest", "parts", "navigation", "projectTree", "audit", "monolith"]) {
+    assert.ok(new RegExp(`\\b${artifact}:`).test(text), `config should mention artifact ${artifact}`);
+  }
+
+  assert.ok(text.includes('import { defineConfig } from "@ankurhalder/codebase-snapshot"'));
+  assert.ok(text.includes("// ── Size"), "sections are grouped for scanning");
+});
+
+test("the minimal config writes only what differs from the defaults", () => {
+  const terse = renderMinimalConfig({ ...DEFAULT_ANSWERS, maxPartBytes: "120k" });
+  assert.ok(terse.includes("maxPartBytes"));
+  assert.ok(!terse.includes("previewHeadLines"), "defaults must not appear in the minimal form");
+  assert.ok(!terse.includes("layersMode"));
+
+  const blank = renderMinimalConfig(DEFAULT_ANSWERS);
+  assert.ok(blank.includes("defineConfig({})"), "no changes means an empty config");
+});
+
+test("runInit writes a config from flags without a TTY", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-"));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x", version: "1.0.0" }));
+  fs.writeFileSync(path.join(dir, "go.mod"), "module x\n");
+
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO, maxPartBytes: "120k" });
+  assert.equal(result.written, true);
+  assert.equal(result.preset, "go", "the detected preset is used");
+  assert.ok(result.configText.includes('maxPartBytes: "120k"'));
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(pkg.scripts.snapshot, "codebase-snapshot generate");
+  assert.equal(pkg.scripts["snapshot:validate"], "codebase-snapshot validate");
+  assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));
+
+  await assert.rejects(() => runInit({ cwd: dir, yes: true, io: quietIO }), /already exists/);
+  const forced = await runInit({ cwd: dir, yes: true, io: quietIO, force: true });
+  assert.equal(forced.written, true, "--force overwrites");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("runInit --dry-run renders without touching the disk", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-dry-"));
+  fs.writeFileSync(path.join(dir, "Cargo.toml"), '[package]\nname = "x"\n');
+
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO, dryRun: true });
+  assert.equal(result.written, false);
+  assert.equal(result.preset, "rust");
+  assert.ok(result.configText.includes('preset: "rust"'));
+  assert.equal(fs.existsSync(result.configPath), false);
+  assert.equal(fs.existsSync(path.join(dir, ".gitignore")), false);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("runInit honours the artifact selection", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-art-"));
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO, onlyArtifacts: ["parts"] });
+
+  assert.ok(/parts: true/.test(result.configText));
+  assert.ok(/audit: false/.test(result.configText));
+  assert.ok(/readme: false/.test(result.configText));
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });

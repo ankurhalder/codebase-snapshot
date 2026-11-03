@@ -211,7 +211,9 @@ export const JS_PRESETS: PresetDefinition[] = [
   },
   {
     name: "node-lib",
-    priority: 60,
+    // A bare package.json is often just tooling around a non-JS project, so it
+    // ranks below every definitive language manifest.
+    priority: 45,
     detect: (context) => hasFile(context, "package.json"),
     layers: [
       layer("src", "src/"),
