@@ -4,6 +4,53 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## Unreleased
+
+### A file's recorded bytes and lines described the file, not the block
+
+`includedBytes` counted the final newline that the closing fence swallows — 6 290 of 6 344 files in
+a real repository were off by exactly one byte — and a CRLF checkout, which is written as LF, was
+over-counted by one byte per line. A bounded preview reported `head + tail + 1` lines, one more than
+its block carried. Both numbers are now computed once, from the body after normalisation and after
+the closing newline is dropped, and an invariant test compares every `### FILE:` block in every part
+against the manifest entry.
+
+### A large file was parsed for a summary the snapshot could not carry
+
+A file above `largeFileBytes` is emitted as a head/tail excerpt, yet it was still parsed into an AST
+and had every identifier masked so a whole-file summary could be attached — a summary describing
+lines no artifact contains, which the partitioner then discarded. On a 1.9 MB source file that was
+70% of the wall clock: 1.8 s / 283 MB peak RSS became 0.5 s / 105 MB. The manifest names every
+skipped preview in one grouped warning; `summaryOmitted` is deliberately not reused for them,
+because it means "dropped for budget" and the part prints that reason.
+
+### `--format json` wrote nothing at all when a command failed
+
+Progress goes to stderr and payloads to stdout, which meant a failed JSON-mode run produced an empty
+stdout: an agent had to notice the empty string, then parse stderr prose and guess. Every failure now
+writes one parseable document — `{ "error": { "message": …, "exitCode": … } }` — while the human line
+stays on stderr and the exit code is unchanged. A successful run never carries an `error` key.
+
+### Smaller corrections
+
+- Masking no longer walks left through a URL path: `https://example.com/v1/<key>` was emitted as
+  `https://example.[REDACTED]`, contradicting "only the matched span is masked".
+- `explain` answers a file inside an ignored directory with the record its directory carries,
+  naming the ancestor, instead of the weaker `not-discovered`.
+- `package.json#snapshot` as an array is reported like any other wrong type instead of being
+  silently ignored, and an unreadable config file names itself in the error.
+- `init` no longer fails with a raw `EISDIR` when `.gitignore` is a directory — after the config had
+  already been written. The `.gitignore` line is a convenience, so it is a note, and `init` finishes.
+- `--format`'s scope is the same machine-readable eight-command list as every other option, and a
+  test now fails if any option's scope regresses to prose or names a command that does not exist.
+- The hook documentation says what "not awaited" does not mean: Node keeps the process alive while
+  the hook's own timers and sockets are outstanding, so `afterGenerate` should stay short.
+- The README and `llms.txt` describe what 4.1.0 actually guarantees — the eleven skip reasons, the
+  `encoding` field, discovery modes, the emitted-byte accounting — instead of the feature list from
+  before the release.
+
+---
+
 ## 4.1.0
 
 ### A UTF-16 source file was invisible, and a Latin-1 one was quietly mangled
