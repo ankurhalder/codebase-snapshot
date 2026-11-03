@@ -523,6 +523,33 @@ function describeManifestShapeProblem(manifest: unknown): string | null {
   return null;
 }
 
+/**
+ * The first command the user should run after `init`.
+ *
+ * It has to be runnable exactly as printed. `npm run snapshot` needs the script *and*
+ * installed dependencies, so an uninstalled project gets the install too; without a
+ * package.json (or without the script after a re-run) the only form that works from a
+ * clean checkout is `npx <package> generate`. A bare package name is not a command.
+ */
+function nextStepHint(cwd: string, scriptsAddedNow: boolean): string {
+  let hasScript = scriptsAddedNow;
+  if (!hasScript) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      hasScript = typeof parsed.scripts?.snapshot === "string";
+    } catch {
+      hasScript = false;
+    }
+  }
+  if (!hasScript) return `npx ${GENERATOR_NAME} generate`;
+
+  const bin = path.join(cwd, "node_modules", ".bin", "codebase-snapshot");
+  const installed = fs.existsSync(bin) || fs.existsSync(`${bin}.cmd`);
+  return installed ? "npm run snapshot" : "npm install && npm run snapshot";
+}
+
 async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
   try {
     const result = await runInit({
@@ -557,13 +584,7 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     }
     for (const note of result.notes) info(`   ⚠ ${note}`);
     info("");
-    // "Next: npm run snapshot" is useless in a directory with no package.json —
-    // exactly the case where the scripts could not be added.
-    if (result.scripts.length > 0) {
-      info("   Next:  npm run snapshot");
-    } else {
-      info(`   Next:  ${GENERATOR_NAME} generate`);
-    }
+    info(`   Next:  ${nextStepHint(invocation.cwd, result.scripts.length > 0)}`);
     info(
       `   Tip:   \`${GENERATOR_NAME} skill --install\` makes this repo discoverable by AI agents.`
     );
