@@ -32,6 +32,26 @@ function maskedPath(value: string, secretRules: readonly SecretRule[] | undefine
   return findSecretInPath(value, secretRules)?.masked ?? value;
 }
 
+/**
+ * Resolves a manifest-supplied filename inside `directory`, or refuses.
+ *
+ * A manifest is an input: it can be hand-edited, or written by an older or other tool. Joining an
+ * unvalidated name onto a directory accepts `../../..` and absolute paths, so `validate` would
+ * read a file anywhere on the machine and then report its size and digest back to the caller — a
+ * read primitive with an oracle attached. Part names produced by this generator are bare names,
+ * so anything that resolves outside the directory is a defect, not a path to follow.
+ */
+function confineToDirectory(directory: string, filename: string): string | null {
+  if (filename.includes("\0")) return null;
+  if (path.isAbsolute(filename)) return null;
+  const base = path.resolve(directory);
+  const resolved = path.resolve(base, filename);
+  const caseInsensitive = process.platform === "win32" || process.platform === "darwin";
+  const prefix = caseInsensitive ? `${base}${path.sep}`.toLowerCase() : `${base}${path.sep}`;
+  const candidate = caseInsensitive ? resolved.toLowerCase() : resolved;
+  return candidate.startsWith(prefix) ? resolved : null;
+}
+
 function emptyDrift(): ValidationDrift {
   return {
     missingInSnapshot: [],
@@ -203,13 +223,24 @@ export function validateSnapshot(
   // `partNames` is needed for the cross-check below even when parts were
   // deliberately not written, so it is always collected.
   const partNames = new Set<string>();
+  const partsDir = path.join(snapshotDir, "parts");
   for (const part of manifest.parts) {
     if (!part || typeof part.filename !== "string") continue;
     partNames.add(part.filename);
 
     if (!config.artifacts.parts) continue;
 
-    const partPath = path.join(snapshotDir, "parts", part.filename);
+    const partPath = confineToDirectory(partsDir, part.filename);
+    if (partPath === null) {
+      // A manifest is an input, so its filenames are untrusted: `path.join` would happily turn
+      // `../../../etc/passwd` into a read outside the snapshot and report that file's byte size
+      // and digest back to the caller. A part filename is a bare name by construction.
+      drift.partIssues.push({
+        part: part.filename,
+        issue: "filename resolves outside snapshot/parts; refusing to read it",
+      });
+      continue;
+    }
     let buffer: Buffer;
     try {
       buffer = fs.readFileSync(partPath);
@@ -516,6 +547,12 @@ export function validateSnapshot(
     hashMismatches: drift.hashMismatches.map((mismatch) => ({
       ...mismatch,
       path: maskedPath(mismatch.path, config.secretRules),
+    })),
+    // A part name comes from the manifest, which is an input: it can carry a credential shape as
+    // easily as a real path can, and these records are printed.
+    partIssues: drift.partIssues.map((issue) => ({
+      ...issue,
+      part: maskedPath(issue.part, config.secretRules),
     })),
   };
 
