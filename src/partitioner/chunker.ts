@@ -397,8 +397,27 @@ function renderGroups(
   });
 }
 
+/**
+ * The body exactly as it reaches the reader: CRLF normalised, closing newline dropped.
+ *
+ * The manifest's `includedBytes` and `includedLines` have to describe this string rather than the
+ * content the generator read. Counting the raw content reported one byte too many for almost every
+ * file (the newline the closing fence swallows) and one byte per line too many for a CRLF checkout
+ * (the part is written with LF). A number an agent uses to budget context must be the number of
+ * bytes it will actually read.
+ */
+function emittedBody(content: string): string {
+  const normalised = content.replace(/\r\n/g, "\n");
+  return normalised.endsWith("\n") ? normalised.slice(0, -1) : normalised;
+}
+
 function renderFileSection(file: FileEntry): string {
   const content = file.content ?? "";
+  const body = emittedBody(content);
+  // Settled before the metadata lines are built, because `- Included Lines:` is rendered from
+  // these values and both are read afterwards by `PartFileEntry` and by the manifest entry.
+  file.includedBytes = Buffer.byteLength(body, "utf8");
+  file.includedLines = countLines(body);
   const fence = fenceForContent(content);
   const anchor = anchorForPath(file.relativePath);
 
@@ -421,7 +440,7 @@ function renderFileSection(file: FileEntry): string {
     file.inclusionMode === "preview" ? "#### Bounded Preview" : "#### Content",
     "",
     `${fence}${capMetadata(file.language)}`,
-    content.endsWith("\n") ? content.slice(0, -1) : content,
+    body,
     fence,
     "",
     "",
