@@ -52,7 +52,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.5";
+export const GENERATOR_VERSION = "4.0.6";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -1244,8 +1244,11 @@ export function generateSnapshot(
     totalLines += lineCount;
     totalSizeBytes += stats.size;
 
-    const layer = classifyLayer(relativePath, config.layers);
-    const kind = classifyKind(relativePath, config.kinds);
+    // Masked at the source: a layer or kind name supplied in the config can look like
+    // a credential, and every derived field (files[].layer, part headers, README, audit,
+    // navigation, manifest.layers) is built from this value.
+    const layer = maskPathText(classifyLayer(relativePath, config.layers), config.secretRules);
+    const kind = maskPathText(classifyKind(relativePath, config.kinds), config.secretRules);
     const language = detectLanguage(relativePath);
     bump(layerCounts, layer);
     bump(kindCounts, kind);
@@ -1393,7 +1396,12 @@ export function generateSnapshot(
       include: [...config.include].map(maskName),
       preset: config.preset,
       layersMode: config.layersMode,
-      budgets: { default: config.budgets.default, byLayer: { ...config.budgets.byLayer } },
+      budgets: {
+        default: config.budgets.default,
+        byLayer: Object.fromEntries(
+          Object.entries(config.budgets.byLayer).map(([name, bytes]) => [maskName(name), bytes])
+        ),
+      },
       excludePatterns: [...config.excludePatterns].map(maskName),
       layers: config.layers.map((layer) => maskName(layer.name)),
       kinds: config.kinds.map((kind) => maskName(kind.kind)),

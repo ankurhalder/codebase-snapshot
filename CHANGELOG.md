@@ -4,6 +4,21 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.6
+
+### A NUL byte past the first 8 KB
+Binary detection sampled 8 KB, so a file with a NUL at byte 9000 was emitted as text into a part.
+The whole file is scanned now, up to 8 MB, in 64 KB chunks. Verified: a 20 KB file with one NUL at
+offset 9000 is skipped as `binary`.
+
+### Layer and kind names are masked wherever they are derived
+Masking `config.layers` was not enough: the *derived* values were raw — `manifest.layers` keys,
+`files[].layer`, part headers, the README parts table, the audit layer table, navigation, report and
+`config.budgets.byLayer` keys. Eleven sinks, one root. The name is now masked where it is assigned,
+so every derived field inherits the mask. Verified with a `ghp_…` layer name: zero occurrences in
+any artifact.
+---
+
 ## 4.0.5
 
 ### `validate` now notices every configuration change
