@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   ARTIFACT_NAMES,
   assertUsableConfigInput,
+  configDigest,
   isResolvedConfig,
   normalizeResolvedConfig,
   resolveConfig,
@@ -262,6 +263,15 @@ export function validateSnapshot(
   const currentExcludes = config.excludePatterns.map(maskValue);
   const currentInclude = config.include.map(maskValue);
   const recorded = manifest.config;
+  // A digest of the raw settings catches every configuration change, including the
+  // ones no per-field comparison covers (layers, kinds, custom secret rules) and the
+  // ones a masked comparison cannot see (a credential-shaped value changed from A to B).
+  if (recorded?.digest && recorded.digest !== configDigest(config)) {
+    drift.configMismatches.push(
+      "configuration: the settings differ from the ones this snapshot was generated with " +
+        "(run generate)"
+    );
+  }
   if (recorded && typeof recorded === "object") {
     if (recorded.maxPartBytes !== config.maxPartBytes) {
       drift.configMismatches.push(

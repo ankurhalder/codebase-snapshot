@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
@@ -1102,4 +1103,37 @@ export function classifyKind(filePath: string, kinds: KindRule[]): string {
     if (matchRule(filePath, kind.match)) return kind.kind;
   }
   return "other";
+}
+
+/**
+ * Digest of every setting that changes what a snapshot contains.
+ *
+ * Masked config values cannot be compared directly: two different secrets both
+ * mask to the same placeholder, and `validate` would then report "current" for a
+ * snapshot generated with different rules. A digest of the raw effective settings
+ * answers "is this snapshot still configured the same way" without ever printing
+ * a value.
+ */
+export function configDigest(config: ResolvedSnapshotConfig): string {
+  const material = {
+    maxPartBytes: config.maxPartBytes,
+    largeFileBytes: config.largeFileBytes,
+    previewHeadLines: config.previewHeadLines,
+    previewTailLines: config.previewTailLines,
+    includeMonolith: config.includeMonolith,
+    maxMonolithBytes: config.maxMonolithBytes ?? null,
+    includeSensitiveFiles: config.includeSensitiveFiles,
+    artifacts: config.artifacts,
+    include: config.include,
+    excludePatterns: config.excludePatterns,
+    preset: config.preset,
+    layersMode: config.layersMode,
+    budgets: config.budgets,
+    layers: config.layers.map((layer) => layer.name),
+    kinds: config.kinds.map((kind) => kind.kind),
+    secretRules: config.secretRules
+      .map((rule) => `${rule.rule}:${rule.pattern.source}`)
+      .sort(),
+  };
+  return createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }

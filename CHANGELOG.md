@@ -4,6 +4,36 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.5
+
+### `validate` now notices every configuration change
+
+It compared a handful of settings field by field and silently ignored the rest: `layers`, `kinds`,
+`secrets.customPatterns`, `disableDefaultPatterns`, `maxMonolithBytes`. With a config that is not
+itself in the snapshot (`include: ["src/**"]`), changing classification or redaction rules still
+produced "✅ valid and up to date" on a stale snapshot — the "config changes are drift" promise
+was false for exactly the rules that decide what goes in.
+
+The manifest now records a digest of the effective settings, computed from the raw values, and
+`validate` compares it. That covers every setting, including the ones no field comparison lists,
+and it works where masked values cannot: two different credential-shaped exclude patterns both
+mask to the same placeholder, so a masked comparison would call them equal.
+
+```
+$ validate        # same config
+✅ Snapshot is valid and up to date with disk.
+
+$ validate        # after adding a layer rule
+❌ config: configuration: the settings differ from the ones this snapshot was generated with (run generate)
+```
+
+### Still open, recorded rather than hidden
+100k files take about 67 s (I/O bound); parallel runs with different `outDir`s can still hit the
+staging lock and exit 1 instead of waiting; `--watch`'s quiet window can defer an edit made during
+a run; layer and kind names supplied in the config are still emitted raw in derived fields; binary
+detection samples the first 8 KB; the monolith is built before `--max-monolith-bytes` rejects it.
+---
+
 ## 4.0.4
 
 Five defects found by driving the published package from another agent's environment.

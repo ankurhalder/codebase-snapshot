@@ -9,6 +9,7 @@ import {
   ARTIFACT_NAMES,
   assertUsableConfigInput,
   classifyKind,
+  configDigest,
   classifyLayer,
   isResolvedConfig,
   loadConfigFile,
@@ -51,7 +52,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.4";
+export const GENERATOR_VERSION = "4.0.5";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -1381,6 +1382,7 @@ export function generateSnapshot(
       largeFileBytes: config.largeFileBytes,
     },
     config: {
+      digest: configDigest(config),
       maxPartBytes: config.maxPartBytes,
       largeFileBytes: config.largeFileBytes,
       previewHeadLines: config.previewHeadLines,

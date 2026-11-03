@@ -200,6 +200,8 @@ export interface ManifestIndexes {
 
 /** Effective configuration recorded so `validate` can detect config drift. */
 export interface ManifestConfigSnapshot {
+  /** Digest of the effective settings; see `configDigest`. */
+  digest?: string;
   maxPartBytes: number;
   largeFileBytes: number;
   previewHeadLines: number;
