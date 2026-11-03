@@ -23,6 +23,8 @@ export interface SourceSummary {
   reactComponents: string[];
   hooks: string[];
   routeHandlers: string[];
+  /** Number of parser diagnostics, present only when the file has syntax errors. */
+  parseErrors?: number;
 }
 
 export interface JsonSummary {
@@ -44,6 +46,7 @@ export type SkipReason =
   | "not-file"
   | "sensitive-file"
   | "symlink"
+  | "default-ignore"
   | "excluded";
 
 export interface SkipRecord {
@@ -162,6 +165,10 @@ export interface ManifestConfigSnapshot {
   previewTailLines: number;
   includeMonolith: boolean;
   includeSensitiveFiles: boolean;
+  artifacts: ResolvedArtifacts;
+  include: string[];
+  layersMode: "merge" | "replace";
+  budgets: ResolvedBudgets;
   excludePatterns: string[];
   layers: string[];
   kinds: string[];
@@ -217,9 +224,58 @@ export interface LayerRule {
   match: string | RegExp | ((filePath: string) => boolean);
 }
 
+/**
+ * Which snapshot artifacts get written.
+ *
+ * Everything a developer opens is produced by default; each entry exists only so
+ * a single artifact can be switched off without disabling the rest. `monolith`
+ * is the one exception, because it duplicates the entire payload: it follows
+ * `includeMonolith` (off by default) unless set here explicitly.
+ */
+export interface ArtifactSelection {
+  /** `README.md` — the orientation page for humans and models. */
+  readme?: boolean;
+  /** `manifest.json` — the registry `validate` and `report` read. */
+  manifest?: boolean;
+  /** `parts/part-XXX.md` — the partitioned code payload. */
+  parts?: boolean;
+  /** `reports/navigation.md` — file-to-part lookup index. */
+  navigation?: boolean;
+  /** `reports/project-tree.md` — ASCII repository tree. */
+  projectTree?: boolean;
+  /** `reports/audit.md` — security, layer, kind and skip findings. */
+  audit?: boolean;
+  /** `full-codebase.{json,md}` — one file per format, the whole payload again. */
+  monolith?: boolean;
+}
+
+/** Every artifact decision made concrete. */
+export type ResolvedArtifacts = Required<ArtifactSelection>;
+
 export interface KindRule {
   kind: string;
   match: string | RegExp | ((filePath: string) => boolean);
+}
+
+/** A byte budget: either raw bytes or a human-readable size such as `"120k"`. */
+export type ByteSize = number | string;
+
+/** Per-layer part budgets. Unlisted layers fall back to `default`. */
+export interface BudgetConfig {
+  default?: ByteSize;
+  byLayer?: Record<string, ByteSize>;
+}
+
+/** Every budget resolved to concrete byte counts. */
+export interface ResolvedBudgets {
+  default: number;
+  byLayer: Record<string, number>;
+}
+
+/** Lifecycle hooks. Not serialized into the manifest (functions are not data). */
+export interface HooksConfig {
+  /** Runs once after a successful generate, with the manifest that was written. */
+  afterGenerate?: (manifest: Manifest) => void;
 }
 
 export interface SnapshotConfig {
@@ -227,14 +283,28 @@ export interface SnapshotConfig {
   branch?: string;
   outDir?: string;
   tmpDir?: string;
-  maxPartBytes?: number;
-  largeFileBytes?: number;
+  /** Raw bytes, or a human-readable size (`"120k"`, `"1.5mb"`). */
+  maxPartBytes?: ByteSize;
+  largeFileBytes?: ByteSize;
   previewHeadLines?: number;
   previewTailLines?: number;
   includeMonolith?: boolean;
-  maxMonolithBytes?: number | null;
+  maxMonolithBytes?: ByteSize | null;
   /** Opt in to emitting `.env`/`*.pem`/`.npmrc`/credential files. Default false. */
   includeSensitiveFiles?: boolean;
+  /** Allow-list of globs. When non-empty, only matching files are included. */
+  include?: string[];
+  /** Switch individual snapshot artifacts off. Everything is on by default. */
+  artifacts?: ArtifactSelection;
+  /**
+   * How user `layers`/`kinds` interact with the detected preset (default
+   * `"merge"`): user rules are evaluated first, then the preset fills the gaps.
+   * `"replace"` discards the preset entirely.
+   */
+  layersMode?: "merge" | "replace";
+  /** Per-layer part budgets. */
+  budgets?: BudgetConfig;
+  hooks?: HooksConfig;
   layers?: LayerRule[];
   kinds?: KindRule[];
   excludePatterns?: string[];
@@ -256,6 +326,12 @@ export interface ResolvedSnapshotConfig {
   includeMonolith: boolean;
   maxMonolithBytes: number | null;
   includeSensitiveFiles: boolean;
+  /** Empty means "no allow-list"; every discovered file is a candidate. */
+  include: string[];
+  artifacts: ResolvedArtifacts;
+  layersMode: "merge" | "replace";
+  budgets: ResolvedBudgets;
+  hooks: HooksConfig;
   layers: LayerRule[];
   kinds: KindRule[];
   excludePatterns: string[];
@@ -273,6 +349,8 @@ export interface CliOptions {
   maxMonolithBytes?: number | null;
   maxPartBytes?: number;
   largeFileBytes?: number;
+  /** Artifact names to suppress for this invocation (`--skip-artifacts`). */
+  skipArtifacts?: string[];
 }
 
 export interface ValidationDrift {

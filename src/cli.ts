@@ -1,14 +1,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { loadConfigFileDetailed, resolveConfig, supportsTypeScriptImports } from "./config.js";
+import { compareManifests, loadManifest, renderDiffText } from "./diff.js";
+import { explainPath, renderExplainText } from "./explain.js";
+import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig, supportsTypeScriptImports } from "./config.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
-import type { Manifest, Mode, OutputFormat } from "./types.js";
+import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
 
 const VERSION = GENERATOR_VERSION;
 
-type Command = "generate" | "validate" | "report" | "init";
+type Command = "generate" | "validate" | "report" | "init" | "explain" | "diff";
 
 const COMMAND_ALIASES = new Map<string, Command>([
   ["generate", "generate"],
@@ -16,7 +18,19 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["check", "validate"],
   ["report", "report"],
   ["init", "init"],
+  ["explain", "explain"],
+  ["diff", "diff"],
 ]);
+
+/** How many positional arguments each command accepts after its name. */
+const COMMAND_ARITY: Record<Command, number> = {
+  generate: 0,
+  validate: 0,
+  report: 0,
+  init: 0,
+  explain: 1,
+  diff: 2,
+};
 
 const CLI_OPTIONS = {
   cwd: { type: "string" },
@@ -26,9 +40,12 @@ const CLI_OPTIONS = {
   "max-monolith-bytes": { type: "string" },
   "include-monolith": { type: "boolean" },
   "include-sensitive-files": { type: "boolean" },
+  "skip-artifacts": { type: "string" },
+  "only-artifacts": { type: "string" },
   format: { type: "string" },
   mode: { type: "string" },
   "dry-run": { type: "boolean" },
+  watch: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -49,17 +66,25 @@ Commands:
   validate, check      Validate snapshot integrity and check for drift
   init                 Generate a starter snapshot.config file
   report               Print codebase health, layer metrics, and secret audit
+  explain <path>       Show how one path would be treated: layer, kind, part, skips
+  diff <a> <b>         Compare two snapshots (directories or manifest.json files)
 
 Options:
   --cwd <path>                  Target repository directory (default: current directory)
   --out-dir <path>              Snapshot output directory (default: snapshot)
   --include-monolith            Also generate full-codebase.json and full-codebase.md
   --max-monolith-bytes <n>      Skip monolith artefacts larger than n bytes
-  --max-part-bytes <n>          Maximum byte budget per markdown part (default: 307200)
+  --max-part-bytes <n>          Maximum byte budget per markdown part (default: 307200).
+                                Accepts units: 120k, 1.5mb
   --large-file-bytes <n>        Threshold for head/tail truncation (default: 204800)
   --include-sensitive-files     Emit .env / *.pem / .npmrc / credential files
+  --skip-artifacts <names>      Comma-separated artifacts to omit
+                                (readme, manifest, parts, navigation,
+                                 projectTree, audit, monolith)
+  --only-artifacts <names>      Write *only* these artifacts
   --format <text|json>          CLI output format (default: text)
   --dry-run                     Compute the snapshot without writing anything
+  --watch                       Re-generate whenever the repository changes
   -h, --help                    Display this help message
   -v, --version                 Display version
 
@@ -69,8 +94,11 @@ Human-readable progress is written to stderr; payloads (--format json) go to std
 
 interface ParsedInvocation {
   command: Command;
+  /** Positional arguments that follow the command name. */
+  args: string[];
   format: OutputFormat;
   dryRun: boolean;
+  watch: boolean;
   cwd: string;
   outDir?: string;
   includeMonolith?: boolean;
@@ -78,6 +106,7 @@ interface ParsedInvocation {
   maxPartBytes?: number;
   largeFileBytes?: number;
   maxMonolithBytes?: number | null;
+  skipArtifacts?: string[];
 }
 
 export function parsePositiveInteger(
@@ -95,6 +124,48 @@ export function parsePositiveInteger(
     throw new UsageError(`--${optionName} must be at least ${minimum}, received "${raw}".`);
   }
   return value;
+}
+
+/**
+ * Parses a byte-budget option, accepting human-readable units (`120k`, `1.5mb`)
+ * as well as raw byte counts.
+ */
+export function parseByteOption(
+  raw: string | undefined,
+  optionName: string,
+  minimum: number
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = parseByteSize(raw);
+  if (value === undefined || !Number.isSafeInteger(value)) {
+    throw new UsageError(
+      `--${optionName} expects a byte count such as 120000 or "120k", received "${raw}".`
+    );
+  }
+  if (value < minimum) {
+    throw new UsageError(`--${optionName} must be at least ${minimum}, received "${raw}".`);
+  }
+  return value;
+}
+
+/** Parses and validates a comma-separated artifact list. */
+function parseArtifactList(raw: string, flag: string): string[] {
+  const names = raw
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (names.length === 0) {
+    throw new UsageError(
+      `${flag} expects at least one artifact name (${ARTIFACT_NAMES.join(", ")}).`
+    );
+  }
+  const unknown = names.filter((name) => !(ARTIFACT_NAMES as ReadonlyArray<string>).includes(name));
+  if (unknown.length > 0) {
+    throw new UsageError(
+      `Unknown artifact(s): ${unknown.join(", ")}. Expected one of: ${ARTIFACT_NAMES.join(", ")}.`
+    );
+  }
+  return names;
 }
 
 /**
@@ -130,6 +201,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
 
   const positionals = parsed.positionals;
   let command: Command = "generate";
+  let args: string[] = [];
 
   const explicitMode = values.mode ? String(values.mode) : undefined;
   const firstPositional = positionals[0];
@@ -142,6 +214,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       );
     }
     command = resolved;
+    args = positionals.slice(1);
   } else if (explicitMode !== undefined) {
     const resolved = COMMAND_ALIASES.get(explicitMode);
     if (!resolved) {
@@ -152,9 +225,18 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     command = resolved;
   }
 
-  if (positionals.length > 1) {
+  const expectedArgs = COMMAND_ARITY[command];
+  if (args.length !== expectedArgs) {
+    if (command === "explain") {
+      throw new UsageError("explain expects exactly one path.");
+    }
+    if (command === "diff") {
+      throw new UsageError(
+        "diff expects exactly two arguments: two snapshot directories or manifest.json files."
+      );
+    }
     throw new UsageError(
-      `Unexpected argument(s): ${positionals.slice(1).join(" ")}. Only one command may be given.`
+      `Unexpected argument(s): ${args.join(" ")}. ${command} takes no positional arguments.`
     );
   }
 
@@ -163,29 +245,47 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     throw new UsageError(`--format must be "text" or "json", received "${rawFormat}".`);
   }
 
+  const rawSkip = values["skip-artifacts"];
+  const rawOnly = values["only-artifacts"];
+  if (rawSkip !== undefined && rawOnly !== undefined) {
+    throw new UsageError("--skip-artifacts and --only-artifacts cannot be combined.");
+  }
+  let skipArtifacts: string[] | undefined;
+  if (rawOnly !== undefined) {
+    const keep = parseArtifactList(String(rawOnly), "--only-artifacts");
+    skipArtifacts = (ARTIFACT_NAMES as ReadonlyArray<string>).filter(
+      (name) => !keep.includes(name)
+    );
+  } else if (rawSkip !== undefined) {
+    skipArtifacts = parseArtifactList(String(rawSkip), "--skip-artifacts");
+  }
+
   return {
     command,
+    args,
     format: rawFormat as OutputFormat,
     dryRun: values["dry-run"] === true,
+    watch: values.watch === true,
     cwd: values.cwd === undefined ? process.cwd() : path.resolve(String(values.cwd)),
     outDir: values["out-dir"] === undefined ? undefined : String(values["out-dir"]),
     includeMonolith: values["include-monolith"] === true ? true : undefined,
     includeSensitiveFiles: values["include-sensitive-files"] === true ? true : undefined,
-    maxPartBytes: parsePositiveInteger(
+    maxPartBytes: parseByteOption(
       values["max-part-bytes"] as string | undefined,
       "max-part-bytes",
       MIN_MAX_PART_BYTES
     ),
-    largeFileBytes: parsePositiveInteger(
+    largeFileBytes: parseByteOption(
       values["large-file-bytes"] as string | undefined,
       "large-file-bytes",
       1
     ),
-    maxMonolithBytes: parsePositiveInteger(
+    maxMonolithBytes: parseByteOption(
       values["max-monolith-bytes"] as string | undefined,
       "max-monolith-bytes",
       1
     ),
+    skipArtifacts,
   };
 }
 
@@ -297,6 +397,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       maxPartBytes: invocation.maxPartBytes,
       largeFileBytes: invocation.largeFileBytes,
       maxMonolithBytes: invocation.maxMonolithBytes,
+      skipArtifacts: invocation.skipArtifacts,
     },
     invocation.cwd
   );
@@ -344,6 +445,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return validation.valid ? 0 : 1;
   }
 
+  if (invocation.command === "explain") {
+    const result = explainPath(resolved, invocation.args[0]);
+    emit(invocation.format, result, () => info(renderExplainText(result)));
+    return result.included ? 0 : 1;
+  }
+
+  if (invocation.command === "diff") {
+    try {
+      const [beforePath, afterPath] = invocation.args;
+      const diff = compareManifests(loadManifest(beforePath), loadManifest(afterPath));
+      emit(invocation.format, diff, () => info(renderDiffText(diff)));
+      return 0;
+    } catch (err) {
+      warn(`❌ ${(err as Error).message}`);
+      return 1;
+    }
+  }
+
   const started = performance.now();
   info(`📸 ${invocation.dryRun ? "Planning snapshot (dry run)" : "Generating snapshot"} for: ${resolved.cwd}`);
   info(
@@ -383,11 +502,92 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     if (invocation.format === "json") {
       process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
     }
+
+    if (invocation.watch) {
+      return await runWatchLoop(invocation, resolved);
+    }
+
     return manifest.validation.status === "passed" ? 0 : 1;
   } catch (err) {
     warn(`❌ Failed to generate snapshot: ${(err as Error).message}`);
     return 1;
   }
+}
+
+/**
+ * Re-generates on every change under `cwd`.
+ *
+ * Events inside the output and temporary directories are ignored, otherwise
+ * writing a snapshot would immediately schedule the next run and loop forever.
+ */
+async function runWatchLoop(
+  invocation: ParsedInvocation,
+  resolved: ResolvedSnapshotConfig
+): Promise<number> {
+  const outDir = path.resolve(resolved.cwd, resolved.outDir);
+  const tmpDir = path.resolve(resolved.cwd, resolved.tmpDir);
+
+  // Compare case-insensitively on Windows, where the watcher can report a
+  // different casing than `path.resolve` produced. Filtering by *segment* rather
+  // than by prefix also survives the relative paths `fs.watch` emits. The
+  // `<outDir>.backup-*` directories created by the atomic swap must be ignored
+  // too, or each run schedules the next one forever.
+  const outName = path.basename(outDir).toLowerCase();
+  const tmpName = path.basename(tmpDir).toLowerCase();
+  const isGenerated = (candidate: string): boolean =>
+    candidate
+      .toLowerCase()
+      .split(/[\\/]/)
+      .some(
+        (segment) =>
+          segment === outName ||
+          segment === tmpName ||
+          segment.startsWith(`${outName}.backup-`)
+      );
+
+  let running = false;
+  const regenerate = (): void => {
+    if (running) return;
+    running = true;
+    const started = performance.now();
+    try {
+      const manifest = generateSnapshot(resolved, { dryRun: invocation.dryRun });
+      const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+      info(
+        `♻️  ${new Date().toISOString()}  ${manifest.counts.totalFiles} file(s), ` +
+          `${manifest.counts.partsCount} part(s), ${manifest.validation.status} (${elapsed}s)`
+      );
+    } catch (err) {
+      warn(`❌ ${(err as Error).message}`);
+    } finally {
+      running = false;
+    }
+  };
+
+  info("👀 Watching for changes. Press Ctrl+C to stop.");
+  regenerate();
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
+    if (filename) {
+      const changed = path.resolve(resolved.cwd, filename.toString());
+      if (isGenerated(changed)) return;
+    }
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(regenerate, 250);
+  });
+
+  await new Promise<void>((resolve) => {
+    const stop = (): void => {
+      if (timer) clearTimeout(timer);
+      watcher.close();
+      resolve();
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
+
+  return 0;
 }
 
 /**

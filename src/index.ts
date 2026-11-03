@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
 import { summarizeTypeScriptSource } from "./ast/ts-parser.js";
 import {
+  ARTIFACT_NAMES,
   assertUsableConfigInput,
   classifyKind,
   classifyLayer,
@@ -18,7 +19,8 @@ import { generateMonolithJson, generateMonolithMarkdown } from "./generator/mono
 import { generateNavigation } from "./generator/navigation.js";
 import { generateReadme } from "./generator/readme.js";
 import { generateProjectTree } from "./generator/tree.js";
-import { anchorForPath, partitionFiles } from "./partitioner/chunker.js";
+import { anchorForPath, partitionFiles, renumberParts } from "./partitioner/chunker.js";
+import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { detectPreset } from "./presets/index.js";
 import {
@@ -34,6 +36,7 @@ import type {
   FileEntry,
   Manifest,
   ManifestIndexes,
+  ResolvedArtifacts,
   ResolvedSnapshotConfig,
   SecretFinding,
   SkipRecord,
@@ -323,6 +326,92 @@ function swapIntoPlace(tmpDir: string, outDir: string): void {
 }
 
 /**
+ * Flags artifact combinations that leave a snapshot a consumer cannot fully use.
+ *
+ * These are warnings rather than errors: switching an artifact off is a
+ * legitimate choice, but a disabled manifest silently breaks `validate`/`report`,
+ * and navigation links into parts that were never written.
+ */
+function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
+  const messages: string[] = [];
+  if (!artifacts.manifest) {
+    messages.push("manifest.json is disabled: `validate` and `report` cannot inspect this snapshot.");
+  }
+  if (!artifacts.parts && artifacts.navigation) {
+    messages.push(
+      "parts are disabled but navigation.md is enabled: its links point at part files that were not written."
+    );
+  }
+  if (ARTIFACT_NAMES.every((name) => artifacts[name] === false)) {
+    messages.push("every artifact is disabled: the snapshot directory will be empty.");
+  }
+  return messages;
+}
+
+/**
+ * Runs `hooks.afterGenerate`, downgrading a throwing hook to a warning.
+ *
+ * The snapshot is already written by this point; losing a good artefact because
+ * user code threw would be the worse outcome.
+ */
+function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): void {
+  const hook = config.hooks.afterGenerate;
+  if (!hook) return;
+  try {
+    hook(manifest);
+  } catch (err) {
+    manifest.warnings.push(`hooks.afterGenerate failed: ${(err as Error).message}`);
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
+}
+
+/**
+ * Partitions files under the configured per-layer budgets.
+ *
+ * Files sharing an effective budget are packed together. More than one bucket
+ * means more than one partition pass, and each pass numbers from `part-001`, so
+ * the merged set is re-numbered before it is returned.
+ */
+function partitionByBudget(
+  files: FileEntry[],
+  config: ResolvedSnapshotConfig,
+  fingerprint: string
+): PartitionedPart[] {
+  const budgetFor = (file: FileEntry): number =>
+    config.budgets.byLayer[file.layer] ?? config.budgets.default;
+
+  const buckets = new Map<number, FileEntry[]>();
+  for (const file of files) {
+    const budget = budgetFor(file);
+    const bucket = buckets.get(budget);
+    if (bucket) bucket.push(file);
+    else buckets.set(budget, [file]);
+  }
+
+  if (buckets.size <= 1) {
+    const only = buckets.size === 1 ? Array.from(buckets.keys())[0] : config.maxPartBytes;
+    return partitionFiles(files, only, fingerprint);
+  }
+
+  const parts: PartitionedPart[] = [];
+  for (const budget of Array.from(buckets.keys()).sort((a, b) => a - b)) {
+    parts.push(...partitionFiles(buckets.get(budget) ?? [], budget, fingerprint));
+  }
+
+  const merged = renumberParts(parts, fingerprint);
+
+  // Re-numbering renames the parts, so every file's back-pointer is stale.
+  const byPath = new Map(files.map((file) => [file.relativePath, file]));
+  for (const part of merged) {
+    for (const included of part.metadata.includedFiles) {
+      const file = byPath.get(included.relativePath);
+      if (file) file.part = part.filename;
+    }
+  }
+  return merged;
+}
+
+/**
  * Generates the snapshot.
  *
  * Synchronous by design: it previously carried an `async` signature while doing
@@ -346,6 +435,7 @@ export function generateSnapshot(
   const gitInfo = getGitInfo(config.cwd, config.branch);
 
   const collection = collectFiles(config.cwd, {
+    includePatterns: config.include,
     excludePatterns: config.excludePatterns,
     includeSensitiveFiles: config.includeSensitiveFiles,
   });
@@ -432,6 +522,11 @@ export function generateSnapshot(
     let summary: FileEntry["summary"];
     try {
       summary = summarizeFile(relativePath, redacted);
+      if (isSourceSummary(summary) && summary.parseErrors) {
+        warnings.push(
+          `Parse errors in ${relativePath} (${summary.parseErrors}); its summary is incomplete.`
+        );
+      }
     } catch (err) {
       // A single pathological file used to abort the whole run.
       warnings.push(
@@ -468,11 +563,22 @@ export function generateSnapshot(
       .join("\n")
   );
 
-  const parts = partitionFiles(files, config.maxPartBytes, fingerprint);
+  // Captured before partitioning: the partitioner overwrites `file.content` when
+  // it byte-truncates a section, so a monolith built afterwards would silently
+  // contain the truncated bodies instead of the whole codebase.
+  const fullContents = new Map<string, string>();
+  for (const file of files) fullContents.set(file.relativePath, file.content ?? "");
+
+  const parts = partitionByBudget(files, config, fingerprint);
+  const maxEffectiveBudget = Math.max(
+    config.maxPartBytes,
+    config.budgets.default,
+    ...Object.values(config.budgets.byLayer)
+  );
   // Byte-budget truncation happens inside the partitioner, so preview counts
   // must be derived from the final state of `files`, not from the scan loop.
   const truncatedPreviewCount = files.filter((file) => file.isPreviewTruncated).length;
-  const validationErrors = verifyInMemory(files, parts, config.maxPartBytes);
+  const validationErrors = verifyInMemory(files, parts, maxEffectiveBudget);
 
   const totalContentBytes = files.reduce((total, file) => total + file.includedBytes, 0);
 
@@ -495,6 +601,10 @@ export function generateSnapshot(
       previewTailLines: config.previewTailLines,
       includeMonolith: config.includeMonolith,
       includeSensitiveFiles: config.includeSensitiveFiles,
+      artifacts: { ...config.artifacts },
+      include: [...config.include],
+      layersMode: config.layersMode,
+      budgets: { default: config.budgets.default, byLayer: { ...config.budgets.byLayer } },
       excludePatterns: [...config.excludePatterns],
       layers: config.layers.map((layer) => layer.name),
       kinds: config.kinds.map((kind) => kind.kind),
@@ -551,8 +661,14 @@ export function generateSnapshot(
   let monolithJson: string | null = null;
   let monolithMarkdown: string | null = null;
   if (config.includeMonolith) {
-    const json = generateMonolithJson(manifest, files);
-    const markdown = generateMonolithMarkdown(manifest, files);
+    // Built from the pre-partition contents so the monolith really is the whole
+    // codebase, not whatever survived the per-part byte budget.
+    const fullFiles = files.map((file) => ({
+      ...file,
+      content: fullContents.get(file.relativePath) ?? "",
+    }));
+    const json = generateMonolithJson(manifest, fullFiles);
+    const markdown = generateMonolithMarkdown(manifest, fullFiles);
     const jsonBytes = Buffer.byteLength(json, "utf8");
     const markdownBytes = Buffer.byteLength(markdown, "utf8");
 
@@ -578,26 +694,53 @@ export function generateSnapshot(
     manifest.totals.warningCount = manifest.warnings.length;
   }
 
-  if (dryRun) return manifest;
+  for (const message of artifactWarnings(config.artifacts)) manifest.warnings.push(message);
+  manifest.totals.warningCount = manifest.warnings.length;
 
-  const { outDir, tmpDir } = resolveSafeOutputDirs(config);
-
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-  const partsDir = path.join(tmpDir, "parts");
-  const reportsDir = path.join(tmpDir, "reports");
-  fs.mkdirSync(partsDir, { recursive: true });
-  fs.mkdirSync(reportsDir, { recursive: true });
-
-  for (const part of parts) {
-    fs.writeFileSync(path.join(partsDir, part.filename), part.markdown, "utf8");
+  if (dryRun) {
+    runAfterGenerate(config, manifest);
+    return manifest;
   }
 
-  const projectTree = generateProjectTree(files.map((file) => file.relativePath));
-  fs.writeFileSync(path.join(reportsDir, "project-tree.md"), projectTree, "utf8");
-  fs.writeFileSync(path.join(reportsDir, "navigation.md"), generateNavigation(manifest), "utf8");
-  fs.writeFileSync(path.join(reportsDir, "audit.md"), generateAuditReport(manifest, secretFindings), "utf8");
-  fs.writeFileSync(path.join(tmpDir, "README.md"), generateReadme(manifest), "utf8");
-  fs.writeFileSync(path.join(tmpDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+  const { outDir, tmpDir } = resolveSafeOutputDirs(config);
+  const { artifacts } = config;
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const partsDir = path.join(tmpDir, "parts");
+  const reportsDir = path.join(tmpDir, "reports");
+  if (artifacts.parts) fs.mkdirSync(partsDir, { recursive: true });
+  if (artifacts.navigation || artifacts.projectTree || artifacts.audit) {
+    fs.mkdirSync(reportsDir, { recursive: true });
+  }
+
+  if (artifacts.parts) {
+    for (const part of parts) {
+      fs.writeFileSync(path.join(partsDir, part.filename), part.markdown, "utf8");
+    }
+  }
+
+  if (artifacts.projectTree) {
+    const projectTree = generateProjectTree(files.map((file) => file.relativePath));
+    fs.writeFileSync(path.join(reportsDir, "project-tree.md"), projectTree, "utf8");
+  }
+  if (artifacts.navigation) {
+    fs.writeFileSync(path.join(reportsDir, "navigation.md"), generateNavigation(manifest), "utf8");
+  }
+  if (artifacts.audit) {
+    fs.writeFileSync(
+      path.join(reportsDir, "audit.md"),
+      generateAuditReport(manifest, secretFindings),
+      "utf8"
+    );
+  }
+  if (artifacts.readme) {
+    fs.writeFileSync(path.join(tmpDir, "README.md"), generateReadme(manifest), "utf8");
+  }
+  if (artifacts.manifest) {
+    fs.writeFileSync(path.join(tmpDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+  }
 
   if (monolithJson !== null) {
     fs.writeFileSync(path.join(tmpDir, "full-codebase.json"), monolithJson, "utf8");
@@ -607,6 +750,8 @@ export function generateSnapshot(
   }
 
   swapIntoPlace(tmpDir, outDir);
+
+  runAfterGenerate(config, manifest);
 
   return manifest;
 }
@@ -641,9 +786,17 @@ export {
 };
 
 export { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
+export { explainPath, renderExplainText } from "./explain.js";
+export type { ExplainResult } from "./explain.js";
+export { compareManifests, loadManifest, renderDiffText } from "./diff.js";
+export type { ManifestDiff } from "./diff.js";
+export { stripJsonComments } from "./ast/structured.js";
+export { renumberParts } from "./partitioner/chunker.js";
 export { collectFiles, isSensitivePath, matchesExclude, globToRegExp } from "./scanner/files.js";
 export {
+  ARTIFACT_NAMES,
   loadConfigFileDetailed,
+  parseByteSize,
   supportsTypeScriptImports,
   matchRule,
   markResolvedConfig,

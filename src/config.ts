@@ -6,9 +6,13 @@ import { globToRegExp } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
 import type {
+  ByteSize,
   CliOptions,
+  HooksConfig,
   KindRule,
   LayerRule,
+  ResolvedArtifacts,
+  ResolvedBudgets,
   ResolvedSnapshotConfig,
   SnapshotConfig,
 } from "./types.js";
@@ -115,6 +119,18 @@ export function normalizeResolvedConfig(
   return markResolvedConfig({
     ...config,
     secretRules: compileSecretRules(config.secretRules),
+    artifacts: resolveArtifacts(
+      config.artifacts,
+      undefined,
+      config.includeMonolith === true
+    ),
+    include: resolveInclude(config.include),
+    layersMode: config.layersMode === "replace" ? "replace" : "merge",
+    budgets:
+      config.budgets && typeof config.budgets === "object"
+        ? config.budgets
+        : { default: config.maxPartBytes, byLayer: {} },
+    hooks: resolveHooks(config.hooks),
     excludePatterns: Array.isArray(config.excludePatterns) ? config.excludePatterns : [],
     layers: Array.isArray(config.layers) ? config.layers : [],
     kinds: Array.isArray(config.kinds) ? config.kinds : [],
@@ -265,9 +281,122 @@ export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null
 /** Smallest usable part budget: a part header plus one section must fit. */
 export const MIN_MAX_PART_BYTES = 4096;
 
+/** Every artifact this package can write, in the order it is written. */
+export const ARTIFACT_NAMES = [
+  "readme",
+  "manifest",
+  "parts",
+  "navigation",
+  "projectTree",
+  "audit",
+  "monolith",
+] as const;
+
+export type ArtifactName = (typeof ARTIFACT_NAMES)[number];
+
+/** Everything on, except the monolith, which duplicates the whole payload. */
+const DEFAULT_ARTIFACTS: ResolvedArtifacts = {
+  readme: true,
+  manifest: true,
+  parts: true,
+  navigation: true,
+  projectTree: true,
+  audit: true,
+  monolith: false,
+};
+
+function isArtifactName(value: string): value is ArtifactName {
+  return (ARTIFACT_NAMES as ReadonlyArray<string>).includes(value);
+}
+
+/**
+ * Validates a user-supplied artifact selection.
+ *
+ * Unknown keys are rejected rather than ignored: a typo here silently produces
+ * an artifact the developer believed they had switched off, or leaves one they
+ * believed they had removed.
+ */
+function resolveArtifacts(
+  requested: SnapshotConfig["artifacts"] | undefined,
+  skipped: string[] | undefined,
+  includeMonolith: boolean
+): ResolvedArtifacts {
+  const artifacts: ResolvedArtifacts = {
+    ...DEFAULT_ARTIFACTS,
+    // `includeMonolith` predates this selection and stays the switch for it.
+    monolith: includeMonolith,
+  };
+
+  if (requested !== undefined) {
+    if (typeof requested !== "object" || requested === null || Array.isArray(requested)) {
+      throw new Error("`artifacts` must be an object of boolean flags.");
+    }
+    for (const [name, value] of Object.entries(requested)) {
+      if (!isArtifactName(name)) {
+        throw new Error(
+          `Unknown artifact "${name}". Expected one of: ${ARTIFACT_NAMES.join(", ")}.`
+        );
+      }
+      if (typeof value !== "boolean") {
+        throw new Error(`\`artifacts.${name}\` must be a boolean.`);
+      }
+      artifacts[name] = value;
+    }
+  }
+
+  for (const name of skipped ?? []) {
+    if (!isArtifactName(name)) {
+      throw new Error(
+        `Unknown artifact "${name}". Expected one of: ${ARTIFACT_NAMES.join(", ")}.`
+      );
+    }
+    artifacts[name] = false;
+  }
+
+  return artifacts;
+}
+
 function positiveInteger(value: number, fallback: number): number {
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return Math.floor(value);
+}
+
+const BYTE_UNITS: Record<string, number> = {
+  b: 1,
+  k: 1024,
+  kb: 1024,
+  kib: 1024,
+  m: 1024 * 1024,
+  mb: 1024 * 1024,
+  mib: 1024 * 1024,
+  g: 1024 * 1024 * 1024,
+  gb: 1024 * 1024 * 1024,
+  gib: 1024 * 1024 * 1024,
+};
+
+/**
+ * Parses a byte budget.
+ *
+ * Accepts a plain number (`122880`), a numeric string (`"122880"`), or a
+ * human-readable size (`"120k"`, `"1.5mb"`, `"2 GB"`). Returns `undefined` for
+ * anything it cannot read, so callers can decide whether that is an error or a
+ * fallback — a typo'd budget must not silently become the default.
+ */
+export function parseByteSize(value: ByteSize | null | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.floor(value) : undefined;
+  }
+  const match = /^\s*(\d+(?:\.\d+)?)\s*(b|k|kb|kib|m|mb|mib|g|gb|gib)?\s*$/i.exec(value);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return undefined;
+  const multiplier = BYTE_UNITS[(match[2] ?? "b").toLowerCase()] ?? 1;
+  return Math.floor(amount * multiplier);
+}
+
+function describeBytes(value: ByteSize): string {
+  return typeof value === "number" ? String(value) : `"${value}"`;
 }
 
 /**
@@ -276,21 +405,96 @@ function positiveInteger(value: number, fallback: number): number {
  * that blew through the requested limit.
  */
 function boundedBytes(
-  value: number | undefined,
+  value: ByteSize | undefined,
   fallback: number,
   minimum: number,
   label: string
 ): number {
   if (value === undefined) return fallback;
-  if (!Number.isFinite(value)) return fallback;
-  const rounded = Math.floor(value);
-  if (rounded <= 0) return fallback;
-  if (rounded < minimum) {
+  const parsed = parseByteSize(value);
+  if (parsed === undefined) {
     throw new Error(
-      `${label} must be at least ${minimum} bytes (received ${value}).`
+      `${label} must be a byte count such as 120000, "120k" or "1.5mb" (received ${describeBytes(value)}).`
     );
   }
-  return rounded;
+  if (parsed <= 0) return fallback;
+  if (parsed < minimum) {
+    throw new Error(`${label} must be at least ${minimum} bytes (received ${describeBytes(value)}).`);
+  }
+  return parsed;
+}
+
+function optionalBytes(
+  value: ByteSize | null | undefined,
+  label: string
+): number | null {
+  if (value === undefined || value === null) return null;
+  const parsed = parseByteSize(value);
+  if (parsed === undefined || parsed <= 0) {
+    throw new Error(
+      `${label} must be a positive byte count such as 1000000 or "1mb" (received ${describeBytes(value)}).`
+    );
+  }
+  return parsed;
+}
+
+/** Normalises the `include` allow-list, rejecting anything that is not a glob. */
+function resolveInclude(include: SnapshotConfig["include"]): string[] {
+  if (include === undefined) return [];
+  if (!Array.isArray(include) || include.some((pattern) => typeof pattern !== "string")) {
+    throw new Error("`include` must be an array of glob strings.");
+  }
+  return include.map((pattern) => pattern.trim()).filter(Boolean);
+}
+
+function resolveLayersMode(mode: SnapshotConfig["layersMode"]): "merge" | "replace" {
+  if (mode === undefined) return "merge";
+  if (mode !== "merge" && mode !== "replace") {
+    throw new Error(`\`layersMode\` must be "merge" or "replace" (received ${JSON.stringify(mode)}).`);
+  }
+  return mode;
+}
+
+/** Resolves per-layer budgets, defaulting every missing entry to `maxPartBytes`. */
+function resolveBudgets(
+  budgets: SnapshotConfig["budgets"],
+  fallback: number
+): ResolvedBudgets {
+  const byLayer: Record<string, number> = {};
+  if (budgets === undefined) return { default: fallback, byLayer };
+
+  if (typeof budgets !== "object" || budgets === null || Array.isArray(budgets)) {
+    throw new Error("`budgets` must be an object.");
+  }
+  if (budgets.byLayer !== undefined) {
+    if (typeof budgets.byLayer !== "object" || budgets.byLayer === null) {
+      throw new Error("`budgets.byLayer` must be an object of layer name to byte size.");
+    }
+    for (const [layer, value] of Object.entries(budgets.byLayer)) {
+      byLayer[layer] = boundedBytes(
+        value,
+        fallback,
+        MIN_MAX_PART_BYTES,
+        `budgets.byLayer["${layer}"]`
+      );
+    }
+  }
+
+  return {
+    default: boundedBytes(budgets.default, fallback, MIN_MAX_PART_BYTES, "budgets.default"),
+    byLayer,
+  };
+}
+
+function resolveHooks(hooks: SnapshotConfig["hooks"]): HooksConfig {
+  if (hooks === undefined) return {};
+  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) {
+    throw new Error("`hooks` must be an object.");
+  }
+  if (hooks.afterGenerate !== undefined && typeof hooks.afterGenerate !== "function") {
+    throw new Error("`hooks.afterGenerate` must be a function.");
+  }
+  return { ...hooks };
 }
 
 function resolveCandidateCwd(
@@ -323,12 +527,23 @@ export function resolveConfig(
 ): ResolvedSnapshotConfig {
   const cwd = resolveCandidateCwd(userConfig ?? null, cliOptions, baseDir);
   const preset = detectPreset(cwd);
+  const layersMode = resolveLayersMode(userConfig?.layersMode);
 
+  // `merge` (the default) keeps the preset's rules and lets user rules win by
+  // being evaluated first; `replace` is the old, all-or-nothing behaviour.
   const layers: LayerRule[] =
-    userConfig?.layers && userConfig.layers.length > 0 ? userConfig.layers : preset.layers;
+    userConfig?.layers && userConfig.layers.length > 0
+      ? layersMode === "replace"
+        ? userConfig.layers
+        : [...userConfig.layers, ...preset.layers]
+      : preset.layers;
 
   const kinds: KindRule[] =
-    userConfig?.kinds && userConfig.kinds.length > 0 ? userConfig.kinds : preset.kinds;
+    userConfig?.kinds && userConfig.kinds.length > 0
+      ? layersMode === "replace"
+        ? userConfig.kinds
+        : [...userConfig.kinds, ...preset.kinds]
+      : preset.kinds;
 
   const customRules = userConfig?.secrets?.customPatterns ?? [];
   const rawRules = userConfig?.secrets?.disableDefaultPatterns
@@ -336,24 +551,44 @@ export function resolveConfig(
     : [...DEFAULT_SECRET_PATTERNS, ...customRules];
   const secretRules = compileSecretRules(rawRules);
 
+  const includeMonolith = cliOptions?.includeMonolith ?? userConfig?.includeMonolith ?? false;
+  const artifacts = resolveArtifacts(
+    userConfig?.artifacts,
+    cliOptions?.skipArtifacts,
+    includeMonolith
+  );
+
+  const maxPartBytes = boundedBytes(
+    cliOptions?.maxPartBytes ?? userConfig?.maxPartBytes,
+    300 * 1024,
+    MIN_MAX_PART_BYTES,
+    "maxPartBytes"
+  );
+  const budgets = resolveBudgets(userConfig?.budgets, maxPartBytes);
+
   return markResolvedConfig({
     cwd,
     branch: userConfig?.branch || "main",
     outDir: cliOptions?.outDir || userConfig?.outDir || "snapshot",
     tmpDir: userConfig?.tmpDir || "snapshot.tmp",
-    maxPartBytes: boundedBytes(cliOptions?.maxPartBytes ?? userConfig?.maxPartBytes, 300 * 1024, MIN_MAX_PART_BYTES, "maxPartBytes"),
+    maxPartBytes,
     largeFileBytes: boundedBytes(cliOptions?.largeFileBytes ?? userConfig?.largeFileBytes, 200 * 1024, 1, "largeFileBytes"),
     previewHeadLines: positiveInteger(userConfig?.previewHeadLines ?? 80, 80),
     previewTailLines: positiveInteger(userConfig?.previewTailLines ?? 40, 40),
-    includeMonolith: cliOptions?.includeMonolith ?? userConfig?.includeMonolith ?? false,
-    maxMonolithBytes:
+    includeMonolith: artifacts.monolith,
+    maxMonolithBytes: optionalBytes(
       cliOptions?.maxMonolithBytes !== undefined
         ? cliOptions.maxMonolithBytes
-        : userConfig?.maxMonolithBytes !== undefined
-          ? userConfig.maxMonolithBytes
-          : null,
+        : userConfig?.maxMonolithBytes,
+      "maxMonolithBytes"
+    ),
     includeSensitiveFiles:
       cliOptions?.includeSensitiveFiles ?? userConfig?.includeSensitiveFiles ?? false,
+    include: resolveInclude(userConfig?.include),
+    artifacts,
+    layersMode,
+    budgets,
+    hooks: resolveHooks(userConfig?.hooks),
     layers,
     kinds,
     excludePatterns: userConfig?.excludePatterns ?? [],

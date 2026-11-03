@@ -22,6 +22,7 @@ import {
   loadConfigFileDetailed,
   matchRule,
   matchesExclude,
+  parseByteSize,
   resolveConfig,
   scanAndRedactSecrets,
   summarizeJson,
@@ -161,6 +162,77 @@ test("anchorForPath is stable and injective", () => {
 });
 
 // ------------------------------------------------------------ path matching
+
+test("parseByteSize accepts raw bytes and human-readable units", () => {
+  assert.equal(parseByteSize(122880), 122880);
+  assert.equal(parseByteSize("122880"), 122880);
+  assert.equal(parseByteSize("120k"), 122880);
+  assert.equal(parseByteSize("120KB"), 122880);
+  assert.equal(parseByteSize("120 kib"), 122880);
+  assert.equal(parseByteSize("1.5mb"), 1572864);
+  assert.equal(parseByteSize("2 GB"), 2147483648);
+  // Anything unreadable is `undefined`, so callers can fail loudly instead of
+  // silently falling back to the default budget.
+  for (const bad of ["12x", "", "k", "1.2.3mb", "abc"]) {
+    assert.equal(parseByteSize(bad), undefined, `"${bad}" should not parse`);
+  }
+  assert.equal(parseByteSize(Number.NaN), undefined);
+  assert.equal(parseByteSize(null), undefined);
+});
+
+test("resolveConfig accepts human-readable budgets and rejects nonsense", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bytes-"));
+  const config = resolveConfig({ cwd: dir, maxPartBytes: "120k", largeFileBytes: "1mb" });
+  assert.equal(config.maxPartBytes, 122880);
+  assert.equal(config.largeFileBytes, 1048576);
+  assert.equal(config.maxMonolithBytes, null);
+
+  assert.throws(() => resolveConfig({ cwd: dir, maxPartBytes: "12x" }), /byte count/);
+  assert.throws(() => resolveConfig({ cwd: dir, include: "src/**" }), /array of glob strings/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("globToRegExp supports brace groups and character classes", () => {
+  const extensions = globToRegExp("*.{ts,tsx}");
+  assert.ok(extensions.test("a.ts"), "a.ts should match *.{ts,tsx}");
+  assert.ok(extensions.test("deep/b.tsx"), "b.tsx should match *.{ts,tsx}");
+  assert.ok(!extensions.test("c.js"), "c.js should not match *.{ts,tsx}");
+
+  assert.ok(globToRegExp("src/[ab].ts").test("src/a.ts"));
+  assert.ok(!globToRegExp("src/[!ab].ts").test("src/a.ts"));
+  assert.ok(globToRegExp("src/[!ab].ts").test("src/c.ts"));
+});
+
+test("summarizeJson reads JSONC comments and ignores comment-like strings", () => {
+  const summary = summarizeJson(
+    ['{', '  // line comment', '  "a": 1, /* block */', '  "b": "http://x//y"', "}"].join("\n")
+  );
+  assert.equal(summary.shape, "object");
+  assert.deepEqual(summary.keys, ["a", "b"], "a URL must not be treated as a comment");
+});
+
+test("named default exports record both the name and default", () => {
+  const summary = summarizeTypeScriptSource(
+    "a.ts",
+    "export default function Foo() { return 1; }\n"
+  );
+  assert.ok(summary.exports.includes("Foo"));
+  assert.ok(summary.exports.includes("default"), "the default export must be recorded");
+
+  const klass = summarizeTypeScriptSource("b.ts", "export default class Bar {}\n");
+  assert.ok(klass.exports.includes("default"));
+});
+
+test("syntax errors are surfaced on the summary instead of looking clean", () => {
+  const summary = summarizeTypeScriptSource("broken.ts", "export function ( {\n");
+  assert.ok(
+    typeof summary.parseErrors === "number" && summary.parseErrors > 0,
+    `expected parse errors, got ${JSON.stringify(summary.parseErrors)}`
+  );
+
+  const fine = summarizeTypeScriptSource("ok.ts", "export const a = 1;\n");
+  assert.equal(fine.parseErrors, undefined);
+});
 
 test("globToRegExp and matchesExclude use segment semantics", () => {
   assert.equal(matchesExclude("test/a.ts", "test"), true);

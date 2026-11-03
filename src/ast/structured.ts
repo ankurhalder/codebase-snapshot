@@ -1,8 +1,73 @@
 import type { JsonSummary, MarkdownSummary } from "../types.js";
 
+/**
+ * Strips `//` and block comments the way JSONC does, without touching anything
+ * inside a string literal. `JSON.parse` alone made every `.jsonc` file report
+ * `invalid-json`, losing its key shape entirely.
+ */
+export function stripJsonComments(content: string): string {
+  const text = content.replace(/^\uFEFF/, "");
+  let out = "";
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (inLineComment) {
+      if (char === "\n") {
+        inLineComment = false;
+        out += char;
+      }
+      continue;
+    }
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inString) {
+      out += char;
+      if (char === "\\") {
+        // Keep escape pairs intact so `\"` cannot end the string early.
+        if (next !== undefined) {
+          out += next;
+          i += 1;
+        }
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+    out += char;
+  }
+
+  return out;
+}
+
 export function summarizeJson(content: string): JsonSummary {
   try {
-    const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
+    const parsed = JSON.parse(stripJsonComments(content));
     if (Array.isArray(parsed)) {
       const sample = parsed[0];
       const sampleKeys =

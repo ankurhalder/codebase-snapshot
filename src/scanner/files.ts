@@ -10,6 +10,11 @@ export interface GitInfo {
 }
 
 export interface CollectOptions {
+  /**
+   * When non-empty, only files matching at least one pattern are candidates.
+   * Applied before `excludePatterns`, which then narrows the result further.
+   */
+  includePatterns?: string[];
   excludePatterns?: string[];
   /**
    * Emit credential-bearing files (`.env`, `*.pem`, `.npmrc`, `id_rsa`, …).
@@ -115,17 +120,28 @@ export function isSensitivePath(relativePath: string): boolean {
 }
 
 /**
- * Translates a glob (`**`, `*`, `?`) into a RegExp. A pattern without a leading
- * `/` matches at any depth, mirroring `.gitignore` semantics.
+ * Translates a glob (`**`, `*`, `?`, `{a,b}`, `[abc]`) into a RegExp. A pattern
+ * without a leading `/` matches at any depth, mirroring `.gitignore` semantics.
+ *
+ * Brace groups and character classes are supported because they are what people
+ * actually write: `*.{ts,tsx}` previously matched nothing at all, since `{` and
+ * `}` were escaped as literals.
  */
 export function globToRegExp(glob: string): RegExp {
   const normalized = glob.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   const anchored = normalized.startsWith("/");
   const body = anchored ? normalized.slice(1) : normalized;
 
+  const prefix = anchored || body.includes("/") ? "^" : "(?:^|.*/)";
+  return new RegExp(`${prefix}${globBodyToRegExp(body, true)}(?:/.*)?$`);
+}
+
+/** One level of brace nesting, which covers `*.{ts,tsx}` and `src/{app,lib}/**`. */
+function globBodyToRegExp(body: string, allowBraces: boolean): string {
   let out = "";
   for (let i = 0; i < body.length; i++) {
     const char = body[i];
+
     if (char === "*") {
       if (body[i + 1] === "*") {
         i += 1;
@@ -138,17 +154,58 @@ export function globToRegExp(glob: string): RegExp {
       } else {
         out += "[^/]*";
       }
-    } else if (char === "?") {
+      continue;
+    }
+
+    if (char === "?") {
       out += "[^/]";
-    } else if ("\\^$.|+()[]{}".includes(char)) {
-      out += `\\${char}`;
-    } else {
-      out += char;
+      continue;
+    }
+
+    if (char === "{" && allowBraces) {
+      const close = findClosing(body, i, "{", "}");
+      if (close !== -1) {
+        const alternatives = body
+          .slice(i + 1, close)
+          .split(",")
+          .map((part) => globBodyToRegExp(part.trim(), false));
+        if (alternatives.length > 1) {
+          out += `(?:${alternatives.join("|")})`;
+          i = close;
+          continue;
+        }
+      }
+    }
+
+    if (char === "[") {
+      const close = body.indexOf("]", i + 1);
+      if (close !== -1 && close > i + 1) {
+        const inner = body.slice(i + 1, close);
+        const negated = inner.startsWith("!") || inner.startsWith("^");
+        const chars = negated ? inner.slice(1) : inner;
+        // `-` keeps range semantics; everything else that is special is escaped.
+        const safe = chars.replace(/[\\^\]]/g, (value) => `\\${value}`);
+        out += negated ? `[^/${safe}]` : `[${safe}]`;
+        i = close;
+        continue;
+      }
+    }
+
+    out += "\\^$.|+()[]{}".includes(char) ? `\\${char}` : char;
+  }
+  return out;
+}
+
+function findClosing(body: string, start: number, open: string, close: string): number {
+  let depth = 0;
+  for (let i = start; i < body.length; i++) {
+    if (body[i] === open) depth += 1;
+    else if (body[i] === close) {
+      depth -= 1;
+      if (depth === 0) return i;
     }
   }
-
-  const prefix = anchored || body.includes("/") ? "^" : "(?:^|.*/)";
-  return new RegExp(`${prefix}${out}(?:/.*)?$`);
+  return -1;
 }
 
 /**
@@ -163,7 +220,7 @@ export function matchesExclude(relativePath: string, pattern: string): boolean {
   const cleaned = pattern.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "").trim();
   if (!cleaned) return false;
 
-  if (cleaned.includes("*") || cleaned.includes("?")) {
+  if (/[*?{[]/.test(cleaned)) {
     return globToRegExp(cleaned).test(posixPath);
   }
 
@@ -208,14 +265,31 @@ function readGitignoreMatcher(dir: string): (relativePath: string) => boolean {
   };
 }
 
-function isDefaultIgnored(relativePath: string): boolean {
+/**
+ * Explains *why* a path is in the built-in ignore list, or `null` when it is not.
+ *
+ * Returning the reason instead of a bare boolean is what lets the manifest say
+ * "this file exists but was skipped, and here is the rule" — a directory named
+ * `out` or `build` used to drop real source silently and inexplicably.
+ */
+function defaultIgnoreReason(relativePath: string): string | null {
   const posixPath = relativePath.replace(/\\/g, "/");
   const parts = posixPath.split("/");
   for (let i = 0; i < parts.length - 1; i++) {
-    if (DEFAULT_IGNORED_DIRS.includes(parts[i])) return true;
+    if (DEFAULT_IGNORED_DIRS.includes(parts[i])) {
+      return `built-in ignore: directory "${parts[i]}"`;
+    }
+    // A crashed atomic swap can leave `snapshot.backup-<pid>-<ts>` behind;
+    // scanning our own leftovers back into the next snapshot is never intended.
+    if (parts[i].startsWith("snapshot.backup-")) {
+      return `built-in ignore: leftover snapshot backup "${parts[i]}"`;
+    }
   }
   const base = parts[parts.length - 1];
-  return DEFAULT_IGNORED_FILES.includes(base);
+  if (DEFAULT_IGNORED_FILES.includes(base)) {
+    return `built-in ignore: filename "${base}"`;
+  }
+  return null;
 }
 
 /**
@@ -226,6 +300,7 @@ function isDefaultIgnored(relativePath: string): boolean {
  * mangled `src/café.ts` into a path that never existed and dropped the file.
  */
 export function collectFiles(cwd: string, options: CollectOptions = {}): CollectResult {
+  const includePatterns = options.includePatterns ?? [];
   const excludePatterns = options.excludePatterns ?? [];
   const includeSensitiveFiles = options.includeSensitiveFiles ?? false;
 
@@ -256,10 +331,34 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
 
   const files = candidates
     .filter((file) => {
-      if (isDefaultIgnored(file)) return false;
-      for (const pattern of excludePatterns) {
-        if (matchesExclude(file, pattern)) return false;
+      const ignored = defaultIgnoreReason(file);
+      if (ignored) {
+        skipped.push({ path: file, reason: "default-ignore", detail: ignored });
+        return false;
       }
+      // `include` is an allow-list: when it is non-empty, anything it does not
+      // match is out, and the reason is recorded so the omission is auditable
+      // rather than a file that simply never appears.
+      if (includePatterns.length > 0 && !includePatterns.some((pattern) => matchesExclude(file, pattern))) {
+        skipped.push({
+          path: file,
+          reason: "excluded",
+          detail: `does not match any include pattern (${includePatterns.join(", ")})`,
+        });
+        return false;
+      }
+
+      for (const pattern of excludePatterns) {
+        if (matchesExclude(file, pattern)) {
+          skipped.push({
+            path: file,
+            reason: "excluded",
+            detail: `matches exclude pattern "${pattern}"`,
+          });
+          return false;
+        }
+      }
+
       if (!includeSensitiveFiles && isSensitivePath(file)) {
         skipped.push({
           path: file,

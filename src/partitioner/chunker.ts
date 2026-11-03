@@ -83,7 +83,92 @@ export function partitionFiles(
     return rendered;
   }
 
-  return renderGroups(groups, contentFingerprint);
+  // The split-pass budget is exhausted (or every remaining group is a single
+  // section). Clip anything still over budget so the byte bound is a guarantee
+  // rather than a best effort.
+  return enforceBudget(renderGroups(groups, contentFingerprint), budget);
+}
+
+/** Hard-clips any part that is still above `budget`, re-hashing what it wrote. */
+function enforceBudget(parts: PartitionedPart[], budget: number): PartitionedPart[] {
+  const marker = "\n... [part truncated: cannot fit budget] ...\n";
+  const target = Math.max(0, budget - Buffer.byteLength(marker, "utf8"));
+
+  return parts.map((part) => {
+    if (part.metadata.byteSize <= budget) return part;
+    const clipped = truncateToBytes(part.markdown, target);
+    return rehashPart(part, clipped.content + marker);
+  });
+}
+
+/**
+ * Re-numbers a set of parts as one sequence and rewrites their headers.
+ *
+ * Needed when parts are produced by more than one partition pass (per-layer
+ * budgets): each pass numbers from `part-001`, so the merged set would otherwise
+ * contain duplicate filenames and every `Previous:`/`Next:` link would lie.
+ */
+export function renumberParts(
+  parts: PartitionedPart[],
+  contentFingerprint?: string
+): PartitionedPart[] {
+  const total = parts.length;
+  if (total === 0) return [];
+
+  const zeroPad = (index: number): string =>
+    String(index).padStart(Math.max(3, String(total).length), "0");
+  const nameFor = (position: number): string => `part-${zeroPad(position)}.md`;
+  const marker = "## Contents\n";
+
+  return parts.map((part, index) => {
+    const markerIndex = part.markdown.indexOf(marker);
+    const body = markerIndex === -1 ? "" : part.markdown.slice(markerIndex + marker.length);
+    const included = part.metadata.includedFiles;
+    if (markerIndex === -1) {
+      throw new Error(`${part.filename} has no "## Contents" section to re-number.`);
+    }
+
+    const layerCounts: Record<string, number> = {};
+    const kindCounts: Record<string, number> = {};
+    for (const file of included) {
+      layerCounts[file.layer] = (layerCounts[file.layer] || 0) + 1;
+      kindCounts[file.kind] = (kindCounts[file.kind] || 0) + 1;
+    }
+
+    const header = [
+      `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,
+      "",
+      `- Previous: ${index === 0 ? "none" : nameFor(index)}`,
+      `- Next: ${index === total - 1 ? "none" : nameFor(index + 2)}`,
+      `- Files: ${included.length}`,
+      `- Content Fingerprint: ${contentFingerprint || "none"}`,
+      `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
+      `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
+      "",
+      "## Files",
+      "",
+      "```text",
+      ...included.map((file) => displayPath(file.relativePath)),
+      "```",
+      "",
+      "## Contents",
+      "",
+    ].join("\n");
+
+    const markdown = (header + body).replace(/\r\n/g, "\n");
+    const metadata: PartMetadata = {
+      ...part.metadata,
+      index: index + 1,
+      filename: nameFor(index + 1),
+      byteSize: Buffer.byteLength(markdown, "utf8"),
+      sha256: crypto.createHash("sha256").update(markdown).digest("hex"),
+      lines: countLines(markdown),
+      fileCount: included.length,
+      layersCovered: Object.keys(layerCounts).sort(),
+    };
+
+    return { filename: metadata.filename, markdown, metadata };
+  });
 }
 
 /** Characters reserved for the omission notice appended to a hard-truncated section. */
@@ -103,6 +188,15 @@ function capValue(value: string, max: number): string {
 
 const capMetadata = (value: string): string => capValue(value, METADATA_VALUE_MAX);
 const displayPath = (value: string): string => capValue(value, DISPLAY_PATH_MAX);
+
+/** Top-N `Layer (count)` / `Kind (count)` summary used in a part header. */
+function topEntries(counts: Record<string, number>, limit: number): string {
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, limit)
+    .map(([key, value]) => `${capMetadata(key)} (${value})`)
+    .join(", ");
+}
 
 /**
  * Renders a section and guarantees it fits within `sectionBudget` bytes.
@@ -230,12 +324,6 @@ function renderGroups(
       layerCounts[section.file.layer] = (layerCounts[section.file.layer] || 0) + 1;
       kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
     }
-    const topEntries = (counts: Record<string, number>, limit: number): string =>
-      Object.entries(counts)
-        .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-        .slice(0, limit)
-        .map(([key, value]) => `${capMetadata(key)} (${value})`)
-        .join(", ");
 
     const header = [
       `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,

@@ -50,6 +50,15 @@ export function summarizeTypeScriptSource(
     isJsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   );
 
+  // A file with syntax errors still produces a (partial) summary. Recording the
+  // count lets the caller say so instead of presenting a broken file as clean.
+  // `parseDiagnostics` is part of the compiler's implementation surface, hence
+  // the narrowing cast rather than a public API call.
+  const parseErrors =
+    (sourceFile as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics
+      ?.length ?? 0;
+  if (parseErrors > 0) summary.parseErrors = parseErrors;
+
   // Module directives ("use client" / "use server") are only meaningful in the
   // prologue: the first run of string-literal expression statements.
   for (const statement of sourceFile.statements) {
@@ -119,6 +128,9 @@ export function summarizeTypeScriptSource(
       const exported = isExported(node);
       if (node.name) {
         recordFunctionLike(node.name.text, exported);
+        // `export default function Foo() {}` is reachable both as `Foo` and as
+        // the default export; only the anonymous form used to record `default`.
+        if (isDefault(node)) summary.exports.push("default");
       } else if (isDefault(node)) {
         // `export default function () {}`
         summary.exports.push("default");
@@ -129,6 +141,7 @@ export function summarizeTypeScriptSource(
       if (node.name) {
         summary.classes.push(node.name.text);
         if (isExported(node)) summary.exports.push(node.name.text);
+        if (isDefault(node)) summary.exports.push("default");
         if (/^[A-Z]/.test(node.name.text)) summary.reactComponents.push(node.name.text);
       } else if (isDefault(node)) {
         summary.exports.push("default");
