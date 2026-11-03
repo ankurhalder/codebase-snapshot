@@ -9,6 +9,7 @@ import {
   resolveConfig,
 } from "../config.js";
 import { collectFiles, getGitInfo } from "../scanner/files.js";
+import { isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
   ResolvedSnapshotConfig,
@@ -30,6 +31,25 @@ function emptyDrift(): ValidationDrift {
 
 function sha256Hex(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+/**
+ * True when a path that was skipped at snapshot time would now be emitted.
+ *
+ * `collectFiles` has already applied the ignore/exclude/sensitive rules, so the
+ * only decision left is the binary check that `generate` performs per file. A
+ * skip is a record of that decision, not a permanent exemption: `data.bin` that
+ * held NUL bytes then and is plain text now must surface as drift, otherwise
+ * `generate` silently adds a file `validate` said was absent.
+ */
+function wouldNowBeIncluded(cwd: string, relativePath: string): boolean {
+  const absolutePath = path.join(cwd, relativePath);
+  try {
+    if (!fs.statSync(absolutePath).isFile()) return false;
+    return !isBinaryFile(absolutePath);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -119,9 +139,11 @@ export function validateSnapshot(
   });
 
   for (const diskFile of collection.files) {
-    if (skippedSet.has(diskFile)) continue;
     const snapshotHash = manifestFileMap.get(diskFile);
     if (!snapshotHash) {
+      // A path in `skipped[]` is not permanently exempt: re-evaluate it and
+      // report drift when it would now be included.
+      if (skippedSet.has(diskFile) && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
     }

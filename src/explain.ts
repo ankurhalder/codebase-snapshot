@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { countLines } from "./partitioner/preview.js";
 import { collectFiles } from "./scanner/files.js";
+import { isBinaryFile } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import type { Manifest, ResolvedSnapshotConfig } from "./types.js";
@@ -35,9 +36,10 @@ function describeMatcher(matcher: unknown): string {
   if (typeof matcher === "string") return matcher;
   if (matcher instanceof RegExp) return String(matcher);
   if (typeof matcher === "function") {
-    // Presets use predicate functions; showing the source beats "(function)".
-    const source = String(matcher).replace(/\s+/g, " ").trim();
-    return source.length > 70 ? `${source.slice(0, 67)}...` : source;
+    // Presets use predicate functions. Printing the function source leaked
+    // implementation detail into a machine-readable payload and was unreadable;
+    // say that a custom predicate decided it, which is all the caller can act on.
+    return "function (custom predicate)";
   }
   return String(matcher);
 }
@@ -108,6 +110,15 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   }
 
   result.included = true;
+  // `generate` skips binaries and records `binary` in manifest.skipped[]. The
+  // explanation used to answer "included: true" for a file the very next run
+  // would drop, which is worse than no answer at all.
+  if (isBinaryFile(absolute)) {
+    result.included = false;
+    result.reason = "binary";
+    result.detail = "binary content; generate skips it and records `binary` in manifest.skipped[]";
+    return result;
+  }
   result.layer = classifyLayer(relative, config.layers);
   result.kind = classifyKind(relative, config.kinds);
   result.language = detectLanguage(relative);

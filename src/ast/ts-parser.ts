@@ -85,14 +85,61 @@ export function summarizeTypeScriptSource(
     return Boolean(modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
   };
 
-  const recordFunctionLike = (name: string, exported: boolean): void => {
+  /**
+   * True when `node` renders something: it contains JSX, or a `createElement`
+   * call. A PascalCase *name* alone is not evidence of a component — every
+   * `class Calc` and every `const Config = {...}` used to be listed as one.
+   */
+  const rendersJsx = (node: ts.Node): boolean => {
+    const pending: ts.Node[] = [node];
+    while (pending.length > 0) {
+      const current = pending.pop() as ts.Node;
+      if (
+        ts.isJsxElement(current) ||
+        ts.isJsxSelfClosingElement(current) ||
+        ts.isJsxFragment(current)
+      ) {
+        return true;
+      }
+      if (ts.isCallExpression(current)) {
+        const callee = current.expression;
+        const calleeName = ts.isIdentifier(callee)
+          ? callee.text
+          : ts.isPropertyAccessExpression(callee)
+            ? callee.name.text
+            : "";
+        if (calleeName === "createElement") return true;
+      }
+      // A block body matters: `ts.forEachChild` stops as soon as the callback
+      // returns a truthy value, and `push` returns the array length.
+      ts.forEachChild(current, (child) => {
+        pending.push(child);
+      });
+    }
+    return false;
+  };
+
+  /** `Component` / `PureComponent`, optionally behind a namespace (`React.`). */
+  const REACT_BASE_CLASS = /(?:^|\.)(?:PureComponent|Component)$/;
+
+  const extendsReactBase = (node: ts.ClassDeclaration): boolean => {
+    const heritage = (node.heritageClauses ?? []).find(
+      (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword
+    );
+    const expression = heritage?.types[0]?.expression;
+    if (!expression) return false;
+    const text = ts.isIdentifier(expression) ? expression.text : expression.getText(sourceFile);
+    return REACT_BASE_CLASS.test(text);
+  };
+
+  const recordFunctionLike = (name: string, exported: boolean, node: ts.Node): void => {
     summary.functions.push(name);
     if (exported) {
       summary.exports.push(name);
       if (ROUTE_HANDLER_NAMES.has(name)) summary.routeHandlers.push(name);
     }
     if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
-    if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
+    if (/^[A-Z]/.test(name) && rendersJsx(node)) summary.reactComponents.push(name);
   };
 
   const stack: ts.Node[] = [sourceFile];
@@ -127,7 +174,7 @@ export function summarizeTypeScriptSource(
     if (ts.isFunctionDeclaration(node)) {
       const exported = isExported(node);
       if (node.name) {
-        recordFunctionLike(node.name.text, exported);
+        recordFunctionLike(node.name.text, exported, node);
         // `export default function Foo() {}` is reachable both as `Foo` and as
         // the default export; only the anonymous form used to record `default`.
         if (isDefault(node)) summary.exports.push("default");
@@ -142,7 +189,15 @@ export function summarizeTypeScriptSource(
         summary.classes.push(node.name.text);
         if (isExported(node)) summary.exports.push(node.name.text);
         if (isDefault(node)) summary.exports.push("default");
-        if (/^[A-Z]/.test(node.name.text)) summary.reactComponents.push(node.name.text);
+        // A component class extends Component/PureComponent or renders JSX;
+        // the name-only rule listed plain classes such as `class Calc` as
+        // React components.
+        if (
+          /^[A-Z]/.test(node.name.text) &&
+          (extendsReactBase(node) || rendersJsx(node))
+        ) {
+          summary.reactComponents.push(node.name.text);
+        }
       } else if (isDefault(node)) {
         summary.exports.push("default");
       }
@@ -176,7 +231,15 @@ export function summarizeTypeScriptSource(
           if (ROUTE_HANDLER_NAMES.has(name)) summary.routeHandlers.push(name);
         }
         if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
-        if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
+        // Arrow/function components and `memo`/`forwardRef` wrappers render JSX
+        // in their initializer; a plain `const Config = {...}` does not.
+        if (
+          /^[A-Z]/.test(name) &&
+          declaration.initializer !== undefined &&
+          rendersJsx(declaration.initializer)
+        ) {
+          summary.reactComponents.push(name);
+        }
       }
     }
 

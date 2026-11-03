@@ -50,14 +50,29 @@ export interface MarkdownSummary {
  */
 export type SummaryQuality = "ast" | "structural" | "heuristic";
 
+/**
+ * Why a discovered path was not emitted.
+ *
+ * Every reason below is produced by the scanner; nothing in the type is
+ * aspirational. `asset` was removed because no code path ever emitted it.
+ */
 export type SkipReason =
-  | "asset"
   | "binary"
   | "read-error"
   | "not-file"
+  /** A credential-bearing name (`.env`, `*.pem`, `.npmrc`, …). */
   | "sensitive-file"
+  /** The path itself matched a secret rule; the emitted path is span-masked. */
+  | "sensitive-path"
+  /** A directory link (never followed), or a link to neither file nor directory. */
   | "symlink"
+  /** A file link whose target resolves outside the scanned root. */
+  | "outside-root"
+  /** Excluded by a `.gitignore` in a scan without git. */
+  | "gitignore"
+  /** Excluded by a built-in rule: the ignore list, a preset, or an output dir. */
   | "default-ignore"
+  /** Excluded by the user's own `excludePatterns` or `include` allow-list. */
   | "excluded";
 
 export interface SkipRecord {
@@ -122,13 +137,25 @@ export interface PartMetadata {
 export interface SecretRule {
   rule: string;
   pattern: RegExp;
+  /**
+   * Index of the capture group that holds the secret, when the rule has to match
+   * its surrounding context to identify one (`password: "…"`). Redaction then
+   * masks only that group, so the key and the rest of the line survive.
+   */
+  valueGroup?: number;
 }
 
-/** Shape accepted from JSON config files, where `pattern` can only be a string. */
-export interface SecretRuleInput {
-  rule: string;
-  pattern: RegExp | string;
-}
+/**
+ * Shape accepted for `secrets.customPatterns`.
+ *
+ * A bare `RegExp` or string is accepted because it is the documented form; the
+ * object form exists to name a rule. `valueGroup` is only useful with the object
+ * form, since a bare pattern has no group to name.
+ */
+export type SecretRuleInput =
+  | { rule: string; pattern: RegExp | string; valueGroup?: number }
+  | RegExp
+  | string;
 
 /**
  * A detected secret. Deliberately carries no excerpt of the matched source:

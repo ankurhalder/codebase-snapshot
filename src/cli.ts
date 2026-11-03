@@ -13,6 +13,8 @@ import { buildAgentContract, renderContractText } from "./agent/contract.js";
 import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
+import type { CommandName } from "./agent/option-scope.js";
+import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
 
 const VERSION = GENERATOR_VERSION;
@@ -65,6 +67,7 @@ const CLI_OPTIONS = {
   mode: { type: "string" },
   "dry-run": { type: "boolean" },
   watch: { type: "boolean" },
+  "no-config": { type: "boolean" },
   preset: { type: "string" },
   include: { type: "string" },
   exclude: { type: "string" },
@@ -113,6 +116,7 @@ Options:
   --format <text|json>          CLI output format (default: text)
   --dry-run                     Compute the snapshot without writing anything
   --watch                       Re-generate whenever the repository changes
+  --no-config                   Ignore snapshot.config.* and use the built-in defaults
 
   init only:
   --preset <name>               Force a project preset instead of detecting one
@@ -141,6 +145,8 @@ interface ParsedInvocation {
   format: OutputFormat;
   dryRun: boolean;
   watch: boolean;
+  /** Ignore any config file and run on the built-in defaults. */
+  noConfig: boolean;
   preset?: string;
   /** The size exactly as typed, so the generated config can keep `120k`. */
   maxPartBytesRaw?: string;
@@ -348,25 +354,36 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     skipArtifacts = parseArtifactList(String(rawSkip), "--skip-artifacts");
   }
 
-  // These configure `init`, which writes them into the config file. They are not
-  // runtime overrides — `resolveConfig` reads scoping and presets from the config
-  // file only. Accepting them silently here would leave the developer believing a
-  // --preset or --include took effect when the run used the detected defaults.
-  if (command !== "init") {
-    const initOnly: string[] = [];
-    if (values.preset !== undefined) initOnly.push("--preset");
-    if (values.include !== undefined) initOnly.push("--include");
-    if (values.exclude !== undefined) initOnly.push("--exclude");
-    if (values.yes === true) initOnly.push("--yes");
-    if (values.minimal === true) initOnly.push("--minimal");
-    if (values.force === true) initOnly.push("--force");
-    if (initOnly.length > 0) {
-      throw new UsageError(
-        `${initOnly.join(", ")} ${initOnly.length === 1 ? "is" : "are"} only valid with \`init\`. ` +
-          `To scope \`${command}\`, set include/excludePatterns/preset in snapshot.config.ts ` +
-          `(or run \`codebase-snapshot init\` to generate one).`
-      );
-    }
+  // Reject every option that has no effect for this command. A flag that parses
+  // but changes nothing is the command-line form of a silent fallback: the user
+  // believes the override applied and the run used the default. The scope table
+  // is the same one `describe` publishes as `appliesTo`, so the contract and the
+  // parser cannot disagree.
+  const scope = COMMAND_OPTION_SCOPE[command as CommandName];
+  const ignored: string[] = [];
+  for (const name of Object.keys(CLI_OPTIONS)) {
+    if (scope.includes(name)) continue;
+    const value = values[name];
+    if (value === undefined || value === false) continue;
+    ignored.push(`--${name}`);
+  }
+  if (ignored.length > 0) {
+    const owners = Array.from(
+      new Set(
+        ignored.flatMap((flag) =>
+          commandsForOption(flag.replace(/^--/, "")).map((owner) => `\`${owner}\``)
+        )
+      )
+    );
+    const hint = ignored.some((flag) => ["--preset", "--include", "--exclude"].includes(flag))
+      ? " To scope a run, set include/excludePatterns/preset in snapshot.config.ts " +
+        "(or run `codebase-snapshot init` to generate one)."
+      : "";
+    throw new UsageError(
+      `${ignored.join(", ")} ${ignored.length === 1 ? "does" : "do"} not apply to \`${command}\` and ` +
+        `${ignored.length === 1 ? "was" : "were"} not applied. ${ignored.length === 1 ? "It is" : "They are"} ` +
+        `accepted by: ${owners.join(", ")}.${hint}`
+    );
   }
 
   // `init --preset <typo>` used to fall back to detection and write a config for
@@ -378,12 +395,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     if (!getPreset(requested)) throw new UsageError(unknownPresetMessage(requested));
   }
 
-  // `--install`/`--target` belong to `skill` only; accepting them silently
-  // elsewhere would suggest they did something.
-  if (command !== "skill" && (values.install !== undefined || values.target !== undefined)) {
-    throw new UsageError("--install and --target are only valid with `skill`.");
-  }
-  if (values.target !== undefined && !isSkillTarget(String(values.target))) {
+  if (command === "skill" && values.target !== undefined && !isSkillTarget(String(values.target))) {
     throw new UsageError(
       `--target must be one of: ${SKILL_TARGETS.join(", ")} (received "${String(values.target)}").`
     );
@@ -395,6 +407,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     format: rawFormat as OutputFormat,
     dryRun: values["dry-run"] === true,
     watch: values.watch === true,
+    noConfig: values["no-config"] === true,
     preset: values.preset === undefined ? undefined : String(values.preset),
     maxPartBytesRaw:
       values["max-part-bytes"] === undefined ? undefined : String(values["max-part-bytes"]),
@@ -452,6 +465,20 @@ function splitList(value: string | undefined): string[] | undefined {
 }
 
 /**
+ * Renders a path inside the output directory for the summary.
+ *
+ * `--out-dir` accepts an absolute path, and the summary used to print
+ * `<absolute>/manifest.json` — a Windows path with a forward slash welded to it.
+ * Paths inside `cwd` are shown relative; anything else keeps its native form.
+ */
+function displayOutPath(cwd: string, outDir: string, ...segments: string[]): string {
+  const absolute = path.resolve(cwd, outDir, ...segments);
+  const relative = path.relative(cwd, absolute);
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) return relative;
+  return absolute;
+}
+
+/**
  * Describes why a parsed JSON file is not usable as a snapshot manifest.
  *
  * A parseable file is not necessarily a snapshot: rendering a foreign or
@@ -480,6 +507,7 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     const result = await runInit({
       cwd: invocation.cwd,
       preset: invocation.preset,
+      outDir: invocation.outDir,
       maxPartBytes: invocation.maxPartBytesRaw ?? invocation.maxPartBytes,
       include: splitList(invocation.include),
       exclude: splitList(invocation.exclude),
@@ -508,7 +536,13 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     }
     for (const note of result.notes) info(`   ⚠ ${note}`);
     info("");
-    info("   Next:  npm run snapshot");
+    // "Next: npm run snapshot" is useless in a directory with no package.json —
+    // exactly the case where the scripts could not be added.
+    if (result.scripts.length > 0) {
+      info("   Next:  npm run snapshot");
+    } else {
+      info(`   Next:  ${GENERATOR_NAME} generate`);
+    }
     info(
       `   Tip:   \`${GENERATOR_NAME} skill --install\` makes this repo discoverable by AI agents.`
     );
@@ -531,6 +565,14 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
  */
 function runSkillCommand(invocation: ParsedInvocation): number {
   if (!invocation.install) {
+    // `--format json` used to print markdown anyway, which silently produced a
+    // non-JSON payload on a flag whose only promise is machine readability.
+    if (invocation.format === "json") {
+      process.stdout.write(
+        `${JSON.stringify({ name: SKILL_NAME, version: GENERATOR_VERSION, skill: renderSkill() }, null, 2)}\n`
+      );
+      return 0;
+    }
     process.stdout.write(renderSkill());
     return 0;
   }
@@ -615,7 +657,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return runSkillCommand(invocation);
   }
 
-  const loaded = await loadConfigFileDetailed(invocation.cwd);
+  const loaded = invocation.noConfig
+    ? { config: null, warnings: [], errors: [], file: null }
+    : await loadConfigFileDetailed(invocation.cwd);
+  if (invocation.noConfig) info("⚙  --no-config: using built-in defaults, config file ignored");
   for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
   if (loaded.errors.length > 0) {
     // A config that exists but cannot be read must not silently fall back to the
@@ -703,7 +748,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   if (invocation.command === "explain") {
     const result = explainPath(resolved, invocation.args[0]);
     emit(invocation.format, result, () => info(renderExplainText(result)));
-    return result.included ? 0 : 1;
+    // Explaining a file that *would be skipped* is a successful explanation, not
+    // a failure: exit 1 is reserved for drift and refusals, so an agent asking
+    // about `.env` must read `included: false` rather than infer it from an
+    // exit code that also means "the snapshot is stale".
+    return 0;
   }
 
   if (invocation.command === "diff") {
@@ -731,7 +780,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     if (invocation.dryRun) {
       info("\n🧪 Dry run — nothing was written:");
       info(`   - Would track:  ${manifest.counts.totalFiles} files`);
-      info(`   - Would write:  ${manifest.counts.partsCount} part(s) under ${resolved.outDir}/parts/`);
+      info(
+        `   - Would write:  ${manifest.counts.partsCount} part(s) under ${displayOutPath(resolved.cwd, resolved.outDir, "parts")}`
+      );
       info(`   - Skipped:      ${manifest.counts.skippedCount} file(s)`);
       info(`   - Warnings:     ${manifest.warnings.length}`);
       info(`   - Integrity:    ${manifest.validation.status}`);
@@ -747,7 +798,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       // used to leave the summary naming reports and a manifest that do not exist.
       const { artifacts } = resolved;
       if (artifacts.parts) {
-        info(`   - Parts written: ${manifest.counts.partsCount} under ${resolved.outDir}/parts/`);
+        info(
+          `   - Parts written: ${manifest.counts.partsCount} under ${displayOutPath(resolved.cwd, resolved.outDir, "parts")}/`
+        );
       }
       const reports = [
         artifacts.projectTree && "project-tree",
@@ -755,10 +808,31 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         artifacts.audit && "audit",
       ].filter(Boolean);
       if (reports.length > 0) {
-        info(`   - Reports:       ${resolved.outDir}/reports/ (${reports.join(", ")})`);
+        info(
+          `   - Reports:       ${displayOutPath(resolved.cwd, resolved.outDir, "reports")}/ (${reports.join(", ")})`
+        );
       }
-      if (artifacts.manifest) info(`   - Manifest:      ${resolved.outDir}/manifest.json`);
-      if (artifacts.monolith) info(`   - Monolith:      ${resolved.outDir}/full-codebase.{json,md}`);
+      if (artifacts.manifest) {
+        info(`   - Manifest:      ${displayOutPath(resolved.cwd, resolved.outDir, "manifest.json")}`);
+      }
+      if (artifacts.monolith) {
+        const monolithFiles = [
+          manifest.artifacts?.fullJson ? "full-codebase.json" : null,
+          manifest.artifacts?.fullMarkdown ? "full-codebase.md" : null,
+        ].filter((name): name is string => name !== null);
+        // `--max-monolith-bytes` can skip one or both files, and the summary used
+        // to promise both regardless: it may only list what is on disk.
+        if (monolithFiles.length === 2) {
+          info(
+            `   - Monolith:      ${displayOutPath(resolved.cwd, resolved.outDir, "full-codebase.{json,md}")}`
+          );
+        } else if (monolithFiles.length === 1) {
+          info(
+            `   - Monolith:      ${displayOutPath(resolved.cwd, resolved.outDir, monolithFiles[0])} ` +
+              "(the other was skipped by --max-monolith-bytes)"
+          );
+        }
+      }
       if (reports.length === 0 && !artifacts.parts && !artifacts.manifest && !artifacts.monolith) {
         info(`   - Artifacts:     all disabled (only the ownership marker was written)`);
       }
@@ -812,6 +886,12 @@ async function runWatchLoop(
   // than by prefix also survives the relative paths `fs.watch` emits. The
   // `<outDir>.backup-*` directories created by the atomic swap must be ignored
   // too, or each run schedules the next one forever.
+  //
+  // Version-control metadata is ignored for the same reason: `getGitInfo` runs
+  // `git status`, git touches `.git/index.lock` on every call, and a watcher that
+  // reacted to that regenerated forever — eight times in five idle seconds in a
+  // clean repository, which made `--watch` unusable on the main use case.
+  const VCS_SEGMENTS = new Set([".git", ".hg", ".svn", ".bzr"]);
   const outName = path.basename(outDir).toLowerCase();
   const tmpName = path.basename(tmpDir).toLowerCase();
   const isGenerated = (candidate: string): boolean =>
@@ -822,16 +902,45 @@ async function runWatchLoop(
         (segment) =>
           segment === outName ||
           segment === tmpName ||
-          segment.startsWith(`${outName}.backup-`)
+          segment.startsWith(`${outName}.backup-`) ||
+          VCS_SEGMENTS.has(segment)
       );
 
   let running = false;
-  const regenerate = (): void => {
+  const regenerate = async (): Promise<void> => {
     if (running) return;
     running = true;
     const started = performance.now();
     try {
-      const manifest = generateSnapshot(resolved, { dryRun: invocation.dryRun });
+      // A watcher that keeps the config it started with regenerates with stale
+      // settings: editing snapshot.config above a watched repository appeared to
+      // work (the run happened, the config file's own hash updated) while the
+      // budget and scoping stayed at the old values. Reload on every run.
+      const loaded = await loadConfigFileDetailed(invocation.cwd);
+      if (loaded.errors.length > 0) {
+        for (const error of loaded.errors) warn(`⚠ Config: ${error}`);
+        warn("❌ The config file could not be read. Fix it, or delete it to use the defaults.");
+        return;
+      }
+      for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
+      const next = resolveConfig(
+        loaded.config,
+        {
+          mode: invocation.command as Mode,
+          format: invocation.format,
+          dryRun: invocation.dryRun,
+          cwd: invocation.cwd,
+          outDir: invocation.outDir,
+          includeMonolith: invocation.includeMonolith,
+          includeSensitiveFiles: invocation.includeSensitiveFiles,
+          maxPartBytes: invocation.maxPartBytes,
+          largeFileBytes: invocation.largeFileBytes,
+          maxMonolithBytes: invocation.maxMonolithBytes,
+          skipArtifacts: invocation.skipArtifacts,
+        },
+        invocation.cwd
+      );
+      const manifest = generateSnapshot(next, { dryRun: invocation.dryRun });
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       info(
         `♻️  ${new Date().toISOString()}  ${manifest.counts.totalFiles} file(s), ` +
@@ -845,7 +954,7 @@ async function runWatchLoop(
   };
 
   info("👀 Watching for changes. Press Ctrl+C to stop.");
-  regenerate();
+  void regenerate();
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
@@ -854,7 +963,7 @@ async function runWatchLoop(
       if (isGenerated(changed)) return;
     }
     if (timer) clearTimeout(timer);
-    timer = setTimeout(regenerate, 250);
+    timer = setTimeout(() => void regenerate(), 250);
   });
 
   await new Promise<void>((resolve) => {

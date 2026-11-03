@@ -135,6 +135,9 @@ export function renumberParts(
       kindCounts[file.kind] = (kindCounts[file.kind] || 0) + 1;
     }
 
+    const pathLines = included.map((file) => displayPath(file.relativePath));
+    const listFence = fenceForText(pathLines.join("\n"), 3);
+
     const header = [
       `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,
       "",
@@ -147,9 +150,9 @@ export function renumberParts(
       "",
       "## Files",
       "",
-      "```text",
-      ...included.map((file) => displayPath(file.relativePath)),
-      "```",
+      `${listFence}text`,
+      ...pathLines,
+      listFence,
       "",
       "## Contents",
       "",
@@ -187,7 +190,17 @@ function capValue(value: string, max: number): string {
 }
 
 const capMetadata = (value: string): string => capValue(value, METADATA_VALUE_MAX);
-const displayPath = (value: string): string => capValue(value, DISPLAY_PATH_MAX);
+
+/**
+ * Control characters in a path would break the line-oriented part layout: a
+ * newline inside a filename could start a line, and a line that starts with a
+ * backtick run can close the `## Files` fence (see {@link fenceForText}).
+ * Paths are legal UTF-8, so this is reachable with an ordinary `git mv`.
+ */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+
+const displayPath = (value: string): string =>
+  capValue(value.replace(CONTROL_CHARS, " "), DISPLAY_PATH_MAX);
 
 /** Top-N `Layer (count)` / `Kind (count)` summary used in a part header. */
 function topEntries(counts: Record<string, number>, limit: number): string {
@@ -325,6 +338,11 @@ function renderGroups(
       kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
     }
 
+    const pathLines = group.map((s) => displayPath(s.file.relativePath));
+    // A filename can itself contain a backtick run, so the listing fence is
+    // chosen from the listing rather than hardcoded to three backticks.
+    const listFence = fenceForText(pathLines.join("\n"), 3);
+
     const header = [
       `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,
       "",
@@ -337,9 +355,9 @@ function renderGroups(
       "",
       "## Files",
       "",
-      "```text",
-      ...group.map((s) => displayPath(s.file.relativePath)),
-      "```",
+      `${listFence}text`,
+      ...pathLines,
+      listFence,
       "",
       "## Contents",
       "",
@@ -409,9 +427,22 @@ function renderFileSection(file: FileEntry): string {
  * contains a fenced block cannot break out of its own code block.
  */
 export function fenceForContent(content: string): string {
+  return fenceForText(content, 4);
+}
+
+/**
+ * A fence longer than any backtick run in `content`, never shorter than
+ * `minimum`.
+ *
+ * Every fenced block the generator writes goes through this, not just file
+ * bodies: a *filename* may contain a backtick run (it is a legal name), and a
+ * fixed three-backtick fence around the `## Files` list let such a name close
+ * the block and turn the following filenames into live document text.
+ */
+export function fenceForText(content: string, minimum: number): string {
   const matches = content.match(/`+/g);
   const maxRun = matches?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
-  return "`".repeat(Math.max(4, maxRun + 1));
+  return "`".repeat(Math.max(minimum, maxRun + 1));
 }
 
 function renderSummary(summary: FileEntry["summary"]): string[] {

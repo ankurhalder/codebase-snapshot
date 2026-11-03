@@ -61,7 +61,8 @@ not resolved — clear the npm cache and retry; do not assume the repository is 
    \`--format json\` if you want to parse it.
 
 4. **Configure (recommended).** Run \`npx ${PACKAGE_NAME}@latest init --yes\`. It detects
-   the project shape, then writes \`snapshot.config.ts\` listing **every** setting at its
+   the project shape, then writes \`snapshot.config.ts\` (or \`.mjs\` when the project is
+   not an ES module) listing **every** setting at its
    current value, commented. Pass \`--preset <name>\` only if detection is wrong; the
    preset names are in the contract. This step is optional: without a config the tool
    runs on the same defaults.

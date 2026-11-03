@@ -505,7 +505,7 @@ test("CLI rejects init-only flags on non-init commands", () => {
   ]) {
     const result = runCli(["generate", ...flag]);
     assert.equal(result.code, 2, `generate ${flag.join(" ")} must be a usage error`);
-    assert.match(result.stderr, /only valid with `init`/);
+    assert.match(result.stderr, /do not apply to `generate`|does not apply to `generate`/);
   }
   // ...but they stay valid for init itself.
   const dir = makeRepo("cli-init-only-", { "package.json": '{"name":"fixture"}' });
@@ -1377,11 +1377,15 @@ test("explain reports how a path would be treated", () => {
   assert.ok(info.layerMatch, "the matching layer rule should be reported");
 
   const skipped = runCli(["explain", ".env", "--cwd", dir, "--format", "json"]);
-  assert.equal(skipped.code, 1, "an excluded path exits non-zero");
+  // Explaining a file that would be skipped is a successful explanation, not a
+  // failure: exit 1 is reserved for drift and refusals, so the verdict is the
+  // `included` flag rather than the exit code.
+  assert.equal(skipped.code, 0, "explaining a skipped path is not an error");
+  assert.equal(JSON.parse(skipped.stdout).included, false);
   assert.equal(JSON.parse(skipped.stdout).reason, "sensitive-file");
 
   const missing = runCli(["explain", "does/not/exist.ts", "--cwd", dir, "--format", "json"]);
-  assert.equal(missing.code, 1);
+  assert.equal(missing.code, 0);
   assert.equal(JSON.parse(missing.stdout).reason, "missing");
 
   const arity = runCli(["explain", "--cwd", dir]);
@@ -1595,7 +1599,9 @@ test("the detected preset contributes its ecosystem ignores", () => {
   assert.equal(manifest.config.preset, "python-django");
   const dropped = manifest.skipped.find((entry) => entry.path.includes("__pycache__"));
   assert.ok(dropped, "__pycache__ must be skipped by the python preset");
-  assert.equal(dropped.reason, "excluded");
+  // A preset's own ecosystem ignore is a built-in rule, not a user glob, so it
+  // reports `default-ignore`; `excluded` is reserved for the user's patterns.
+  assert.equal(dropped.reason, "default-ignore");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

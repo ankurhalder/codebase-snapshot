@@ -1,3 +1,5 @@
+import { fenceForText } from "../partitioner/chunker.js";
+
 /**
  * Builds an ASCII directory tree.
  *
@@ -8,6 +10,9 @@
  * produce an unbounded report.
  */
 const MAX_TREE_LINES = 20_000;
+
+/** A newline or other control character in a name would break the tree layout. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 
 export function generateProjectTree(filePaths: string[]): string {
   interface TreeNode {
@@ -29,7 +34,7 @@ export function generateProjectTree(filePaths: string[]): string {
     }
   }
 
-  const lines: string[] = ["# Project Tree", "", "```text", "."];
+  const lines: string[] = ["."];
   let truncatedAt = -1;
 
   function walk(node: TreeNode, prefix: string): void {
@@ -47,7 +52,8 @@ export function generateProjectTree(filePaths: string[]): string {
       const isLast = index === keys.length - 1;
       const child = node.children.get(key)!;
       const isDirectory = child.children.size > 0;
-      lines.push(`${prefix}${isLast ? "└── " : "├── "}${key}${isDirectory ? "/" : ""}`);
+      const label = key.replace(CONTROL_CHARS, " ");
+      lines.push(`${prefix}${isLast ? "└── " : "├── "}${label}${isDirectory ? "/" : ""}`);
       if (lines.length >= MAX_TREE_LINES) {
         truncatedAt = lines.length;
         return;
@@ -62,6 +68,8 @@ export function generateProjectTree(filePaths: string[]): string {
     lines.push(`... [tree truncated at ${MAX_TREE_LINES} lines] ...`);
   }
 
-  lines.push("```", "");
-  return lines.join("\n");
+  // Chosen from the rendered tree: a filename may contain a backtick run, and a
+  // fixed three-backtick fence would let it close the block.
+  const fence = fenceForText(lines.join("\n"), 3);
+  return ["# Project Tree", "", `${fence}text`, ...lines, fence, ""].join("\n");
 }

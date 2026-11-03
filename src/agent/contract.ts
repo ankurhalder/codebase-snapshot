@@ -1,6 +1,7 @@
 import { ARTIFACT_NAMES } from "../config.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, SCHEMA_VERSION } from "../index.js";
 import { PRESETS } from "../presets/registry.js";
+import { optionAppliesTo } from "./option-scope.js";
 
 /** Version of the shape of this document, independent of the package version. */
 export const CONTRACT_VERSION = "1.0.0";
@@ -167,11 +168,11 @@ export function buildAgentContract(): AgentContract {
     invocation: {
       oneShot: `npx ${PACKAGE_NAME}@latest`,
       installed: "npx codebase-snapshot",
-      bins: ["codebase-snapshot"],
+      bins: ["codebase-snapshot", "snap"],
       notes: [
         `The bare package name also works: npx ${PACKAGE_NAME} <command>.`,
-        "Pin @latest (or @2) when you need the exact same version on every machine.",
-        "This package exposes exactly one executable on purpose: npm cannot infer which one to run for a scoped package that ships several.",
+        "Pin @latest (or @4) when you need the exact same version on every machine.",
+        "Both bin names point at the same file. npm resolves a package by its bin entries, so they must stay aliases of one executable.",
         "Human progress goes to stderr. With --format json the payload on stdout is pure JSON.",
       ],
     },
@@ -180,7 +181,7 @@ export function buildAgentContract(): AgentContract {
         step: 1,
         id: "verify",
         run: `npx ${PACKAGE_NAME}@latest --version`,
-        expect: "prints v2.x.x on stdout and exits 0",
+        expect: `prints v${GENERATOR_VERSION} on stdout and exits 0`,
         notes: "If it prints nothing, clear the npm cache and retry, or use `npx -p <pkg> codebase-snapshot`.",
       },
       {
@@ -254,9 +255,11 @@ export function buildAgentContract(): AgentContract {
       {
         name: "explain",
         aliases: [],
-        summary: "Explain how one path would be treated: layer, kind, part, skip reason.",
+        summary:
+          "Explain how one path would be treated: layer, kind, part, skip reason. " +
+          "Always exits 0 when it can report; read `included` and `reason` instead of the exit code.",
         positionals: ["<path>"],
-        exits: [0, 1],
+        exits: [0],
       },
       {
         name: "diff",
@@ -291,140 +294,147 @@ export function buildAgentContract(): AgentContract {
         flag: "--out-dir",
         type: "string",
         default: "snapshot",
-        appliesTo: "generate/validate/report/explain",
+        appliesTo: optionAppliesTo("out-dir"),
         summary: "Where the snapshot is written. Must not be the repo root or a directory the tool did not create.",
       },
       {
         flag: "--max-part-bytes",
         type: "string",
         default: 307200,
-        appliesTo: "generate/validate/report",
+        appliesTo: optionAppliesTo("max-part-bytes"),
         summary: 'Byte budget per markdown part. Accepts "120k" / "1.5mb". Minimum 4096.',
       },
       {
         flag: "--large-file-bytes",
         type: "string",
         default: 204800,
-        appliesTo: "generate/validate/report",
+        appliesTo: optionAppliesTo("large-file-bytes"),
         summary: "Above this size a file gets a head/tail preview instead of the full body.",
       },
       {
         flag: "--max-monolith-bytes",
         type: "string",
         default: "unset",
-        appliesTo: "generate",
+        appliesTo: optionAppliesTo("max-monolith-bytes"),
         summary: "Skip the monolith artifacts when they would exceed this size.",
       },
       {
         flag: "--include-monolith",
         type: "boolean",
         default: false,
-        appliesTo: "generate",
+        appliesTo: optionAppliesTo("include-monolith"),
         summary: "Also write full-codebase.json and full-codebase.md.",
       },
       {
         flag: "--include-sensitive-files",
         type: "boolean",
         default: false,
-        appliesTo: "generate/validate/report",
+        appliesTo: optionAppliesTo("include-sensitive-files"),
         summary: "Also emit .env / *.pem / .npmrc style files. Off by default; they are recorded as skipped.",
       },
       {
         flag: "--skip-artifacts",
         type: "string",
         default: "unset",
-        appliesTo: "generate",
+        appliesTo: optionAppliesTo("skip-artifacts"),
         summary: "Comma-separated artifacts to omit (readme, manifest, parts, navigation, projectTree, audit, monolith).",
       },
       {
         flag: "--only-artifacts",
         type: "string",
         default: "unset",
-        appliesTo: "generate",
+        appliesTo: optionAppliesTo("only-artifacts"),
         summary: "Write only these artifacts. Cannot be combined with --skip-artifacts.",
       },
       {
         flag: "--format",
         type: "string",
         default: "text",
-        appliesTo: "all commands",
+        appliesTo: optionAppliesTo("format"),
         summary: 'Output format: "text" or "json". JSON goes to stdout, progress to stderr.',
       },
       {
         flag: "--cwd",
         type: "string",
         default: "process.cwd()",
-        appliesTo: "all commands",
+        appliesTo: optionAppliesTo("cwd"),
         summary: "Repository to operate on. Must be an existing directory.",
       },
       {
         flag: "--dry-run",
         type: "boolean",
         default: false,
-        appliesTo: "generate",
+        appliesTo: optionAppliesTo("dry-run"),
         summary: "Compute everything and print the result without writing.",
       },
       {
         flag: "--watch",
         type: "boolean",
         default: false,
-        appliesTo: "generate",
+        appliesTo: optionAppliesTo("watch"),
         summary: "Regenerate on every change until interrupted.",
+      },
+      {
+        flag: "--no-config",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("no-config"),
+        summary: "Ignore the config file and run on the built-in defaults.",
       },
       {
         flag: "--preset",
         type: "string",
         default: "detected",
-        appliesTo: "init",
+        appliesTo: optionAppliesTo("preset"),
         summary: "Force a project preset instead of detecting one. Unknown names are a usage error.",
       },
       {
         flag: "--include",
         type: "string",
         default: "unset",
-        appliesTo: "init",
+        appliesTo: optionAppliesTo("include"),
         summary: "Comma-separated allow-list of globs to record in the generated config.",
       },
       {
         flag: "--exclude",
         type: "string",
         default: "unset",
-        appliesTo: "init",
+        appliesTo: optionAppliesTo("exclude"),
         summary: "Comma-separated globs to record in the generated config.",
       },
       {
         flag: "--yes",
         type: "boolean",
         default: false,
-        appliesTo: "init",
+        appliesTo: optionAppliesTo("yes"),
         summary: "Accept every default without prompting. Required in a non-TTY.",
       },
       {
         flag: "--minimal",
         type: "boolean",
         default: false,
-        appliesTo: "init",
+        appliesTo: optionAppliesTo("minimal"),
         summary: "Write only the settings that differ from the defaults.",
       },
       {
         flag: "--force",
         type: "boolean",
         default: false,
-        appliesTo: "init",
+        appliesTo: optionAppliesTo("force"),
         summary: "Overwrite an existing config file.",
       },
       {
         flag: "--install",
         type: "boolean",
         default: false,
-        appliesTo: "skill",
+        appliesTo: optionAppliesTo("install"),
         summary: "Write the skill into the repository instead of printing it.",
       },
       {
         flag: "--target",
         type: "string",
         default: "all",
-        appliesTo: "skill",
+        appliesTo: optionAppliesTo("target"),
         summary: 'Where to install: "claude", "agents", "cursor" or "all".',
       },
     ],
@@ -500,9 +510,12 @@ export function buildAgentContract(): AgentContract {
       {
         symptom: "Command prints nothing and exits 0",
         cause:
-          "The executable was not found: an offline or partially populated npm cache, or an npm proxy " +
-          "serving an incomplete manifest.",
-        fix: `Clear the npx cache (npm cache clean --force), then run npx ${PACKAGE_NAME}@latest <command>.`,
+          "A stale global install of this package (often a leftover `npm link`) is shadowing npx: " +
+          "npm runs the global binary instead of installing the published one.",
+        fix:
+          "Check `npm ls -g --depth=0` for @ankurhalder/codebase-snapshot and remove it with " +
+          "`npm rm -g @ankurhalder/codebase-snapshot`. If it is not installed globally, clear the npx " +
+          "cache with `npm cache clean --force` and retry.",
       },
       {
         symptom: "Exit 1 with 'Refusing to replace outDir'",
