@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
+import { detectPreset, getPreset, unknownPresetMessage } from "./presets/index.js";
 import { globToRegExp } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
@@ -553,9 +553,7 @@ export function resolveConfig(
   // believing their layers are in effect when they are not.
   const forcedPreset = userConfig?.preset;
   if (forcedPreset !== undefined && !getPreset(forcedPreset)) {
-    throw new Error(
-      `Unknown preset "${forcedPreset}". Expected one of: ${listPresetNames().join(", ")}.`
-    );
+    throw new Error(unknownPresetMessage(forcedPreset));
   }
   const preset = detectPreset(cwd, forcedPreset);
   const layersMode = resolveLayersMode(userConfig?.layersMode);

@@ -300,6 +300,51 @@ export function resolveSafeOutputDirs(config: {
   return { outDir, tmpDir };
 }
 
+const REPLACEABLE_ENTRIES = new Set([
+  "README.md",
+  "manifest.json",
+  "parts",
+  "reports",
+  "full-codebase.json",
+  "full-codebase.md",
+  ".gitkeep",
+  ".gitignore",
+  ".DS_Store",
+]);
+
+/**
+ * Refuses to replace a directory that contains anything this generator did not write.
+ *
+ * `swapIntoPlace` renames the previous output aside and deletes it, and the
+ * scratch directory is deleted outright before every run. Path checks alone
+ * cannot make that safe: `outDir: "src"` is a plausible typo, and it used to
+ * delete the developer's entire source tree and exit 0. A directory is only
+ * replaceable when every top-level entry is one this generator puts there (or a
+ * placeholder such as `.gitkeep` in an otherwise-empty directory).
+ */
+export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): void {
+  if (!fs.existsSync(target)) return;
+
+  if (!fs.statSync(target).isDirectory()) {
+    throw new Error(
+      `Refusing to write into ${label} ${target}: it exists but is not a directory.`
+    );
+  }
+
+  const unexpected = fs
+    .readdirSync(target)
+    .filter((name) => !REPLACEABLE_ENTRIES.has(name));
+  if (unexpected.length === 0) return;
+
+  const preview = unexpected.slice(0, 5).join(", ");
+  const more = unexpected.length > 5 ? `, and ${unexpected.length - 5} more` : "";
+  throw new Error(
+    `Refusing to replace ${label} ${target}: it contains files this generator did not ` +
+      `write (${preview}${more}). Point ${label} at a new or empty directory, or delete ` +
+      `it yourself first.`
+  );
+}
+
 /**
  * Moves `tmpDir` into place, keeping the previous output until the new one is
  * fully in place. Falls back to a recursive copy across devices (EXDEV).
@@ -715,6 +760,12 @@ export function generateSnapshot(
   }
 
   const { outDir, tmpDir } = resolveSafeOutputDirs(config);
+
+  // Checked before anything is mutated: the scratch directory is deleted
+  // outright below, and the swap replaces outDir wholesale.
+  assertReplaceable(tmpDir, "tmpDir");
+  assertReplaceable(outDir, "outDir");
+
   const { artifacts } = config;
 
   fs.rmSync(tmpDir, { recursive: true, force: true });

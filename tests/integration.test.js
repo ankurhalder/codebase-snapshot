@@ -507,6 +507,89 @@ test("CLI rejects init-only flags on non-init commands", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// A mistyped outDir/tmpDir is a plausible mistake; destroying the directory it
+// names is not an acceptable outcome. The swap renames the previous output aside
+// and deletes it, and the scratch dir is deleted outright, so both must refuse to
+// touch a directory containing anything this generator did not write.
+test("generate refuses to replace a directory holding user files", () => {
+  for (const [label, config] of [
+    ["outDir", { outDir: "src" }],
+    ["tmpDir", { tmpDir: "src" }],
+  ]) {
+    const keep = "export const keep = 1;\n";
+    const dir = makeRepo(`cli-safety-${label}-`, {
+      "package.json": '{"name":"fixture"}',
+      "src/keep.ts": keep,
+      "snapshot.config.json": JSON.stringify(config),
+    });
+    const result = runCli(["generate", "--cwd", dir]);
+    assert.equal(result.code, 1, `${label}=src must be refused, got exit ${result.code}`);
+    assert.match(result.stderr, /Refusing to replace/);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "src", "keep.ts"), "utf8"),
+      keep,
+      `${label}=src must leave the source tree intact`
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generate refuses when outDir already exists as a file", () => {
+  const dir = makeRepo("cli-safety-file-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    snapshot: "user content that must survive\n",
+  });
+  const result = runCli(["generate", "--cwd", dir]);
+  assert.equal(result.code, 1, `expected exit 1, got ${result.code}`);
+  assert.equal(fs.readFileSync(path.join(dir, "snapshot"), "utf8"), "user content that must survive\n");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("generate accepts an existing empty outDir and re-runs over its own output", () => {
+  const dir = makeRepo("cli-safety-empty-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+  });
+  fs.mkdirSync(path.join(dir, "snapshot"));
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0, "an empty outDir is replaceable");
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0, "its own output is replaceable");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// generate resolves outDir against cwd, so the readers must too — otherwise an
+// absolute --out-dir produces "<cwd>\<absolute path>" and reports a missing
+// manifest immediately after a successful generate.
+test("an absolute --out-dir is honoured by generate, validate, report and explain", () => {
+  const dir = makeRepo("cli-abs-out-", {
+    "package.json": '{"name":"fixture"}',
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "abs-out-"));
+  const out = path.join(outside, "result");
+
+  assert.equal(runCli(["generate", "--cwd", dir, "--out-dir", out]).code, 0);
+  assert.ok(fs.existsSync(path.join(out, "manifest.json")), "generate must write to the absolute path");
+  assert.equal(runCli(["validate", "--cwd", dir, "--out-dir", out]).code, 0, "validate must find it");
+  assert.equal(runCli(["report", "--cwd", dir, "--out-dir", out]).code, 0, "report must find it");
+  const explained = runCli(["explain", "src/a.ts", "--cwd", dir, "--out-dir", out]);
+  assert.equal(explained.code, 0);
+  assert.doesNotMatch(explained.stdout, /not in the last snapshot/, "explain must read the manifest");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(outside, { recursive: true, force: true });
+});
+
+// docs/configuration.md promises an error listing every valid preset.
+test("init rejects an unknown preset instead of falling back to detection", () => {
+  const dir = makeRepo("cli-init-badpreset-", { "package.json": '{"name":"fixture"}' });
+  const result = runCli(["init", "--yes", "--preset", "nope-9000", "--cwd", dir]);
+  assert.equal(result.code, 2, `expected usage error (2), got ${result.code}`);
+  assert.match(result.stderr, /Unknown preset "nope-9000"/);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot.config.ts")), false, "no config must be written");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // A config that exists but cannot be read must fail, not fall back to defaults:
 // a silent fallback produces a snapshot with none of the developer's settings.
 test("CLI fails when an existing config cannot be parsed", () => {

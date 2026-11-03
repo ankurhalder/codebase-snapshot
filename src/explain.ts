@@ -60,7 +60,8 @@ function findRuleMatch<T extends { match: unknown }>(
 
 /** Reads the last written manifest, tolerating its absence. */
 function readManifest(config: ResolvedSnapshotConfig): Manifest | null {
-  const manifestPath = path.join(config.cwd, config.outDir, "manifest.json");
+  // `path.resolve` so an absolute outDir is not appended to cwd.
+  const manifestPath = path.resolve(config.cwd, config.outDir, "manifest.json");
   try {
     return JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Manifest;
   } catch {

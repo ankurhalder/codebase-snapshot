@@ -52,7 +52,8 @@ export function validateSnapshot(
   const config = isResolvedConfig(configInput)
     ? normalizeResolvedConfig(configInput)
     : resolveConfig(configInput);
-  const manifestPath = path.join(config.cwd, config.outDir, "manifest.json");
+  // `path.resolve` so an absolute outDir is not appended to cwd.
+  const manifestPath = path.resolve(config.cwd, config.outDir, "manifest.json");
 
   if (!fs.existsSync(manifestPath)) {
     return {
@@ -97,7 +98,7 @@ export function validateSnapshot(
 
   const drift = emptyDrift();
   const warnings: string[] = [];
-  const snapshotDir = path.join(config.cwd, config.outDir);
+  const snapshotDir = path.resolve(config.cwd, config.outDir);
 
   // ---- source files -------------------------------------------------------
   const manifestFileMap = new Map<string, string>();

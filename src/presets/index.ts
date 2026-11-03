@@ -4,6 +4,7 @@ export {
   detectPresetFromContext,
   getPreset,
   listPresetNames,
+  unknownPresetMessage,
 } from "./registry.js";
 export type { DetectedPreset, PresetDefinition } from "./registry.js";
 export { buildPresetContext } from "./context.js";

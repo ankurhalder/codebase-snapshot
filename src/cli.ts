@@ -8,6 +8,7 @@ import { runInit } from "./wizard/init.js";
 import { PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
+import { getPreset, unknownPresetMessage } from "./presets/index.js";
 import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
 
 const VERSION = GENERATOR_VERSION;
@@ -305,6 +306,15 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     }
   }
 
+  // `init --preset <typo>` used to fall back to detection and write a config for
+  // a preset nobody asked for, while still exiting 0. The docs promise a usage
+  // error listing every valid preset, so validate the name here (exit 2) rather
+  // than letting it surface later as a generic failure.
+  if (command === "init" && values.preset !== undefined) {
+    const requested = String(values.preset);
+    if (!getPreset(requested)) throw new UsageError(unknownPresetMessage(requested));
+  }
+
   return {
     command,
     args,
@@ -489,7 +499,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (invocation.command === "report") {
-    const manifestPath = path.join(resolved.cwd, resolved.outDir, "manifest.json");
+    // `path.resolve`, not `path.join`: generate resolves outDir against cwd, so a
+    // reader using join would look for "<cwd>\<absolute path>" and report a
+    // missing manifest after a successful generate.
+    const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
     if (!fs.existsSync(manifestPath)) {
       warn(`❌ Manifest not found at ${manifestPath}. Run generate first.`);
       return 1;

@@ -57,15 +57,26 @@ export function getPreset(name: string): PresetDefinition | undefined {
 }
 
 /**
+ * The error text for an unknown preset name.
+ *
+ * Shared so every entry point — config validation, `detectPreset`, and the
+ * `init` CLI flag — fails with the same message and the same list.
+ */
+export function unknownPresetMessage(name: string): string {
+  return `Unknown preset "${name}". Expected one of: ${listPresetNames().join(", ")}.`;
+}
+
+/**
  * Resolves a preset from an already-built context.
  *
- * A preset can be forced by name; an unknown name is a caller error and is
- * reported by `resolveConfig` rather than silently ignored.
+ * A preset can be forced by name, and an unknown name throws. It used to fall
+ * back to detection instead, which meant `init --preset <typo>` wrote a config
+ * for a preset the developer never asked for and exited 0.
  */
 export function detectPresetFromContext(context: PresetContext, forced?: string): DetectedPreset {
   if (forced !== undefined) {
     const preset = BY_NAME.get(forced);
-    if (!preset) return detectPresetFromContext(context);
+    if (!preset) throw new Error(unknownPresetMessage(forced));
     return toDetected(preset);
   }
 
