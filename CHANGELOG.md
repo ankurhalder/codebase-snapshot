@@ -4,6 +4,60 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## Unreleased
+
+### A UTF-16 source file was invisible, and a Latin-1 one was quietly mangled
+
+Two encoding decisions were silent, and one was wrong in both directions. `generate` decided
+"binary" from a NUL in the first 8 MB and then decoded with `buffer.toString("utf8")`, so a UTF-16
+source file — which is half NUL bytes — was skipped as `binary` and vanished from the snapshot,
+while a Latin-1 file was emitted with U+FFFD in place of every non-ASCII byte, and `validate` then
+reported the snapshot as current because the hash covers the raw bytes.
+
+Decoding is now explicit. A BOM, or the NUL padding of a BOM-less UTF-16 file, is recognised and
+the file is transcoded; a file that is not valid UTF-8 is kept, decoded lossily, and labelled
+`encoding: "utf-8-lossy"` with the count of undecodable bytes in `warnings`; a NUL anywhere in the
+file — including past the 8 MB head scan, which used to be the end of the check — marks it binary
+and `skipped[]` records the offset. `files[].encoding` is present only when a file was not plain
+UTF-8, so its absence keeps meaning "clean UTF-8". `explain` answers the same question the same
+way. Verified: 12 new tests covering both endiannesses, BOM-less detection, five classes of
+invalid sequence, a NUL at byte 8388608, and hash stability across two runs.
+
+### A file the tool did not write could be deleted without a word
+
+Ownership checking had a hole with a nice name. `.gitkeep` and `.gitignore` were treated as
+placeholders and subtracted from the set of entries belonging to somebody else, so a snapshot
+directory this generator owned and that a user then added a `.gitignore` to was replaced — atomically,
+exit 0, `manifest.warnings` empty — and the file was gone. A directory holding nothing but
+`.gitkeep`, or nothing but a `.gitignore` (`*`, `!.gitignore`), was replaced without any ownership
+evidence at all, because the placeholder shortcut fired before the marker was ever read.
+
+Both are files a user creates; the generator never writes either into an output directory. They are
+foreign entries now, so the run refuses and names them, exactly as it already did for `notes.md`.
+`.DS_Store` remains the only tolerated entry, because Finder writes it and it carries no intent.
+Verified: 6 new tests — owned directory plus `.gitignore`, bare `.gitkeep`, bare `.gitignore`, the
+refusal naming the entry, `.DS_Store` still discarded, and a genuine snapshot still replaced.
+
+### A directory named `snapshot` disappeared, and the manifest said nothing
+
+The output directory was excluded from the scan by name, at every depth: `snapshot`,
+`snapshot.tmp` and `snapshot.backup-*` were dropped before the branch that records a `skipped[]`
+entry, so a directory the user committed under one of those names was missing from the snapshot
+with no record anywhere — the exact omission `skipped[]` exists to prevent, and it contradicted
+the documented promise that every discovered path is accounted for. `generate` and `explain` also
+disagreed: one dropped the path, the other called it `not-discovered`.
+
+Exclusion is now evidence-based. A directory is this tool's output when it carries the
+`.codebase-snapshot` marker, and only the exact `outDir`/`tmpDir` paths a run is about to write are
+excluded by name — so a first run still does not record its own output (two identical runs keep
+producing identical manifests) while a user's directory with the same name is scanned like any
+other. `snapshot` and `snapshot.tmp` also left the built-in ignore list, where they had been
+second-layer protection for the same mistake. Verified: 5 new tests, including the same fixture
+through the git and the walking discovery paths, a full generate that now lists
+`snapshot/keep.md`, and the determinism guard that the second run does not record the first.
+
+---
+
 ## 4.0.9
 
 ### The tool executed a config it had been told to ignore

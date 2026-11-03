@@ -29,6 +29,15 @@ export interface CollectOptions {
    * `config.secretRules` so `customPatterns` also protect file names.
    */
   secretRules?: readonly SecretRule[];
+  /**
+   * Top-level directory names this run is about to write — `outDir` and `tmpDir`.
+   *
+   * They are excluded from the scan without a `skipped[]` record because that is this tool's own
+   * bookkeeping and a first run cannot have written a marker into them yet. A directory with one
+   * of these *names* that carries no marker is still excluded when it is one of these paths, but
+   * is an ordinary directory when it is not: dropping it silently was the bug.
+   */
+  toolOwnedPaths?: readonly string[];
 }
 
 export interface CollectResult {
@@ -105,6 +114,15 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
   }
 }
 
+/**
+ * Names ignored by convention, everywhere in the tree.
+ *
+ * `snapshot` and `snapshot.tmp` used to be here, which meant a directory a user happened to call
+ * `snapshot` was ignored at any depth — cost free while it was also silently dropped, but wrong:
+ * it is a normal directory unless it is this tool's output, and this tool's output is recognised
+ * by its ownership marker and by the exact `outDir`/`tmpDir` a run is writing, not by its name.
+ * Those names are handled by {@link makeToolOwnedDecider} now.
+ */
 const DEFAULT_IGNORED_DIRS = [
   "node_modules",
   ".git",
@@ -116,8 +134,6 @@ const DEFAULT_IGNORED_DIRS = [
   ".cache",
   "coverage",
   "out",
-  "snapshot",
-  "snapshot.tmp",
 ];
 
 const DEFAULT_IGNORED_FILES = [
@@ -515,24 +531,36 @@ function hasSnapshotMarker(target: string): boolean {
  * nothing, run 2 skipped `snapshot` — so two identical runs produced different
  * manifests, and the monolith (which embeds the manifest) changed size with
  * them. A `--max-monolith-bytes` picked from run 1 could then flip a file off on
- * run 2. Output and crash leftovers are bookkeeping: they are excluded silently.
+ * run 2. Output and crash leftovers are therefore excluded without a `skipped[]`
+ * record, *provided the directory actually carries this tool's marker*, so two
+ * identical runs stay identical.
  *
- * A custom `outDir` (`--out-dir .context`) is recognised by the `.codebase-snapshot`
- * marker this tool writes into the directories it owns.
+ * The name alone is not enough, and used to be treated as though it were. Every
+ * directory called `snapshot`, `snapshot.tmp` or `snapshot.backup-*` was dropped
+ * at any depth, so a directory the user committed under that name vanished from
+ * the snapshot with nothing recorded anywhere — the opposite lie to the one the
+ * `skipped[]` record exists to prevent. A directory with no marker is now an
+ * ordinary directory: its contents are scanned like any others, unless it is the
+ * configured output directory or the top-level `outDir`/`tmpDir` this run is
+ * about to write (`toolOwnedPaths`), which cannot carry a marker on a first run.
  */
-function makeToolOwnedDecider(cwd: string): (relativePath: string) => boolean {
+function makeToolOwnedDecider(
+  cwd: string,
+  toolOwnedPaths: readonly string[]
+): (relativePath: string) => boolean {
   const markers = new Map<string, boolean>();
+  const reservedPaths = new Set(toolOwnedPaths.filter((entry) => entry.length > 0));
   return (relativePath: string): boolean => {
     const parts = relativePath.replace(/\\/g, "/").split("/");
     for (let depth = 1; depth < parts.length; depth += 1) {
       const prefix = parts.slice(0, depth).join("/");
-      if (depth === 1 && isToolOwnedDirName(prefix)) return true;
       let hasMarker = markers.get(prefix);
       if (hasMarker === undefined) {
         hasMarker = fs.existsSync(path.join(cwd, prefix, ".codebase-snapshot"));
         markers.set(prefix, hasMarker);
       }
       if (hasMarker) return true;
+      if (reservedPaths.has(prefix)) return true;
     }
     return false;
   };
@@ -640,7 +668,10 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
   const excludePatterns = options.excludePatterns ?? [];
   const includeSensitiveFiles = options.includeSensitiveFiles ?? false;
   const pathRules = options.secretRules;
-  const isToolOwned = makeToolOwnedDecider(cwd);
+  const toolOwnedPaths = new Set(
+    (options.toolOwnedPaths ?? []).map((entry) => entry.replace(/\\/g, "/"))
+  );
+  const isToolOwned = makeToolOwnedDecider(cwd, [...toolOwnedPaths]);
 
   let candidates: string[];
   const skipped: SkipRecord[] = [];
@@ -704,7 +735,7 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
           "Fix the repository (git status should work) or run outside git."
       );
     }
-    const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), true);
+    const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), true, toolOwnedPaths);
     candidates = walked.files;
     skipped.push(...walked.skipped);
   }
@@ -800,7 +831,8 @@ function walkDirectory(
   baseDir: string,
   rootReal: string,
   visited: Set<string>,
-  isRoot = false
+  isRoot = false,
+  reservedPaths: ReadonlySet<string> = new Set<string>()
 ): CollectResult {
   const results: CollectResult = { files: [], skipped: [] };
 
@@ -828,11 +860,10 @@ function walkDirectory(
     const fullPath = path.join(dir, entry.name);
     const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
 
-    // Recorded rather than silently dropped: without git there is no candidate
-    // listing to filter later, so this is the only place the omission can be
-    // reported. The tool's own output directories are the exception — they are
-    // excluded without a record so two identical runs produce identical manifests.
-    if (isToolOwnedDirName(entry.name)) continue;
+    // Without git there is no candidate listing to filter later, so this is the only place an
+    // omission can be reported. The exception is the tool's own output directory for this run,
+    // which cannot carry a marker before its first run.
+    if (isToolOwnedDirName(entry.name) && reservedPaths.has(relPath)) continue;
     if (DEFAULT_IGNORED_DIRS.includes(entry.name)) {
       results.skipped.push({
         path: relPath,
@@ -925,7 +956,7 @@ function walkDirectory(
     }
 
     if (isDirectory) {
-      const nested = walkDirectory(fullPath, baseDir, rootReal, visited);
+      const nested = walkDirectory(fullPath, baseDir, rootReal, visited, false, reservedPaths);
       results.files.push(...nested.files);
       results.skipped.push(...nested.skipped);
     } else if (isFile) {

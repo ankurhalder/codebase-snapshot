@@ -117,4 +117,6 @@ When you parse the manifest, remember what is conditional: `manifest.files[]` ca
 `relativePath`, `layer`, `kind`, `language`, `part`, `inclusionMode` and `hashSha256` for
 every included file, but `summary` and `summaryQuality` only for a language the tool can
 analyse. A `.gitignore` or plain-text entry has neither key, and a file whose summary was too
-large for its part carries `summaryOmitted: true` instead of a `summary`.
+large for its part carries `summaryOmitted: true` instead of a `summary`. `encoding` appears only
+when a file was not plain UTF-8: `utf-16le`/`utf-16be` were transcoded, and `utf-8-lossy` means
+the body you are reading contains `U+FFFD` where undecodable bytes were.

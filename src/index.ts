@@ -27,6 +27,8 @@ import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
 import {
+  countInvalidUtf8Bytes,
+  decodeText,
   isBinaryBuffer,
   isBinaryExtension,
   isBinaryFile,
@@ -49,6 +51,7 @@ import type {
   SnapshotConfig,
   SourceSummary,
   SummaryQuality,
+  TextEncoding,
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
@@ -371,13 +374,16 @@ export function resolveSafeOutputDirs(config: {
 }
 
 /**
- * Placeholder files that may sit in an otherwise-empty *output* directory.
+ * The one entry an otherwise-empty output directory may hold and still be replaced.
  *
- * They are tolerated there because replacing such a directory loses nothing.
- * They are not evidence of ownership, and `tmpDir` is stricter: a directory that
- * still holds any file — a `.gitkeep` included — was not written by this tool.
+ * `.DS_Store` is written by Finder, carries no user intent and is recreated on demand, so
+ * discarding it loses nothing. `.gitkeep` and `.gitignore` used to be tolerated in the same way,
+ * and that tolerance was a data-loss bug rather than a convenience: both are files a *user*
+ * creates, this generator never writes either into an output directory, and a snapshot directory
+ * holding one was replaced — with a valid ownership marker behind it — while the file was deleted
+ * without a word. They are foreign entries like any other now, so the run refuses and names them.
  */
-const PLACEHOLDER_ENTRIES = new Set([".gitkeep", ".gitignore", ".DS_Store"]);
+const IGNORABLE_ENTRIES = new Set([".DS_Store"]);
 
 /**
  * Prefix of a per-run staging directory inside `tmpDir`.
@@ -712,7 +718,7 @@ function assessSnapshotDirectory(dir: string): DirectoryVerdict {
   }
 
   const foreignEntries = listEntries(dir).filter(
-    (entry) => !recorded.has(entry) && !PLACEHOLDER_ENTRIES.has(entry)
+    (entry) => !recorded.has(entry) && !IGNORABLE_ENTRIES.has(entry)
   );
   return {
     owned: foreignEntries.length === 0,
@@ -751,8 +757,8 @@ export function assertReplaceable(
 
   const entries = fs.readdirSync(target);
   if (entries.length === 0) return;
-  // Tolerated: replacing such a directory loses nothing.
-  if (entries.every((name) => PLACEHOLDER_ENTRIES.has(name))) return;
+  // Tolerated: replacing a directory that holds nothing but Finder noise loses nothing.
+  if (entries.every((name) => IGNORABLE_ENTRIES.has(name))) return;
 
   const { problem } = readOwnershipMarker(target);
   const verdict = assessSnapshotDirectory(target);
@@ -1192,6 +1198,14 @@ export function generateSnapshot(
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
     secretRules: config.secretRules,
+    // The output and staging directories this run is about to write, relative to the root. A
+    // first run cannot have marked them yet, so the name alone keeps a run from recording its own
+    // output — but only at these exact paths, not at every directory that shares the name.
+    toolOwnedPaths: [config.outDir, config.tmpDir]
+      .map((directory) =>
+        path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
+      )
+      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
   });
 
   const files: FileEntry[] = [];
@@ -1200,6 +1214,8 @@ export function generateSnapshot(
   const skipped: SkipRecord[] = maskSkipRecords([...collection.skipped], config.secretRules);
   const secretFindings: SecretFinding[] = [];
   const warnings: string[] = [];
+  /** Files that were not plain UTF-8, grouped into one warning after the scan. */
+  const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
   const layerCounts: LayerOrKindCounts = {};
   const kindCounts: LayerOrKindCounts = {};
 
@@ -1235,14 +1251,35 @@ export function generateSnapshot(
       continue;
     }
 
+    // The pre-read NUL scan gives up after BINARY_SCAN_BYTES so a huge blob is never pulled into
+    // memory; this is the complete check, on the buffer that had to be read anyway. A file of
+    // 8 MB of text with a NUL at byte 8 388 672 used to be emitted as text.
+    const decoded = decodeText(buffer);
+    if (decoded.binary) {
+      skipped.push({
+        path: relativePath,
+        reason: "binary",
+        detail: `Size: ${stats.size} B; NUL byte at offset ${decoded.binaryOffset ?? 0}`,
+      });
+      continue;
+    }
+
     // One read, one hash domain: the validator hashes the raw buffer too, so a
     // file with invalid UTF-8 no longer produces unfixable phantom drift.
     const hashSha256 = sha256Hex(buffer);
-    const rawContent = buffer.toString("utf8");
+    const rawContent = decoded.text;
     const lineCount = countLines(rawContent);
 
     totalLines += lineCount;
     totalSizeBytes += stats.size;
+
+    if (decoded.encoding !== "utf-8") {
+      encodingNotes.push({
+        path: relativePath,
+        encoding: decoded.encoding,
+        invalidBytes: decoded.invalidBytes,
+      });
+    }
 
     // Masked at the source: a layer or kind name supplied in the config can look like
     // a credential, and every derived field (files[].layer, part headers, README, audit,
@@ -1329,8 +1366,35 @@ export function generateSnapshot(
       includedBytes: Buffer.byteLength(finalContent, "utf8"),
       summary,
       summaryQuality,
+      ...(decoded.encoding === "utf-8" ? {} : { encoding: decoded.encoding }),
       content: finalContent,
     });
+  }
+
+  // One warning per encoding class, not per file: a repository with 400 Latin-1 files must not
+  // produce 400 warnings that bury everything else.
+  const encodingBuckets = new Map<TextEncoding, { paths: string[]; invalidBytes: number }>();
+  for (const note of encodingNotes) {
+    const bucket = encodingBuckets.get(note.encoding) ?? { paths: [], invalidBytes: 0 };
+    bucket.paths.push(note.path);
+    bucket.invalidBytes += note.invalidBytes;
+    encodingBuckets.set(note.encoding, bucket);
+  }
+  const ENCODING_PATHS_SHOWN = 5;
+  for (const [encoding, bucket] of encodingBuckets) {
+    const maskedPaths = bucket.paths.map((entry) => maskPathText(entry, config.secretRules));
+    const shown = maskedPaths.slice(0, ENCODING_PATHS_SHOWN).join(", ");
+    const hidden = maskedPaths.length - ENCODING_PATHS_SHOWN;
+    const listing = hidden > 0 ? `${shown} and ${hidden} more` : shown;
+    if (encoding === "utf-8-lossy") {
+      warnings.push(
+        `${bucket.paths.length} file(s) are not valid UTF-8; ${bucket.invalidBytes} undecodable byte(s) became U+FFFD: ${listing}.`
+      );
+    } else {
+      warnings.push(
+        `${bucket.paths.length} file(s) are ${encoding.toUpperCase()} and were transcoded to UTF-8: ${listing}.`
+      );
+    }
   }
 
   const fingerprint = sha256Hex(
@@ -1660,6 +1724,8 @@ export {
   isBinaryExtension,
   isBinaryBuffer,
   isBinaryFile,
+  decodeText,
+  countInvalidUtf8Bytes,
   truncatePreview,
   partitionFiles,
   generateProjectTree,

@@ -3,10 +3,11 @@ import * as path from "node:path";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { countLines } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
-import { isBinaryFile } from "./scanner/binary.js";
+import { isBinaryFile, decodeText } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
-import type { Manifest, ResolvedSnapshotConfig } from "./types.js";
+import { escapeControls } from "./terminal.js";
+import type { Manifest, ResolvedSnapshotConfig, TextEncoding } from "./types.js";
 
 export interface ExplainResult {
   /** Path relative to the configured cwd, POSIX separators. */
@@ -28,6 +29,8 @@ export interface ExplainResult {
   inclusionMode?: string;
   lines?: number;
   bytes?: number;
+  /** Present when the file is not plain UTF-8, so an explanation cannot quietly lie about it. */
+  encoding?: TextEncoding;
   secretCount?: number;
   secrets?: Array<{ rule: string; line: number }>;
 }
@@ -96,6 +99,13 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
     secretRules: config.secretRules,
+    // Same exclusion `generate` applies, so `explain` never says "not-discovered" about a file
+    // that is only missing because the walker dropped the tool's own output directory.
+    toolOwnedPaths: [config.outDir, config.tmpDir]
+      .map((directory) =>
+        path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
+      )
+      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
   });
 
   if (!collection.files.includes(relative)) {
@@ -137,9 +147,19 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
 
   if (fs.existsSync(absolute) && fs.statSync(absolute).isFile()) {
     const buffer = fs.readFileSync(absolute);
-    const text = buffer.toString("utf8");
+    // Decode the way `generate` decodes: a UTF-16 file is transcoded rather than reported as a
+    // pile of NULs, and a lossy decode is stated instead of being passed off as clean text.
+    const decoded = decodeText(buffer);
+    if (decoded.binary) {
+      result.included = false;
+      result.reason = "binary";
+      result.detail = `binary content (NUL byte at offset ${decoded.binaryOffset ?? 0}); generate skips it and records \`binary\` in manifest.skipped[]`;
+      return result;
+    }
+    const text = decoded.text;
     result.bytes = buffer.length;
     result.lines = countLines(text);
+    if (decoded.encoding !== "utf-8") result.encoding = decoded.encoding;
 
     const { findings } = scanAndRedactSecrets(text, config.secretRules, relative);
     result.secretCount = findings.length;
@@ -160,8 +180,13 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
 
 /** Renders an explanation for a terminal. */
 export function renderExplainText(result: ExplainResult): string {
-  const lines: string[] = [result.path, ""];
-  const row = (label: string, value: string): string => `  ${label.padEnd(11)}${value}`;
+  // Every value here can be repository-derived: the path, the layer and kind names (which a
+  // committed `snapshot.config.*` may set), a manifest part name, a matched rule. A raw bidi
+  // override or C1 control in one of them reorders the line or drives the terminal, so each value
+  // is re-spelled as `\uXXXX` before it is padded and printed — the labels are fixed text.
+  const lines: string[] = [escapeControls(result.path), ""];
+  const row = (label: string, value: string): string =>
+    `  ${label.padEnd(11)}${escapeControls(value)}`;
 
   if (!result.included) {
     lines.push(row("included", "no"));
@@ -184,6 +209,7 @@ export function renderExplainText(result: ExplainResult): string {
     )
   );
   if (result.inclusionMode) lines.push(row("inclusion", result.inclusionMode));
+  if (result.encoding) lines.push(row("encoding", result.encoding));
   lines.push(
     row(
       "secrets",

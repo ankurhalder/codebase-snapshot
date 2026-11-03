@@ -83,8 +83,13 @@ and the digest of the manifest it shipped. A file with the right name is not eno
 | carries our marker but you added files | `it carries this generator's ownership marker, but these entries are not part of the snapshot it recorded: custom.txt. Remove them yourself, or point outDir at a new or empty directory.` |
 
 **Fix** — point `--out-dir` somewhere new, or delete the directory yourself. Do not delete
-your source. Accepted without complaint: a missing directory, an empty directory, one
-holding only `.gitkeep`/`.gitignore`/`.DS_Store`, and a complete snapshot this build wrote.
+your source. Accepted without complaint: a missing directory, an empty directory, one holding
+nothing but `.DS_Store`, and a complete snapshot this build wrote.
+
+`.gitkeep` and `.gitignore` are **not** accepted, even in a directory that holds nothing else.
+Both are files you create — the generator never writes either into an output directory — so a
+directory holding one is somebody's data and is refused rather than replaced. Move the file out,
+or point `--out-dir` somewhere new.
 
 A snapshot written by 3.0.0 or earlier is **not** upgraded in place: its marker has three keys
 and no `id`, so the new build cannot prove it wrote the directory and refuses. Delete the old
@@ -195,7 +200,7 @@ npx codebase-snapshot explain src/generated/schema.ts
 | :--- | :--- | :--- |
 | `sensitive-file` | `.env`, `*.pem`, `.npmrc`, `.ssh/`, `.tfstate`, … | `--include-sensitive-files` if you really want it. |
 | `sensitive-path` | The path itself matched a secret rule, so the file is skipped and its path is masked in every artifact. | Rename the file; a path that looks like a key is treated as one. |
-| `binary` | Not text. | Nothing to do. |
+| `binary` | Not text: it contains a NUL byte outside a UTF-16 stream. The `detail` names the file size, and the offset of the first NUL when that byte sits past the 8 MB head scan. | Nothing to do. A UTF-16 file is *not* binary — it is transcoded and reported with `encoding`, not skipped. |
 | `default-ignore` | A built-in rule, the preset's ecosystem ignores (`node_modules`, `__pycache__`, `target`, `vendor`, …), or the output directory. | A preset's ignores are not configurable; a custom `excludePatterns` can only remove more. |
 | `excluded` | Your own `excludePatterns`, or a path outside a non-empty `include` allow-list. | Remove the pattern, or widen `include`. |
 | `symlink` | Links are not followed (a directory link names its target in `detail`). | Snapshot the target. |
@@ -238,6 +243,15 @@ under a `- Warnings: N` line in the summary, and none of them stops a run:
 - `every artifact is disabled: only the .codebase-snapshot ownership marker will be written.`
 - A `hooks.afterGenerate` error is downgraded to a warning: the snapshot it was called for is
   already written and is not lost.
+- `N file(s) are UTF-16LE and were transcoded to UTF-8: …` — those files were UTF-16 and are
+  now ordinary text in the snapshot. They are listed in `manifest.files[]` with
+  `encoding: "utf-16le"`, or `"utf-16be"`. Nothing to fix; the warning exists because the bytes
+  in the artifact are not the bytes on disk.
+- `N file(s) are not valid UTF-8; M undecodable byte(s) became U+FFFD: …` — the named files are
+  not UTF-8 at all (Latin-1 is the usual cause). They are kept, with `encoding: "utf-8-lossy"`,
+  but the undecodable spans are substituted, so **do not hand the emitted body to a model as if
+  it were the source**. Convert the file to UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8 file > file.tmp`)
+  and regenerate. The snapshot still validates as current, because the hash covers the raw bytes.
 
 `validate` produces its own warnings, printed with a `⚠ ` prefix and never written to the
 manifest, because they describe the state of the repository rather than the snapshot:

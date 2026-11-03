@@ -2,6 +2,15 @@ export type Mode = "generate" | "validate" | "report";
 export type OutputFormat = "text" | "json";
 
 /**
+ * How a file's bytes became text.
+ *
+ * Absent from a `FileEntry` means plain UTF-8, which is the overwhelmingly common case. The other
+ * values are recorded because they change what the artifact actually contains: `utf-16le`/`utf-16be`
+ * files were transcoded, and `utf-8-lossy` files carry U+FFFD where their undecodable bytes were.
+ */
+export type TextEncoding = "utf-8" | "utf-8-lossy" | "utf-16le" | "utf-16be";
+
+/**
  * How much of a file made it into the snapshot.
  * `full`    – the complete file body was emitted.
  * `preview` – the body was truncated (by lines and/or bytes) before emission.
@@ -110,6 +119,11 @@ export interface FileEntry {
   summaryQuality?: SummaryQuality;
   /** True when the summary alone was too large for the part budget and was dropped. */
   summaryOmitted?: boolean;
+  /**
+   * How the file's bytes were decoded. Absent means plain UTF-8. Present when the file was
+   * transcoded from UTF-16, or when it was not valid UTF-8 and lost bytes to U+FFFD.
+   */
+  encoding?: TextEncoding;
   /** Emitted body after redaction/truncation. Never serialized into the manifest. */
   content?: string;
 }

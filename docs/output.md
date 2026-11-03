@@ -129,6 +129,13 @@ values — the hash is the whole 64-character digest, never elided.
 - Only `isPreviewTruncated` tells you content is missing; `isLarge` alone does not.
 - `hashSha256` is the hash of the source file on disk — `validate` recomputes it to detect
   drift. It is the full 64-character digest.
+- `encoding` is present **only** when the file is not plain UTF-8; its absence means clean UTF-8.
+  `utf-16le` and `utf-16be` mean the file was transcoded to UTF-8 before it was emitted, so a
+  UTF-16 source file is readable in the parts instead of vanishing as "binary". `utf-8-lossy`
+  means the file is not valid UTF-8 at all: its undecodable byte spans became `U+FFFD`, the count
+  is reported in `warnings`, and the file is kept rather than dropped. The hash still covers the
+  raw bytes, so a lossy file validates as current — `encoding` is how you learn that the body you
+  are reading is not byte-exact.
 - `summary` and `summaryQuality` are **conditional**. Both keys are present for a language
   with an analyser and both are absent for a shapeless one — a `.gitignore`, a `.txt`. Treat a
   missing `summary` as "no structural information", not as an empty one.
@@ -160,7 +167,7 @@ Reasons, and what each one means:
 | `default-ignore` | A built-in rule caught it, the preset's ecosystem ignores did (`node_modules`, `__pycache__`, `target`, …), or it sat inside an output directory. |
 | `sensitive-file` | Its name is credential-bearing (`.env`, `*.pem`, `.npmrc`, …). |
 | `sensitive-path` | The path itself matched a secret rule. The file is skipped and the path is masked in every artifact. |
-| `binary` | It is not text. |
+| `binary` | It is not text. `detail` gives the size, and for a file that only reveals itself past the 8 MB head scan, the offset of the first NUL byte. |
 | `symlink` | It is a link, and links are not followed. A directory link names its target in `detail`. |
 | `outside-root` | It is a link whose target resolves outside the scanned root. |
 | `gitignore` | A `.gitignore` excluded it, in a scan that is not reading git's index. |
@@ -191,9 +198,11 @@ example). See [Troubleshooting](troubleshooting.md#a-file-is-missing-from-the-sn
   replacement is complete.
 - **The tool refuses to replace a directory it did not write.** Pointing `--out-dir` at
   `src/` is refused with exit `1` and the directory is left untouched — a mistyped output
-  path cannot delete source code. Empty directories, directories containing only
-  `.gitkeep`/`.gitignore`/`.DS_Store`, and directories holding a complete snapshot this build
-  wrote are accepted.
+  path cannot delete source code. Empty directories, directories that hold nothing but
+  `.DS_Store`, and directories holding a complete snapshot this build wrote are accepted.
+  A `.gitkeep` or `.gitignore` inside the directory is not accepted, because the generator never
+  writes either into an output directory: a directory that holds one is somebody's data, so the
+  run refuses instead of deleting it.
 - **Ownership is the marker, not a filename.** `.codebase-snapshot` is a JSON record carrying
   this generator's name and `version`, the marker's `schemaVersion`, a `createdAt` timestamp,
   a per-snapshot `id`, the run `state` (`staging` while it is being written, `complete` once it
