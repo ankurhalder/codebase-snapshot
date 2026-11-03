@@ -56,6 +56,60 @@ second-layer protection for the same mistake. Verified: 5 new tests, including t
 through the git and the walking discovery paths, a full generate that now lists
 `snapshot/keep.md`, and the determinism guard that the second run does not record the first.
 
+### A hook could kill a run that had already succeeded
+
+`hooks.afterGenerate` ran after the snapshot was swapped into place. A hook that returned a
+rejected promise was never awaited and never caught, so Node turned it into an unhandled rejection:
+the process exited 1 *after* printing "Snapshot generated … Integrity: passed" and writing its
+`--format json` payload, and nothing about the failure reached `manifest.json`. A hook's own files
+were also missing from the ownership inventory, so the next run refused a directory the tool had
+written itself, and a `console.log` inside a hook landed on stdout in the middle of the JSON
+payload.
+
+A returned promise is now tracked rather than awaited — this is a synchronous API — and its
+rejection is recorded as a warning on the manifest and in the marker, which are re-shipped when it
+lands. The marker is written after the hook for the same reason it now includes the hook's files.
+stdout is redirected to stderr for the duration of the hook and restored afterwards, so the payload
+channel stays pure. Verified: 6 end-to-end tests through the built CLI, including a rejected async
+hook that must exit 0 with a parseable payload and a recorded warning.
+
+### `validate` would read any file the manifest named
+
+A manifest is an input, and `validate` treated it as trustworthy. It joined `parts[].filename`
+onto `snapshot/parts` with `path.join`, which accepts `../../../some/file` and absolute paths, so a
+manifest naming a file outside the snapshot made `validate` read that file and then report its byte
+size — a read primitive, with a size oracle for the file it named, reachable by anyone who can
+write a manifest. Part names are bare names by construction, so a name that does not stay inside
+`snapshot/parts` is now a drift error and is never read. `explain`'s text form also re-spells
+control and bidi characters in paths, layer names, kind names and part names, because a committed
+`snapshot.config.*` can put a U+202E in a layer name and the terminal renders it.
+
+Verified: 5 new tests — a traversal name, an absolute name, the byte-size oracle specifically
+proven closed, a legitimate snapshot still current, and control characters escaped while accented
+text passes through untouched.
+
+### Also in this release
+
+- **`--watch` reloads a module config.** Node's ESM loader caches by URL, so `snapshot.config.ts`
+  (exactly what `init` writes) was never re-read: an edited config was ignored and a broken one
+  was invisible while the run printed `passed`. The loader now evicts the CJS cache and imports
+  with a per-load token. 6 tests.
+- **`--watch` never drops an edit.** A change during a run, a change inside the post-run quiet
+  window, and a source directory whose name matched the outDir basename were all lost silently
+  while the manifest kept reporting `Integrity: passed`. 6 tests plus live repros.
+- **JWTs are redacted.** Only three-segment JWTs with long signatures were masked; two-segment,
+  padded, empty-signature and short-signature forms reached the parts verbatim. 8 tests.
+- **Display hygiene.** Control, C1 and bidi characters in file and layer names are escaped wherever
+  a path is displayed (parts, tree, navigation, audit, explain), raw bytes are kept in
+  `manifest.json` and file bodies, and the snapshot README and part header say that contents are
+  untrusted repository data. 12 tests.
+- **The hint after `init` is runnable.** It printed `npm run snapshot` with no `package.json`, and
+  a bare package name on re-runs. 4 tests. The scaffolder now records the tool in
+  `devDependencies` at its own version instead of resolving it from the registry on first run.
+  7 tests.
+- **The linter ignores prose.** Content rules matched comments, so documenting why `console` is
+  banned failed the lint that bans it.
+
 ---
 
 ## 4.0.9
