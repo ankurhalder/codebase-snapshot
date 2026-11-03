@@ -319,6 +319,22 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     command = resolved;
   }
 
+  // `generate --mode validate` used to run generate and ignore the flag; `--mode bogus`
+  // with a command word was accepted too. A mode that contradicts the command is a
+  // usage error, and an unknown mode is an error either way.
+  if (explicitMode !== undefined) {
+    const resolvedMode = COMMAND_ALIASES.get(explicitMode);
+    if (!resolvedMode) {
+      throw new UsageError(
+        `Unknown --mode "${explicitMode}". Expected one of: ${Array.from(COMMAND_ALIASES.keys()).join(", ")}.`
+      );
+    }
+    if (firstPositional !== undefined && resolvedMode !== command) {
+      throw new UsageError(
+        `--mode ${explicitMode} contradicts the command "${firstPositional}". Pass one or the other.`
+      );
+    }
+  }
   const expectedArgs = COMMAND_ARITY[command];
   if (args.length !== expectedArgs) {
     if (command === "explain") {
@@ -339,6 +355,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     throw new UsageError(`--format must be "text" or "json", received "${rawFormat}".`);
   }
 
+  let onlyNamesMonolith = false;
   const rawSkip = values["skip-artifacts"];
   const rawOnly = values["only-artifacts"];
   if (rawSkip !== undefined && rawOnly !== undefined) {
@@ -347,6 +364,9 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
   let skipArtifacts: string[] | undefined;
   if (rawOnly !== undefined) {
     const keep = parseArtifactList(String(rawOnly), "--only-artifacts");
+    // Asking to write only the monolith used to write nothing at all: the artifact was
+    // not enabled, so it was skipped like everything else. Naming it enables it.
+    onlyNamesMonolith = keep.includes("monolith");
     skipArtifacts = (ARTIFACT_NAMES as ReadonlyArray<string>).filter(
       (name) => !keep.includes(name)
     );
@@ -420,7 +440,8 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     target: values.target === undefined ? undefined : String(values.target),
     cwd: values.cwd === undefined ? process.cwd() : path.resolve(String(values.cwd)),
     outDir: values["out-dir"] === undefined ? undefined : String(values["out-dir"]),
-    includeMonolith: values["include-monolith"] === true ? true : undefined,
+    includeMonolith:
+      values["include-monolith"] === true || onlyNamesMonolith === true ? true : undefined,
     includeSensitiveFiles: values["include-sensitive-files"] === true ? true : undefined,
     maxPartBytes: parseByteOption(
       values["max-part-bytes"] as string | undefined,

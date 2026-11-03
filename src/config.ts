@@ -19,6 +19,9 @@ import type {
   SnapshotConfig,
 } from "./types.js";
 
+/** Carries the directory a config was loaded from, so `resolveConfig` can use it. */
+export const CONFIG_DIR_SYMBOL: unique symbol = Symbol.for("codebase-snapshot.configDir");
+
 const CONFIG_FILENAMES = [
   "snapshot.config.ts",
   "snapshot.config.js",
@@ -442,6 +445,15 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
 
 export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null> {
   const loaded = await loadConfigFileDetailed(cwd);
+  // Remember where the config came from. `resolveConfig(await loadConfigFile(dir))` is the
+  // documented flow, and without this it generated into process.cwd() instead of that dir.
+  if (loaded.config && loaded.file && typeof loaded.config === "object") {
+    Object.defineProperty(loaded.config, CONFIG_DIR_SYMBOL, {
+      value: path.dirname(loaded.file),
+      enumerable: false,
+      configurable: true,
+    });
+  }
   // A config that exists but cannot be read is an error, not "no config": returning
   // null here made `resolveConfig(await loadConfigFile(cwd))` silently generate on
   // defaults while every setting the caller wrote was ignored.
@@ -896,7 +908,12 @@ export function resolveConfig(
   cliOptions?: Partial<CliOptions>,
   baseDir?: string
 ): ResolvedSnapshotConfig {
-  const cwd = resolveCandidateCwd(userConfig ?? null, cliOptions, baseDir);
+  // The directory the config was loaded from wins over process.cwd(): a config that
+  // travels to another directory must not silently scan the caller's project.
+  const configDir = (userConfig as Record<string | symbol, unknown> | null)?.[CONFIG_DIR_SYMBOL] as
+    | string
+    | undefined;
+  const cwd = resolveCandidateCwd(userConfig ?? null, cliOptions, baseDir ?? configDir);
 
   // A forced preset must exist: silently falling back would leave the developer
   // believing their layers are in effect when they are not.
@@ -1048,7 +1065,11 @@ export function resolveConfig(
     hooks: resolveHooks(userConfig?.hooks),
     layers,
     kinds,
-    excludePatterns: resolveExcludePatterns(userConfig?.excludePatterns),
+    // `exclude` is the flag spelling of the same setting; writing it in a config used to
+    // be ignored without a word.
+    excludePatterns: resolveExcludePatterns(
+      userConfig?.excludePatterns ?? (userConfig as { exclude?: unknown } | null)?.exclude
+    ),
     secretRules,
   });
 }

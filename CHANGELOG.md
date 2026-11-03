@@ -4,6 +4,36 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.7
+
+Wave-2 findings: nine independent critics, one dimension each.
+
+### Credentials
+- **A branch name is user input.** `git checkout -b "release2/<ghp_…>"` copied the token raw into
+  `manifest.git.branch`, the README and the audit report — a channel that never passed through
+  redaction. It is masked now.
+- **Azure had no rules.** DevOps PATs, AD client secrets (`…8Q~…`) and SAS `sig=` values reached
+  parts and both monoliths verbatim. Added.
+- **Missing prefixes** in otherwise exhaustive alternations: `ABIA` for AWS bearer keys, `glrt-`
+  (GitLab runner), `hvb.` (Vault batch), `1//0…` (GCP refresh), `sk_test_` (Stripe test).
+- **`exclude` in a config** is the flag's spelling of `excludePatterns` and used to be ignored
+  silently, so a directory the user excluded was still emitted. It is accepted as an alias now.
+
+### The documented programmatic flow scanned the wrong project
+`resolveConfig(await loadConfigFile(dir))` ignored `dir` and generated into `process.cwd()`, exit 0.
+The loaded config now carries the directory it came from (non-enumerable), so the documented flow
+scans the project the config describes.
+
+### Small lies in the CLI
+- `--mode` was discarded when a command word was present: `generate --mode validate` wrote a
+  snapshot. A contradiction is now exit 2, and an unknown mode is an error either way.
+- `--only-artifacts monolith` wrote nothing but the marker, because the artifact was off. Naming
+  the monolith now enables it.
+- `init` wrote `"snapshot": "codebase-snapshot generate"` into `package.json` without installing the
+  package, so the very next line it printed (`npm run snapshot`) failed with "not recognized".
+  The scripts are `npx @ankurhalder/codebase-snapshot …` now, which works either way.
+---
+
 ## 4.0.6
 
 ### A NUL byte past the first 8 KB

@@ -164,11 +164,11 @@ function addScripts(cwd: string, notes: string[]): string[] {
   >;
   const added: string[] = [];
   if (!scripts.snapshot) {
-    scripts.snapshot = "codebase-snapshot generate";
+    scripts.snapshot = "npx @ankurhalder/codebase-snapshot generate";
     added.push("snapshot");
   }
   if (!scripts["snapshot:validate"]) {
-    scripts["snapshot:validate"] = "codebase-snapshot validate";
+    scripts["snapshot:validate"] = "npx @ankurhalder/codebase-snapshot validate";
     added.push("snapshot:validate");
   }
   if (added.length === 0) return [];

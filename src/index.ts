@@ -52,7 +52,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.6";
+export const GENERATOR_VERSION = "4.0.7";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -1379,7 +1379,9 @@ export function generateSnapshot(
       name: GENERATOR_NAME,
       version: GENERATOR_VERSION,
     },
-    git: gitInfo,
+    // A branch name is user input and can carry a token: it reaches the manifest,
+    // the README and the audit report.
+    git: { ...gitInfo, branch: maskPathText(gitInfo.branch, config.secretRules) },
     budgets: {
       maxPartBytes: config.maxPartBytes,
       largeFileBytes: config.largeFileBytes,

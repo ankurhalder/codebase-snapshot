@@ -88,7 +88,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
   },
   {
     rule: "aws-access-key-id",
-    pattern: /(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA)[0-9A-Z]{16}/,
+    pattern: /(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASCA|ABIA)[0-9A-Z]{16}/,
   },
   {
     // The name is no longer limited to the three snake_case spellings: an
@@ -130,7 +130,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // Hub), `hf_` (HuggingFace), `ya29.` (Google OAuth access token).
     rule: "known-vendor-token-prefix",
     pattern:
-      /\b(?:glpat-[A-Za-z0-9_-]{20,64}|hvs\.[A-Za-z0-9_-]{20,128}|s\.[A-Za-z0-9]{20,64}|whsec_[A-Za-z0-9]{20,64}|dckr_pat_[A-Za-z0-9_-]{20,64}|hf_[A-Za-z0-9]{30,64}|ya29\.[A-Za-z0-9_-]{20,128})/,
+      /\b(?:glpat-[A-Za-z0-9_-]{20,64}|glrt-[A-Za-z0-9_-]{20,64}|hvs\.[A-Za-z0-9_-]{20,128}|hvb\.[A-Za-z0-9_-]{20,128}|s\.[A-Za-z0-9]{20,64}|whsec_[A-Za-z0-9]{20,64}|dckr_pat_[A-Za-z0-9_-]{20,64}|hf_[A-Za-z0-9]{30,64}|ya29\.[A-Za-z0-9_-]{20,128}|sk_test_[A-Za-z0-9]{16,64}|1\/\/0[A-Za-z0-9_-]{20,64})/,
   },
   {
     rule: "slack-webhook-url",

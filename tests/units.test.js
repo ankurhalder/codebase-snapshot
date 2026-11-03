@@ -838,8 +838,8 @@ test("runInit writes a config from flags without a TTY", async () => {
   assert.ok(result.configText.includes('maxPartBytes: "120k"'));
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-  assert.equal(pkg.scripts.snapshot, "codebase-snapshot generate");
-  assert.equal(pkg.scripts["snapshot:validate"], "codebase-snapshot validate");
+  assert.equal(pkg.scripts.snapshot, "npx @ankurhalder/codebase-snapshot generate");
+  assert.equal(pkg.scripts["snapshot:validate"], "npx @ankurhalder/codebase-snapshot validate");
   assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));
 
   await assert.rejects(() => runInit({ cwd: dir, yes: true, io: quietIO }), /already exists/);
