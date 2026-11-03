@@ -285,6 +285,12 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       if (snapshotKey && typeof snapshotKey === "object") {
         return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings, errors };
       }
+      // A wrong-typed key is a mistake but not proof of intent — plenty of other
+      // tools use a "snapshot" key — so warn rather than fail the run. Silently
+      // ignoring it was the worst of the three options.
+      if (snapshotKey !== undefined) {
+        warnings.push(`${pkgJsonPath}: the "snapshot" key must be an object; it was ignored.`);
+      }
     } catch (err) {
       const message = (err as Error).message;
       warnings.push(message);

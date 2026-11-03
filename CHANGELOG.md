@@ -4,6 +4,49 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 2.1.1
+
+A correctness and contract pass driven by an independent CLI audit of 2.1.0. No new
+features; every item below was reproduced against the released build first.
+
+### Fixed
+
+- **`validate` never printed the bookkeeping mismatches it counted.** It reported
+  "1 manifest bookkeeping value(s) disagree" without saying which one, while
+  `--format json` carried the detail. The text output now names them
+  (`counts.totalFiles: manifest 999 vs actual 5`).
+- **`generate` claimed artifacts it had not written.** `--only-artifacts parts` still
+  printed a `Reports:` line and a `Manifest:` line; `--skip-artifacts manifest` still
+  printed `Manifest:`. The summary now reflects the selection, and an all-disabled run
+  says so instead of listing files that do not exist.
+- **`diff` leaked raw Node errors** — `ENOENT: no such file or directory, stat …` for a
+  missing path, and `Cannot read properties of undefined (reading 'totalFiles')` for a
+  parseable but foreign manifest. Both are actionable messages now.
+- **`validate` double-counted a tracked-but-deleted file**: it appeared in
+  `missingOnDisk` twice, so the text said "2 file(s) no longer exist" for one file.
+- **A bad `--cwd` exited 1** although the documented contract reserves 2 for usage
+  errors. A missing directory or a file passed as `--cwd` is now exit 2.
+- **`--max-part-bytes -5`** produced the parser's "option argument is ambiguous" text;
+  it now says the value looks like another flag and points at the `--option=value` form.
+- **Empty option values silently meant "use the default"**, so `--out-dir "$UNSET"`
+  wrote to `./snapshot` instead of failing. Every string option now rejects an empty
+  value with a usage error.
+- **A detached HEAD was recorded as branch `"HEAD"`**, then `validate` warned about it
+  forever. A detached HEAD cannot name a branch, so the configured fallback is used.
+- **A read-only output directory produced a bare `EPERM`**. It now says the directory is
+  not writable and suggests `--out-dir`; the previous snapshot still survives.
+- **A wrong-typed `"snapshot"` key in `package.json` was silently dropped.** It now
+  warns. It stays non-fatal on purpose — other tools use that key too.
+- The all-artifacts-disabled warning claimed the directory "will be empty", which
+  stopped being true once the ownership marker was introduced.
+
+### Tests
+
+130 pass (119 before), including a POSIX-only check that a read-only output directory
+fails with a clear message.
+
+---
+
 ## 2.1.0
 
 Multi-project support and an interactive setup.

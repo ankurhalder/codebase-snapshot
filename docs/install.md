@@ -82,7 +82,7 @@ if the generator version is reproducible.
 
 ```bash
 npx @ankurhalder/codebase-snapshot@2 generate
-pnpm dlx @ankurhalder/codebase-snapshot@2.1.0 generate
+pnpm dlx @ankurhalder/codebase-snapshot@2.1.1 generate
 ```
 
 ## Verified clients

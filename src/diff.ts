@@ -77,9 +77,16 @@ export function compareManifests(before: Manifest, after: Manifest): ManifestDif
 
 /** Loads a manifest from a snapshot directory or a `manifest.json` path. */
 export function loadManifest(target: string): Manifest {
-  const manifestPath = fs.statSync(target).isDirectory()
-    ? path.join(target, "manifest.json")
-    : target;
+  // `statSync` used to be unguarded, so `diff nope nope` printed a raw
+  // "ENOENT: no such file or directory, stat ..." instead of saying what failed.
+  let isDirectory: boolean;
+  try {
+    isDirectory = fs.statSync(target).isDirectory();
+  } catch {
+    throw new Error(`No snapshot found at ${target}: the path does not exist.`);
+  }
+
+  const manifestPath = isDirectory ? path.join(target, "manifest.json") : target;
 
   let raw: string;
   try {
@@ -97,6 +104,11 @@ export function loadManifest(target: string): Manifest {
 
   if (!parsed || !Array.isArray(parsed.files)) {
     throw new Error(`${manifestPath} is not a snapshot manifest (no "files" array).`);
+  }
+  // `counts` is read by the summary, so a manifest without it used to crash with
+  // "Cannot read properties of undefined (reading 'totalFiles')".
+  if (!parsed.counts || typeof parsed.counts !== "object") {
+    throw new Error(`${manifestPath} is not a snapshot manifest (no "counts" object).`);
   }
   return parsed;
 }

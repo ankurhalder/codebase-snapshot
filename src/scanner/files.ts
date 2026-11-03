@@ -30,14 +30,18 @@ export interface CollectResult {
 
 export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
   try {
-    const branch =
-      childProcess
-        .execSync("git rev-parse --abbrev-ref HEAD", {
-          cwd,
-          stdio: ["ignore", "pipe", "ignore"],
-          encoding: "utf8",
-        })
-        .trim() || fallbackBranch;
+    // `--abbrev-ref HEAD` prints the literal string "HEAD" on a detached HEAD,
+    // which is a normal CI state. Recording it as a branch produced misleading
+    // metadata and a permanent "generated on branch HEAD" warning from validate.
+    // A detached HEAD cannot name a branch, which is what the fallback is for.
+    const reported = childProcess
+      .execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
+      })
+      .trim();
+    const branch = !reported || reported === "HEAD" ? fallbackBranch : reported;
 
     const commit =
       childProcess
