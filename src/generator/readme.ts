@@ -1,5 +1,5 @@
 import type { Manifest } from "../types.js";
-import { UNTRUSTED_CONTENT_NOTICE } from "../terminal.js";
+import { UNTRUSTED_CONTENT_NOTICE, escapeControls } from "../terminal.js";
 
 export function generateReadme(manifest: Manifest): string {
   const lines: string[] = [
@@ -39,7 +39,7 @@ export function generateReadme(manifest: Manifest): string {
   for (const part of manifest.parts) {
     const sizeKb = (part.byteSize / 1024).toFixed(1);
     lines.push(
-      `| [${part.filename}](parts/${part.filename}) | ${part.fileCount} | ${sizeKb} KB | ${part.layersCovered.join(", ")} |`
+      `| [${part.filename}](parts/${part.filename}) | ${part.fileCount} | ${sizeKb} KB | ${escapeControls(part.layersCovered.join(", "))} |`
     );
   }
 

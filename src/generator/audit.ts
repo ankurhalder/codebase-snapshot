@@ -130,7 +130,7 @@ export function generateAuditReport(
     (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
   )) {
     const pct = ((count / totalFiles) * 100).toFixed(1);
-    lines.push(`| \`${layer}\` | ${count} | ${pct}% |`);
+    lines.push(`| \`${mask(layer)}\` | ${count} | ${pct}% |`);
   }
   lines.push("");
 
@@ -144,7 +144,7 @@ export function generateAuditReport(
     (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
   )) {
     const pct = ((count / totalFiles) * 100).toFixed(1);
-    lines.push(`| \`${kind}\` | ${count} | ${pct}% |`);
+    lines.push(`| \`${mask(kind)}\` | ${count} | ${pct}% |`);
   }
   lines.push("");
 

@@ -28,6 +28,13 @@ const JWT = {
   ].join("."),
   twoSegments: ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0"].join("."),
   padded: "eyJhbGciOiJIUzI1NiJ9=.eyJzdWIiOiIxMjM0NTY3ODkwIn0=.abc123=",
+  // The form a URL encoder produces when it escapes `.` — it used to walk
+  // straight past the rule.
+  percentSeparators: [
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+    "abc123",
+  ].join("%2E"),
 };
 
 const scan = (content) => scanAndRedactSecrets(content, DEFAULT_SECRET_PATTERNS, "fixture.ts");
@@ -76,6 +83,19 @@ test("a JWT inside a URL or an Authorization header is masked, the context survi
   const redactedHeader = scan(header).redacted;
   assert.equal(redactedHeader.includes(JWT.shortSignature), false);
   assert.ok(redactedHeader.includes('const h = "Authorization: Bearer '));
+});
+
+test("percent-encoded separators do not shake the rule off", () => {
+  // A URL encoder that escapes `.` turns `a.b.c` into `a%2Eb%2Ec`; the token is
+  // the same credential and must still be masked, with the query string intact.
+  const encoded = JWT.percentSeparators;
+  assert.equal(encoded.includes("."), false, "the fixture must really be percent-encoded");
+  const url = `const url = "https://api.example.com/v1?access_token=${encoded}&expires=3600";`;
+  const { redacted, findings } = scan(url);
+  assert.equal(redacted.includes(encoded), false, "the percent-encoded JWT must not survive");
+  assert.ok(redacted.includes("https://api.example.com/v1?access_token="));
+  assert.ok(redacted.includes("&expires=3600"));
+  assert.ok(findings.some((finding) => finding.rule === "jwt-token"));
 });
 
 test("source that merely looks like a JWT is left alone", () => {

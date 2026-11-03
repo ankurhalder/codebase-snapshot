@@ -93,11 +93,13 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // The signature is optional (an `alg: none` token has none) and may be much
     // shorter than ten characters — `eyJ….eyJ….abc123` is the shape that used to
     // reach `parts/*.md` unwrapped. Padding is accepted so a padded token is
-    // masked whole instead of half-matched. Quantifiers stay bounded (1024, as
-    // before) so an `eyJ`-dense line cannot go quadratic.
+    // masked whole instead of half-matched, and a dot written as `%2E` — the form
+    // a URL encoder produces, which used to walk straight past this rule — is
+    // accepted as a separator. Quantifiers stay bounded (1024, as before) so an
+    // `eyJ`-dense line cannot go quadratic.
     rule: "jwt-token",
     pattern:
-      /eyJ[A-Za-z0-9_-]{8,1024}={0,2}\.eyJ[A-Za-z0-9_-]{8,1024}={0,2}(?:\.[A-Za-z0-9_-]{1,1024}={0,2})?/,
+      /eyJ[A-Za-z0-9_-]{8,1024}={0,2}(?:\.|%2[eE])eyJ[A-Za-z0-9_-]{8,1024}={0,2}(?:(?:\.|%2[eE])[A-Za-z0-9_-]{1,1024}={0,2})?/,
   },
   {
     rule: "aws-access-key-id",
