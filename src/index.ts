@@ -1425,18 +1425,21 @@ export function generateSnapshot(
 
     let summary: FileEntry["summary"];
     let summaryQuality: SummaryQuality | undefined;
-    if (SKIP_PREVIEW_SUMMARIES && isPreviewTruncated && hasStructuralSummary(relativePath)) {
-      // The body in the snapshot is a head/tail preview, so a whole-file summary
-      // would describe lines no artifact carries. Skipping it is also the single
-      // largest cost saving on a big source file: masking tens of thousands of
-      // identifiers for a summary the partitioner discards.
-      previewSummaryPaths.push(relativePath);
-    } else if (rawContent.length > SUMMARY_MAX_SOURCE_CHARS) {
+    // Size first, then preview: a 3 MB file is both, and "exceeds 2 MB" is the more useful of the
+    // two true statements — it names the ceiling that kept the run bounded. The preview rule then
+    // covers the 200 KB–2 MB band, where the file is small enough to have been parsed before.
+    if (rawContent.length > SUMMARY_MAX_SOURCE_CHARS) {
       // A structural summary of a file this size costs far more memory than the file itself — the
       // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
       // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
       // describe a file the snapshot does not contain. Recorded, never silent.
       oversizeSummaryPaths.push(relativePath);
+    } else if (SKIP_PREVIEW_SUMMARIES && isPreviewTruncated && hasStructuralSummary(relativePath)) {
+      // The body in the snapshot is a head/tail preview, so a whole-file summary
+      // would describe lines no artifact carries. Skipping it is also the single
+      // largest cost saving on a big source file: masking tens of thousands of
+      // identifiers for a summary the partitioner discards.
+      previewSummaryPaths.push(relativePath);
     } else {
       try {
         // Always parse the original source. Masking a credential-shaped identifier such as
