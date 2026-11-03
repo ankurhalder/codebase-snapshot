@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import { countLines, truncateToBytes } from "./preview.js";
+import { escapeControls, UNTRUSTED_CONTENT_NOTICE } from "../terminal.js";
 import type { FileEntry, PartFileEntry, PartMetadata } from "../types.js";
 
 export interface PartitionedPart {
@@ -9,11 +10,12 @@ export interface PartitionedPart {
 }
 
 /**
- * Worst-case header overhead for a chunk: title, prev/next, counts, fingerprint
- * and the capped layer/kind summary lines. Reserving it up front guarantees that
- * a chunk holding a single pre-truncated file always fits.
+ * Worst-case header overhead for a chunk: title, prev/next, counts, fingerprint,
+ * the capped layer/kind summary lines and the untrusted-content notice.
+ * Reserving it up front guarantees that a chunk holding a single pre-truncated
+ * file always fits.
  */
-const HEADER_RESERVE_BYTES = 2048;
+const HEADER_RESERVE_BYTES = 2048 + Buffer.byteLength(UNTRUSTED_CONTENT_NOTICE, "utf8") + 8;
 const MIN_SECTION_BUDGET_BYTES = 512;
 const MAX_SPLIT_PASSES = 64;
 
@@ -148,6 +150,8 @@ export function renumberParts(
       `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
       `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
       "",
+      UNTRUSTED_CONTENT_NOTICE,
+      "",
       "## Files",
       "",
       `${listFence}text`,
@@ -189,18 +193,18 @@ function capValue(value: string, max: number): string {
   return `${value.slice(0, half)}…${value.slice(value.length - half)}`;
 }
 
-const capMetadata = (value: string): string => capValue(value, METADATA_VALUE_MAX);
+const capMetadata = (value: string): string => capValue(escapeControls(value), METADATA_VALUE_MAX);
 
 /**
- * Control characters in a path would break the line-oriented part layout: a
- * newline inside a filename could start a line, and a line that starts with a
- * backtick run can close the `## Files` fence (see {@link fenceForText}).
- * Paths are legal UTF-8, so this is reachable with an ordinary `git mv`.
+ * Paths reach the `## Files` list, the `### FILE:` heading and the navigation
+ * index, so a control character in a name is rendered as `\uXXXX` instead of
+ * being emitted raw: a bidi override visually reorders the line, a C1 CSI drives
+ * the terminal, and a newline would break the line-oriented layout. Escaping
+ * also keeps the `## Files` fence safe (see {@link fenceForText}). Paths are
+ * legal UTF-8, so this is reachable with an ordinary `git mv`.
  */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
-
 const displayPath = (value: string): string =>
-  capValue(value.replace(CONTROL_CHARS, " "), DISPLAY_PATH_MAX);
+  capValue(escapeControls(value), DISPLAY_PATH_MAX);
 
 /** Top-N `Layer (count)` / `Kind (count)` summary used in a part header. */
 function topEntries(counts: Record<string, number>, limit: number): string {
@@ -352,6 +356,8 @@ function renderGroups(
       `- Content Fingerprint: ${contentFingerprint || "none"}`,
       `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
       `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
+      "",
+      UNTRUSTED_CONTENT_NOTICE,
       "",
       "## Files",
       "",

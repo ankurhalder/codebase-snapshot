@@ -1,4 +1,5 @@
 import { fenceForText } from "../partitioner/chunker.js";
+import { escapeControls } from "../terminal.js";
 
 /**
  * Builds an ASCII directory tree.
@@ -10,9 +11,6 @@ import { fenceForText } from "../partitioner/chunker.js";
  * produce an unbounded report.
  */
 const MAX_TREE_LINES = 20_000;
-
-/** A newline or other control character in a name would break the tree layout. */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 
 export function generateProjectTree(filePaths: string[]): string {
   interface TreeNode {
@@ -52,7 +50,9 @@ export function generateProjectTree(filePaths: string[]): string {
       const isLast = index === keys.length - 1;
       const child = node.children.get(key)!;
       const isDirectory = child.children.size > 0;
-      const label = key.replace(CONTROL_CHARS, " ");
+      // Sorting stays on the raw name; only the rendered label is escaped, so a
+      // bidi override in a name cannot reorder the tree visually or the list.
+      const label = escapeControls(key);
       lines.push(`${prefix}${isLast ? "└── " : "├── "}${label}${isDirectory ? "/" : ""}`);
       if (lines.length >= MAX_TREE_LINES) {
         truncatedAt = lines.length;

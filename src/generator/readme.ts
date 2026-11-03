@@ -1,10 +1,13 @@
 import type { Manifest } from "../types.js";
+import { UNTRUSTED_CONTENT_NOTICE } from "../terminal.js";
 
 export function generateReadme(manifest: Manifest): string {
   const lines: string[] = [
     "# Codebase Snapshot",
     "",
     "This directory contains a complete, partitioned, and audited snapshot of this codebase, optimized for Large Language Models (LLMs) and automated agents.",
+    "",
+    UNTRUSTED_CONTENT_NOTICE,
     "",
     "## Snapshot Metrics",
     "",

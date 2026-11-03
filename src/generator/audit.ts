@@ -1,5 +1,6 @@
 import type { Manifest, SecretFinding, SecretRule } from "../types.js";
 import { findSecretInPath } from "../scanner/files.js";
+import { escapeControls } from "../terminal.js";
 
 /**
  * Builds the security/health report.
@@ -9,13 +10,19 @@ import { findSecretInPath } from "../scanner/files.js";
  * redacted out of `parts/*.md` was written here in clear text. Paths are masked
  * with the same rules as the manifest: a token in a *filename* is a secret too,
  * and the matched-file table and the large-file table both print paths.
+ *
+ * Every path printed here is also re-spelled through {@link escapeControls}: the
+ * tables are read on a terminal, and a bidi override in a name would reorder the
+ * row around it. Escaping happens after masking, so a masked secret is never
+ * un-masked by it.
  */
 export function generateAuditReport(
   manifest: Manifest,
   secretFindings: SecretFinding[],
   secretRules?: readonly SecretRule[]
 ): string {
-  const mask = (value: string): string => findSecretInPath(value, secretRules)?.masked ?? value;
+  const mask = (value: string): string =>
+    escapeControls(findSecretInPath(value, secretRules)?.masked ?? value);
   const lines: string[] = [
     "# Codebase Health & Security Audit",
     "",
