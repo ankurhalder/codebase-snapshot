@@ -86,7 +86,6 @@ Production-grade LLM codebase snapshot generator, auditor, and AST partitioner
 
 Usage:
   codebase-snapshot [command] [options]
-  snap [command] [options]
 
 Commands:
   generate (default)   Generate a complete partitioned codebase snapshot
@@ -365,7 +364,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       throw new UsageError(
         `${initOnly.join(", ")} ${initOnly.length === 1 ? "is" : "are"} only valid with \`init\`. ` +
           `To scope \`${command}\`, set include/excludePatterns/preset in snapshot.config.ts ` +
-          `(or run \`snap init\` to generate one).`
+          `(or run \`codebase-snapshot init\` to generate one).`
       );
     }
   }
@@ -528,7 +527,7 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
  * Prints the bundled agent skill, or installs it into the repository.
  *
  * Printing goes to **stdout** (not the usual stderr progress stream) so an agent
- * can capture the skill directly: `snap skill > SKILL.md`.
+ * can capture the skill directly: `codebase-snapshot skill > SKILL.md`.
  */
 function runSkillCommand(invocation: ParsedInvocation): number {
   if (!invocation.install) {

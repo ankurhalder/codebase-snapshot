@@ -15,7 +15,7 @@ export const AGENTS_MARKER_END = "<!-- codebase-snapshot:skill:end -->";
  * Written for an agent that has never heard of this tool: it says what the tool
  * is for, gives the exact commands, and tells the agent to read the
  * machine-readable contract before acting. It is generated from a template rather
- * than shipped as a file so that `snap skill`, `snap skill --install` and the
+ * than shipped as a file so that `codebase-snapshot skill`, `codebase-snapshot skill --install` and the
  * bundled CLI can never drift from each other or from the package version.
  */
 export function renderSkill(): string {
@@ -39,10 +39,10 @@ another model, and reading files one by one would not fit in context.
 This tool is a Node CLI. It needs **Node.js 18 or newer**. You do not need to install it
 globally, and you do not need to clone anything.
 
-**Always pin the tag** — \`npx ${PACKAGE_NAME}@latest <command>\`. A bare scoped spec can
-resolve to a placeholder manifest with no executable on some npm builds and exit 0
-printing nothing; the pinned form cannot. If a command exits 0 with no output, that is
-the cause, not a broken repository.
+**Pin the tag** — \`npx ${PACKAGE_NAME}@latest <command>\` — when you need the same version on
+every machine. The bare package name works too: this package ships exactly one executable,
+which is what lets npm pick it. If a command exits 0 printing nothing, the executable was
+not resolved — clear the npm cache and retry; do not assume the repository is broken.
 
 ## Step by step
 

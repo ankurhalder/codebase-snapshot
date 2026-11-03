@@ -54,9 +54,9 @@ npx @ankurhalder/codebase-snapshot init --preset react-vite --max-part-bytes 120
 - **TypeScript AST extraction** — directives, imports, exports (including `export *` and anonymous
   defaults), functions, classes, interfaces, types, enums, components, hooks, and route handlers.
 - **Structured summaries** — JSON key shapes and Markdown headings, computed from redacted text.
-- **Built for AI agents** — `snap describe --format json` returns a machine-readable
+- **Built for AI agents** — `codebase-snapshot describe --format json` returns a machine-readable
   contract (workflow, every option and default, exit codes, presets, safety rules), and
-  `snap skill --install` writes the bundled agent skill into `AGENTS.md`,
+  `codebase-snapshot skill --install` writes the bundled agent skill into `AGENTS.md`,
   `.claude/skills/` and `.cursor/rules/` so a zero-context agent discovers the tool
   automatically. See [docs/agent.md](docs/agent.md).
 - **Zero-config presets** — auto-detects Next.js, Vite, Node/Express/Nest, and plain TypeScript.
@@ -122,8 +122,9 @@ npx @ankurhalder/codebase-snapshot@latest generate     # write ./snapshot/
 npx @ankurhalder/codebase-snapshot@latest validate     # exit 0 = matches disk
 ```
 
-Pin the tag (`@latest` or `@2`): a bare scoped spec can resolve to a placeholder manifest
-with no executable on some npm builds and exit 0 printing nothing.
+The bare form works too — `npx @ankurhalder/codebase-snapshot generate` — because the
+package ships exactly one executable, which is what lets npm resolve it. Pin `@latest`
+(or `@3`) when you need the same build on every machine.
 
 Details, including the contract schema and the skill's install targets, are in
 [docs/agent.md](docs/agent.md).
@@ -134,7 +135,7 @@ Details, including the contract schema and the skill's install targets, are in
 
 ```bash
 codebase-snapshot [command] [options]
-snap [command] [options]
+codebase-snapshot [command] [options]
 ```
 
 Every option accepts both `--opt value` and `--opt=value`. Human-readable progress goes to **stderr**;
