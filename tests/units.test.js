@@ -810,7 +810,10 @@ test("the generated config exposes every setting at its default", () => {
     assert.ok(new RegExp(`\\b${artifact}:`).test(text), `config should mention artifact ${artifact}`);
   }
 
-  assert.ok(text.includes('import { defineConfig } from "@ankurhalder/codebase-snapshot"'));
+  // Deliberately no package import: `snap init` usually runs through npx, where
+  // the package is not installed, and an import made the file unloadable.
+  assert.ok(text.includes("export default {"));
+  assert.ok(!text.includes("defineConfig"));
   assert.ok(text.includes("// ── Size"), "sections are grouped for scanning");
 });
 
@@ -821,7 +824,7 @@ test("the minimal config writes only what differs from the defaults", () => {
   assert.ok(!terse.includes("layersMode"));
 
   const blank = renderMinimalConfig(DEFAULT_ANSWERS);
-  assert.ok(blank.includes("defineConfig({})"), "no changes means an empty config");
+  assert.ok(blank.includes("export default {};"), "no changes means an empty config");
 });
 
 test("runInit writes a config from flags without a TTY", async () => {

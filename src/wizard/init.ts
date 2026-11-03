@@ -64,6 +64,28 @@ const CONFIG_CANDIDATES = [
   ".snapshotrc",
 ];
 
+/**
+ * Picks the config filename this project can actually load.
+ *
+ * A `.ts` config is only usable when Node can strip types *and* the package is an
+ * ES module: Node applies the enclosing `package.json` `type` field to a `.ts`
+ * file, so an `export default` config in a CommonJS project fails to load. That
+ * made `snap init` write a file the next `snap generate` refused to read. `.mjs`
+ * works everywhere, so it is the safe default.
+ */
+export function chooseConfigFileName(cwd: string): string {
+  if (!supportsTypeScriptImports()) return "snapshot.config.mjs";
+
+  const pkgPath = path.join(cwd, "package.json");
+  if (!fs.existsSync(pkgPath)) return "snapshot.config.mjs";
+  try {
+    const parsed = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { type?: unknown };
+    return parsed.type === "module" ? "snapshot.config.ts" : "snapshot.config.mjs";
+  } catch {
+    return "snapshot.config.mjs";
+  }
+}
+
 const SIZE_CHOICES: Array<{ value: string; label: string; hint: string }> = [
   { value: "60k", label: "Small", hint: "60 KB · ~15k tokens · tight context windows" },
   { value: "120k", label: "Medium", hint: "120 KB · ~30k tokens · recommended" },
@@ -304,7 +326,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
 
   const configText = options.minimal ? renderMinimalConfig(answers) : renderConfig(answers);
-  const configName = supportsTypeScriptImports() ? "snapshot.config.ts" : "snapshot.config.mjs";
+  const configName = chooseConfigFileName(options.cwd);
   const configPath = path.join(options.cwd, configName);
 
   if (options.dryRun) {

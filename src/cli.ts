@@ -9,11 +9,23 @@ import { PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
 import { getPreset, unknownPresetMessage } from "./presets/index.js";
+import { buildAgentContract, renderContractText } from "./agent/contract.js";
+import type { SkillTarget } from "./agent/install-skill.js";
+import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
+import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
 
 const VERSION = GENERATOR_VERSION;
 
-type Command = "generate" | "validate" | "report" | "init" | "explain" | "diff";
+type Command =
+  | "generate"
+  | "validate"
+  | "report"
+  | "init"
+  | "explain"
+  | "diff"
+  | "describe"
+  | "skill";
 
 const COMMAND_ALIASES = new Map<string, Command>([
   ["generate", "generate"],
@@ -23,6 +35,8 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["init", "init"],
   ["explain", "explain"],
   ["diff", "diff"],
+  ["describe", "describe"],
+  ["skill", "skill"],
 ]);
 
 /** How many positional arguments each command accepts after its name. */
@@ -33,6 +47,8 @@ const COMMAND_ARITY: Record<Command, number> = {
   init: 0,
   explain: 1,
   diff: 2,
+  describe: 0,
+  skill: 0,
 };
 
 const CLI_OPTIONS = {
@@ -55,6 +71,8 @@ const CLI_OPTIONS = {
   yes: { type: "boolean" },
   minimal: { type: "boolean" },
   force: { type: "boolean" },
+  install: { type: "boolean" },
+  target: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -77,6 +95,8 @@ Commands:
   report               Print codebase health, layer metrics, and secret audit
   explain <path>       Show how one path would be treated: layer, kind, part, skips
   diff <a> <b>         Compare two snapshots (directories or manifest.json files)
+  describe             Print the machine-readable contract (--format json for agents)
+  skill                Print the bundled agent skill; --install writes it into the repo
 
 Options:
   --cwd <path>                  Target repository directory (default: current directory)
@@ -102,11 +122,17 @@ Options:
   --minimal                     Write only the settings that differ from defaults
   --yes                         Accept every default without prompting
   --force                       Overwrite an existing config
+
+  skill only:
+  --install                     Write the skill into the repository instead of printing
+  --target <name>               claude | agents | cursor | all (default: all)
+
   -h, --help                    Display this help message
   -v, --version                 Display version
 
 All options also accept the --option=value form.
 Human-readable progress is written to stderr; payloads (--format json) go to stdout.
+Agents with no prior knowledge of this tool should start with: describe --format json
 `.trim();
 
 interface ParsedInvocation {
@@ -124,6 +150,10 @@ interface ParsedInvocation {
   yes: boolean;
   minimal: boolean;
   force: boolean;
+  /** `skill` only: write the skill into the repository instead of printing it. */
+  install: boolean;
+  /** `skill` only: which location(s) to write. */
+  target?: string;
   cwd: string;
   outDir?: string;
   includeMonolith?: boolean;
@@ -349,6 +379,17 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     if (!getPreset(requested)) throw new UsageError(unknownPresetMessage(requested));
   }
 
+  // `--install`/`--target` belong to `skill` only; accepting them silently
+  // elsewhere would suggest they did something.
+  if (command !== "skill" && (values.install !== undefined || values.target !== undefined)) {
+    throw new UsageError("--install and --target are only valid with `skill`.");
+  }
+  if (values.target !== undefined && !isSkillTarget(String(values.target))) {
+    throw new UsageError(
+      `--target must be one of: ${SKILL_TARGETS.join(", ")} (received "${String(values.target)}").`
+    );
+  }
+
   return {
     command,
     args,
@@ -363,6 +404,8 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     yes: values.yes === true,
     minimal: values.minimal === true,
     force: values.force === true,
+    install: values.install === true,
+    target: values.target === undefined ? undefined : String(values.target),
     cwd: values.cwd === undefined ? process.cwd() : path.resolve(String(values.cwd)),
     outDir: values["out-dir"] === undefined ? undefined : String(values["out-dir"]),
     includeMonolith: values["include-monolith"] === true ? true : undefined,
@@ -467,6 +510,9 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     for (const note of result.notes) info(`   ⚠ ${note}`);
     info("");
     info("   Next:  npm run snapshot");
+    info(
+      `   Tip:   \`${GENERATOR_NAME} skill --install\` makes this repo discoverable by AI agents.`
+    );
     return 0;
   } catch (err) {
     if (err instanceof PromptCancelled) {
@@ -478,8 +524,39 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
   }
 }
 
-function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
-  if (result.valid) {
+/**
+ * Prints the bundled agent skill, or installs it into the repository.
+ *
+ * Printing goes to **stdout** (not the usual stderr progress stream) so an agent
+ * can capture the skill directly: `snap skill > SKILL.md`.
+ */
+function runSkillCommand(invocation: ParsedInvocation): number {
+  if (!invocation.install) {
+    process.stdout.write(renderSkill());
+    return 0;
+  }
+
+  try {
+    const result = installSkill(invocation.cwd, invocation.target as SkillTarget | undefined);
+    if (invocation.format === "json") {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+    info(`✅ Agent skill installed (${SKILL_NAME}):`);
+    for (const item of result.written) {
+      const shown = path.relative(invocation.cwd, item.path) || item.path;
+      info(`   - ${item.action.padEnd(9)} ${shown}`);
+    }
+    info("");
+    info("   Agents that read AGENTS.md, .claude/skills or .cursor/rules will pick this up automatically.");
+    return 0;
+  } catch (err) {
+    warn(`❌ Could not install the skill: ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {  if (result.valid) {
     info("✅ Snapshot is valid and up to date with disk.");
   } else {
     warn("❌ Snapshot validation failed:");
@@ -524,6 +601,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   if (invocation.command === "init") {
     return await runInitCommand(invocation);
+  }
+
+  // Agent-facing commands run before config discovery on purpose: an agent must
+  // be able to read the contract and install the skill even when the repository's
+  // config is broken, which is exactly when it needs help.
+  if (invocation.command === "describe") {
+    const contract = buildAgentContract();
+    emit(invocation.format, contract, () => info(renderContractText(contract)));
+    return 0;
+  }
+
+  if (invocation.command === "skill") {
+    return runSkillCommand(invocation);
   }
 
   const loaded = await loadConfigFileDetailed(invocation.cwd);
