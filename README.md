@@ -37,8 +37,14 @@ AST structures, and partitions your repository into **hard byte-bounded**, LLM-r
 npx @ankurhalder/codebase-snapshot generate
 ```
 
+Or install it in your project. Any npm-compatible client works — they all resolve the
+same published package:
+
 ```bash
 npm install -D @ankurhalder/codebase-snapshot
+yarn add -D @ankurhalder/codebase-snapshot
+pnpm add -D @ankurhalder/codebase-snapshot
+bun add -d @ankurhalder/codebase-snapshot
 ```
 
 ```json
@@ -49,6 +55,10 @@ npm install -D @ankurhalder/codebase-snapshot
   }
 }
 ```
+
+Requires **Node.js 18+**. Every client above is verified in CI, including yarn Berry with
+strict PnP. See [docs/install.md](docs/install.md) for global installs, version pinning,
+and troubleshooting.
 
 ---
 

@@ -143,3 +143,132 @@ jobs:
 
           console.log("OK: tarball has every required file and no .map artifacts");
           '
+
+  # The package is published once to the npm registry but consumed by every
+  # npm-compatible client. Those clients differ in how they resolve `bin`
+  # entries, how they lay out node_modules, and (yarn Berry) whether
+  # node_modules exists at all — so "it works with npm" does not imply "it works
+  # with pnpm". Each client here installs the *real packed tarball* and runs a
+  # real `generate`, so a broken `bin`/`exports` field fails the build instead
+  # of a user's terminal.
+  client-install:
+    name: install via ${{ matrix.client }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - client: npm
+            install_cmd: npm install -D ./pkg.tgz
+            exec_cmd: npx snap
+          - client: yarn-classic
+            install_cmd: npx --yes yarn@1.22.22 add -D ./pkg.tgz
+            exec_cmd: npx --yes yarn@1.22.22 snap
+          - client: yarn-berry-pnp
+            install_cmd: corepack yarn add -D ./pkg.tgz
+            exec_cmd: corepack yarn snap
+          - client: pnpm
+            install_cmd: npx --yes pnpm@10 add -D ./pkg.tgz
+            exec_cmd: npx --yes pnpm@10 exec snap
+          - client: bun
+            install_cmd: npx --yes bun@1.4 add -d ./pkg.tgz
+            exec_cmd: npx --yes bun@1.4 run snap
+    env:
+      # corepack otherwise blocks on an interactive download prompt.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Pack the exact artifact that would be published, then install it from a
+      # local path so CI never depends on the registry copy being up to date.
+      - name: Pack the tarball
+        run: |
+          set -euo pipefail
+          echo "PACKAGE_VERSION=$(npm pkg get version | tr -d '"')" >> "$GITHUB_ENV"
+          npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/consumer"
+          mv "$RUNNER_TEMP"/*.tgz "$RUNNER_TEMP/consumer/pkg.tgz"
+
+      # Berry's default linker is strict PnP: there is no node_modules directory,
+      # and the runtime `typescript` dependency has to resolve through .pnp.cjs.
+      # That is the interesting case, so pin it explicitly rather than inheriting
+      # whatever the default is.
+      #
+      # The `packageManager` field is written ONLY here. Yarn classic and pnpm
+      # both hard-refuse a project that pins a different package manager
+      # ("This project's package.json defines packageManager: yarn@4.6.0"),
+      # so stamping it for every client would break two of the five jobs.
+      - name: Enable strict PnP and pin yarn Berry (this client only)
+        if: matrix.client == 'yarn-berry-pnp'
+        working-directory: ${{ runner.temp }}/consumer
+        run: |
+          printf '{"name":"consumer","version":"1.0.0","private":true,"packageManager":"yarn@4.6.0"}\n' > package.json
+          printf 'nodeLinker: pnp\n' > .yarnrc.yml
+
+      - name: ${{ matrix.client }} — install
+        working-directory: ${{ runner.temp }}/consumer
+        env:
+          INSTALL_CMD: ${{ matrix.install_cmd }}
+        run: |
+          set -euo pipefail
+          [ -f package.json ] || printf '{"name":"consumer","version":"1.0.0","private":true}\n' > package.json
+          eval "$INSTALL_CMD"
+
+      # `--version` alone can pass without ever loading the AST stack; generating
+      # from a real TypeScript file forces the runtime `typescript` dependency to
+      # resolve. That resolution is exactly what breaks under strict PnP.
+      - name: ${{ matrix.client }} — run a real snapshot
+        working-directory: ${{ runner.temp }}/consumer
+        env:
+          EXEC_CMD: ${{ matrix.exec_cmd }}
+        run: |
+          set -euo pipefail
+          # Match a line that *is* the version. Client wrappers pollute stdout:
+          # yarn classic prints "yarn run v1.22.22" before the command and
+          # "Done in 0.37s." after it, so neither `tail -1` nor "first version
+          # token found" is correct.
+          ACTUAL="$(eval "$EXEC_CMD" --version 2>/dev/null | tr -d '\r' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+          echo "expected v$PACKAGE_VERSION, got '${ACTUAL:-<no version found>}'"
+          [ "$ACTUAL" = "v$PACKAGE_VERSION" ] || { echo "FAIL: version mismatch"; exit 1; }
+
+          mkdir -p src
+          printf 'export function add(a: number, b: number): number { return a + b; }\n' > src/math.ts
+          eval "$EXEC_CMD" generate
+          test -f snapshot/manifest.json || { echo "FAIL: no manifest produced"; exit 1; }
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync("snapshot/manifest.json", "utf8"));
+            const entry = manifest.files.find((file) => file.relativePath === "src/math.ts");
+            if (!entry) {
+              console.error("FAIL: src/math.ts is missing from the manifest");
+              process.exit(1);
+            }
+            if (entry.language !== "typescript") {
+              console.error("FAIL: expected language typescript, got " + entry.language);
+              process.exit(1);
+            }
+            // `summaryQuality` is emitted from 2.1.0 onward. When present it must
+            // be "ast": that is what proves the TypeScript compiler actually
+            // loaded, which is precisely what fails under yarn Berry PnP. Guarded
+            // so this job also passes on the 2.0.0 line, where the field does not
+            // exist yet.
+            if ("summaryQuality" in entry && entry.summaryQuality !== "ast") {
+              console.error("FAIL: expected summaryQuality ast, got " + entry.summaryQuality);
+              process.exit(1);
+            }
+            console.log("OK: src/math.ts analyzed" + ("summaryQuality" in entry ? " with summaryQuality=ast" : ""));
+          '
+          echo "OK: ${{ matrix.client }} installed the tarball and generated a snapshot"
