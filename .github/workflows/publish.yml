@@ -118,16 +118,29 @@ jobs:
           console.log("OK: tarball has every required file and no .map artifacts");
           '
 
+      # Guarded so a partial failure later in the job can be recovered by simply
+      # re-running: without this, npm refuses with "cannot publish over" and the
+      # only way forward is a version bump.
       - name: Publish to npm with provenance
-        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(npm pkg get version | tr -d '"')"
+          if npm view "@ankurhalder/codebase-snapshot@$VERSION" version >/dev/null 2>&1; then
+            echo "@ankurhalder/codebase-snapshot@$VERSION is already on the registry; skipping"
+            exit 0
+          fi
+          npm publish --access public --provenance
 
       # `npm create codebase-snapshot` is advertised in the changelog and README
       # and lives in packages/create, but nothing ever published it — so the
-      # command resolved to a 404 while `docs/install.md` told people to run it.
-      # Guarded on the registry so re-running a release (or re-dispatching this
-      # workflow) is idempotent instead of failing with "cannot publish over".
+      # command resolved to a 404 while docs/install.md told people to run it.
+      #
+      # Publish from *inside* the directory. `npm publish packages/create` is
+      # parsed as the GitHub shorthand owner/repo, and npm then tries
+      # `git ls-remote ssh://git@github.com/packages/create.git` and fails with
+      # exit 128 and a publickey error.
       - name: Publish create-codebase-snapshot (skip if this version exists)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -138,4 +151,5 @@ jobs:
             echo "create-codebase-snapshot@$VERSION is already on the registry; nothing to do"
             exit 0
           fi
-          npm publish packages/create --access public --provenance
+          cd packages/create
+          npm publish --access public --provenance
