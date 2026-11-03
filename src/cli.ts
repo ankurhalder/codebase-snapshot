@@ -375,6 +375,30 @@ function splitList(value: string | undefined): string[] | undefined {
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
 }
 
+/**
+ * Describes why a parsed JSON file is not usable as a snapshot manifest.
+ *
+ * A parseable file is not necessarily a snapshot: rendering a foreign or
+ * truncated manifest used to fail with a raw `TypeError: Cannot read properties
+ * of undefined (reading 'totalFiles')` from inside the text formatter.
+ */
+function describeManifestShapeProblem(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return "not a JSON object";
+  }
+  const candidate = manifest as Record<string, unknown>;
+
+  const counts = candidate.counts as Record<string, unknown> | undefined;
+  if (!counts || typeof counts !== "object") return "missing `counts`";
+  for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
+    if (typeof counts[key] !== "number") return `missing numeric \`counts.${key}\``;
+  }
+
+  if (!candidate.layers || typeof candidate.layers !== "object") return "missing `layers`";
+  if (!Array.isArray(candidate.files)) return "missing `files` array";
+  return null;
+}
+
 async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
   try {
     const result = await runInit({
@@ -514,6 +538,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       warn(`❌ Could not read ${manifestPath}: ${(err as Error).message}`);
       return 1;
     }
+
+    // A parseable file is not necessarily a snapshot: reading a foreign or
+    // truncated manifest used to fail with a raw `TypeError: Cannot read
+    // properties of undefined (reading 'totalFiles')` instead of a message.
+    const shapeError = describeManifestShapeProblem(manifest);
+    if (shapeError) {
+      warn(`❌ ${manifestPath} is not a snapshot manifest: ${shapeError}`);
+      return 1;
+    }
+
     const validation = validateSnapshot(resolved);
 
     emit(invocation.format, { manifest, validation }, () => {

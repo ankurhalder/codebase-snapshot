@@ -644,6 +644,57 @@ test("a hook-written artifact does not block later runs", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// A directory of user assets may well contain a manifest.json with a
+// schemaVersion. Ownership must require *our* generator identity, or that
+// directory gets replaced by a snapshot.
+test("generate refuses a directory whose manifest.json is not ours", () => {
+  const userAsset = '{"schemaVersion":"1.0","name":"my user assets","files":["logo.svg"]}';
+  const dir = makeRepo("cli-own-foreign-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "assets/manifest.json": userAsset,
+    "assets/logo.svg": "<svg/>\n",
+  });
+
+  const result = runCli(["generate", "--cwd", dir, "--out-dir", "assets"]);
+  assert.equal(result.code, 1, `expected refusal, got ${result.code}`);
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "manifest.json"), "utf8"), userAsset);
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "logo.svg"), "utf8"), "<svg/>\n");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// `maxPartBytes: 0` used to be swallowed as "use the 300 KB default" while
+// `maxPartBytes: 1000` threw, so a clearly wrong setting silently did nothing.
+test("a non-positive budget in the config is an error, not a silent default", () => {
+  for (const value of [0, -100]) {
+    const dir = makeRepo(`cli-budget-neg-`, {
+      "package.json": '{"name":"fixture"}',
+      "a.ts": "export const a = 1;\n",
+      "snapshot.config.json": JSON.stringify({ maxPartBytes: value }),
+    });
+    const result = runCli(["generate", "--cwd", dir]);
+    assert.notEqual(result.code, 0, `maxPartBytes: ${value} must not be accepted`);
+    assert.match(result.stderr, /positive byte count/);
+    assert.equal(fs.existsSync(path.join(dir, "snapshot")), false, "nothing must be written");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A parseable file is not necessarily a snapshot; the text report used to die
+// with a raw TypeError out of the formatter.
+test("report rejects a manifest that is not a snapshot", () => {
+  const dir = makeRepo("cli-report-foreign-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "snapshot/manifest.json": '{"schemaVersion":"1.0","name":"not a snapshot"}',
+  });
+  const result = runCli(["report", "--cwd", dir]);
+  assert.equal(result.code, 1, `expected exit 1, got ${result.code}`);
+  assert.match(result.stderr, /is not a snapshot manifest/);
+  assert.doesNotMatch(result.stderr, /TypeError/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // A config that exists but cannot be read must fail, not fall back to defaults:
 // a silent fallback produces a snapshot with none of the developer's settings.
 test("CLI fails when an existing config cannot be parsed", () => {

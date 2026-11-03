@@ -343,8 +343,22 @@ function isOwnOutput(dir: string): boolean {
   const manifestPath = path.join(dir, "manifest.json");
   if (!fs.existsSync(manifestPath)) return false;
   try {
-    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
-    return typeof parsed.schemaVersion === "string" || typeof parsed.generator === "string";
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      generator?: unknown;
+      schemaVersion?: unknown;
+      files?: unknown;
+    };
+    // It has to be *our* manifest, not merely a document that happens to have a
+    // schemaVersion: a directory of user assets can easily contain one, and
+    // treating that as a previous snapshot deleted it.
+    const generator = parsed.generator as { name?: unknown } | null | undefined;
+    return (
+      typeof parsed.schemaVersion === "string" &&
+      Array.isArray(parsed.files) &&
+      typeof generator === "object" &&
+      generator !== null &&
+      generator.name === GENERATOR_NAME
+    );
   } catch {
     return false;
   }

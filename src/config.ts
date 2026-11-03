@@ -439,12 +439,16 @@ function boundedBytes(
       `${label} must be a byte count such as 120000, "120k" or "1.5mb" (received ${describeBytes(value)}).`
     );
   }
-  if (parsed <= 0) return fallback;
+  // A non-positive value is a mistake, not a request for the default: treating
+  // `maxPartBytes: 0` as "use 300 KB" silently ignored the setting while
+  // `maxPartBytes: 1000` threw.
+  if (parsed <= 0) {
+    throw new Error(`${label} must be a positive byte count (received ${describeBytes(value)}).`);
+  }
   if (parsed < minimum) {
     throw new Error(`${label} must be at least ${minimum} bytes (received ${describeBytes(value)}).`);
   }
-  return parsed;
-}
+  return parsed;}
 
 function optionalBytes(
   value: ByteSize | null | undefined,
