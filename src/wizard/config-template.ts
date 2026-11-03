@@ -120,7 +120,7 @@ export function renderConfig(answers: WizardAnswers): string {
   secrets: {
     // [{ rule: "internal-token", pattern: /CORP-[A-Z0-9]{32}/ }]
     customPatterns: [],
-    // Set true to drop the 21 built-in rules.
+    // Set true to drop the built-in rules above and keep only customPatterns.
     disableDefaultPatterns: false,
   },
 
@@ -136,6 +136,10 @@ export function renderConfig(answers: WizardAnswers): string {
   },
   // Skip the monolith above this size. null = no limit.
   maxMonolithBytes: null,
+  // Top-level switch for the monolith, equivalent to artifacts.monolith.
+  // When both are present the artifact entry wins; this one exists so the
+  // generated file lists every setting the tool accepts.
+  includeMonolith: ${artifacts.monolith},
 
   // ── Advanced ───────────────────────────────────────────────────────────
   // afterGenerate: (manifest) => { /* write your own artifact */ }

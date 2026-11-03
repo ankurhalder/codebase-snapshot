@@ -71,12 +71,26 @@ function mergeAgentsFile(cwd: string, skill: string): SkillWrite {
   let next: string;
   if (existing === null) {
     next = `# AGENTS.md\n\n${block}`;
-  } else if (existing.includes(AGENTS_MARKER_START) && existing.includes(AGENTS_MARKER_END)) {
+  } else {
+    const starts = existing.split(AGENTS_MARKER_START).length - 1;
+    const ends = existing.split(AGENTS_MARKER_END).length - 1;
     const start = existing.indexOf(AGENTS_MARKER_START);
     const end = existing.indexOf(AGENTS_MARKER_END) + AGENTS_MARKER_END.length;
-    next = `${existing.slice(0, start)}${block.trimEnd()}${existing.slice(end)}`;
-  } else {
-    next = `${existing.trimEnd()}\n\n${block}`;
+    if (starts === 1 && ends === 1 && start < end) {
+      next = `${existing.slice(0, start)}${block.trimEnd()}${existing.slice(end)}`;
+    } else if (starts > 0 && ends === 0) {
+      // An orphaned start marker means the hand edit removed our closer. The
+      // marker itself is our own text, so it is replaced by the complete block
+      // and nothing the user wrote is touched — appending instead left two
+      // start markers and one end marker behind, permanently malformed.
+      next = `${existing.slice(0, start)}${block.trimEnd()}${existing.slice(
+        start + AGENTS_MARKER_START.length
+      )}`;
+    } else if (existing.includes(block.trimEnd())) {
+      next = existing;
+    } else {
+      next = `${existing.trimEnd()}\n\n${block}`;
+    }
   }
 
   const action =

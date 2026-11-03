@@ -1,0 +1,46 @@
+name: Feature request
+description: A capability you want, or a project type that is detected badly.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Presets and language support are the most common requests. If your project is detected as
+        `generic`, say which files should have given it away.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve
+      description: Describe the situation, not the solution — that leaves room for a better fix.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like to happen
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of request
+      options:
+        - A project type / preset that is missing or misdetected
+        - A language whose summaries are too shallow
+        - A command or option
+        - Configuration
+        - Documentation
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you have tried
+      description: Config, flags, or a manual step. This tells us how much the fix matters.
+    validations:
+      required: false

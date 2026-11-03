@@ -38,12 +38,56 @@ function hashMap(manifest: Manifest): Map<string, string> {
 }
 
 /**
- * Compares two manifests file by file.
+ * Describes why a parsed value cannot be used as a snapshot manifest.
  *
- * The per-file hashes and the content fingerprint already make this exact, so
- * nothing is inferred: a path is added, removed or changed, never "maybe".
+ * A parseable JSON object is not necessarily a manifest: `{ "counts": {},
+ * "files": [] }` used to be accepted, and `diff` then printed
+ * `before  undefined  undefined file(s)` and exited 0. The checks mirror what
+ * `validate` requires before it will inspect a manifest at all.
  */
+function manifestProblem(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "not a JSON object";
+  const candidate = value as Record<string, unknown>;
+
+  if (!Array.isArray(candidate.files)) return 'no "files" array';
+  for (const entry of candidate.files) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return 'a "files" entry is not an object';
+    }
+    if (typeof (entry as Record<string, unknown>).relativePath !== "string") {
+      return 'a "files" entry has no "relativePath"';
+    }
+  }
+
+  const counts = candidate.counts;
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
+    return 'no "counts" object';
+  }
+  for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
+    if (typeof (counts as Record<string, unknown>)[key] !== "number") {
+      return `no numeric "counts.${key}"`;
+    }
+  }
+
+  if (typeof candidate.generatedAt !== "string") return 'no "generatedAt"';
+  if (typeof candidate.fingerprint !== "string") return 'no "fingerprint"';
+  return null;
+}
+
+function assertUsableManifest(value: unknown, label: string): asserts value is Manifest {
+  const problem = manifestProblem(value);
+  if (problem) {
+    throw new Error(`The ${label} manifest is not a snapshot manifest this tool wrote: ${problem}.`);
+  }
+}
+
+/** Compares two manifests file by file. */
 export function compareManifests(before: Manifest, after: Manifest): ManifestDiff {
+  // Validated here as well as in `loadManifest`, so a caller that builds its own
+  // objects gets a clear error naming the side instead of `undefined` in output.
+  assertUsableManifest(before, "before");
+  assertUsableManifest(after, "after");
+
   const left = hashMap(before);
   const right = hashMap(after);
 
@@ -95,22 +139,21 @@ export function loadManifest(target: string): Manifest {
     throw new Error(`Could not read a manifest at ${manifestPath}.`);
   }
 
-  let parsed: Manifest;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as Manifest;
+    parsed = JSON.parse(raw);
   } catch (err) {
     throw new Error(`Could not parse ${manifestPath}: ${(err as Error).message}`);
   }
 
-  if (!parsed || !Array.isArray(parsed.files)) {
-    throw new Error(`${manifestPath} is not a snapshot manifest (no "files" array).`);
+  const problem = manifestProblem(parsed);
+  if (problem) {
+    throw new Error(
+      `${manifestPath} is not a usable snapshot manifest: ${problem}. ` +
+        `Point diff at a manifest.json written by \`generate\` (or at the directory that holds it).`
+    );
   }
-  // `counts` is read by the summary, so a manifest without it used to crash with
-  // "Cannot read properties of undefined (reading 'totalFiles')".
-  if (!parsed.counts || typeof parsed.counts !== "object") {
-    throw new Error(`${manifestPath} is not a snapshot manifest (no "counts" object).`);
-  }
-  return parsed;
+  return parsed as Manifest;
 }
 
 /** Renders a diff for a terminal. */

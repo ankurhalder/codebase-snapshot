@@ -1,45 +1,63 @@
 # Using this with an AI agent
 
-The package ships two things that make it usable by an agent that has never heard of it:
-a **machine-readable contract** and a **bundled skill**.
+The package ships two things that make it usable by an agent that has never heard of it: a
+**machine-readable contract** and a **bundled skill**.
 
-Nothing here needs to be installed globally, and no prior knowledge of the tool is
-required.
+Nothing needs to be installed globally and no prior knowledge of the tool is required.
 
 ## The three commands an agent needs
 
 ```bash
 # 1. Read the contract. This is the machine-readable replacement for --help.
-npx @ankurhalder/codebase-snapshot@latest describe --format json
+npx @ankurhalder/codebase-snapshot describe --format json
 
 # 2. Write a commented config that lists every setting (non-interactive).
-npx @ankurhalder/codebase-snapshot@latest init --yes
+npx @ankurhalder/codebase-snapshot init --yes
 
 # 3. Generate and verify.
-npx @ankurhalder/codebase-snapshot@latest generate
-npx @ankurhalder/codebase-snapshot@latest validate
+npx @ankurhalder/codebase-snapshot generate
+npx @ankurhalder/codebase-snapshot validate
 ```
 
-`describe` returns the invocation that works, an ordered `workflow` array, every command,
-every option with its default, the exit-code contract, all 25 presets, the artifact list,
-the config file names, the output layout, safety rules and a troubleshooting table — all
-as JSON on stdout.
+The bare package name works; pin `@latest` or `@4` when the same version must run on every
+machine.
 
-**Always pin the tag** (`@latest` or `@2`). A bare scoped spec can resolve to a bin-less
-placeholder manifest on some npm builds and exit 0 printing nothing; the pinned form
-cannot.
+## The contract
+
+`describe --format json` returns the whole tool as data on stdout:
+
+| Field | Contents |
+| :--- | :--- |
+| `invocation` | The supported one-shot and installed commands, and the bin names. |
+| `workflow` | An ordered six-step procedure: verify → understand → configure → generate → verify output → consume. |
+| `commands` | Every command with what it does, its positionals and its exit codes. |
+| `options` | Every option with its type, default, which commands it applies to, and a summary. |
+| `exitCodes` | `0` success, `1` drift or refused generation, `2` usage error. |
+| `presets` | All 25, with priority, recommended budget and ecosystem ignores. |
+| `artifacts` | Each artifact with its on/off default and what it contains. |
+| `config` | Every config filename and every setting with its default. |
+| `output` | The directory layout and how to read `manifest.json`. |
+| `safety` | What is excluded or redacted, and which directories are refused. |
+| `troubleshooting` | Symptom → cause → fix. |
+
+It is generated from the same code the CLI runs — presets, artifact names and versions are
+read directly — and a test compares its documented defaults against a real
+`generate --dry-run` manifest. If a default changes, the test fails rather than the contract
+silently misleading an agent.
+
+`describe` with no `--format` renders the same content for a human.
 
 ## The skill
 
 ```bash
-npx @ankurhalder/codebase-snapshot@latest skill            # print it (stdout)
-npx @ankurhalder/codebase-snapshot@latest skill --install  # write it into the repo
+npx @ankurhalder/codebase-snapshot skill            # print it (stdout)
+npx @ankurhalder/codebase-snapshot skill --install  # write it into the repository
 ```
 
 Printing goes to stdout deliberately, so it can be redirected:
 
 ```bash
-npx @ankurhalder/codebase-snapshot@latest skill > SKILL.md
+npx @ankurhalder/codebase-snapshot skill > SKILL.md
 ```
 
 `--install` writes the same skill to every location agents look at by default:
@@ -51,30 +69,52 @@ npx @ankurhalder/codebase-snapshot@latest skill > SKILL.md
 | `cursor` | `.cursor/rules/codebase-snapshot.mdc` | Cursor rules |
 
 ```bash
-skill --install --target claude    # one location
-skill --install                    # all three (default)
+npx @ankurhalder/codebase-snapshot skill --install --target claude   # one location
+npx @ankurhalder/codebase-snapshot skill --install                   # all three (default)
 ```
 
-The install is **idempotent and non-destructive**: re-running replaces only the block
-between `<!-- codebase-snapshot:skill:start -->` and
-`<!-- codebase-snapshot:skill:end -->`, so an `AGENTS.md` that already documents your
-conventions keeps them. `--format json` reports what was created, updated or unchanged.
+The install is **idempotent and non-destructive**: re-running replaces only the block between
+`<!-- codebase-snapshot:skill:start -->` and `<!-- codebase-snapshot:skill:end -->`, so an
+`AGENTS.md` that already documents your conventions keeps them. `--format json` reports what
+was created, updated or unchanged.
 
 `codebase-snapshot init` prints a reminder about this; it never installs the skill on its own.
 
 ## Why both a contract and a skill
 
-The contract is for **doing** — it is the data an agent needs to pick correct commands and
-options, and it is asserted against the real defaults in the test suite so it cannot drift
-into lying.
-
+The contract is for **doing** — the data an agent needs to pick correct commands and options.
 The skill is for **knowing when to act** — it carries the trigger conditions, the ordered
-workflow, and the surprises (sensitive files excluded by default, secrets redacted, the
-output directory being tool-owned) that an agent cannot infer from a schema.
+workflow, and the surprises an agent cannot infer from a schema: sensitive files excluded by
+default, secrets redacted, the output directory being tool-owned.
 
-## Keeping the contract honest
+## What an agent should avoid
 
-`describe` is generated from the same code the CLI runs — the preset list, artifact names,
-schema version and generator version are read directly, and a test compares its documented
-defaults against a real `generate --dry-run` manifest. If a default changes, the test fails
-rather than the contract silently misleading an agent.
+- **Do not point `--out-dir` at source code.** It is refused, and the refusal is deliberate.
+- **Do not add `--include-sensitive-files`** unless the user explicitly asked for credential
+  files; by default they are excluded and recorded as `sensitive-file` in `manifest.skipped[]`.
+- **Do not work around redaction.** If a value is masked, ask the user rather than reading the
+  original file.
+- **Do not assume exit 2 means the repository is broken.** It means the command was wrong.
+  Re-read the contract.
+- **Do not treat a bare `npx` that prints nothing as a repository problem.** A stale global
+  install shadows `npx`; see [Troubleshooting](troubleshooting.md#the-command-does-nothing).
+
+## Verifying an agent can drive it
+
+`tests/agent-simulation.test.js` runs the published instructions as an agent would: read
+`--help`, discover `describe`, then execute the six workflow steps in order against an 8-file
+Django fixture.
+
+It asserts what the contract promises at each step: `--version` prints a version, every
+published option states where it applies, `init --yes` writes a config naming **every**
+setting the contract lists, `generate --format json` exits `0` with
+`validation.status: "passed"` and the preset `python-django`, every fixture file is either in
+`manifest.files[]` or explained in `manifest.skipped[]`, each `files[]` entry carries its
+classification and hash, and `validate` then exits `0`. If an agent following the published
+words would fail, that test fails.
+
+When you parse the manifest, remember what is conditional: `manifest.files[]` carries
+`relativePath`, `layer`, `kind`, `language`, `part`, `inclusionMode` and `hashSha256` for
+every included file, but `summary` and `summaryQuality` only for a language the tool can
+analyse. A `.gitignore` or plain-text entry has neither key, and a file whose summary was too
+large for its part carries `summaryOmitted: true` instead of a `summary`.

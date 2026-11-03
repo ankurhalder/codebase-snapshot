@@ -1,0 +1,56 @@
+# codebase-snapshot
+
+> Turn any repository into an LLM-ready snapshot: code packed into size-budgeted markdown
+> parts, indexed by a JSON manifest, with a secret audit, in one command. Works on TypeScript,
+> JavaScript, Python, Go, Rust, Java/Kotlin, C#/.NET, PHP, Ruby, C/C++, Vue, Svelte and Astro.
+
+`codebase-snapshot` is a Node.js CLI (Node >= 18, one runtime dependency: `typescript`). It is
+for handing a whole repository to a language model as context: it packs source files into
+markdown parts that never exceed a byte budget, records every included file and every excluded
+file (with the reason) in `manifest.json`, and reports secrets, large files and git state.
+
+## Start here
+
+- [Agent guide](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md): the machine-readable contract and the installable agent skill; the recommended entry point for an AI agent.
+- [Installation](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/install.md): every npm-compatible client, version pinning, troubleshooting a shadowed `npx`.
+- [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md): all 8 commands, all 21 options with defaults, exit codes, examples.
+- [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md): every setting and default, the 25 project presets, byte budgets, artifacts, hooks, secret handling.
+- [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md): directory layout and the complete `manifest.json` schema.
+- [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md): every message the tool prints and what to do about it.
+- [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md): release history, breaking changes.
+
+## Machine-readable entry points
+
+- `npx @ankurhalder/codebase-snapshot describe --format json` — the full contract as JSON on stdout: invocation, ordered workflow, commands, options with defaults, exit codes, presets, artifacts, config settings, output layout, safety rules, troubleshooting.
+- `npx @ankurhalder/codebase-snapshot skill` — the bundled agent skill, printed on stdout.
+- `npx @ankurhalder/codebase-snapshot skill --install` — writes the skill to `AGENTS.md`, `.claude/skills/codebase-snapshot/SKILL.md` and `.cursor/rules/codebase-snapshot.mdc`.
+- [package.json](https://github.com/ankurhalder/codebase-snapshot/blob/main/package.json) — npm metadata, keywords and entry points.
+- npm registry: https://registry.npmjs.org/@ankurhalder/codebase-snapshot
+
+## Typical use
+
+```bash
+npx @ankurhalder/codebase-snapshot init --yes   # detect the project, write a config
+npx @ankurhalder/codebase-snapshot generate     # write ./snapshot/
+npx @ankurhalder/codebase-snapshot validate     # exit 0 = snapshot matches the files on disk
+```
+
+Exit codes: `0` success, `1` drift or refused generation, `2` usage error. Human progress goes
+to stderr; `--format json` payloads go to stdout and are safe to parse.
+
+## Notes for agents
+
+- Pin `@latest` or `@4` when the same version must run on every machine. The bare package name
+  also works — both bin entries point at the same file, which is what lets npm resolve it.
+- The output directory is owned by the tool and is replaced atomically. It refuses to replace a
+  directory it did not write, so never point `--out-dir` at source code.
+- Credential files (`.env`, `*.pem`, `.npmrc`, `.ssh/`, `.tfstate`) are excluded unless
+  `--include-sensitive-files` is given, and they are recorded in `manifest.skipped[]`.
+- Secret-shaped strings inside ordinary files are redacted in the emitted parts; no excerpt of a
+  matched line reaches any artifact.
+
+## Optional
+
+- [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md): conventions for contributing to this repository.
+- [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki): longer guides, recipes and FAQ.
+- [Releases](https://github.com/ankurhalder/codebase-snapshot/releases): version history with notes.

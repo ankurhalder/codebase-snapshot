@@ -1,0 +1,91 @@
+name: Bug report
+description: Something behaved incorrectly, crashed, or produced a wrong snapshot.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A failing reproduction is worth more than a long description —
+        `--dry-run` computes a full snapshot without writing anything, so it is safe to run on
+        a private repository.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `npx @ankurhalder/codebase-snapshot --version`
+      placeholder: v3.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, and the client you used (npm, yarn, pnpm, bun, npx).
+      placeholder: Windows 11, Node 22.11, npm 11.17
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      render: shell
+      placeholder: npx @ankurhalder/codebase-snapshot generate --max-part-bytes 120k
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the exit code and the exact message. Paste output rather than paraphrasing it.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        The smallest repository that shows it. A file list plus the contents of the trigger file
+        is usually enough. Redact anything private.
+      placeholder: |
+        package.json: {"name":"x","dependencies":{"next":"14.0.0"}}
+        next.config.ts: export default {}
+        app/page.tsx: trigger file
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (optional, recommended)
+      description: |
+        These two commands dump the machine-readable contract and a full dry run. Redact what you
+        need to before pasting.
+      render: shell
+      placeholder: |
+        npx codebase-snapshot describe --format json > contract.json
+        npx codebase-snapshot generate --dry-run --format json > dry-run.json
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I checked docs/troubleshooting.md for the message I saw.
+          required: true

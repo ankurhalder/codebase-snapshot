@@ -120,7 +120,7 @@ test("summarizeTypeScriptSource extracts declarations, directives and exports", 
     export interface Props { id: string }
     export type Status = "active" | "idle";
     export function useCounter() { return useState(0); }
-    export function UserCard(props: Props) { return null; }
+    export function UserCard(props: Props) { return <div>{props.id}</div>; }
     export async function GET(req: Request) { return new Response("ok"); }
     function notExportedRoute() {}
     export const PATCH = () => null;

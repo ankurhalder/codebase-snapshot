@@ -1,6 +1,6 @@
 {
   "name": "@ankurhalder/codebase-snapshot",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "Production-grade LLM codebase snapshot generator, auditor, and AST partitioner",
   "keywords": [
     "codebase",
@@ -32,7 +32,8 @@
   "types": "./dist/index.d.ts",
   "sideEffects": false,
   "bin": {
-    "codebase-snapshot": "./dist/bin.js"
+    "codebase-snapshot": "./dist/bin.js",
+    "snap": "./dist/bin.js"
   },
   "exports": {
     ".": {
@@ -75,9 +76,11 @@
     "pretest": "npm run build",
     "test": "node --test tests/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
-    "prepare": "npm run build",
     "prepublishOnly": "npm run build",
-    "publish:create": "npm publish packages/create --access public"
+    "publish:create": "npm publish packages/create --access public",
+    "prepack": "npm run build",
+    "pack-check": "node scripts/pack-check.mjs",
+    "verify": "npm run check && npm run pack-check"
   },
   "dependencies": {
     "typescript": "^5.0.0"

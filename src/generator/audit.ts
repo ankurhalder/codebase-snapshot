@@ -19,7 +19,11 @@ export function generateAuditReport(
     `**Total Files:** ${manifest.counts.totalFiles}  `,
     `**Total Lines:** ${manifest.counts.totalLines.toLocaleString()}  `,
     `**Total Size:** ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB  `,
-    `**Redacted Content Bytes:** ${manifest.totals.totalContentBytes.toLocaleString()}  `,
+    // This counts the bytes that were *emitted* after redaction, not the bytes
+    // that were masked: calling it "redacted bytes" made a repository with zero
+    // secrets report a non-zero redacted-byte figure directly above "no secrets
+    // detected". The number of masked spans is reported in section 1 instead.
+    `**Emitted Content Bytes:** ${manifest.totals.totalContentBytes.toLocaleString()}  `,
     "",
     "## 1. Security Scan & Redaction",
     "",

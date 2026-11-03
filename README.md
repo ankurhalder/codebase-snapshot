@@ -1,369 +1,220 @@
-# @ankurhalder/codebase-snapshot
+# codebase-snapshot
 
-> LLM codebase snapshot generator, auditor, and AST partitioner for modern full-stack repositories.
+**Turn any repository into an LLM-ready snapshot: code packed into size-budgeted markdown
+parts, indexed by a JSON manifest, with a secret audit — in one command.**
 
 [![npm version](https://img.shields.io/npm/v/@ankurhalder/codebase-snapshot.svg)](https://www.npmjs.com/package/@ankurhalder/codebase-snapshot)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
-`@ankurhalder/codebase-snapshot` inspects your codebase, redacts sensitive credentials, parses TypeScript
-AST structures, and partitions your repository into **hard byte-bounded**, LLM-ready markdown chunks
-(`parts/part-XXX.md`) accompanied by navigation indexes, a directory tree, and a health audit.
-
----
-
-## ⚡ Set up a repository
-
-```bash
-npm create codebase-snapshot
-```
-
-Detects the project type, asks a handful of questions with real defaults, and
-writes a `snapshot.config.mjs` that lists **every setting at its default** — so
-the config doubles as the documentation. Works for 25 project shapes including
-Next.js, Nuxt, SvelteKit, Astro, Vue, React, NestJS, Django, FastAPI, Go, Rust,
-Java, .NET, PHP, Ruby, monorepos and infra repos.
-
-Non-interactive, with every answer as a flag:
-
-```bash
-npx @ankurhalder/codebase-snapshot init --preset react-vite --max-part-bytes 120k --yes
-```
-
----
-
-## ✨ Features
-
-- **25 project presets** — detection reads the repository once and picks the most
-  specific match: Next.js, Nuxt, SvelteKit, Remix, Astro, Angular, Solid, Vue,
-  React, NestJS, Express/ Fastify, Python (Django / FastAPI / library), Go, Rust,
-  Java/Spring, .NET, Laravel, Rails, monorepos, infra and docs.
-- **Structural summaries beyond TypeScript** — imports, declarations and exports
-  for Python, Go, Rust, Java/Kotlin/Scala, C#, PHP, Ruby and C/C++, plus the
-  script block of Vue/Svelte/Astro components through the real TypeScript
-  compiler. Every summary is labelled `ast`, `structural` or `heuristic`.
-- **Interactive setup** — `npm create codebase-snapshot` walks every tunable
-  parameter and writes a self-documenting config.
-- **Per-ecosystem ignores** — `__pycache__`, `.venv`, `target`, `.gradle`,
-  `bin`/`obj`, `vendor`, `.svelte-kit` and friends are recognised per preset.
-- **Hard byte budgeting** — every `part-XXX.md` is guaranteed to stay under `maxPartBytes`. A single
-  oversized file is byte-truncated and marked rather than emitted whole.
-- **Bounded redaction** — masks only the matched span (not the whole line), and masks multi-line PEM
-  private keys as a block. **No excerpt of a matched line is ever written to any artifact.**
-- **Credential files are skipped by default** — `.env`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
-  `.git-credentials`, `id_rsa`, `.kube/config`, `*.tfstate`, … Opt back in with `includeSensitiveFiles`.
-- **TypeScript AST extraction** — directives, imports, exports (including `export *` and anonymous
-  defaults), functions, classes, interfaces, types, enums, components, hooks, and route handlers.
-- **Structured summaries** — JSON key shapes and Markdown headings, computed from redacted text.
-- **Built for AI agents** — `codebase-snapshot describe --format json` returns a machine-readable
-  contract (workflow, every option and default, exit codes, presets, safety rules), and
-  `codebase-snapshot skill --install` writes the bundled agent skill into `AGENTS.md`,
-  `.claude/skills/` and `.cursor/rules/` so a zero-context agent discovers the tool
-  automatically. See [docs/agent.md](docs/agent.md).
-- **Zero-config presets** — auto-detects Next.js, Vite, Node/Express/Nest, and plain TypeScript.
-- **Real integrity validation** — verifies source hashes, every emitted `parts/*.md` against its recorded
-  `byteSize`/`sha256`, monolith artifacts, and the recorded configuration.
-- **Safe output swapping** — the previous snapshot survives until the new one is fully in place, and
-  destructive `outDir`/`tmpDir` combinations are refused.
-- **CLI & programmatic API** — `npx`, ESM, and CJS.
-
----
-
-## 🚀 Quick Start
+[![npm downloads](https://img.shields.io/npm/dw/@ankurhalder/codebase-snapshot.svg)](https://www.npmjs.com/package/@ankurhalder/codebase-snapshot)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 
 ```bash
 npx @ankurhalder/codebase-snapshot generate
 ```
 
-Or install it in your project. Any npm-compatible client works — they all resolve the
-same published package:
+That writes `./snapshot/` — a directory you can drop into a chat, a prompt, a RAG pipeline or
+a repository review. It works on TypeScript and JavaScript projects, and on Python, Go, Rust,
+Java/Kotlin, C#/.NET, PHP, Ruby, C/C++, Vue, Svelte and Astro, without configuration.
+
+![How it works](https://raw.githubusercontent.com/ankurhalder/codebase-snapshot/main/docs/how-it-works.svg)
+
+---
+
+## Why
+
+Feeding a real repository to a model is awkward: files are too big, context windows are too
+small, and picking what matters by hand does not scale or repeat. `codebase-snapshot` does it
+deterministically:
+
+- **One file per part, never over budget.** `maxPartBytes` is a hard ceiling. A file bigger
+  than the budget becomes a head/tail preview rather than blowing the limit.
+- **An index, not just text.** `manifest.json` lists every included file with its layer, kind,
+  language, part, hash and a structural summary — and every *excluded* file with the reason.
+- **Provably current.** `validate` re-hashes the repository against the snapshot and exits
+  non-zero on any drift, so a pipeline can gate on context being fresh.
+- **Safe by default.** Credential files are skipped unless asked for, secret-shaped strings are
+  redacted, and a mistyped output directory cannot delete source code.
+- **Usable by agents, not just humans.** A machine-readable contract and an installable skill
+  let an agent with no prior knowledge drive the whole thing.
+
+## Install
 
 ```bash
-npm install -D @ankurhalder/codebase-snapshot
-yarn add -D @ankurhalder/codebase-snapshot
-pnpm add -D @ankurhalder/codebase-snapshot
-bun add -d @ankurhalder/codebase-snapshot
+npx @ankurhalder/codebase-snapshot generate      # no install, one-off
+npm install -D @ankurhalder/codebase-snapshot    # or add it to a project
 ```
 
-```json
-{
-  "scripts": {
-    "snapshot": "codebase-snapshot generate",
-    "snapshot:validate": "codebase-snapshot validate"
-  }
-}
-```
+Any npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
+each verified against the packed tarball before release. Requires **Node.js 18+**.
 
-Requires **Node.js 18+**. Every client above is verified in CI, including yarn Berry with
-strict PnP. See [docs/install.md](docs/install.md) for global installs, version pinning,
-and troubleshooting.
+→ [Installation guide](docs/install.md)
 
----
-
-## 🤖 For AI agents
-
-An agent with **no prior knowledge** of this tool can drive it end to end. Two commands
-exist for exactly that:
+## Quick start
 
 ```bash
-# Machine-readable contract: workflow, every option + default, exit codes,
-# presets, safety rules and troubleshooting — as JSON on stdout.
-npx @ankurhalder/codebase-snapshot@latest describe --format json
+# 1. Optional but recommended: detect the project and write a commented config
+npx @ankurhalder/codebase-snapshot init --yes
 
-# Write the bundled agent skill where agents look for it:
-# AGENTS.md, .claude/skills/codebase-snapshot/SKILL.md, .cursor/rules/
-npx @ankurhalder/codebase-snapshot@latest skill --install
+# 2. Generate
+npx @ankurhalder/codebase-snapshot generate
+
+# 3. Check it matches the files on disk (exit 0 = current)
+npx @ankurhalder/codebase-snapshot validate
 ```
 
-The typical agent flow, once the contract is read:
+```
+📸 Generating snapshot for: /Users/you/project
+   Branch: main | Part budget: 300 KB
 
-```bash
-npx @ankurhalder/codebase-snapshot@latest init --yes   # detect the project, write config
-npx @ankurhalder/codebase-snapshot@latest generate     # write ./snapshot/
-npx @ankurhalder/codebase-snapshot@latest validate     # exit 0 = matches disk
+✅ Snapshot generated in 0.14s:
+   - Tracked files: 128
+   - Total lines:   9,431
+   - Total size:    0.41 MB
+   - Parts written: 3 under snapshot/parts/
+   - Reports:       snapshot/reports/ (project-tree, navigation, audit)
+   - Manifest:      snapshot/manifest.json
+   - Fingerprint:   e4607b570268c8def0911babbace97e4a0196d9eaf2cac22c8847500883d70aa
+   - Integrity:     passed
 ```
 
-The bare form works too — `npx @ankurhalder/codebase-snapshot generate` — because the
-package ships exactly one executable, which is what lets npm resolve it. Pin `@latest`
-(or `@3`) when you need the same build on every machine.
+The fingerprint is printed in full — all 64 hex characters, never elided — and it is the same
+value as `manifest.fingerprint`.
 
-Details, including the contract schema and the skill's install targets, are in
-[docs/agent.md](docs/agent.md).
+## What you get
 
----
-
-## 🛠️ CLI
-
-```bash
-codebase-snapshot [command] [options]
-codebase-snapshot [command] [options]
 ```
-
-Every option accepts both `--opt value` and `--opt=value`. Human-readable progress goes to **stderr**;
-payloads (`--format json`) go to **stdout**, so the output is safe to pipe into `jq`.
-
-### Commands
-
-| Command | Description |
-| :--- | :--- |
-| `generate` *(default)* | Generates snapshot parts, reports, tree, and manifest |
-| `validate`, `check` | Verifies snapshot integrity against disk and against the recorded config |
-| `init` | Creates a starter `snapshot.config.ts` (or `.mjs` on Node < 22.6) |
-| `report` | Prints metrics and health audits |
-| `explain <path>` | Explains how one path is treated: layer, kind, part, or why it was skipped |
-| `diff <a> <b>` | Compares two snapshots file by file |
-
-See [docs/configuration.md](docs/configuration.md) for the full option reference.
-
-### Options
-
-| Option | Description | Default |
-| :--- | :--- | :--- |
-| `--cwd <path>` | Target repository directory | `process.cwd()` |
-| `--out-dir <path>` | Snapshot output directory | `snapshot` |
-| `--include-monolith` | Also write `full-codebase.json` & `full-codebase.md` | `false` |
-| `--max-monolith-bytes <n>` | Skip monolith artifacts above this size | unlimited |
-| `--max-part-bytes <n>` | Hard byte budget per markdown part (min `4096`). Accepts units: `120k`, `1.5mb` | `307200` (300 KB) |
-| `--large-file-bytes <n>` | Threshold for head/tail preview truncation. Accepts units | `204800` (200 KB) |
-| `--include-sensitive-files` | Emit credential-bearing files (skipped by default) | `false` |
-| `--skip-artifacts <names>` | Omit artifacts, comma-separated: `readme`, `manifest`, `parts`, `navigation`, `projectTree`, `audit`, `monolith` | everything on |
-| `--only-artifacts <names>` | Write *only* the named artifacts. Cannot be combined with `--skip-artifacts` | — |
-| `--format <text\|json>` | Output format | `text` |
-| `--dry-run` | Compute the snapshot and print the plan without writing | `false` |
-| `--watch` | Re-generate whenever the repository changes | `false` |
-
-### Exit codes
-
-`0` success · `1` drift detected or generation failed · `2` usage error (unknown flag, bad number, …).
-
-Unknown flags and unknown commands are **rejected**; they do not fall through to `generate`.
-
----
-
-## ⚙️ Configuration
-
-Run `npx @ankurhalder/codebase-snapshot init`. Supported filenames, in order:
-`snapshot.config.ts`, `.js`, `.mjs`, `.cjs`, `.json`, `.snapshotrc.json`, `.snapshotrc`, and a `"snapshot"`
-key in `package.json`.
-
-> **Node note:** a `.ts` config is only importable natively from Node **22.6+**. `init` writes `.mjs`
-> instead on older Node versions, and a config that cannot be loaded is reported on stderr rather than
-> being silently ignored.
-
-```typescript
-import { defineConfig } from "@ankurhalder/codebase-snapshot";
-
-export default defineConfig({
-  branch: "main",
-  outDir: "snapshot",
-  maxPartBytes: 300 * 1024,
-  largeFileBytes: 200 * 1024,
-  previewHeadLines: 80,
-  previewTailLines: 40,
-
-  // Credential files are excluded unless you opt in:
-  includeSensitiveFiles: false,
-
-  // Every artifact is generated by default; switch individual ones off here.
-  artifacts: {
-    audit: false,        // skip reports/audit.md
-    projectTree: false,  // skip reports/project-tree.md
-  },
-
-  // Allow-list: when non-empty, only matching files are candidates.
-  include: ["src/**", "packages/*/src/**"],
-
-  // Plain strings match a whole path segment sequence; globs are supported.
-  excludePatterns: ["tests/fixtures", "**/*.lock", "**/__snapshots__/**"],
-
-  // "src/app/**" matches src/app and below — not src/apple or src/application.
-  layers: [
-    { name: "app", match: "src/app/**" },
-    { name: "features", match: "src/features/**" },
-    { name: "shared", match: "src/shared/**" },
-    { name: "scripts", match: "scripts/**" },
-  ],
-  kinds: [
-    { kind: "route", match: (p) => p.includes("/api/") || p.endsWith("route.ts") },
-    { kind: "component", match: (p) => p.endsWith(".tsx") },
-    { kind: "hook", match: (p) => p.includes("/hooks/") },
-  ],
-  secrets: {
-    // Strings are accepted here too (JSON configs can only express strings).
-    customPatterns: [{ rule: "internal-corp-token", pattern: /CORP-[A-Z0-9]{32}/ }],
-  },
-});
-```
-
-### Scoping with `include` / `excludePatterns`
-
-`include` is an allow-list: when it is non-empty, a file must match at least one
-pattern to enter the snapshot. `excludePatterns` then narrows what survived.
-
-```typescript
-export default defineConfig({
-  include: ["src/**"],                       // only src/, everything else is out
-  excludePatterns: ["**/*.test.ts"],         // …minus tests
-});
-```
-
-Both accept globs (`**`, `*`, `?`) or plain strings, where a plain string matches
-a whole path segment sequence — `"docs"` matches `docs/a.md` and `src/docs/b.md`
-but not `docsite/c.md`.
-
-Files dropped by either list are recorded in `manifest.skipped` with
-`reason: "excluded"` and the pattern that removed them, so an omission is always
-explicable. The effective `include` list is written into
-`manifest.config.include`, so changing it later is reported as configuration
-drift by `validate`.
-
-### Choosing which artifacts to emit
-
-Everything is written by default. Each artifact can be switched off without
-affecting the others, from a config file (`artifacts`) or the CLI
-(`--skip-artifacts audit,navigation`):
-
-| Artifact | Default | Notes |
-| :--- | :--- | :--- |
-| `readme` | on | `README.md` orientation page |
-| `manifest` | on | `manifest.json` — **off breaks `validate` and `report`** |
-| `parts` | on | `parts/part-XXX.md`, the code payload itself |
-| `navigation` | on | `reports/navigation.md` — dangles if `parts` is off |
-| `projectTree` | on | `reports/project-tree.md` |
-| `audit` | on | `reports/audit.md` |
-| `monolith` | off | `full-codebase.{json,md}`; also set by `includeMonolith` |
-
-```typescript
-export default defineConfig({
-  // Reports only — a security/health pass with no code payload:
-  artifacts: { parts: false, navigation: false },
-});
-```
-
-Unknown artifact names are **rejected**, not ignored, so a typo cannot quietly
-leave something enabled. Combinations that produce an unusable snapshot (a
-disabled manifest, or navigation without parts) are recorded in
-`manifest.warnings`. The selection is written into `manifest.config.artifacts`,
-so changing it later is reported as configuration drift by `validate`.
-
-### Redaction behaviour
-
-- Only the matched substring is replaced; the rest of the line survives.
-- Multi-line `-----BEGIN … PRIVATE KEY-----` blocks are masked as a whole, including keys that were
-  cut off before their `END` marker.
-- A rule supplied with the `/g` flag is compiled without it, so it cannot skip every other line.
-- `reports/audit.md` lists *where* secrets were found (file, line, rule) and never reproduces the value.
-
----
-
-## 📦 Programmatic API
-
-```typescript
-import { generateSnapshot, resolveConfig, validateSnapshot } from "@ankurhalder/codebase-snapshot";
-
-// `generateSnapshot` is synchronous — it does blocking file I/O by design.
-// (`generateSnapshotAsync` is provided if you prefer an async call site.)
-const config = resolveConfig({ cwd: process.cwd() }, { maxPartBytes: 300 * 1024 });
-const manifest = generateSnapshot(config);
-
-console.log(`Generated ${manifest.counts.partsCount} parts for ${manifest.counts.totalFiles} files.`);
-console.log(`Integrity: ${manifest.validation.status}`);
-
-// Dry run: compute everything, write nothing.
-const plan = generateSnapshot(config, { dryRun: true });
-
-// Validate against disk
-const validation = validateSnapshot(config);
-if (!validation.valid) {
-  console.error("Drift detected:", validation.errors);
-  console.error(validation.drift);           // hashMismatches, partIssues, configMismatches, …
-}
-```
-
-`resolveConfig(userConfig, cliOptions?, baseDir?)` brands its result; `isResolvedConfig(value)` lets you
-check for it, and `generateSnapshot`/`validateSnapshot` accept either a resolved config or a plain
-`SnapshotConfig`.
-
----
-
-## 📁 Snapshot Output
-
-```text
 snapshot/
-├── README.md                 # Overview for LLMs and developers
-├── manifest.json             # Machine-readable metadata and AST registry
-├── parts/
-│   ├── part-001.md           # Byte-bounded chunks with anchored code blocks
-│   └── ...
+├── README.md                  human summary of this snapshot
+├── manifest.json              machine index: files, parts, hashes, config, skips
+├── parts/part-001.md …        the code, grouped and size-budgeted
 └── reports/
-    ├── navigation.md         # File-to-part lookup index (anchors resolve)
-    ├── project-tree.md       # ASCII repository hierarchy
-    └── audit.md              # Security findings, layer distributions, large files
+    ├── project-tree.md        directory tree of included files
+    ├── navigation.md          links between layers, kinds and parts
+    └── audit.md               secrets, large files, parse diagnostics, git state
 ```
 
-`manifest.json` records the effective configuration (budgets, preview sizes, excludes,
-`includeSensitiveFiles`), so `validate` can detect configuration drift as well as code drift.
-`manifest.validation.status` is computed from a real pre-write integrity pass (part digests, byte
-budgets, file-to-part assignment) — it is not a constant.
+Every artifact can be turned off (`--skip-artifacts`, `--only-artifacts`, or the config).
 
----
+→ [Snapshot output and manifest schema](docs/output.md)
 
-## 🔄 Upgrading from 1.x
+## Supported projects
 
-Version 2.0.0 contains breaking changes, all in service of correctness:
+25 presets, detected automatically from the repository — each contributing layers, kinds,
+ecosystem ignore patterns and a recommended part budget.
 
-| Change | Reason |
+| | | | |
+| :--- | :--- | :--- | :--- |
+| Next.js | Nuxt | SvelteKit | Remix |
+| Astro | Angular | Solid | Vue + Vite |
+| React + Vite | NestJS | Express / Fastify / Koa | Node library |
+| Monorepo | Django | FastAPI / Flask | Python library |
+| Go | Rust | Java / Spring | .NET |
+| Laravel (PHP) | Rails (Ruby) | Terraform / Docker infra | Docs-only |
+| generic fallback | | | |
+
+Non-TypeScript languages get import/export/class/function summaries rather than being treated
+as opaque text. Vue, Svelte and Astro script blocks go through the real TypeScript compiler.
+Every summary is labelled `ast`, `structural` or `heuristic` so you know how much to trust it —
+Python, for example, is a line-scan `heuristic`, while JSON and Markdown get `structural`
+shapes.
+
+→ [Preset table and detection rules](docs/configuration.md#project-presets)
+
+## Commands
+
+| Command | Does |
 | :--- | :--- |
-| `generateSnapshot()` is synchronous | It never awaited anything; the `async` signature only promised concurrency it did not have. `await generateSnapshot(...)` still works; `generateSnapshotAsync` is available. |
-| Manifest `schemaVersion` is `3.0.0` | The shape changed materially (below). |
-| Removed duplicate fields: `path`, `bytes`, `sha256` (on entries), `PartMetadata.bytes`, `PartMetadata.files`, `contentFingerprint`, `generator.script` | Each was a permanent alias of a canonical field that could only ever agree. Use `relativePath`, `sizeBytes`, `hashSha256`, `byteSize`, `includedFiles[].relativePath`. |
-| `totals.summaryOnlyFiles` → `totals.previewFiles` | The old name claimed more than the value meant. |
-| `SecretFinding.snippet` removed | It carried the raw matched source line — the vector that leaked secrets into `reports/audit.md`. |
-| Credential files skipped by default | A private key or registry token cannot be reliably masked by a regex; opt in with `includeSensitiveFiles`. |
-| `monolithContent` option removed, `--force` removed | Never implemented / never read. |
-| `dist/cli.js` is no longer the executable | The bin is now `dist/bin.js`; `./cli` is a side-effect-free module usable from both ESM and CJS. |
+| `generate` *(default)* | Write the snapshot. |
+| `validate` / `check` | Compare the snapshot with the repository; exit `1` on drift. |
+| `report` | Snapshot health, layer metrics, secret audit. |
+| `init` | Interactive (or `--yes`) setup that writes a self-documenting config. |
+| `explain <path>` | Why one path is included, which part it lands in, or why it was skipped. |
+| `diff <a> <b>` | Compare two snapshots. |
+| `describe` | The machine-readable contract (`--format json`). |
+| `skill` | Print or install the agent skill. |
 
----
+Exit codes: `0` success · `1` drift or refused generation · `2` usage error.
 
-## 📄 License
+→ [Full CLI reference](docs/cli.md)
 
-MIT © [Ankur Halder](https://github.com/ankurhalder)
+## For AI agents
+
+Everything an agent needs is available as data, and the tool can install its own skill:
+
+```bash
+# The contract: workflow, every option and default, exit codes, presets, safety rules
+npx @ankurhalder/codebase-snapshot describe --format json
+
+# Write the skill where agents look: AGENTS.md, .claude/skills/, .cursor/rules/
+npx @ankurhalder/codebase-snapshot skill --install
+```
+
+An agent told only "use `npx @ankurhalder/codebase-snapshot`" can read the contract, follow its
+ordered workflow, and produce a validated snapshot unaided — that path is covered by a test.
+
+→ [Using this with an AI agent](docs/agent.md) · [AGENTS.md](AGENTS.md) · [llms.txt](llms.txt)
+
+## Configuration
+
+`snapshot.config.ts` (or `.mjs`) is written by `init` with **every** setting at its current
+value, commented and grouped, so it doubles as the reference. Deleting any line is safe: the
+defaults are real.
+
+```js
+export default {
+  maxPartBytes: "120k",                                   // hard budget per part
+  excludePatterns: ["vendor/**", "**/*.min.js"],
+  artifacts: { monolith: false },                         // single-file output stays off
+  budgets: { default: "120k", byLayer: { docs: 40_000 } },
+  includeSensitiveFiles: false,                           // .env, *.pem … stay out
+};
+```
+
+→ [Configuration reference](docs/configuration.md)
+
+## Programmatic API
+
+```js
+import { generateSnapshot, resolveConfig, validateSnapshot, loadConfigFile } from "@ankurhalder/codebase-snapshot";
+
+const config = resolveConfig(await loadConfigFile(process.cwd()));
+const manifest = generateSnapshot(config);
+const validation = validateSnapshot(config);
+```
+
+CommonJS works too (`require("@ankurhalder/codebase-snapshot")`), with type definitions for
+both. The CLI and the API share one implementation, so anything the CLI does is available here.
+
+## Documentation
+
+| | |
+| :--- | :--- |
+| [Installation](docs/install.md) | Every client, version pinning, agent skill install |
+| [CLI reference](docs/cli.md) | Commands, options, exit codes, examples |
+| [Configuration](docs/configuration.md) | Every setting, all 25 presets, budgets, hooks, secrets |
+| [Snapshot output](docs/output.md) | Directory layout and the full manifest schema |
+| [AI agents](docs/agent.md) | The contract, the skill, what an agent should avoid |
+| [Troubleshooting](docs/troubleshooting.md) | Every message and what to do about it |
+| [Changelog](CHANGELOG.md) | Release history and breaking changes |
+| [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki) | Guides, recipes, FAQ |
+
+## Safety
+
+- **Credential files are excluded by default** — `.env`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
+  `.git-credentials`, `id_rsa`, `.kube/config`, `*.tfstate` — and listed in
+  `manifest.skipped[]` with the reason.
+- **Secrets are redacted** inside ordinary files: only the matched span is masked, never the
+  whole line, and no excerpt reaches any artifact.
+- **The output directory is owned by the tool.** Each run is written to a scratch directory and
+  swapped in atomically; the previous snapshot survives a failure.
+- **It refuses to replace a directory it did not create**, so `--out-dir src` cannot destroy
+  source code.
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © Ankur Halder

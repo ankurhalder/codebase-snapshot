@@ -1,126 +1,146 @@
 # Configuration reference
 
-Everything `@ankurhalder/codebase-snapshot` can be told to do, in one place.
+Every setting, every default, and what each one changes. For commands and options see the
+[CLI reference](cli.md).
 
-```bash
-npx @ankurhalder/codebase-snapshot init     # writes a starter config
+Nothing here is required: with no config at all the tool runs on the defaults below.
+
+## Contents
+
+- [Config files](#config-files)
+- [Scoping: which files get in](#scoping-which-files-get-in)
+- [Project presets](#project-presets)
+- [Classification: layers and kinds](#classification-layers-and-kinds)
+- [Sizing: byte budgets](#sizing-byte-budgets)
+- [Artifacts: what gets written](#artifacts-what-gets-written)
+- [Secrets: redaction](#secrets-redaction)
+- [Output directories](#output-directories)
+- [Hooks](#hooks)
+- [Complete example](#complete-example)
+- [Interactive setup](#interactive-setup)
+
+## Config files
+
+The first match wins:
+
+```
+snapshot.config.ts
+snapshot.config.js
+snapshot.config.mjs
+snapshot.config.cjs
+snapshot.config.json
+.snapshotrc / .snapshotrc.json
+package.json → "snapshot"
 ```
 
-Config files are resolved in this order, first match wins:
+`snapshot.config.json` accepts comments. `package.json`'s `"snapshot"` key is read only when
+no dedicated config file exists, and it must be an object (a wrong type is a warning, since
+other tools use that key too).
 
-`snapshot.config.ts` → `.js` → `.mjs` → `.cjs` → `.json` → `.snapshotrc.json` → `.snapshotrc` → `"snapshot"` in `package.json`.
+The extension decides how the file is loaded. `.cjs` is always CommonJS and must use
+`module.exports`; `.mjs` and `.ts` are always ESM and must use `export default`. `.js` follows
+the package's `type` field — `module` means ESM, `commonjs` means CommonJS; with no `type`
+Node decides by detecting the syntax, so `export default` works on current Node but is not
+portable to versions without detection. Getting it wrong is the `Could not load …` error
+above, not a silent fallback.
 
-> A `.ts` config is only importable natively from Node **22.6+**. `init` writes `.mjs` on older Node, and an unloadable config is reported on stderr rather than ignored.
+A config file that exists but cannot be parsed is a **hard error** (exit `1`, nothing
+written). Silently ignoring it would produce a snapshot with none of your settings.
 
----
+A `.ts` config needs Node ≥ 22.6 **and** an ES-module project, because Node applies the
+package's `type` field to a `.ts` file. `codebase-snapshot init` picks the right filename for
+the project — `.ts` when both conditions hold, `.mjs` otherwise — and writes a plain object
+with no imports so it loads even when the package is only used through `npx`.
+
+CLI flags override the config for a single run (`--max-part-bytes`, `--out-dir`, …).
+`--no-config` goes further and ignores every config file, so the run uses the built-in
+defaults and the project's detected preset. A code config is executed when it is loaded, so
+`--no-config` is also the way to snapshot a repository whose config you do not want to run —
+see [the trust boundary](../SECURITY.md#trust-boundary).
 
 ## Scoping: which files get in
 
-```javascript
+```js
 export default {
-  include: ["src/**", "packages/*/src/**"],   // allow-list, empty = everything
-  excludePatterns: ["**/*.test.ts", "docs"],  // narrows what include let through
+  include: [],                    // allow-list; empty means "everything"
+  excludePatterns: [],            // extra excludes, applied on top of the preset's
 };
 ```
 
-`include` runs first, `excludePatterns` narrows the survivors. Both accept globs
-(`**`, `*`, `?`, `{a,b}`, `[abc]`) or plain strings; a plain string matches a
-whole path segment sequence, so `"docs"` matches `docs/a.md` and `src/docs/b.md`
-but not `docsite/c.md`.
+- `include` is an allow-list of globs. When non-empty, only matching files are considered.
+- `excludePatterns` removes files everywhere. Presets contribute their own ecosystem ignores
+  on top; those are not removable, only addable to.
 
-Every dropped file is recorded in `manifest.skipped` with `reason` and the exact
-pattern responsible (`excluded`, `default-ignore`, `sensitive-file`, `binary`,
-`symlink`, `read-error`, `not-file`).
+Built-in ignores always apply: `.git`, `node_modules`, `.next`, `dist`, `build`, lockfiles,
+minified assets and binaries. Sensitive files are handled separately (see
+[Secrets](#secrets-redaction)).
 
-```javascript
-export default {
-  includeSensitiveFiles: false,   // .env, *.pem, .npmrc, .ssh/, .tfstate …
-};
+Every path the scanner discovers is recorded in `manifest.skipped[]` with the reason and the
+rule that matched — nothing it sees is dropped silently, including a `.gitignore`d path in a
+repository where git does the filtering. See the [`skipped[]`
+reasons](output.md#skipped). To debug one path:
+
+```bash
+npx codebase-snapshot explain src/some/file.ts
 ```
 
 ## Project presets
 
-A preset is a detected project shape: layers, kinds, ecosystem ignores and a
-recommended part budget. Detection reads the repository **once** and the first
-matching preset wins, ordered by specificity — so a Next.js app inside a pnpm
-workspace is still a Next.js project.
+Detection reads the repository **once** and picks the highest-priority match, so a Next.js
+app inside a pnpm workspace is still `nextjs`, not `monorepo`. `peerDependencies` and
+`optionalDependencies` count as dependencies. A bare `package.json` ranks below any
+definitive language manifest, so a Go or Rust repository with a `package.json` for tooling is
+not mistaken for a Node library.
 
-| Preset | Detected from |
-| :--- | :--- |
-| `nextjs` | `next.config.*`, or `next` |
-| `nuxt` | `nuxt.config.*`, or `nuxt` |
-| `sveltekit` | `svelte.config.*`, `@sveltejs/kit` |
-| `remix` | `@remix-run/*` |
-| `astro` | `astro.config.*`, `astro` |
-| `angular` | `angular.json`, `@angular/core` |
-| `solid` | `solid-js` |
-| `vue-vite` | `vue` + vite |
-| `react-vite` | `react` + vite |
-| `nest` | `@nestjs/core` |
-| `node-express` | `express`, `fastify`, `koa` |
-| `node-lib` | any `package.json` |
-| `python-django` | `manage.py`, or django in the manifest |
-| `python-fastapi` | fastapi / flask in the manifest |
-| `python-lib` | `pyproject.toml`, `setup.py`, `.py` files |
-| `go` | `go.mod` |
-| `rust` | `Cargo.toml` |
-| `java-spring` | `pom.xml`, `build.gradle` |
-| `dotnet` | `*.csproj`, `*.sln` |
-| `php-laravel` | `artisan`, `composer.json` |
-| `ruby-rails` | `Gemfile`, `config.ru` |
-| `monorepo` | `pnpm-workspace.yaml`, `workspaces`, `nx.json`, `turbo.json` |
-| `infra` | `*.tf`, `Chart.yaml`, `docker-compose.yml` |
-| `docs` | mostly Markdown, no `package.json` |
-| `generic` | anything else |
+| Preset | Priority | Detected from | Budget | Ecosystem ignores |
+| :--- | ---: | :--- | :--- | :--- |
+| `nextjs` | 100 | `next.config.*`, or `next` | 300k | `.svelte-kit`, `.astro`, `.vite`, `.output` |
+| `nuxt` | 98 | `nuxt.config.*`, or `nuxt` | 200k | `.nuxt`, `.output` |
+| `sveltekit` | 96 | `svelte.config.*`, `@sveltejs/kit` | 200k | `.svelte-kit`, `.vercel` |
+| `remix` | 94 | `@remix-run/*` | 200k | `.cache`, `public/build` |
+| `astro` | 92 | `astro.config.*`, `astro` | 150k | `.astro`, `dist` |
+| `angular` | 90 | `angular.json`, `@angular/core` | 200k | `.angular`, `dist` |
+| `solid` | 88 | `solid-js`, `solid-start` | 120k | `.solid`, `dist` |
+| `vue-vite` | 86 | `vue` + `vite`/`vite.config.*` | 120k | `.vite`, `dist` |
+| `react-vite` | 84 | `react` + `vite`/`vite.config.*` | 120k | `.vite`, `dist` |
+| `nest` | 80 | `@nestjs/core` | 200k | `dist`, `node_modules` |
+| `node-express` | 78 | `express`, `fastify`, `koa`, `@hapi/hapi` | 200k | `dist` |
+| `monorepo` | 70 | `pnpm-workspace.yaml`, `nx.json`, `turbo.json`, `lerna.json`, `"workspaces"` | 200k | `.turbo`, `.nx` |
+| `python-django` | 56 | `manage.py`, django in `pyproject.toml`/`requirements.txt` | 150k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs`, `staticfiles`, `media` |
+| `python-fastapi` | 54 | fastapi or flask in `pyproject.toml`/`requirements.txt` | 150k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs` |
+| `go` | 50 | `go.mod` | 200k | `vendor`, `testdata` |
+| `rust` | 48 | `Cargo.toml` | 200k | `target` |
+| `java-spring` | 46 | `pom.xml`, `build.gradle`, `build.gradle.kts` | 200k | `.gradle`, `out`, `target` |
+| `node-lib` | 45 | any `package.json` | 120k | `dist` |
+| `dotnet` | 44 | `*.csproj`, `*.sln`, `global.json` | 200k | `bin`, `obj`, `.vs` |
+| `php-laravel` | 42 | `artisan`, laravel in `composer.json`, `composer.json` | 150k | `vendor`, `storage`, `bootstrap/cache`, `public/build` |
+| `ruby-rails` | 40 | `Gemfile`, `config.ru`, `Rakefile` | 150k | `.bundle`, `log`, `tmp`, `vendor/bundle`, `public/assets` |
+| `python-lib` | 30 | `pyproject.toml`, `setup.py`, `requirements.txt`, `.py` files | 120k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs` |
+| `infra` | 24 | `*.tf`, `Chart.yaml`, `kustomization.yaml`, `docker-compose.yml` | 100k | `.terraform`, `.terragrunt-cache` |
+| `docs` | 22 | ≥ 3 markdown files and no `package.json` | 100k | `.docusaurus`, `.vitepress/dist`, `site` |
+| `generic` | 0 | anything else | 120k | — |
 
-Force one when detection is wrong:
+A preset contributes layers, kinds, ignores and a recommended budget — what `init` writes as
+`maxPartBytes`. Force one when detection is wrong:
 
-```javascript
-export default {
-  preset: "react-vite",
-};
+```js
+export default { preset: "react-vite" };
 ```
 
-An unknown name is an error listing every valid preset — never a silent fallback.
-Each preset also contributes ignore patterns the generic list cannot know
-(`__pycache__`, `target`, `vendor`, `bin`/`obj`, …). The resolved preset is
-recorded in `manifest.config.preset`, so changing it shows up as config drift.
+An unknown name is an error listing every valid preset, never a silent fallback. The resolved
+preset is recorded in `manifest.config.preset`, so changing it shows up as config drift.
 
----
-
-## Interactive setup
-
-```bash
-npm create codebase-snapshot        # or: npx @ankurhalder/codebase-snapshot init
-```
-
-Detects the project, asks seven questions with real defaults, and writes the
-config. It never prompts when either end is not a TTY: every answer has a flag.
-
-| Flag | Question it answers |
-| :--- | :--- |
-| `--preset <name>` | project type |
-| `--include <globs>` / `--exclude <globs>` | scope |
-| `--max-part-bytes <size>` | part size |
-| `--skip-artifacts` / `--only-artifacts` | artifacts |
-| `--include-sensitive-files` | safety |
-| `--minimal` | write only what differs from the defaults |
-| `--yes` | accept everything, do not prompt |
-| `--force` | overwrite an existing config |
-| `--dry-run` | print the config, write nothing |
-
-The generated config lists **every setting at its current value**, commented and
-grouped. That is deliberate: most people never open the documentation, and a
-config that only records their changes cannot tell them what else exists.
-Deleting any line is safe — the defaults are real.
 ## Classification: layers and kinds
 
-```javascript
+Layers group files (roughly directories), kinds label their role. Both are first-match-wins
+with `other` as the fallback, and both accept a glob string, a `RegExp`, or a function.
+
+```js
 export default {
-  layersMode: "merge",   // default: your rules first, then the preset's
+  layersMode: "merge",         // "merge" (default) or "replace"
   layers: [
-    { name: "billing", match: "src/features/billing/**" },
-    { name: "legacy", match: (p) => p.includes(".legacy.") },
+    { name: "api", match: "src/api/**" },
+    { name: "ui", match: /\.(tsx|vue|svelte)$/ },
   ],
   kinds: [
     { kind: "route", match: /(^|\/)route\.tsx?$/ },
@@ -129,115 +149,124 @@ export default {
 };
 ```
 
-Rules are evaluated in order, **first match wins**, with an `other` fallback.
-`match` may be a string, a `RegExp`, or a predicate function.
+A layer rule is `{ name, match }` and a kind rule is `{ kind, match }`. The label key is
+different in each, and a row that gets it wrong is rejected rather than silently ignored, so
+copy the shapes above.
 
-`layersMode: "merge"` (the default) keeps the detected preset's rules and lets
-yours win by being evaluated first. `"replace"` discards the preset entirely.
+- `layersMode: "merge"` keeps the preset's rules and lets yours win by being evaluated first.
+- `layersMode: "replace"` discards the preset's rules entirely.
 
-Presets are auto-detected by specificity: the first match in descending priority wins,
-and `generic` is the fallback. There are 25 of them — see the table above. A framework
-that depends on `vite` still resolves to `react-vite` / `vue-vite` because those detectors
-outrank `node-lib`, and a Next.js app inside a pnpm workspace is still `nextjs`, not
-`monorepo`.
+Classification drives per-layer budgets and the `Layers:` breakdown in `report`.
 
 ## Sizing: byte budgets
 
-```javascript
+```js
 export default {
-  maxPartBytes: "120k",      // hard ceiling per part; default 300 KB, min 4096 B
-  largeFileBytes: "200k",    // above this a file gets a head/tail preview
+  maxPartBytes: "300k",        // hard ceiling per part; default 307200, minimum 4096
+  largeFileBytes: "200k",      // above this a file becomes a head/tail preview
   previewHeadLines: 80,
   previewTailLines: 40,
-
-  budgets: {                 // optional per-layer overrides
+  budgets: {                   // optional per-layer overrides
     default: "120k",
     byLayer: { docs: 40_000, core: 300_000 },
   },
 };
 ```
 
-Budgets accept raw bytes (`122880`) or human sizes (`"120k"`, `"1.5mb"`, `"2 GB"`).
-Anything unparseable is an error rather than a silent fallback to the default.
+Sizes accept bytes (`307200`), `"120k"`, `"1.5mb"`, and spaces (`"120 k"`). Zero and negative
+values are errors; so is anything below 4096 — a part budget that small cannot hold a header,
+let alone code.
 
-Files under different budgets are partitioned separately and the resulting parts
-are re-numbered, so filenames and `Previous:`/`Next:` links stay correct.
+The budget is a hard ceiling: a part never exceeds it. A single file larger than the budget is
+not split mid-file — it becomes a head/tail preview, marked `isPreviewTruncated`.
+
+`budgets.byLayer` lets expensive layers get more room than generated docs, for example.
 
 ## Artifacts: what gets written
 
-Everything is on by default. Each artifact can be switched off independently —
-`artifacts` in config, or `--skip-artifacts` / `--only-artifacts` on the CLI.
-
-| Artifact | Default | File |
-| :--- | :--- | :--- |
-| `readme` | on | `README.md` |
-| `manifest` | on | `manifest.json` — **off breaks `validate` and `report`** |
-| `parts` | on | `parts/part-XXX.md` |
-| `navigation` | on | `reports/navigation.md` — dangles if `parts` is off |
-| `projectTree` | on | `reports/project-tree.md` |
-| `audit` | on | `reports/audit.md` |
-| `monolith` | off | `full-codebase.{json,md}` |
-
-```javascript
+```js
 export default {
-  artifacts: { parts: false, navigation: false },   // reports-only pass
-  includeMonolith: false,
-  maxMonolithBytes: null,
-};
-```
-
-Unknown artifact names are rejected, not ignored. The selection is recorded in
-`manifest.config.artifacts`, so changing it later shows up as config drift.
-
-The monolith is built from the **pre-partition** contents, so it holds the whole
-file even when a part had to truncate it.
-
-## Secrets: redaction rules
-
-21 built-in rules cover PEM keys, JWT, AWS, GitHub, Slack, Stripe, Google,
-OpenAI/Anthropic, npm, PyPI, SendGrid, Twilio, DigitalOcean, Azure, database
-URIs, basic-auth URLs and `.env`-style assignments.
-
-```javascript
-export default {
-  secrets: {
-    customPatterns: [
-      { rule: "internal-token", pattern: /CORP-[A-Z0-9]{32}/ },
-      { rule: "from-json", pattern: "ACME_[a-z0-9]{10}" },   // strings allowed
-    ],
-    disableDefaultPatterns: false,
+  artifacts: {
+    readme: true,          // snapshot/README.md
+    manifest: true,        // snapshot/manifest.json
+    parts: true,           // snapshot/parts/*.md
+    navigation: true,      // snapshot/reports/navigation.md
+    projectTree: true,     // snapshot/reports/project-tree.md
+    audit: true,           // snapshot/reports/audit.md
+    monolith: false,       // full-codebase.json + full-codebase.md
   },
 };
 ```
 
-Only the matched span is replaced; the rest of the line survives. Multi-line PEM
-blocks are masked as a block, including ones cut off before their `END` marker.
-No excerpt of a matched line is ever written to any artifact.
+Everything except `monolith` is on by default; `monolith` follows `includeMonolith`. Turn
+artifacts off with the config, `--skip-artifacts a,b`, or `--only-artifacts a,b` (the two
+cannot be combined).
 
-## Output layout
+Two combinations warn because they produce a snapshot that contradicts itself: `manifest` off
+means `validate` and `report` cannot inspect the snapshot, and `parts` off with `navigation`
+on leaves links pointing at files that were never written. Both are allowed.
 
-```javascript
+The `.codebase-snapshot` ownership marker is always written, whatever the selection.
+
+See [Snapshot output](output.md) for the layout and the manifest schema.
+
+## Secrets: redaction
+
+```js
 export default {
-  outDir: "snapshot",
-  tmpDir: "snapshot.tmp",
-  branch: "main",   // fallback when git cannot report one
+  secrets: {
+    customPatterns: [
+      { rule: "github-pat", pattern: /ghp_[A-Za-z0-9]{36}/ },
+      { rule: "internal-token", pattern: /CORP-[A-Z0-9]{32}/ },
+    ],
+    disableDefaultPatterns: false,
+  },
+  includeSensitiveFiles: false,   // .env, *.pem, .npmrc, .ssh/, .tfstate …
 };
 ```
 
-`outDir` may not be the working directory, an ancestor, or the filesystem root,
-and `outDir`/`tmpDir` may not contain each other. Writes are atomic: the previous
-snapshot survives until the new one is fully in place.
+Each entry is `{ rule, pattern }`, where `rule` is the name that appears in the audit and
+`pattern` is a `RegExp`, or a string in a `.json` config. A bare `RegExp` in the array works
+too — it comes out as `custom-1`, `custom-2`, … in the findings — but naming the rule is what
+makes an audit entry mean something.
 
-Both directories are also **refused if they already exist and this generator did
-not write them** — a typo such as `outDir: "src"` would otherwise replace your
-source tree. Ownership is proved by a `.codebase-snapshot` marker (plus a
-parseable `manifest.json` for older output), never by filenames, so an existing
-`docs/README.md` is never mistaken for a previous snapshot. An empty directory,
-or one holding only `.gitkeep`/`.gitignore`/`.DS_Store`, is always accepted.
+- Credential-bearing **files** are skipped by default and listed in `skipped[]` with reason
+  `sensitive-file`. `includeSensitiveFiles: true` emits them.
+- Secret-shaped **strings** inside ordinary files are redacted in the emitted parts. Only the
+  matched span is masked, never the whole line, and no excerpt of a matched line reaches any
+  artifact. Multi-line PEM keys are masked as a block.
+- `customPatterns` add rules; `disableDefaultPatterns` removes the built-in set — it does not
+  disable redaction itself.
+
+Findings are summarised in `reports/audit.md` and in `report`.
+
+## Output directories
+
+```js
+export default {
+  outDir: "snapshot",
+  tmpDir: "snapshot.tmp",
+};
+```
+
+`outDir` may not be the working directory, an ancestor, or the filesystem root, and
+`outDir`/`tmpDir` may not contain one another — the message prints the resolved paths. Writes
+are atomic: the previous snapshot survives until the new one is complete.
+
+Both directories are also **refused if they already exist and this generator did not write
+them**, so `outDir: "src"` cannot replace your source tree. Ownership is proved by the
+`.codebase-snapshot` marker and nothing else: a JSON object naming this generator, with a
+schema version this build understands, a per-snapshot `id`, and the list of entries it wrote.
+A file with that name but no valid marker, or a directory holding a manifest from another
+tool, is refused. The proof is never a filename, so an existing `docs/README.md` is safe.
+
+Files your hook writes into the output directory are recorded in the marker's entry list, so
+they do not block later runs; a file you add by hand afterwards does, because it is not in the
+snapshot the marker describes.
 
 ## Hooks
 
-```javascript
+```js
 export default {
   hooks: {
     afterGenerate: (manifest) => {
@@ -247,94 +276,93 @@ export default {
 };
 ```
 
-A throwing hook becomes a warning on the manifest — it never loses a snapshot
-that was already written.
+A throwing hook is downgraded to a warning on the manifest — it never loses a snapshot that
+was already written.
 
-A hook may write its own files into the output directory. That is safe across
-reruns: ownership of the directory is established by a `.codebase-snapshot`
-marker written before any artifact, not by the set of filenames present, so
-custom artifacts never look like someone else's data.
+A hook may write its own files into the output directory; that is safe across reruns because
+ownership is established by the marker rather than by the filenames present.
 
-Note that a hook runs in the **process** working directory, so with
-`codebase-snapshot --cwd elsewhere` a relative path resolves against your shell's directory,
-not the target repo. Use the absolute paths on `manifest` (or resolve against
-`outDir` yourself) when passing `--cwd`.
+A hook runs in the **process** working directory, so with `--cwd elsewhere` a relative path
+resolves against your shell, not the target repository. Use the absolute paths on `manifest`
+(or resolve against `outDir` yourself) when passing `--cwd`.
 
----
+## Complete example
 
-# Commands
+Every setting at its built-in default. Nothing here has to be written — the tool runs on these
+values with no config at all.
 
-| Command | Purpose |
-| :--- | :--- |
-| `generate` *(default)* | Write the snapshot |
-| `validate`, `check` | Re-hash sources and parts, compare config, detect drift |
-| `report` | Print metrics, layer distribution and drift status |
-| `explain <path>` | Show how one path would be treated |
-| `diff <a> <b>` | Compare two snapshots |
-| `init` | Write a starter config |
+```js
+export default {
+  // ── Project ──────────────────────────────────────────────
+  preset: "detected",            // "detected" auto-detects; or name one of the 25
+  branch: "main",                // recorded when git cannot report one
 
-## `explain`
+  // ── Output ───────────────────────────────────────────────
+  outDir: "snapshot",
+  tmpDir: "snapshot.tmp",
 
-```
-$ codebase-snapshot explain src/app/page.tsx
+  // ── Size ─────────────────────────────────────────────────
+  maxPartBytes: "300k",
+  largeFileBytes: "200k",
+  previewHeadLines: 80,
+  previewTailLines: 40,
+  budgets: { default: "300k", byLayer: {} },
 
-src/app/page.tsx
+  // ── Scope ────────────────────────────────────────────────
+  include: [],
+  excludePatterns: [],
 
-  included   yes
-  layer      app   (rule (p) => p.startsWith("src/app/") || ...)
-  kind       component   (rule (p) => { const base = p.split("/").pop() ...)
-  language   tsx
-  size       48 B, 1 line(s)
-  part       part-001.md
-  inclusion  full
-  secrets    none
-```
+  // ── Artifacts ────────────────────────────────────────────
+  artifacts: {
+    readme: true,
+    manifest: true,
+    parts: true,
+    navigation: true,
+    projectTree: true,
+    audit: true,
+    monolith: false,
+  },
 
-Excluded paths say why:
+  // ── Safety ───────────────────────────────────────────────
+  includeSensitiveFiles: false,
+  secrets: { customPatterns: [], disableDefaultPatterns: false },
 
-```
-$ codebase-snapshot explain .env
+  // ── Classification ───────────────────────────────────────
+  layersMode: "merge",
+  layers: [],
+  kinds: [],
 
-.env
-
-  included   no
-  reason     sensitive-file
-  detail     credential-bearing file; enable includeSensitiveFiles to emit it
-```
-
-Exits `0` when the path is included, `1` when it is not. `--format json` emits the
-same data as an object.
-
-## `diff`
-
-```
-$ codebase-snapshot diff old-snapshot new-snapshot
-
-before  2026-11-03T10:00:00.000Z  812 file(s), 4 part(s)
-after   2026-11-03T11:30:00.000Z  820 file(s), 4 part(s)
-
-  + 9 added
-  - 1 removed
-  ~ 3 changed
-  = 808 unchanged
+  // ── Advanced ─────────────────────────────────────────────
+  includeMonolith: false,
+  maxMonolithBytes: null,
+  hooks: {},
+};
 ```
 
-Both arguments may be snapshot directories or paths to a `manifest.json`.
+Deleting any line is safe — the defaults are real, and each one is what the comment says.
 
-## `--watch`
+This is **not** byte-identical to a generated file. `codebase-snapshot init` starts from these
+values and substitutes two things: `preset` becomes the detected name (`node-lib` for a plain
+npm package), and `maxPartBytes` with `budgets.default` become that preset's
+`recommendedBudget` (`"120k"` in the same project). `generate` on its own applies no
+recommended budget — without a config it uses `--max-part-bytes`, default 307200 — so the
+preset's figure only takes effect once `init` has written it into a config.
+
+## Interactive setup
 
 ```bash
-npx @ankurhalder/codebase-snapshot generate --watch
+npx codebase-snapshot init
 ```
 
-Re-generates on every change, ignoring writes into the output and temporary
-directories (including the atomic-swap backup) so it cannot trigger itself.
+Walks every tunable parameter, showing the detected value as the default. Every prompt has a
+flag, so the same setup works non-interactively:
 
----
+```bash
+npx codebase-snapshot init --yes
+npx codebase-snapshot init --preset go --max-part-bytes 200k \
+    --include "cmd/**,internal/**" --exclude "**/*_test.go" --yes
+```
 
-# Drift
-
-`validate` compares five things: source hashes on disk, the emitted parts (size
-and SHA-256), the manifest's own bookkeeping, the recorded configuration
-(budgets, includes, excludes, artifacts, layers mode), and git state. Changing a
-config value without re-generating is reported as drift, not silently accepted.
+`--minimal` writes only what differs from the defaults. `--dry-run` prints the config and
+writes nothing. `--force` overwrites an existing config; without it, an existing config is
+left alone and the command exits `1`.

@@ -100,6 +100,23 @@ function existingConfig(cwd: string): string | null {
   return null;
 }
 
+/**
+ * True when `package.json` already carries a `"snapshot"` config block.
+ *
+ * `init` used to ignore it and write a file that then took precedence, silently
+ * changing the effective settings of a repository that was already configured.
+ */
+function packageJsonHasConfig(cwd: string): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
+      snapshot?: unknown;
+    };
+    return typeof parsed.snapshot === "object" && parsed.snapshot !== null;
+  } catch {
+    return false;
+  }
+}
+
 function artifactAnswers(options: InitOptions): Required<ArtifactSelection> {
   const artifacts: Required<ArtifactSelection> = { ...DEFAULT_ANSWERS.artifacts };
   for (const name of options.skipArtifacts ?? []) {
@@ -345,6 +362,12 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   if (present && present !== configName && !options.force) {
     throw new Error(
       `A configuration already exists (${present}). Re-run with --force to replace it.`
+    );
+  }
+  if (packageJsonHasConfig(options.cwd) && !options.force) {
+    throw new Error(
+      'package.json already defines a "snapshot" config. Remove that key, or re-run with --force ' +
+        "to write a config file that takes precedence over it."
     );
   }
   if (fs.existsSync(configPath) && !options.force) {

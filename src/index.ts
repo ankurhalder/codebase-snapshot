@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { summarizeWithProfile } from "./ast/profiles/index.js";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
@@ -49,7 +50,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "3.0.0";
+export const GENERATOR_VERSION = "4.0.0";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -301,76 +302,325 @@ export function resolveSafeOutputDirs(config: {
 }
 
 /**
- * Placeholder files that may sit in an otherwise-empty output directory.
+ * Placeholder files that may sit in an otherwise-empty *output* directory.
  *
- * They are tolerated, but they are *not* evidence that the directory is ours —
- * ownership is decided by {@link isOwnOutput}.
+ * They are tolerated there because replacing such a directory loses nothing.
+ * They are not evidence of ownership, and `tmpDir` is stricter: a directory that
+ * still holds any file — a `.gitkeep` included — was not written by this tool.
  */
 const PLACEHOLDER_ENTRIES = new Set([".gitkeep", ".gitignore", ".DS_Store"]);
 
 /**
+ * The entries this generator writes into a staging directory.
+ *
+ * Used to decide whether a leftover `tmpDir` can be cleared: anything else in it
+ * was not written by us and is left untouched.
+ */
+const STAGING_ENTRIES = new Set([
+  ".codebase-snapshot",
+  "manifest.json",
+  "README.md",
+  "parts",
+  "reports",
+  "full-codebase.json",
+  "full-codebase.md",
+]);
+
+/**
  * Marks a directory as written by this generator.
  *
- * Written first, before any artifact, so a crash mid-run still leaves proof of
- * ownership. `manifest.json` cannot serve this purpose alone because
- * `--skip-artifacts manifest` is a supported combination.
+ * The marker is *evidence*, not a filename: it has to parse as JSON, name this
+ * generator, carry a schema version this build understands, a random per-run id,
+ * the run state, the digest of the manifest it shipped and the inventory of
+ * entries it wrote. A zero-byte file called `.codebase-snapshot`, or a three-key
+ * forgery next to somebody's documents, used to count as proof and made
+ * `generate --out-dir` delete the directory.
  */
 const OWNERSHIP_MARKER = ".codebase-snapshot";
 
-function writeOwnershipMarker(dir: string): void {
-  const marker = {
+/** `staging` while a snapshot is being written, `complete` once it is whole. */
+type MarkerState = "staging" | "complete";
+
+interface OwnershipMarker {
+  generator: string;
+  version: string;
+  schemaVersion: string;
+  createdAt: string;
+  state: MarkerState;
+  /** Random per-snapshot value; a hand-written marker has no reason to carry one. */
+  id: string;
+  /** sha256 of the shipped `manifest.json`, when one was written. */
+  manifestSha256?: string;
+  /** Every entry the snapshot wrote, POSIX-relative, including hook artifacts. */
+  entries?: string[];
+}
+
+/** Schema versions whose ownership evidence this build understands. */
+const SUPPORTED_MARKER_SCHEMAS = new Set([SCHEMA_VERSION]);
+
+const SNAPSHOT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Lists every entry under `dir` as sorted, POSIX-relative paths. */
+function listEntries(dir: string): string[] {
+  const entries: string[] = [];
+  const walk = (absolute: string, prefix: string): void => {
+    let children: fs.Dirent[];
+    try {
+      children = fs.readdirSync(absolute, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const child of children) {
+      const relative = prefix === "" ? child.name : `${prefix}/${child.name}`;
+      entries.push(relative);
+      // Symlinks are recorded but not followed: the inventory describes this
+      // directory, not wherever a link points.
+      if (child.isDirectory()) walk(path.join(absolute, child.name), relative);
+    }
+  };
+  walk(dir, "");
+  return entries.sort();
+}
+
+/** Builds the marker payload for `dir` as it stands right now. */
+function markerPayload(
+  dir: string,
+  state: MarkerState,
+  id: string,
+  createdAt: string
+): OwnershipMarker {
+  const marker: OwnershipMarker = {
     generator: GENERATOR_NAME,
     version: GENERATOR_VERSION,
     schemaVersion: SCHEMA_VERSION,
+    createdAt,
+    state,
+    id,
+    entries: listEntries(dir),
   };
-  fs.writeFileSync(path.join(dir, OWNERSHIP_MARKER), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+  const manifestPath = path.join(dir, "manifest.json");
+  if (fs.existsSync(manifestPath)) {
+    marker.manifestSha256 = sha256Hex(fs.readFileSync(manifestPath));
+  }
+  return marker;
+}
+
+function writeOwnershipMarker(dir: string, marker: OwnershipMarker): void {
+  fs.writeFileSync(
+    path.join(dir, OWNERSHIP_MARKER),
+    `${JSON.stringify(marker, null, 2)}\n`,
+    "utf8"
+  );
+}
+
+interface MarkerEvidence {
+  marker: OwnershipMarker | null;
+  /** Why the marker is not evidence, when it is not. */
+  problem: string | null;
+}
+
+/** Reads and validates `.codebase-snapshot`. A malformed marker is not evidence. */
+function readOwnershipMarker(dir: string): MarkerEvidence {
+  const markerPath = path.join(dir, OWNERSHIP_MARKER);
+  if (!fs.existsSync(markerPath)) {
+    return { marker: null, problem: "it holds no .codebase-snapshot marker" };
+  }
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(markerPath, "utf8");
+  } catch {
+    return { marker: null, problem: "its .codebase-snapshot marker could not be read" };
+  }
+  if (raw.trim().length === 0) {
+    return { marker: null, problem: "its .codebase-snapshot marker is empty" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { marker: null, problem: "its .codebase-snapshot marker is not valid JSON" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { marker: null, problem: "its .codebase-snapshot marker is not a JSON object" };
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  if (candidate.generator !== GENERATOR_NAME) {
+    return { marker: null, problem: "its .codebase-snapshot marker names a different generator" };
+  }
+  if (
+    typeof candidate.schemaVersion !== "string" ||
+    !SUPPORTED_MARKER_SCHEMAS.has(candidate.schemaVersion)
+  ) {
+    return {
+      marker: null,
+      problem: `its .codebase-snapshot marker has a schema version this build does not understand (${String(candidate.schemaVersion)})`,
+    };
+  }
+  if (typeof candidate.id !== "string" || !SNAPSHOT_ID_PATTERN.test(candidate.id)) {
+    return { marker: null, problem: "its .codebase-snapshot marker carries no snapshot id" };
+  }
+  if (candidate.state !== "staging" && candidate.state !== "complete") {
+    return { marker: null, problem: "its .codebase-snapshot marker records no run state" };
+  }
+
+  return {
+    marker: {
+      generator: GENERATOR_NAME,
+      version: typeof candidate.version === "string" ? candidate.version : "unknown",
+      schemaVersion: candidate.schemaVersion,
+      createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "unknown",
+      state: candidate.state,
+      id: candidate.id,
+      manifestSha256:
+        typeof candidate.manifestSha256 === "string" ? candidate.manifestSha256 : undefined,
+      entries:
+        Array.isArray(candidate.entries) &&
+        candidate.entries.every((entry) => typeof entry === "string")
+          ? (candidate.entries as string[])
+          : undefined,
+    },
+    problem: null,
+  };
+}
+
+/** Why a parsed value is not a manifest this generator wrote. */
+function describeManifestProblem(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "is not a JSON object";
+  const candidate = value as Record<string, unknown>;
+  const generator = candidate.generator as { name?: unknown } | null | undefined;
+  if (typeof generator !== "object" || generator === null || generator.name !== GENERATOR_NAME) {
+    return "was not written by this generator";
+  }
+  if (!Array.isArray(candidate.files)) return "has no files array";
+  return null;
+}
+
+interface DirectoryVerdict {
+  owned: boolean;
+  /** Why it is not owned, when that is a property of the evidence itself. */
+  problem: string | null;
+  /** Entries present in the directory but absent from the recorded inventory. */
+  foreignEntries: string[];
+  marker: OwnershipMarker | null;
 }
 
 /**
- * True when `dir` is a snapshot this generator wrote.
+ * Decides whether `dir` is a snapshot this generator wrote and may replace.
  *
- * Filenames alone are not evidence: `README.md` is both an artifact name and an
- * extremely common *user* filename, so an allowlist of artifact names treated
- * `--out-dir docs` (containing only `docs/README.md`) as a previous snapshot and
- * replaced the user's documentation. Ownership therefore requires either our
- * marker or a manifest that actually parses as one of ours. Extra files are then
- * expected, not suspicious — `hooks.afterGenerate` is documented to write its
- * own artifacts into the output directory.
+ * Ownership needs *consistent* evidence: a marker that parses and names this
+ * generator, a run that completed, a manifest whose digest matches the marker,
+ * and no entry the recorded inventory does not account for. Any unknown entry
+ * means the directory holds something we did not write, whatever the marker says.
  */
-function isOwnOutput(dir: string): boolean {
-  if (fs.existsSync(path.join(dir, OWNERSHIP_MARKER))) return true;
+function assessSnapshotDirectory(dir: string): DirectoryVerdict {
+  const { marker, problem } = readOwnershipMarker(dir);
+  if (!marker) return { owned: false, problem, foreignEntries: [], marker: null };
+
+  if (marker.state !== "complete") {
+    return {
+      owned: false,
+      problem: "its .codebase-snapshot marker records a run that never finished writing it",
+      foreignEntries: [],
+      marker,
+    };
+  }
 
   const manifestPath = path.join(dir, "manifest.json");
-  if (!fs.existsSync(manifestPath)) return false;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
-      generator?: unknown;
-      schemaVersion?: unknown;
-      files?: unknown;
+  if (fs.existsSync(manifestPath)) {
+    let raw: string;
+    try {
+      raw = fs.readFileSync(manifestPath, "utf8");
+    } catch {
+      return {
+        owned: false,
+        problem: "its manifest.json could not be read",
+        foreignEntries: [],
+        marker,
+      };
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {
+        owned: false,
+        problem: "its manifest.json is not valid JSON",
+        foreignEntries: [],
+        marker,
+      };
+    }
+    const manifestProblem = describeManifestProblem(parsed);
+    if (manifestProblem) {
+      return {
+        owned: false,
+        problem: `its manifest.json ${manifestProblem}`,
+        foreignEntries: [],
+        marker,
+      };
+    }
+    if (!marker.manifestSha256) {
+      return {
+        owned: false,
+        problem: "its .codebase-snapshot marker records no manifest digest",
+        foreignEntries: [],
+        marker,
+      };
+    }
+    if (sha256Hex(raw) !== marker.manifestSha256) {
+      return {
+        owned: false,
+        problem:
+          "its manifest.json does not match the digest recorded in its .codebase-snapshot marker",
+        foreignEntries: [],
+        marker,
+      };
+    }
+  } else if (marker.manifestSha256) {
+    return {
+      owned: false,
+      problem: "its manifest.json is missing although its marker records one",
+      foreignEntries: [],
+      marker,
     };
-    // It has to be *our* manifest, not merely a document that happens to have a
-    // schemaVersion: a directory of user assets can easily contain one, and
-    // treating that as a previous snapshot deleted it.
-    const generator = parsed.generator as { name?: unknown } | null | undefined;
-    return (
-      typeof parsed.schemaVersion === "string" &&
-      Array.isArray(parsed.files) &&
-      typeof generator === "object" &&
-      generator !== null &&
-      generator.name === GENERATOR_NAME
-    );
-  } catch {
-    return false;
   }
+
+  const recorded = new Set(marker.entries ?? []);
+  if (recorded.size === 0) {
+    return {
+      owned: false,
+      problem: "its .codebase-snapshot marker records no contents",
+      foreignEntries: [],
+      marker,
+    };
+  }
+
+  const foreignEntries = listEntries(dir).filter(
+    (entry) => !recorded.has(entry) && !PLACEHOLDER_ENTRIES.has(entry)
+  );
+  return {
+    owned: foreignEntries.length === 0,
+    problem: null,
+    foreignEntries,
+    marker,
+  };
+}
+
+function describeEntries(entries: string[], limit = 5): string {
+  const shown = entries.slice(0, limit).join(", ");
+  return entries.length > limit ? `${shown}, and ${entries.length - limit} more` : shown;
 }
 
 /**
  * Refuses to replace a directory that this generator did not write.
  *
- * `swapIntoPlace` renames the previous output aside and deletes it, and the
- * scratch directory is deleted outright before every run. Path checks alone
- * cannot make that safe: `outDir: "src"` is a plausible typo, and it used to
- * delete the developer's entire source tree and exit 0.
+ * Path checks alone cannot make the swap and the staging wipe safe: `outDir:
+ * "src"` is a plausible typo, and a user directory that happens to contain a
+ * `.codebase-snapshot` file or a manifest-shaped JSON document is not a
+ * snapshot. `tmpDir` is held to the same standard: it is only cleared when it
+ * carries our marker and holds nothing but our artifacts.
  */
 export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): void {
   if (!fs.existsSync(target)) return;
@@ -382,17 +632,171 @@ export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): v
   }
 
   const entries = fs.readdirSync(target);
-  const meaningful = entries.filter((name) => !PLACEHOLDER_ENTRIES.has(name));
-  if (meaningful.length === 0) return;
-  if (isOwnOutput(target)) return;
+  if (entries.length === 0) return;
+  // Tolerated for outDir only: replacing such a directory loses nothing. A
+  // tmpDir holding a `.gitkeep` belongs to somebody, and is not ours to delete.
+  if (label === "outDir" && entries.every((name) => PLACEHOLDER_ENTRIES.has(name))) return;
 
-  const preview = meaningful.slice(0, 5).join(", ");
-  const more = meaningful.length > 5 ? `, and ${meaningful.length - 5} more` : "";
+  const { marker, problem } = readOwnershipMarker(target);
+
+  if (label === "tmpDir") {
+    if (!marker) {
+      throw new Error(
+        `Refusing to replace tmpDir ${target}: ${problem ?? "it does not carry this generator's marker"}. ` +
+          `This generator only clears a staging directory it wrote. Point tmpDir at a new or ` +
+          `empty directory, or remove ${target} yourself.`
+      );
+    }
+    const unexpected = entries.filter((name) => !STAGING_ENTRIES.has(name));
+    if (unexpected.length > 0) {
+      throw new Error(
+        `Refusing to replace tmpDir ${target}: it holds ${describeEntries(unexpected)}, which this ` +
+          `generator did not write. Point tmpDir at a new or empty directory, or remove those ` +
+          `files yourself.`
+      );
+    }
+    return;
+  }
+
+  const verdict = assessSnapshotDirectory(target);
+  if (verdict.owned) return;
+
+  if (verdict.foreignEntries.length > 0) {
+    throw new Error(
+      `Refusing to replace ${label} ${target}: it carries this generator's ownership marker, but ` +
+        `these entries are not part of the snapshot it recorded: ${describeEntries(verdict.foreignEntries)}. ` +
+        `Remove them yourself, or point ${label} at a new or empty directory.`
+    );
+  }
+
+  const reason =
+    verdict.problem ?? problem ?? "it does not look like a snapshot this generator wrote";
   throw new Error(
-    `Refusing to replace ${label} ${target}: it exists, is not empty, and does not look like ` +
-      `a snapshot this generator wrote (found ${preview}${more}). Point ${label} at a new or ` +
-      `empty directory, or delete it yourself first.`
+    `Refusing to replace ${label} ${target}: ${reason} (found ${describeEntries(entries)}). ` +
+      `Remove the directory yourself, or point ${label} at a new or empty directory.`
   );
+}
+
+/**
+ * Creates the parents of an output path.
+ *
+ * The atomic swap renames into `outDir`, which requires its parent to exist:
+ * `--out-dir nested/deep/out` used to fail with a raw ENOENT from `rename`.
+ * An ancestor that is a file is a refusal, not something to paper over.
+ */
+function ensureParentDirectory(target: string, label: "outDir" | "tmpDir"): void {
+  const parent = path.dirname(target);
+  if (fs.existsSync(parent) && !fs.statSync(parent).isDirectory()) {
+    throw new Error(
+      `Refusing to create ${label} ${target}: ${parent} exists but is not a directory.`
+    );
+  }
+  try {
+    fs.mkdirSync(parent, { recursive: true });
+  } catch (err) {
+    throw new Error(
+      `Refusing to create ${label} ${target}: its parent ${parent} could not be created (${(err as Error).message}).`
+    );
+  }
+}
+
+/**
+ * Serialises runs that target the same output directory.
+ *
+ * Staging lives at one fixed path (`tmpDir`), so two concurrent runs interleaved:
+ * the loser deleted the winner's `parts/` and the winner still shipped a manifest
+ * whose `validation.status` said "passed". The lock lives in the OS temp
+ * directory — never inside the repository, where it could be scanned — and
+ * records the owning pid so a crashed run's lock does not block forever.
+ */
+function acquireRunLock(outDir: string): () => void {
+  const lockPath = path.join(
+    os.tmpdir(),
+    `codebase-snapshot-${sha256Hex(outDir).slice(0, 16)}.lock`
+  );
+  const payload = `${JSON.stringify({
+    pid: process.pid,
+    outDir,
+    startedAt: new Date().toISOString(),
+  })}\n`;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = fs.openSync(lockPath, "wx");
+      try {
+        fs.writeSync(handle, payload);
+      } finally {
+        fs.closeSync(handle);
+      }
+      return () => {
+        try {
+          fs.rmSync(lockPath, { force: true });
+        } catch {
+          // A lock that cannot be removed is detected as stale by the next run
+          // (dead pid) or reported to the user; the snapshot itself is fine.
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (attempt === 0 && lockOwnerIsGone(lockPath)) {
+        fs.rmSync(lockPath, { force: true });
+        continue;
+      }
+      throw new Error(
+        `Another generate run is already writing ${outDir}. Wait for it to finish, or delete ` +
+          `${lockPath} if no other run is active.`
+      );
+    }
+  }
+
+  throw new Error(`Could not acquire the generate lock for ${outDir}.`);
+}
+
+/** True only when the lock names a pid that certainly no longer exists. */
+function lockOwnerIsGone(lockPath: string): boolean {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(lockPath, "utf8");
+  } catch {
+    return false;
+  }
+  let pid: unknown;
+  try {
+    pid = (JSON.parse(raw) as { pid?: unknown }).pid;
+  } catch {
+    return false;
+  }
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    // EPERM means the process exists but belongs to someone else.
+    return (err as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+/**
+ * Rewrites `manifest.json` in the shipped directory, atomically.
+ *
+ * Used after `hooks.afterGenerate`: the hook runs against the finished snapshot,
+ * so its warning can only reach the manifest after the fact. Writing through a
+ * temporary file and renaming means a crash leaves either the old manifest or
+ * the new one, never a truncated file.
+ */
+function writeManifestAtomically(manifestPath: string, manifest: Manifest): void {
+  const tempPath = `${manifestPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(manifest, null, 2), "utf8");
+  try {
+    fs.renameSync(tempPath, manifestPath);
+  } catch (err) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // The rename failure is the one worth reporting.
+    }
+    throw err;
+  }
 }
 
 /**
@@ -400,6 +804,7 @@ export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): v
  * fully in place. Falls back to a recursive copy across devices (EXDEV).
  */
 function swapIntoPlace(tmpDir: string, outDir: string): void {
+  ensureParentDirectory(outDir, "outDir");
   const backupDir = `${outDir}.backup-${process.pid}-${Date.now()}`;
   const hadPrevious = fs.existsSync(outDir);
 
@@ -545,6 +950,8 @@ export function generateSnapshot(
   });
 
   const files: FileEntry[] = [];
+  /** Full redacted bodies of large files, kept for the monolith only. */
+  const monolithBodies = new Map<string, string>();
   const skipped: SkipRecord[] = [...collection.skipped];
   const secretFindings: SecretFinding[] = [];
   const warnings: string[] = [];
@@ -623,6 +1030,14 @@ export function generateSnapshot(
       includedLines = preview.includedLines;
     }
 
+    // `file.content` is deliberately the head/tail preview, but the monolith is
+    // documented as the whole repository. Keep the full *redacted* body here so
+    // `full-codebase.*` cannot inherit the preview; only pay that memory cost
+    // when a monolith was actually requested.
+    if (config.includeMonolith && isPreviewTruncated) {
+      monolithBodies.set(relativePath, redacted);
+    }
+
     let summary: FileEntry["summary"];
     let summaryQuality: SummaryQuality | undefined;
     try {
@@ -671,11 +1086,17 @@ export function generateSnapshot(
       .join("\n")
   );
 
-  // Captured before partitioning: the partitioner overwrites `file.content` when
-  // it byte-truncates a section, so a monolith built afterwards would silently
-  // contain the truncated bodies instead of the whole codebase.
+  // Built before partitioning: the partitioner overwrites `file.content` when it
+  // byte-truncates a section. Large files take their full body from
+  // `monolithBodies` — their `content` is the parts preview, and a monolith made
+  // of previews was not the codebase it claimed to contain.
   const fullContents = new Map<string, string>();
-  for (const file of files) fullContents.set(file.relativePath, file.content ?? "");
+  for (const file of files) {
+    fullContents.set(
+      file.relativePath,
+      monolithBodies.get(file.relativePath) ?? file.content ?? ""
+    );
+  }
 
   const parts = partitionByBudget(files, config, fingerprint);
   const maxEffectiveBudget = Math.max(
@@ -771,11 +1192,20 @@ export function generateSnapshot(
   let monolithMarkdown: string | null = null;
   if (config.includeMonolith) {
     // Built from the pre-partition contents so the monolith really is the whole
-    // codebase, not whatever survived the per-part byte budget.
-    const fullFiles = files.map((file) => ({
-      ...file,
-      content: fullContents.get(file.relativePath) ?? "",
-    }));
+    // codebase, not whatever survived the per-part byte budget. A file that the
+    // parts carry as a head/tail preview is emitted in full here, and its
+    // inclusion fields describe what this artifact actually contains.
+    const fullFiles: FileEntry[] = files.map((file) => {
+      const content = fullContents.get(file.relativePath) ?? "";
+      return {
+        ...file,
+        content,
+        inclusionMode: "full",
+        isPreviewTruncated: false,
+        includedBytes: Buffer.byteLength(content, "utf8"),
+        includedLines: countLines(content),
+      };
+    });
     const json = generateMonolithJson(manifest, fullFiles);
     const markdown = generateMonolithMarkdown(manifest, fullFiles);
     const jsonBytes = Buffer.byteLength(json, "utf8");
@@ -806,72 +1236,123 @@ export function generateSnapshot(
   for (const message of artifactWarnings(config.artifacts)) manifest.warnings.push(message);
   manifest.totals.warningCount = manifest.warnings.length;
 
+  const { outDir, tmpDir } = resolveSafeOutputDirs(config);
+  const { artifacts } = config;
+
+  // The guards run for a dry run too: a dry run exists to predict the real one,
+  // and it used to exit 0 with "Would write 1 part(s)" for an outDir the real
+  // run refused.
+  assertReplaceable(tmpDir, "tmpDir");
+  assertReplaceable(outDir, "outDir");
+
   if (dryRun) {
     runAfterGenerate(config, manifest);
     return manifest;
   }
 
-  const { outDir, tmpDir } = resolveSafeOutputDirs(config);
+  // Serialise runs that target this outDir *before* staging is touched: the
+  // staging path is fixed, so interleaved runs could delete each other's parts
+  // while both reported success.
+  const releaseLock = acquireRunLock(outDir);
+  let stagingStarted = false;
 
-  // Checked before anything is mutated: the scratch directory is deleted
-  // outright below, and the swap replaces outDir wholesale.
-  assertReplaceable(tmpDir, "tmpDir");
-  assertReplaceable(outDir, "outDir");
+  try {
+    ensureParentDirectory(outDir, "outDir");
 
-  const { artifacts } = config;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.mkdirSync(tmpDir, { recursive: true });
+    stagingStarted = true;
 
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-  fs.mkdirSync(tmpDir, { recursive: true });
-  // First thing written: if this run crashes, the next one can still tell that
-  // the leftover scratch directory is ours and may be cleared.
-  writeOwnershipMarker(tmpDir);
+    const snapshotId = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    // Written before any artifact: if this run dies mid-write, the leftover
+    // staging directory is still provably ours and may be cleared next time.
+    writeOwnershipMarker(tmpDir, {
+      generator: GENERATOR_NAME,
+      version: GENERATOR_VERSION,
+      schemaVersion: SCHEMA_VERSION,
+      createdAt,
+      state: "staging",
+      id: snapshotId,
+    });
 
-  const partsDir = path.join(tmpDir, "parts");
-  const reportsDir = path.join(tmpDir, "reports");
-  if (artifacts.parts) fs.mkdirSync(partsDir, { recursive: true });
-  if (artifacts.navigation || artifacts.projectTree || artifacts.audit) {
-    fs.mkdirSync(reportsDir, { recursive: true });
-  }
-
-  if (artifacts.parts) {
-    for (const part of parts) {
-      fs.writeFileSync(path.join(partsDir, part.filename), part.markdown, "utf8");
+    const partsDir = path.join(tmpDir, "parts");
+    const reportsDir = path.join(tmpDir, "reports");
+    if (artifacts.parts) fs.mkdirSync(partsDir, { recursive: true });
+    if (artifacts.navigation || artifacts.projectTree || artifacts.audit) {
+      fs.mkdirSync(reportsDir, { recursive: true });
     }
-  }
 
-  if (artifacts.projectTree) {
-    const projectTree = generateProjectTree(files.map((file) => file.relativePath));
-    fs.writeFileSync(path.join(reportsDir, "project-tree.md"), projectTree, "utf8");
-  }
-  if (artifacts.navigation) {
-    fs.writeFileSync(path.join(reportsDir, "navigation.md"), generateNavigation(manifest), "utf8");
-  }
-  if (artifacts.audit) {
-    fs.writeFileSync(
-      path.join(reportsDir, "audit.md"),
-      generateAuditReport(manifest, secretFindings),
-      "utf8"
-    );
-  }
-  if (artifacts.readme) {
-    fs.writeFileSync(path.join(tmpDir, "README.md"), generateReadme(manifest), "utf8");
-  }
-  if (artifacts.manifest) {
-    fs.writeFileSync(path.join(tmpDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
-  }
+    if (artifacts.parts) {
+      for (const part of parts) {
+        fs.writeFileSync(path.join(partsDir, part.filename), part.markdown, "utf8");
+      }
+    }
 
-  if (monolithJson !== null) {
-    fs.writeFileSync(path.join(tmpDir, "full-codebase.json"), monolithJson, "utf8");
+    if (artifacts.projectTree) {
+      const projectTree = generateProjectTree(files.map((file) => file.relativePath));
+      fs.writeFileSync(path.join(reportsDir, "project-tree.md"), projectTree, "utf8");
+    }
+    if (artifacts.navigation) {
+      fs.writeFileSync(path.join(reportsDir, "navigation.md"), generateNavigation(manifest), "utf8");
+    }
+    if (artifacts.audit) {
+      fs.writeFileSync(
+        path.join(reportsDir, "audit.md"),
+        generateAuditReport(manifest, secretFindings),
+        "utf8"
+      );
+    }
+    if (artifacts.readme) {
+      fs.writeFileSync(path.join(tmpDir, "README.md"), generateReadme(manifest), "utf8");
+    }
+    if (artifacts.manifest) {
+      fs.writeFileSync(path.join(tmpDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+    }
+
+    if (monolithJson !== null) {
+      fs.writeFileSync(path.join(tmpDir, "full-codebase.json"), monolithJson, "utf8");
+    }
+    if (monolithMarkdown !== null) {
+      fs.writeFileSync(path.join(tmpDir, "full-codebase.md"), monolithMarkdown, "utf8");
+    }
+
+    // The snapshot is whole in staging: record its inventory and manifest digest
+    // before the swap, so a crash right after the swap still leaves a directory
+    // the next run can prove it wrote.
+    writeOwnershipMarker(tmpDir, markerPayload(tmpDir, "complete", snapshotId, createdAt));
+
+    swapIntoPlace(tmpDir, outDir);
+    stagingStarted = false;
+
+    const warningsBeforeHook = manifest.warnings.length;
+    runAfterGenerate(config, manifest);
+
+    // The hook runs against the finished snapshot and may write its own
+    // artifacts. A warning it produced can only reach the shipped manifest by
+    // writing that manifest again — atomically, so a crash cannot truncate it.
+    if (artifacts.manifest && manifest.warnings.length !== warningsBeforeHook) {
+      writeManifestAtomically(path.join(outDir, "manifest.json"), manifest);
+    }
+    // Final evidence: records hook artifacts and the manifest as shipped, so the
+    // next run recognises this directory as its own.
+    writeOwnershipMarker(outDir, markerPayload(outDir, "complete", snapshotId, createdAt));
+
+    return manifest;
+  } catch (err) {
+    if (stagingStarted) {
+      // Nothing this run staged may survive a failure. Everything in `tmpDir`
+      // was written here — the ownership guard refused anything else.
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // The original failure is the one worth reporting.
+      }
+    }
+    throw err;
+  } finally {
+    releaseLock();
   }
-  if (monolithMarkdown !== null) {
-    fs.writeFileSync(path.join(tmpDir, "full-codebase.md"), monolithMarkdown, "utf8");
-  }
-
-  swapIntoPlace(tmpDir, outDir);
-
-  runAfterGenerate(config, manifest);
-
-  return manifest;
 }
 
 /** Promise-returning wrapper for consumers that prefer an async call site. */
@@ -934,6 +1415,6 @@ export {
   assertUsableConfigInput,
 } from "./config.js";
 export { truncateToBytes } from "./partitioner/preview.js";
-export { fenceForContent } from "./partitioner/chunker.js";
+export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 
 export type * from "./types.js";

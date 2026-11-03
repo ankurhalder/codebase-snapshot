@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { detectPreset, getPreset, unknownPresetMessage } from "./presets/index.js";
+import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
 import { globToRegExp } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
@@ -14,6 +14,7 @@ import type {
   ResolvedArtifacts,
   ResolvedBudgets,
   ResolvedSnapshotConfig,
+  SecretRuleInput,
   SnapshotConfig,
 } from "./types.js";
 
@@ -126,7 +127,12 @@ export function normalizeResolvedConfig(
     ),
     include: resolveInclude(config.include),
     preset: typeof config.preset === "string" ? config.preset : "generic",
-    presetExclude: Array.isArray(config.presetExclude) ? config.presetExclude : [],
+    presetExclude: [
+      ...new Set([
+        ...(Array.isArray(config.presetExclude) ? config.presetExclude : []),
+        ...outputExcludePatterns(config.cwd, config.outDir, config.tmpDir),
+      ]),
+    ],
     layersMode: config.layersMode === "replace" ? "replace" : "merge",
     budgets:
       config.budgets && typeof config.budgets === "object"
@@ -201,11 +207,93 @@ export function supportsTypeScriptImports(): boolean {
   return major > 22 || (major === 22 && minor >= 6);
 }
 
+/**
+ * Strips `//` and block comments from JSON-with-comments, plus trailing commas.
+ *
+ * The previous implementation was two regular expressions, and
+ * `(^|[^:"'\\])\/\/.*$` treated a `//` inside a *string* as a comment: a valid
+ * `package.json` containing `"build": "tsc && echo done//ok"` was truncated,
+ * became unparseable, and every command then exited 1. A single pass that
+ * tracks string state and escapes is the only correct way to do this.
+ */
 function stripJsonComments(raw: string): string {
-  return raw
-    .replace(/^\uFEFF/, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:"'\\])\/\/.*$/gm, "$1");
+  const text = raw.replace(/^\uFEFF/, "");
+  let out = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+
+    if (char === "/" && text[index + 1] === "/") {
+      while (index < text.length && text[index] !== "\n" && text[index] !== "\r") index += 1;
+      index -= 1; // let the loop emit the terminator
+      continue;
+    }
+
+    if (char === "/" && text[index + 1] === "*") {
+      index += 2;
+      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) {
+        if (text[index] === "\n" || text[index] === "\r") out += text[index];
+        index += 1;
+      }
+      index += 1; // skip the closing "/"
+      continue;
+    }
+
+    out += char;
+  }
+
+  return stripTrailingCommas(out);
+}
+
+/** Removes `,` before `}`/`]`, which JSONC allows and JSON.parse rejects. */
+function stripTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let next = index + 1;
+      while (next < text.length && /\s/.test(text[next])) next += 1;
+      if (text[next] === "}" || text[next] === "]") continue;
+    }
+
+    out += char;
+  }
+
+  return out;
 }
 
 function parseJsonish(raw: string, file: string): SnapshotConfig {
@@ -214,6 +302,62 @@ function parseJsonish(raw: string, file: string): SnapshotConfig {
   } catch (err) {
     throw new Error(`Could not parse ${file}: ${(err as Error).message}`);
   }
+}
+
+/** Describes a value for an error message without ever echoing its contents. */
+function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  if (value instanceof RegExp) return value.toString();
+  if (typeof value === "function") return "a function";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return keys.length > 0 ? `an object with keys ${keys.join(", ")}` : "an empty object";
+  }
+  return `${typeof value} (${String(value)})`;
+}
+
+const isThenable = (value: object): boolean =>
+  typeof (value as { then?: unknown }).then === "function";
+
+/**
+ * Reads what a config module exported.
+ *
+ * A `Promise` used to pass the `typeof === "object"` check, so
+ * `export default Promise.resolve({…})` produced an empty configuration with
+ * every setting silently ignored and exit 0. Anything that is not a plain
+ * object is now a hard error that says what was received.
+ */
+function readConfigExport(exported: unknown, file: string): SnapshotConfig {
+  if (exported === undefined || exported === null) {
+    throw new Error(
+      `${file} does not export a configuration object (received ${describeValue(exported)}).`
+    );
+  }
+  if (Array.isArray(exported)) {
+    throw new Error(
+      `${file} exports an array; expected a single configuration object such as \`export default { outDir: "snapshot" }\`.`
+    );
+  }
+  if (typeof exported === "function") {
+    throw new Error(
+      `${file} exports a function; expected a configuration object. Call the function yourself and export its result.`
+    );
+  }
+  if (typeof exported !== "object") {
+    throw new Error(
+      `${file} does not export a configuration object (received ${describeValue(exported)}).`
+    );
+  }
+  if (isThenable(exported)) {
+    throw new Error(
+      `${file} exports a Promise/thenable, not a configuration object. ` +
+        "An async config is read synchronously, so its settings would be ignored: " +
+        "export a plain object (`const config = {…}; export default config;`)."
+    );
+  }
+  return exported as SnapshotConfig;
 }
 
 /**
@@ -259,15 +403,9 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       // `pathToFileURL` handles drive letters, spaces, `#` and `%` correctly;
       // naive `file://${fullPath}` concatenation does not.
       const imported = (await import(pathToFileURL(fullPath).href)) as {
-        default?: SnapshotConfig;
-      } & SnapshotConfig;
-      const config = imported.default ?? imported;
-      if (!config || typeof config !== "object") {
-        const message = `${fullPath} does not export a configuration object.`;
-        warnings.push(message);
-        errors.push(message);
-        continue;
-      }
+        default?: unknown;
+      } & Record<string, unknown>;
+      const config = readConfigExport(imported.default ?? imported, fullPath);
       return { config, file: fullPath, warnings, errors };
     } catch (err) {
       const message = `Could not load ${fullPath}: ${(err as Error).message}`;
@@ -347,7 +485,8 @@ function isArtifactName(value: string): value is ArtifactName {
 function resolveArtifacts(
   requested: SnapshotConfig["artifacts"] | undefined,
   skipped: string[] | undefined,
-  includeMonolith: boolean
+  includeMonolith: boolean,
+  monolithOverride?: boolean
 ): ResolvedArtifacts {
   const artifacts: ResolvedArtifacts = {
     ...DEFAULT_ARTIFACTS,
@@ -372,6 +511,14 @@ function resolveArtifacts(
     }
   }
 
+  // An explicit `--include-monolith` outranks `artifacts.monolith: false` in the
+  // config: the CLI is the more specific, more recent instruction. Suppressions
+  // from `--skip-artifacts` are applied afterwards and still win, because asking
+  // for both is a contradiction the user can see in the summary.
+  if (monolithOverride !== undefined) {
+    artifacts.monolith = monolithOverride;
+  }
+
   for (const name of skipped ?? []) {
     if (!isArtifactName(name)) {
       throw new Error(
@@ -384,9 +531,170 @@ function resolveArtifacts(
   return artifacts;
 }
 
-function positiveInteger(value: number, fallback: number): number {
-  if (!Number.isFinite(value) || value <= 0) return fallback;
-  return Math.floor(value);
+/**
+ * A wrong-typed or unusable setting is a hard error, never a fallback.
+ *
+ * `previewHeadLines: 0` used to be silently replaced by 80 and the run exited 0,
+ * while `include: "x"` errored — the same class of mistake behaving two ways.
+ */
+function strictPositiveInteger(value: unknown, fallback: number, label: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer (received ${describeValue(value)}).`);
+  }
+  return value;
+}
+
+function strictBoolean(value: unknown, fallback: boolean, label: string): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be true or false (received ${describeValue(value)}).`);
+  }
+  return value;
+}
+
+function strictString(value: unknown, fallback: string, label: string): string {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label} must be a non-empty string (received ${describeValue(value)}).`);
+  }
+  return value;
+}
+
+/** `excludePatterns: "src/**"` used to be stored as-is and silently matched nothing. */
+function resolveExcludePatterns(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((pattern) => typeof pattern !== "string")) {
+    throw new Error(
+      `\`excludePatterns\` must be an array of glob strings such as ["**/*.test.ts"] (received ${describeValue(value)}).`
+    );
+  }
+  return value.map((pattern) => pattern.trim()).filter(Boolean);
+}
+
+/**
+ * `preset: "detected"` is the documented default and what `describe` reports, so
+ * it must be accepted; `"auto"` is its obvious spelling and is accepted too.
+ */
+const AUTO_PRESET_ALIASES = new Set(["auto", "detected"]);
+
+function resolvePresetName(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `\`preset\` must be a preset name (received ${describeValue(value)}). ` +
+        `Use "detected" (or "auto") to detect one, or one of: ${listPresetNames().join(", ")}.`
+    );
+  }
+  const name = value.trim();
+  return AUTO_PRESET_ALIASES.has(name.toLowerCase()) ? undefined : name;
+}
+
+interface NormalisedRule {
+  name: string;
+  match: string | RegExp | ((filePath: string) => boolean);
+}
+
+/**
+ * Validates custom `layers` / `kinds` rules.
+ *
+ * The documented example used `{ layer: "api", … }` while the type requires
+ * `name`, and nothing checked it: `classifyLayer` returned `undefined` and
+ * `capMetadata(undefined).length` crashed `generate` with a `TypeError` after the
+ * scan had already run. Both spellings are now accepted, and anything else is a
+ * validation error that names the index and the expected shape.
+ */
+function resolveRuleList(value: unknown, kind: "layer" | "kind"): NormalisedRule[] {
+  const collection = kind === "layer" ? "layers" : "kinds";
+  const example =
+    kind === "layer"
+      ? `{ name: "api", match: "src/api/**" }`
+      : `{ kind: "route", match: "src/routes/**" }`;
+
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `\`${collection}\` must be an array of ${kind} rules (received ${describeValue(value)}). A ${kind} rule is ${example}.`
+    );
+  }
+
+  return value.map((entry, index) => {
+    const where = `${collection}[${index}]`;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`${where} must be an object (received ${describeValue(entry)}). A ${kind} rule is ${example}.`);
+    }
+
+    const record = entry as Record<string, unknown>;
+    const keys = Object.keys(record);
+    const canonical = kind === "layer" ? "name" : "kind";
+    const alias = kind === "layer" ? "layer" : "name";
+    const rawName =
+      typeof record[canonical] === "string"
+        ? record[canonical]
+        : typeof record[alias] === "string"
+          ? record[alias]
+          : undefined;
+
+    if (rawName === undefined || rawName.trim() === "") {
+      throw new Error(
+        `${where} is missing \`${canonical}\` (received keys: ${keys.join(", ") || "none"}). ` +
+          `A ${kind} rule is ${example}; \`${alias}\` is accepted as an alias of \`${canonical}\`.`
+      );
+    }
+
+    const match = record.match;
+    if (match === undefined) {
+      throw new Error(
+        `${where}.match is required (received keys: ${keys.join(", ") || "none"}). ` +
+          `Use a glob string ("src/api/**"), a RegExp (/\\\\.tsx$/) or a function.`
+      );
+    }
+    if (!(typeof match === "string" || match instanceof RegExp || typeof match === "function")) {
+      throw new Error(`${where}.match must be a string, a RegExp or a function (received ${describeValue(match)}).`);
+    }
+    if (typeof match === "string" && match.trim() === "") {
+      throw new Error(`${where}.match must not be an empty string.`);
+    }
+
+    return {
+      name: rawName.trim(),
+      match: match as string | RegExp | ((filePath: string) => boolean),
+    };
+  });
+}
+
+function resolveLayerRules(value: unknown): LayerRule[] {
+  return resolveRuleList(value, "layer").map((rule) => ({ name: rule.name, match: rule.match }));
+}
+
+function resolveKindRules(value: unknown): KindRule[] {
+  return resolveRuleList(value, "kind").map((rule) => ({ kind: rule.name, match: rule.match }));
+}
+
+/**
+ * The output directories, expressed as cwd-relative exclude patterns.
+ *
+ * They are the tool's own artifacts, not source: scanning them changed the
+ * fingerprint on every run and made `validate` report `modified:` for files
+ * `generate` had just written. Only directories inside `cwd` can be scanned, so
+ * only those need excluding.
+ */
+function outputExcludePatterns(cwd: string, outDir: string, tmpDir: string): string[] {
+  const patterns: string[] = [];
+  for (const dir of [outDir, tmpDir]) {
+    const absolute = path.resolve(cwd, dir);
+    const relative = path.relative(cwd, absolute);
+    if (
+      !relative ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      continue;
+    }
+    patterns.push(`${relative.replace(/\\/g, "/")}/**`);
+  }
+  return patterns;
 }
 
 const BYTE_UNITS: Record<string, number> = {
@@ -487,16 +795,27 @@ function resolveLayersMode(mode: SnapshotConfig["layersMode"]): "merge" | "repla
   return mode;
 }
 
-/** Resolves per-layer budgets, defaulting every missing entry to `maxPartBytes`. */
+/**
+ * Resolves per-layer budgets.
+ *
+ * `overrideDefault` is set when `maxPartBytes` was written explicitly (CLI flag
+ * or config key). That value is the single-part budget the CLI prints and the
+ * manifest records, so it becomes `budgets.default` and caps every per-layer
+ * budget: `--max-part-bytes 4096` next to `budgets: { default: "300k" }` used to
+ * print "Part budget: 4 KB" while emitting 151 KB parts.
+ */
 function resolveBudgets(
   budgets: SnapshotConfig["budgets"],
-  fallback: number
+  fallback: number,
+  overrideDefault: boolean
 ): ResolvedBudgets {
   const byLayer: Record<string, number> = {};
   if (budgets === undefined) return { default: fallback, byLayer };
 
   if (typeof budgets !== "object" || budgets === null || Array.isArray(budgets)) {
-    throw new Error("`budgets` must be an object.");
+    throw new Error(
+      `\`budgets\` must be an object such as { default: "120k", byLayer: { api: "60k" } } (received ${describeValue(budgets)}).`
+    );
   }
   if (budgets.byLayer !== undefined) {
     if (typeof budgets.byLayer !== "object" || budgets.byLayer === null) {
@@ -512,10 +831,15 @@ function resolveBudgets(
     }
   }
 
-  return {
-    default: boundedBytes(budgets.default, fallback, MIN_MAX_PART_BYTES, "budgets.default"),
-    byLayer,
-  };
+  // Validated even when overridden, so `budgets.default: 0` is still an error
+  // rather than a silently ignored setting.
+  const resolvedDefault = boundedBytes(budgets.default, fallback, MIN_MAX_PART_BYTES, "budgets.default");
+  if (!overrideDefault) return { default: resolvedDefault, byLayer };
+
+  for (const [layer, value] of Object.entries(byLayer)) {
+    byLayer[layer] = Math.min(value, fallback);
+  }
+  return { default: fallback, byLayer };
 }
 
 function resolveHooks(hooks: SnapshotConfig["hooks"]): HooksConfig {
@@ -534,6 +858,14 @@ function resolveCandidateCwd(
   cliOptions: Partial<CliOptions> | undefined,
   baseDir: string | undefined
 ): string {
+  if (
+    userConfig?.cwd !== undefined &&
+    (typeof userConfig.cwd !== "string" || userConfig.cwd.trim() === "")
+  ) {
+    throw new Error(
+      `\`cwd\` must be a non-empty path string (received ${describeValue(userConfig.cwd)}).`
+    );
+  }
   const candidate = cliOptions?.cwd || userConfig?.cwd || baseDir || process.cwd();
   const resolved = path.resolve(candidate);
   if (!fs.existsSync(resolved)) {
@@ -561,59 +893,132 @@ export function resolveConfig(
 
   // A forced preset must exist: silently falling back would leave the developer
   // believing their layers are in effect when they are not.
-  const forcedPreset = userConfig?.preset;
+  const forcedPreset = resolvePresetName(userConfig?.preset);
   if (forcedPreset !== undefined && !getPreset(forcedPreset)) {
     throw new Error(unknownPresetMessage(forcedPreset));
   }
   const preset = detectPreset(cwd, forcedPreset);
   const layersMode = resolveLayersMode(userConfig?.layersMode);
 
+  // Validated before use: an unvalidated rule used to reach `classifyLayer` and
+  // crash `generate` with `Cannot read properties of undefined (reading 'length')`.
+  const userLayers = resolveLayerRules(userConfig?.layers);
+  const userKinds = resolveKindRules(userConfig?.kinds);
+
   // `merge` (the default) keeps the preset's rules and lets user rules win by
   // being evaluated first; `replace` is the old, all-or-nothing behaviour.
   const layers: LayerRule[] =
-    userConfig?.layers && userConfig.layers.length > 0
+    userLayers.length > 0
       ? layersMode === "replace"
-        ? userConfig.layers
-        : [...userConfig.layers, ...preset.layers]
+        ? userLayers
+        : [...userLayers, ...preset.layers]
       : preset.layers;
 
   const kinds: KindRule[] =
-    userConfig?.kinds && userConfig.kinds.length > 0
+    userKinds.length > 0
       ? layersMode === "replace"
-        ? userConfig.kinds
-        : [...userConfig.kinds, ...preset.kinds]
+        ? userKinds
+        : [...userKinds, ...preset.kinds]
       : preset.kinds;
 
-  const customRules = userConfig?.secrets?.customPatterns ?? [];
-  const rawRules = userConfig?.secrets?.disableDefaultPatterns
-    ? customRules
-    : [...DEFAULT_SECRET_PATTERNS, ...customRules];
-  const secretRules = compileSecretRules(rawRules);
+  const secrets = userConfig?.secrets;
+  if (secrets !== undefined && (typeof secrets !== "object" || Array.isArray(secrets))) {
+    throw new Error(
+      `\`secrets\` must be an object of { customPatterns, disableDefaultPatterns } (received ${describeValue(secrets)}).`
+    );
+  }
+  const customRules = secrets?.customPatterns ?? [];
+  if (!Array.isArray(customRules)) {
+    throw new Error(
+      `\`secrets.customPatterns\` must be an array of secret rules (received ${describeValue(customRules)}). ` +
+        "Each entry is a RegExp, a string, or { rule, pattern }."
+    );
+  }
+  const disableDefaultPatterns = strictBoolean(
+    secrets?.disableDefaultPatterns,
+    false,
+    "`secrets.disableDefaultPatterns`"
+  );
+  // Compiled separately so a rejected rule is reported at its index in the user's
+  // `customPatterns` array, and so a bare RegExp is named `custom-1`, `custom-2`, …
+  // rather than by its position after the built-ins.
+  // A raw `{ secretRules: [...] }` handed to the library used to be dropped:
+  // only `secrets.customPatterns` was read, so the caller got clear-text output
+  // and no warning. Applying them is the only non-silent option; a non-array is
+  // refused outright.
+  const aliasedRules = (userConfig as { secretRules?: unknown } | null | undefined)?.secretRules;
+  if (aliasedRules !== undefined && !Array.isArray(aliasedRules)) {
+    throw new Error(
+      `\`secretRules\` must be an array of { rule, pattern } entries (received ${describeValue(aliasedRules)}).`
+    );
+  }
 
-  const includeMonolith = cliOptions?.includeMonolith ?? userConfig?.includeMonolith ?? false;
+  const compiledCustomRules = compileSecretRules([
+    ...customRules,
+    ...((aliasedRules ?? []) as SecretRuleInput[]),
+  ]);
+  const secretRules = disableDefaultPatterns
+    ? compiledCustomRules
+    : [...compileSecretRules(DEFAULT_SECRET_PATTERNS), ...compiledCustomRules];
+
+  const cliMonolith = cliOptions?.includeMonolith;
+  const includeMonolith =
+    cliMonolith ?? strictBoolean(userConfig?.includeMonolith, false, "`includeMonolith`");
   const artifacts = resolveArtifacts(
     userConfig?.artifacts,
     cliOptions?.skipArtifacts,
-    includeMonolith
+    includeMonolith,
+    cliMonolith
   );
 
+  // Precedence: CLI `--max-part-bytes` > config `maxPartBytes` > `budgets.default`
+  // > 300 KB. `resolveBudgets` turns an explicit value into `budgets.default` and
+  // caps every per-layer budget, so the printed budget and the emitted part size
+  // can never disagree.
+  const explicitMaxPartBytes = cliOptions?.maxPartBytes ?? userConfig?.maxPartBytes;
   const maxPartBytes = boundedBytes(
-    cliOptions?.maxPartBytes ?? userConfig?.maxPartBytes,
+    explicitMaxPartBytes,
     300 * 1024,
     MIN_MAX_PART_BYTES,
     "maxPartBytes"
   );
-  const budgets = resolveBudgets(userConfig?.budgets, maxPartBytes);
+  const budgets = resolveBudgets(
+    userConfig?.budgets,
+    maxPartBytes,
+    explicitMaxPartBytes !== undefined
+  );
+
+  const configuredOutDir = strictString(userConfig?.outDir, "snapshot", "`outDir`");
+  const outDir = cliOptions?.outDir || configuredOutDir;
+  const tmpDir = strictString(userConfig?.tmpDir, "snapshot.tmp", "`tmpDir`");
+  const branch = strictString(userConfig?.branch, "main", "`branch`");
+  const configuredSensitiveFiles = strictBoolean(
+    userConfig?.includeSensitiveFiles,
+    false,
+    "`includeSensitiveFiles`"
+  );
+  const includeSensitiveFiles = strictBoolean(
+    cliOptions?.includeSensitiveFiles,
+    configuredSensitiveFiles,
+    "`includeSensitiveFiles`"
+  );
+
+  // The resolved output directories are this tool's own artifacts, never source.
+  // Leaving them in the scan made the fingerprint change on every run and made
+  // `validate` report `modified:` for files `generate` had just written.
+  const presetExclude = [
+    ...new Set([...preset.exclude, ...outputExcludePatterns(cwd, outDir, tmpDir)]),
+  ];
 
   return markResolvedConfig({
     cwd,
-    branch: userConfig?.branch || "main",
-    outDir: cliOptions?.outDir || userConfig?.outDir || "snapshot",
-    tmpDir: userConfig?.tmpDir || "snapshot.tmp",
+    branch,
+    outDir,
+    tmpDir,
     maxPartBytes,
     largeFileBytes: boundedBytes(cliOptions?.largeFileBytes ?? userConfig?.largeFileBytes, 200 * 1024, 1, "largeFileBytes"),
-    previewHeadLines: positiveInteger(userConfig?.previewHeadLines ?? 80, 80),
-    previewTailLines: positiveInteger(userConfig?.previewTailLines ?? 40, 40),
+    previewHeadLines: strictPositiveInteger(userConfig?.previewHeadLines, 80, "`previewHeadLines`"),
+    previewTailLines: strictPositiveInteger(userConfig?.previewTailLines, 40, "`previewTailLines`"),
     includeMonolith: artifacts.monolith,
     maxMonolithBytes: optionalBytes(
       cliOptions?.maxMonolithBytes !== undefined
@@ -621,18 +1026,17 @@ export function resolveConfig(
         : userConfig?.maxMonolithBytes,
       "maxMonolithBytes"
     ),
-    includeSensitiveFiles:
-      cliOptions?.includeSensitiveFiles ?? userConfig?.includeSensitiveFiles ?? false,
+    includeSensitiveFiles,
     include: resolveInclude(userConfig?.include),
     preset: preset.presetName,
-    presetExclude: [...preset.exclude],
+    presetExclude,
     artifacts,
     layersMode,
     budgets,
     hooks: resolveHooks(userConfig?.hooks),
     layers,
     kinds,
-    excludePatterns: userConfig?.excludePatterns ?? [],
+    excludePatterns: resolveExcludePatterns(userConfig?.excludePatterns),
     secretRules,
   });
 }
