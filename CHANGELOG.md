@@ -110,6 +110,81 @@ text passes through untouched.
 - **The linter ignores prose.** Content rules matched comments, so documenting why `console` is
   banned failed the lint that bans it.
 
+### `validate` and `report` could be talked into saying the state was fine
+
+Four ways the state checks answered confidently and wrongly.
+
+A run killed mid-write left the output directory holding a marker and no manifest, and `validate`
+answered "run generate first" for ever — an instruction that could never resolve, because
+generation had already run and failed. The marker records the state, the run id and the start time,
+so the message now names them and says whether to wait or regenerate.
+
+A manifest with no `config.digest` fell back to comparing a handful of fields, so a changed
+`maxMonolithBytes`, `layers`, `kinds` or custom secret rule passed as "valid and up to date". A
+configuration that cannot be verified is not a match: the absence of the digest is itself reported
+as drift.
+
+A file that existed but could not be read was reported as "no longer exist on disk", sending the
+reader to look for a file that was right there. Unreadable and deleted are separate findings now,
+and the summary says which.
+
+`report` printed whatever numbers the manifest contained — `-5 files included`,
+`Total lines: 1.5`, `Total size: Infinity MB` — and both `report` and `validate` accepted
+`fingerprint: "12345"`. Counts must be non-negative integers and a fingerprint must be a sha256
+digest, or the file is refused as not being a snapshot manifest.
+
+Verified: 17 new tests across `tests/snapshot-incomplete.test.js`,
+`tests/validate-drift-classes.test.js` and the guards suite, including a real Windows ACL deny for
+the unreadable case and a control that an untouched snapshot still reports no drift at all.
+
+### `validate` called a binary file a new file
+
+`generate` decides "binary" twice: from the extension and the 8 MB head scan, and again on the
+bytes it reads, where a control-byte payload or a NUL past the head scan only reveals itself.
+`validate` re-evaluated skipped paths with the cheap pre-read question alone, so a file `generate`
+had just skipped came back as `new file` and the first `validate` after a `generate` failed on an
+untouched tree. Both commands decide the same way now.
+
+### `--discovery` chooses how files are found
+
+A `.git` directory that exists but cannot be listed made discovery refuse, and there was no
+override — the only way forward was to repair the repository or copy the tree out of it. The
+refusal also justified itself with a gap that no longer exists (a walk does honour nested
+`.gitignore` files now), so it names the differences that remain: `info/exclude`, the global
+excludes file, tracked files that a `.gitignore` now matches, and a submodule as one entry.
+
+`--discovery auto|git|walk` (config `discovery`) makes that choice explicit. `auto` keeps the old
+behaviour, `git` requires git, `walk` scans the tree and reads `.gitignore` directly. The mode is
+validated, scoped to the commands that scan, published in the contract, written to the init
+template, and recorded in `manifest.config`, so changing it is config drift. 10 tests.
+
+### A workspace is classified by what its packages are
+
+Detection read only the repository root, so a Next.js app under `apps/web` in a pnpm workspace
+detected as `monorepo` and a docs repository whose markdown lived under `docs/` detected as
+`generic` — both contradicting the published preset table. Detection now probes a bounded number
+of workspace packages and markdown directories, so a workspace is classified by the frameworks its
+packages use. The bounds keep it honest: a bare `apps/` without a workspace declaration does not
+trigger it, and a framework two levels down still detects as `monorepo`. 8 tests.
+
+### `skill --install` could write outside the repository
+
+The installer built its three targets from `--cwd` and wrote them without checking where they
+landed, so a pre-existing junction (`.claude` itself, or `.claude/skills/codebase-snapshot`) or a
+hard-linked `AGENTS.md` made it write outside the repository. Targets are resolved and refused
+when they leave it. The section merge also repairs malformed marker layouts — duplicated blocks,
+an inverted pair, a missing end marker — instead of appending another one, while a well-formed
+file stays byte-identical on a rerun. 11 tests.
+
+### `diff` saw no change when the payload changed
+
+`diff` compared `relativePath` plus the source hash, so two snapshots of identical sources with
+different `--max-part-bytes` or `--large-file-bytes` — a 4 KB preview against a 36 KB full body,
+275 KB of parts against 307 KB — reported "0 added / 0 removed / 0 changed". The per-file answer
+stays the same, and a payload block now says the configuration differs and why (the config digest,
+the generator version, part and layer totals), which is what "what changed in the context we hand
+to the model?" was asking. 5 tests.
+
 ---
 
 ## 4.0.9

@@ -174,7 +174,8 @@ Reasons, and what each one means:
 | `outside-root` | It is a link whose target resolves outside the scanned root. |
 | `gitignore` | A `.gitignore` excluded it, in a scan that is not reading git's index. |
 | `read-error` | It could not be read. |
-| `not-file` | It is a directory, socket or FIFO. |
+| `not-file` | It is a directory, socket or FIFO. A directory that belongs to another repository is reported as `nested-repository` instead. |
+| `nested-repository` | It is a nested checkout or a submodule: a directory whose contents are tracked by a different repository, so they are not part of this codebase. |
 
 Every path the scanner discovers is recorded — nothing is dropped silently, in either discovery
 mode. Inside a git repository the candidate list comes from git, which applies `.gitignore`
