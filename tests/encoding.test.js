@@ -92,8 +92,25 @@ test("decodeText: a NUL outside UTF-16 marks the buffer binary and reports the o
   const bytes = Buffer.concat([Buffer.from("text"), Buffer.from([0]), Buffer.from("more")]);
   const decoded = decodeText(bytes);
   assert.equal(decoded.binary, true);
-  assert.equal(decoded.binaryOffset, 4);
+  assert.match(decoded.binaryReason, /NUL byte at offset 4/);
   assert.equal(decoded.text, "");
+});
+
+test("S6: a payload of control bytes is not text, even though it is valid UTF-8", () => {
+  // 4096 bytes of 0x07 (BEL) decode perfectly and used to be emitted as `language=text`,
+  // `inclusionMode=full`, with the raw bytes inside the part document.
+  const blob = Buffer.alloc(4096, 0x07);
+  const decoded = decodeText(blob);
+  assert.equal(decoded.binary, true);
+  assert.match(decoded.binaryReason, /control byte/);
+  assert.equal(decoded.text, "");
+});
+
+test("S6: ordinary whitespace and a stray escape stay text", () => {
+  const text = "const a = 1;\t// tab\n\tif (a) {\r\n\t\treturn;\n\t}\n\u001b[0m\n";
+  const decoded = decodeText(Buffer.from(text, "utf8"));
+  assert.equal(decoded.binary, false);
+  assert.equal(decoded.text, text);
 });
 
 test("decodeText: invalid UTF-8 becomes utf-8-lossy with a counted byte budget", () => {
@@ -195,6 +212,20 @@ test("ENC-01: the corrupted snapshot is still reported as current, and says why"
   // ...but the reason the artifact is lossy travels with the manifest.
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
   assert.equal(manifest.files[0].encoding, "utf-8-lossy");
+});
+
+test("S6: a control-byte payload file is skipped as binary, with the reason recorded", (t) => {
+  const dir = tempDir(t);
+  writeBytes(dir, "blob.dat", Buffer.alloc(4096, 0x07));
+  writeBytes(dir, "notes.md", Buffer.from("# notes\n", "utf8"));
+
+  const manifest = generate(dir);
+
+  assert.equal(entryFor(manifest, "blob.dat"), undefined, "the payload is not emitted as text");
+  const record = manifest.skipped.find((skip) => skip.path === "blob.dat");
+  assert.ok(record);
+  assert.equal(record.reason, "binary");
+  assert.match(record.detail, /control byte/);
 });
 
 test("ENC-05: a NUL beyond the 8 MB head scan is still treated as binary", (t) => {

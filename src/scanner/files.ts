@@ -416,17 +416,30 @@ export function matchesExclude(relativePath: string, pattern: string): boolean {
   );
 }
 
-/** Reads `<dir>/.gitignore` (single level) and returns an ordered matcher. */
-function readGitignoreMatcher(dir: string): (relativePath: string) => boolean {
+interface GitignoreRule {
+  pattern: string;
+  negated: boolean;
+  dirOnly: boolean;
+}
+
+/**
+ * Parses `<dir>/.gitignore` into ordered rules. A missing or unreadable file has none.
+ *
+ * Only the rules are returned, not a matcher, because a matcher needs the directory it was read
+ * for: nested `.gitignore` files were ignored entirely, so a `dist/` rule inside `packages/foo`
+ * had no effect in a non-git checkout while git honoured it — the same repository produced two
+ * different snapshots depending on whether `.git` was readable.
+ */
+function readGitignoreRules(dir: string): GitignoreRule[] {
   const gitignorePath = path.join(dir, ".gitignore");
   let raw: string;
   try {
     raw = fs.readFileSync(gitignorePath, "utf8");
   } catch {
-    return () => false;
+    return [];
   }
 
-  const rules: Array<{ pattern: string; negated: boolean; dirOnly: boolean }> = [];
+  const rules: GitignoreRule[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -436,17 +449,47 @@ function readGitignoreMatcher(dir: string): (relativePath: string) => boolean {
     if (dirOnly) pattern = pattern.slice(0, -1);
     if (pattern) rules.push({ pattern, negated, dirOnly });
   }
+  return rules;
+}
 
-  return (relativePath: string): boolean => {
-    let ignored = false;
-    for (const rule of rules) {
-      const target = rule.dirOnly
-        ? relativePath.replace(/\/.*$/, "")
-        : relativePath;
-      if (matchesExclude(target, rule.pattern)) ignored = !rule.negated;
+/** One `.gitignore` file together with the directory it governs, relative to the scan root. */
+interface GitignoreLayer {
+  prefix: string;
+  rules: readonly GitignoreRule[];
+}
+
+/**
+ * Whether the accumulated `.gitignore` layers ignore `relativePath`, or `null` for no opinion.
+ *
+ * The deepest layer with an opinion wins, which is git's precedence rule: a pattern in a nested
+ * `.gitignore` overrides the same path in an ancestor's, in both directions.
+ */
+function gitignoreVerdict(
+  layers: readonly GitignoreLayer[],
+  relativePath: string
+): boolean | null {
+  let verdict: boolean | null = null;
+
+  for (const layer of layers) {
+    let scoped: string;
+    if (layer.prefix === "") {
+      scoped = relativePath;
+    } else if (relativePath.startsWith(`${layer.prefix}/`)) {
+      scoped = relativePath.slice(layer.prefix.length + 1);
+    } else {
+      // A nested rule never governs paths outside its own directory.
+      continue;
     }
-    return ignored;
-  };
+
+    let layerVerdict: boolean | null = null;
+    for (const rule of layer.rules) {
+      const target = rule.dirOnly ? scoped.replace(/\/.*$/, "") : scoped;
+      if (matchesExclude(target, rule.pattern)) layerVerdict = !rule.negated;
+    }
+    if (layerVerdict !== null) verdict = layerVerdict;
+  }
+
+  return verdict;
 }
 
 /**
@@ -735,9 +778,10 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
           "Fix the repository (git status should work) or run outside git."
       );
     }
-    const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), true, toolOwnedPaths);
+    const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), toolOwnedPaths);
     candidates = walked.files;
-    skipped.push(...walked.skipped);
+    // `push(...array)` would pass one argument per element; see the note in `walkDirectory`.
+    for (const record of walked.skipped) skipped.push(record);
   }
 
   const files = candidates
@@ -826,38 +870,83 @@ function rootRealFor(root: string): string {
   }
 }
 
+/** One directory being walked, with the position reached inside it. */
+interface WalkFrame {
+  dir: string;
+  entries: fs.Dirent[];
+  index: number;
+  gitignoreLayers: readonly GitignoreLayer[];
+}
+
+/**
+ * Walks `dir` depth-first without recursing.
+ *
+ * A recursive walker is one directory per stack frame, so a path 2 400 levels deep overflowed the
+ * JavaScript stack and killed every command — `generate`, `validate`, `report`, `explain` — on a
+ * tree that is otherwise perfectly readable. An explicit frame stack makes the depth a memory
+ * question rather than a crash, and it visits entries in exactly the order the recursion did, so
+ * manifests stay byte-identical.
+ */
 function walkDirectory(
   dir: string,
   baseDir: string,
   rootReal: string,
   visited: Set<string>,
-  isRoot = false,
-  reservedPaths: ReadonlySet<string> = new Set<string>()
+  reservedPaths: ReadonlySet<string> = new Set<string>(),
+  parentGitignoreLayers: readonly GitignoreLayer[] = []
 ): CollectResult {
   const results: CollectResult = { files: [], skipped: [] };
+  const stack: WalkFrame[] = [];
 
-  // Directory links are never descended (see the symlink branch below), so the
-  // walk is a tree; the absolute-path guard is cheap insurance against a
-  // filesystem that reports a reparse point as a plain directory.
-  if (visited.has(dir)) return results;
-  visited.add(dir);
+  const relativeToBase = (target: string): string =>
+    path.relative(baseDir, target).replace(/\\/g, "/") || ".";
 
-  const ignoredByGitignore = isRoot ? readGitignoreMatcher(baseDir) : () => false;
+  /** Reads one directory and pushes its frame; false when it cannot be walked. */
+  const enter = (current: string, layers: readonly GitignoreLayer[]): boolean => {
+    // Directory links are never descended (see the symlink branch below), so the tree really is a
+    // tree; the visited guard is cheap insurance against a filesystem that reports a reparse point
+    // as a plain directory.
+    if (visited.has(current)) return false;
+    visited.add(current);
 
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    results.skipped.push({
-      path: path.relative(baseDir, dir).replace(/\\/g, "/") || ".",
-      reason: "read-error",
-      detail: "directory unreadable",
-    });
-    return results;
-  }
+    const localRules = readGitignoreRules(current);
+    const gitignoreLayers: readonly GitignoreLayer[] =
+      localRules.length === 0
+        ? layers
+        : [
+            ...layers,
+            { prefix: path.relative(baseDir, current).replace(/\\/g, "/"), rules: localRules },
+          ];
 
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      results.skipped.push({
+        path: relativeToBase(current),
+        reason: "read-error",
+        detail: "directory unreadable",
+      });
+      return false;
+    }
+
+    stack.push({ dir: current, entries, index: 0, gitignoreLayers });
+    return true;
+  };
+
+  const rootFrame = enter(dir, parentGitignoreLayers);
+  if (!rootFrame) return results;
+
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1] as WalkFrame;
+    if (frame.index >= frame.entries.length) {
+      stack.pop();
+      continue;
+    }
+    const entry = frame.entries[frame.index] as fs.Dirent;
+    frame.index += 1;
+
+    const fullPath = path.join(frame.dir, entry.name);
     const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
 
     // Without git there is no candidate listing to filter later, so this is the only place an
@@ -881,7 +970,7 @@ function walkDirectory(
       continue;
     }
 
-    if (ignoredByGitignore(relPath)) {
+    if (gitignoreVerdict(frame.gitignoreLayers, relPath) === true) {
       // A gitignored custom output directory is our own bookkeeping, not a
       // user-facing skip (C25).
       if (!hasSnapshotMarker(fullPath)) {
@@ -956,9 +1045,9 @@ function walkDirectory(
     }
 
     if (isDirectory) {
-      const nested = walkDirectory(fullPath, baseDir, rootReal, visited, false, reservedPaths);
-      results.files.push(...nested.files);
-      results.skipped.push(...nested.skipped);
+      // Descending here, before the rest of this frame, is what keeps the visit order identical to
+      // the recursive version this replaced.
+      enter(fullPath, frame.gitignoreLayers);
     } else if (isFile) {
       results.files.push(relPath);
     }

@@ -52,16 +52,49 @@ export function isBinaryBuffer(buffer: Buffer): boolean {
   return buffer.includes(0);
 }
 
+/**
+ * How many bytes are control characters that a text file has no business containing.
+ *
+ * Tab, newline and carriage return are text. So is U+007F only in the sense that it is printable
+ * garbage; it counts here. C1 controls (U+0080–U+009F) are counted through their two-byte UTF-8
+ * form, because a single-byte C1 is not valid UTF-8 at all and is caught by the validity check.
+ */
+function countControlBytes(buffer: Buffer): number {
+  let count = 0;
+  for (let index = 0; index < buffer.length; index++) {
+    const byte = buffer[index] as number;
+    if (byte < 0x20) {
+      if (byte !== 0x09 && byte !== 0x0a && byte !== 0x0d) count += 1;
+      continue;
+    }
+    if (byte === 0x7f) {
+      count += 1;
+      continue;
+    }
+    if (byte === 0xc2 && index + 1 < buffer.length) {
+      const next = buffer[index + 1] as number;
+      if (next >= 0x80 && next <= 0x9f) {
+        count += 1;
+        index += 1;
+      }
+    }
+  }
+  return count;
+}
+
+/** Below this many control bytes a file is text with something odd in it, not a payload. */
+const CONTROL_BYTES_FLOOR = 4;
+
 export interface DecodedText {
   /** Decoded body. Empty when `binary` is true. */
   text: string;
   encoding: TextEncoding;
   /** Byte count that could not be decoded as UTF-8. Zero for well-formed input. */
   invalidBytes: number;
-  /** True when the bytes are not text: a NUL outside a UTF-16 stream. */
+  /** True when the bytes are not text: a NUL, or a payload full of control characters. */
   binary: boolean;
-  /** Offset of the first NUL byte, when `binary` is true. */
-  binaryOffset?: number;
+  /** Human-readable reason the bytes were rejected, when `binary` is true. */
+  binaryReason?: string;
 }
 
 /**
@@ -198,11 +231,30 @@ export function decodeText(buffer: Buffer): DecodedText {
       return { text: decodeUtf16(buffer, shape), encoding: shape, invalidBytes: 0, binary: false };
     }
     const offset = buffer.indexOf(0);
-    return { text: "", encoding: "utf-8", invalidBytes: 0, binary: true, binaryOffset: offset };
+    return {
+      text: "",
+      encoding: "utf-8",
+      invalidBytes: 0,
+      binary: true,
+      binaryReason: `NUL byte at offset ${offset}`,
+    };
   }
 
   const invalidBytes = countInvalidUtf8Bytes(buffer);
   if (invalidBytes === 0) {
+    // Valid UTF-8 is not the same thing as text. A blob of 0x07 bytes decodes perfectly and used
+    // to be emitted as `language=text`, `inclusionMode=full`, with the raw control bytes inside
+    // the part — the one way a binary file could still reach an artifact, because it has no NUL.
+    const controlBytes = countControlBytes(buffer);
+    if (controlBytes > CONTROL_BYTES_FLOOR && controlBytes * 100 > buffer.length) {
+      return {
+        text: "",
+        encoding: "utf-8",
+        invalidBytes: 0,
+        binary: true,
+        binaryReason: `${controlBytes} control byte(s) in ${buffer.length} B; valid UTF-8 but not text`,
+      };
+    }
     return {
       text: new TextDecoder("utf-8").decode(buffer),
       encoding: "utf-8",
