@@ -58,6 +58,16 @@ export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
 export const GENERATOR_VERSION = "4.0.9";
 export const SCHEMA_VERSION = "3.0.0";
 
+/**
+ * Files larger than this are not parsed for a structural summary.
+ *
+ * The parser's AST costs far more than the text it reads — a 50 MB source file peaked at 3.3 GB
+ * resident — and a file this large is emitted as a head/tail preview, so a summary of it would
+ * describe something the snapshot does not contain. Two megabytes is well above every hand-written
+ * source file and below the point where parsing becomes the dominant cost.
+ */
+const SUMMARY_MAX_SOURCE_CHARS = 2 * 1024 * 1024;
+
 
 function sha256Hex(input: string | Buffer): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -1252,6 +1262,8 @@ export function generateSnapshot(
   const warnings: string[] = [];
   /** Files that were not plain UTF-8, grouped into one warning after the scan. */
   const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
+  /** Files too large to parse for a structural summary, grouped into one warning after the scan. */
+  const oversizeSummaryPaths: string[] = [];
   const layerCounts: LayerOrKindCounts = {};
   const kindCounts: LayerOrKindCounts = {};
 
@@ -1295,7 +1307,7 @@ export function generateSnapshot(
       skipped.push({
         path: relativePath,
         reason: "binary",
-        detail: `Size: ${stats.size} B; NUL byte at offset ${decoded.binaryOffset ?? 0}`,
+        detail: `Size: ${stats.size} B; ${decoded.binaryReason ?? "binary content"}`,
       });
       continue;
     }
@@ -1361,28 +1373,36 @@ export function generateSnapshot(
 
     let summary: FileEntry["summary"];
     let summaryQuality: SummaryQuality | undefined;
-    try {
-      // Always parse the original source. Masking a credential-shaped identifier such as
-      // `const secret = previousSecrets[i]` produced syntactically invalid code, so the
-      // parser reported parse errors on files that are perfectly valid TypeScript.
-      const outcome = summarizeFile(relativePath, rawContent);
-      // Parse the raw source (masking an identifier can make valid TypeScript
-      // unparsable), but never let a raw string reach the summary: a secret in a
-      // heading, key or export name is emitted into the manifest and the parts.
-      summary = outcome?.summary
-        ? (maskSummaryStrings(outcome.summary, config.secretRules) as FileEntry["summary"])
-        : undefined;
-      summaryQuality = outcome?.quality;
-      if (isSourceSummary(summary) && summary.parseErrors) {
+    if (rawContent.length > SUMMARY_MAX_SOURCE_CHARS) {
+      // A structural summary of a file this size costs far more memory than the file itself — the
+      // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
+      // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
+      // describe a file the snapshot does not contain. Recorded, never silent.
+      oversizeSummaryPaths.push(relativePath);
+    } else {
+      try {
+        // Always parse the original source. Masking a credential-shaped identifier such as
+        // `const secret = previousSecrets[i]` produced syntactically invalid code, so the
+        // parser reported parse errors on files that are perfectly valid TypeScript.
+        const outcome = summarizeFile(relativePath, rawContent);
+        // Parse the raw source (masking an identifier can make valid TypeScript
+        // unparsable), but never let a raw string reach the summary: a secret in a
+        // heading, key or export name is emitted into the manifest and the parts.
+        summary = outcome?.summary
+          ? (maskSummaryStrings(outcome.summary, config.secretRules) as FileEntry["summary"])
+          : undefined;
+        summaryQuality = outcome?.quality;
+        if (isSourceSummary(summary) && summary.parseErrors) {
+          warnings.push(
+            `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`
+          );
+        }
+      } catch (err) {
+        // A single pathological file used to abort the whole run.
         warnings.push(
-          `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`
+          `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(/\s+/g, " ")
         );
       }
-    } catch (err) {
-      // A single pathological file used to abort the whole run.
-      warnings.push(
-        `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(/\s+/g, " ")
-      );
     }
 
     files.push({
@@ -1417,6 +1437,16 @@ export function generateSnapshot(
     encodingBuckets.set(note.encoding, bucket);
   }
   const ENCODING_PATHS_SHOWN = 5;
+  if (oversizeSummaryPaths.length > 0) {
+    const shown = oversizeSummaryPaths
+      .slice(0, ENCODING_PATHS_SHOWN)
+      .map((entry) => maskPathText(entry, config.secretRules));
+    const hidden = oversizeSummaryPaths.length - ENCODING_PATHS_SHOWN;
+    warnings.push(
+      `${oversizeSummaryPaths.length} file(s) exceed ${Math.round(SUMMARY_MAX_SOURCE_CHARS / (1024 * 1024))} MB and were not parsed for a structural summary: ` +
+        `${shown.join(", ")}${hidden > 0 ? ` and ${hidden} more` : ""}. Their bodies are emitted as head/tail previews.`
+    );
+  }
   for (const [encoding, bucket] of encodingBuckets) {
     const maskedPaths = bucket.paths.map((entry) => maskPathText(entry, config.secretRules));
     const shown = maskedPaths.slice(0, ENCODING_PATHS_SHOWN).join(", ");

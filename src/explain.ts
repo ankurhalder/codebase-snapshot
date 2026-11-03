@@ -153,7 +153,7 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     if (decoded.binary) {
       result.included = false;
       result.reason = "binary";
-      result.detail = `binary content (NUL byte at offset ${decoded.binaryOffset ?? 0}); generate skips it and records \`binary\` in manifest.skipped[]`;
+      result.detail = `binary content (${decoded.binaryReason ?? "not text"}); generate skips it and records \`binary\` in manifest.skipped[]`;
       return result;
     }
     const text = decoded.text;

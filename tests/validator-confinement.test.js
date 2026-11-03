@@ -137,3 +137,47 @@ test("T-05/T-06: ordinary names are untouched by the escaping", () => {
 
   assert.match(rendered, /src\/café\/naïve\.ts/);
 });
+
+test("D-2: a manifest file path outside the repository is refused, not used as an oracle", (t) => {
+  const dir = makeRepo(t);
+  generateSnapshot({ cwd: dir });
+
+  // A file that *does* exist outside the snapshot's idea of the repository.
+  const outside = path.join(dir, "outside.txt");
+  fs.writeFileSync(outside, "exists", "utf8");
+
+  const manifest = readManifest(dir);
+  manifest.files[0].relativePath = "../outside.txt";
+  writeManifest(dir, manifest);
+
+  const result = validateSnapshot({ cwd: dir });
+  const issues = result.drift.partIssues.map((issue) => `${issue.part}: ${issue.issue}`).join("\n");
+
+  assert.match(issues, /resolves outside the repository and was not inspected/);
+  assert.equal(
+    result.drift.missingOnDisk.includes("../outside.txt"),
+    false,
+    "a traversal path is never reported as deleted, which would answer whether it exists"
+  );
+});
+
+test("D-2: the same refusal applies when the target does not exist", (t) => {
+  const dir = makeRepo(t);
+  generateSnapshot({ cwd: dir });
+
+  const manifest = readManifest(dir);
+  manifest.files[0].relativePath = "../definitely-missing.txt";
+  writeManifest(dir, manifest);
+
+  const result = validateSnapshot({ cwd: dir });
+  const issues = result.drift.partIssues.map((issue) => issue.issue).join("\n");
+
+  assert.match(issues, /resolves outside the repository/);
+  assert.deepEqual(result.drift.missingOnDisk, [], "existence is not probed at all");
+});
+
+test("D-2: an ordinary snapshot still validates clean", (t) => {
+  const dir = makeRepo(t);
+  generateSnapshot({ cwd: dir });
+  assert.equal(validateSnapshot({ cwd: dir }).valid, true);
+});

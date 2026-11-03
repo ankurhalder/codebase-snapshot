@@ -202,7 +202,20 @@ export function validateSnapshot(
   }
 
   for (const snapshotFile of manifestFileMap.keys()) {
-    if (!fs.existsSync(path.join(config.cwd, snapshotFile))) {
+    // The manifest is an input, and `path.join` accepts `../..`, so this loop used to answer
+    // "does this path exist?" for any file on the machine: a traversal entry was silently accepted
+    // when the target existed and reported as `deleted: ../../secret` when it did not. A recorded
+    // path that does not stay inside the repository is a foreign or tampered manifest, and is
+    // reported as that instead of being resolved.
+    const confined = confineToDirectory(config.cwd, snapshotFile);
+    if (confined === null) {
+      drift.partIssues.push({
+        part: "(manifest)",
+        issue: `${maskedPath(snapshotFile, config.secretRules)} resolves outside the repository and was not inspected`,
+      });
+      continue;
+    }
+    if (!fs.existsSync(confined)) {
       drift.missingOnDisk.push(snapshotFile);
     }
   }
