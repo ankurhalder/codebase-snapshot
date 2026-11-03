@@ -173,18 +173,17 @@ the same parser the CLI uses.
   credentials      skipped
   excludes         .next, node_modules, coverage, **/*.test.tsx
 
-  ┌ snapshot.config.mjs ─────────────────────────────────┐
-  │ import { defineConfig } from                         │
-  │   "@ankurhalder/codebase-snapshot";                  │
-  │                                                      │
-  │ export default defineConfig({                        │
-  │   preset: "nextjs",                                  │
-  │   maxPartBytes: "120k",                              │
-  │   include: ["src/**", "app/**"],                     │
-  │   excludePatterns: ["**/*.test.tsx"],                │
-  │   artifacts: { projectTree: false, monolith: false },│
-  │ });                                                  │
+  Will write snapshot.config.mjs with your answers, plus every other
+  setting at its default — so nothing is hidden behind the docs.
+
+  ┌ your answers ─────────────────────────────────────────┐
+  │ preset: "nextjs"                                     │
+  │ maxPartBytes: "120k"                                 │
+  │ include: ["src/**", "app/**"]                        │
+  │ excludePatterns: ["**/*.test.tsx"]                   │
+  │ artifacts: { projectTree: false }                    │
   └──────────────────────────────────────────────────────┘
+  …and 40 more settings, commented, at their defaults.
 
 ◆  Write this and continue?
 │  ❯ Yes
@@ -260,8 +259,7 @@ snap init --preset generic --dry-run          # print the config, write nothing
 
 Three things, all reversible, each reported on the done screen:
 
-1. **`snapshot.config.mjs`** — commented, and containing *only non-default
-   values*, so it stays readable as the project grows.
+1. **`snapshot.config.mjs`** — **every setting, at its default, commented** (see below).
 2. **`package.json` scripts** — `snapshot` and `snapshot:validate`, skipped if
    the keys already exist (never silently overwritten).
 3. **`.gitignore` entries** — `snapshot/` and `snapshot.tmp/`, appended only if
@@ -269,6 +267,110 @@ Three things, all reversible, each reported on the done screen:
 
 Nothing else is touched: no lockfile rewrite, no dependency added, no existing
 file modified without saying so.
+
+---
+
+## The config is a menu, not a record
+
+Most developers never open the documentation. A config file that only contains
+what they happened to change is useless to them: it cannot tell them what else
+exists.
+
+So the generated config **lists every setting with its default value, grouped and
+commented**. The file itself is the reference. Every line can be deleted without
+changing behaviour, and every line shows a knob they did not know existed.
+
+```js
+import { defineConfig } from "@ankurhalder/codebase-snapshot";
+
+export default defineConfig({
+  // ── Project ────────────────────────────────────────────────────────────
+  // Detected from the repo when omitted. Every value the CLI accepts:
+  //   nextjs · react-vite · vue-vite · nuxt · sveltekit · angular · astro
+  //   remix · solid · nest · node-express · node-lib
+  //   python-django · python-fastapi · python-lib · go · rust
+  //   java-spring · dotnet · php-laravel · ruby-rails
+  //   monorepo · docs · infra · generic
+  preset: "nextjs",
+
+  // Recorded in the manifest when git cannot report a branch.
+  branch: "main",
+
+  // ── Output ─────────────────────────────────────────────────────────────
+  outDir: "snapshot",
+  // Scratch directory; the new snapshot is renamed into place atomically.
+  tmpDir: "snapshot.tmp",
+
+  // ── Size ───────────────────────────────────────────────────────────────
+  // Hard ceiling per part. "300k", 307200 and "1.5mb" are all accepted.
+  maxPartBytes: "300k",
+  // Files above this size get a head/tail preview instead of the full body.
+  largeFileBytes: "200k",
+  previewHeadLines: 80,
+  previewTailLines: 40,
+  // Different ceilings per layer. Unlisted layers use `default`.
+  budgets: {
+    default: "300k",
+    byLayer: {},
+  },
+
+  // ── What goes in ───────────────────────────────────────────────────────
+  // Allow-list. Empty means "everything that is not ignored".
+  // Example: ["src/**", "packages/*/src/**"]
+  include: [],
+  // Globs or path segments to drop. Example: ["**/*.test.ts", "docs"]
+  excludePatterns: [],
+
+  // ── Classification ─────────────────────────────────────────────────────
+  // "merge" = the preset's rules plus yours (yours win). "replace" = yours only.
+  layersMode: "merge",
+  // [{ name: "billing", match: "src/features/billing/**" }]
+  layers: [],
+  // [{ kind: "route", match: "src/app/api/**" }]
+  kinds: [],
+
+  // ── Safety ─────────────────────────────────────────────────────────────
+  // .env, *.pem, .npmrc, .ssh/ and friends are skipped unless this is true.
+  includeSensitiveFiles: false,
+  secrets: {
+    // [{ rule: "internal-token", pattern: /CORP-[A-Z0-9]{32}/ }]
+    customPatterns: [],
+    // Set true to drop the 21 built-in rules.
+    disableDefaultPatterns: false,
+  },
+
+  // ── Artifacts ──────────────────────────────────────────────────────────
+  artifacts: {
+    readme: true,        // README.md
+    manifest: true,      // manifest.json — required by validate and report
+    parts: true,         // parts/part-XXX.md
+    navigation: true,    // reports/navigation.md
+    projectTree: true,   // reports/project-tree.md
+    audit: true,         // reports/audit.md
+    monolith: false,     // full-codebase.json + .md (roughly doubles output)
+  },
+  // Skip the monolith above this size. null = no limit.
+  maxMonolithBytes: null,
+
+  // ── Advanced ───────────────────────────────────────────────────────────
+  // afterGenerate: (manifest) => { /* write your own artifact */ }
+  hooks: {},
+});
+```
+
+**Design rules for this file:**
+
+| Rule | Why |
+| :--- | :--- |
+| Every setting appears, even when at its default | Turns the file into the documentation nobody reads |
+| Every setting is commented in one line | Explains *when* to change it, not just its type |
+| Grouped by concern with section rules | ~60 lines is scannable; 60 ungrouped lines is not |
+| Deleting any line is safe | Defaults are real; the file is opt-in customization |
+| `snap init --minimal` writes only non-defaults | Escape hatch for people who want the terse version |
+
+This deliberately makes the file longer. The bet is that discoverability beats
+brevity for a tool whose entire purpose is to be configured once and forgotten.
+
 
 ---
 

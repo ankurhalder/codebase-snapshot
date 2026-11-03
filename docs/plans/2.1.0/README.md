@@ -95,6 +95,12 @@ Auto-detects the project, shows what it found, lets the developer confirm or pic
 from **every** available type, then walks every tunable parameter. Ends with a
 review screen and a written `snapshot.config.mjs` plus npm scripts.
 
+**The generated config lists every setting at its default, commented and
+grouped** — not just the ones the developer changed. Most people never read
+documentation; a config that only records differences cannot tell them what else
+exists. The file becomes the reference, and deleting any line is safe.
+`--minimal` writes the terse version for those who want it.
+
 Full screen-by-screen flow in [wizard-ux.md](wizard-ux.md).
 
 ### 4. Non-interactive parity

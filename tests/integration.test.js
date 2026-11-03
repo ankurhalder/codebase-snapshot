@@ -1151,3 +1151,44 @@ test("math: monolith carries the full file even when the part budget truncates",
   );
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ------------------------------------------------------- summary quality
+
+test("summaries record how they were produced", () => {
+  const dir = makeRepo("quality-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "b.py": "def hello():\n    pass\n",
+    "c.json": '{"a":1}',
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+  const byPath = new Map(manifest.files.map((file) => [file.relativePath, file]));
+
+  assert.equal(byPath.get("a.ts").summaryQuality, "ast");
+  assert.equal(byPath.get("b.py").summaryQuality, "heuristic");
+  assert.equal(byPath.get("c.json").summaryQuality, "structural");
+
+  // The part must not present a line-scan as if it were a parse.
+  const partText = fs.readFileSync(path.join(dir, "snapshot", "parts", "part-001.md"), "utf8");
+  assert.match(partText, /- Summary Quality: heuristic/);
+  assert.match(partText, /- Summary Quality: ast/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a Python file is summarized, redacted and budgeted like any other", () => {
+  const dir = makeRepo("python-", {
+    "package.json": '{"name":"fixture"}',
+    "app.py": 'import os\nAPI_KEY = "sk-proj-AAAAAAAAAAAAAAAAAAAA"\ndef main():\n    return os.getcwd()\n',
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+  const entry = manifest.files.find((file) => file.relativePath === "app.py");
+
+  assert.ok(entry, "the .py file must be included");
+  assert.equal(entry.summaryQuality, "heuristic");
+  assert.ok(entry.summary.imports.includes("os"));
+  assert.ok(entry.summary.functions.includes("main"));
+
+  const text = fs.readFileSync(path.join(dir, "snapshot", "parts", "part-001.md"), "utf8");
+  assert.ok(!text.includes("AKIA") && !text.includes("sk-proj-AAAAAAAA"), "secrets stay redacted");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

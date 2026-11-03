@@ -39,6 +39,17 @@ export interface MarkdownSummary {
   frontmatterKeys: string[];
 }
 
+/**
+ * How a summary was produced.
+ *
+ * `ast`        — a real parser (TypeScript compiler; the script block of a
+ *                Vue/Svelte/Astro component).
+ * `structural` — a real grammar for a data format (JSON, Markdown).
+ * `heuristic`  — line patterns. Useful, but not a parse, and never presented
+ *                as one.
+ */
+export type SummaryQuality = "ast" | "structural" | "heuristic";
+
 export type SkipReason =
   | "asset"
   | "binary"
@@ -79,6 +90,8 @@ export interface FileEntry {
   /** UTF-8 bytes of file content actually emitted into the snapshot. */
   includedBytes: number;
   summary?: SourceSummary | JsonSummary | MarkdownSummary;
+  /** How the summary was produced. Absent when there is no summary. */
+  summaryQuality?: SummaryQuality;
   /** True when the summary alone was too large for the part budget and was dropped. */
   summaryOmitted?: boolean;
   /** Emitted body after redaction/truncation. Never serialized into the manifest. */

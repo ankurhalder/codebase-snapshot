@@ -23,11 +23,13 @@ import {
   matchRule,
   matchesExclude,
   parseByteSize,
+  profileForPath,
   resolveConfig,
   scanAndRedactSecrets,
   summarizeJson,
   summarizeMarkdown,
   summarizeTypeScriptSource,
+  summarizeWithProfile,
   supportsTypeScriptImports,
   truncatePreview,
   truncateToBytes,
@@ -525,3 +527,155 @@ test("jwt rule is not quadratic on an eyJ-dense line", () => {
 function ruleFlagsWithoutState(rules) {
   return rules.filter((rule) => /[gy]/.test(rule.pattern.flags)).map((rule) => rule.rule);
 }
+
+// ------------------------------------------------------------ language profiles
+
+test("language profiles extract structure for Python", () => {
+  const { summary, quality } = summarizeWithProfile(
+    "app/models.py",
+    [
+      "import os",
+      "from django.db import models",
+      "class User(models.Model):",
+      "    def save(self):",
+      "        pass",
+      "def create_user(name):",
+      "    return name",
+      "@app.get('/health')",
+      "def health():",
+      "    return 'ok'",
+      "MAX_RETRIES = 3",
+    ].join("\n")
+  );
+
+  assert.equal(quality, "heuristic");
+  assert.ok(summary.imports.includes("os"));
+  assert.ok(summary.imports.includes("django.db"));
+  assert.ok(summary.classes.includes("User"));
+  assert.ok(summary.functions.includes("create_user"));
+  assert.ok(summary.routeHandlers.includes("health"), "a route decorator marks a handler");
+  assert.ok(summary.variables.includes("MAX_RETRIES"));
+  assert.ok(summary.exports.includes("create_user"));
+  assert.ok(!summary.functions.includes("save"), "methods are not module functions");
+});
+
+test("language profiles extract structure for Go", () => {
+  const { summary, quality } = summarizeWithProfile(
+    "internal/server/handler.go",
+    [
+      "package server",
+      "import (",
+      '    "net/http"',
+      '    "github.com/gin-gonic/gin"',
+      ")",
+      "type Server struct {",
+      "    Port int",
+      "}",
+      "type Handler interface {",
+      "    Handle()",
+      "}",
+      "func NewServer() *Server {",
+      "    return nil",
+      "}",
+      "func (s *Server) Start() {}",
+      "const MaxRetries = 3",
+    ].join("\n")
+  );
+
+  assert.equal(quality, "heuristic");
+  assert.ok(summary.imports.includes("net/http"));
+  assert.ok(summary.imports.includes("github.com/gin-gonic/gin"));
+  assert.ok(summary.classes.includes("Server"));
+  assert.ok(summary.interfaces.includes("Handler"));
+  assert.ok(summary.functions.includes("NewServer"));
+  assert.ok(summary.functions.includes("Start"), "methods on a receiver are functions");
+  assert.ok(summary.exports.includes("NewServer"), "capitalised identifiers are exported");
+  assert.ok(!summary.exports.includes("handle"));
+});
+
+test("language profiles extract structure for Rust", () => {
+  const { summary } = summarizeWithProfile(
+    "src/lib.rs",
+    [
+      "use std::collections::HashMap;",
+      "pub struct Config {",
+      "    pub name: String,",
+      "}",
+      "pub trait Runner {",
+      "    fn run(&self);",
+      "}",
+      "pub fn start() {}",
+      "fn private_helper() {}",
+      "pub enum Mode { Fast }",
+    ].join("\n")
+  );
+
+  assert.ok(summary.imports.includes("std::collections::HashMap"));
+  assert.ok(summary.classes.includes("Config"));
+  assert.ok(summary.interfaces.includes("Runner"));
+  assert.ok(summary.enums.includes("Mode"));
+  assert.ok(summary.exports.includes("start"));
+  assert.ok(!summary.exports.includes("private_helper"), "non-pub items are not exported");
+});
+
+test("language profiles extract structure for C#, PHP, Ruby and Java", () => {
+  const cs = summarizeWithProfile(
+    "Controllers/UserController.cs",
+    ["using System.Linq;", "public class UserController {", "    public User Get(int id) { return null; }", "}"].join("\n")
+  ).summary;
+  assert.ok(cs.imports.includes("System.Linq"));
+  assert.ok(cs.classes.includes("UserController"));
+  assert.ok(cs.functions.includes("Get"));
+
+  const php = summarizeWithProfile(
+    "app/Models/User.php",
+    ["namespace App\\Models;", "use Illuminate\\Database\\Eloquent\\Model;", "class User extends Model {", "    public function save() {}", "}"].join("\n")
+  ).summary;
+  assert.ok(php.imports.some((entry) => entry.includes("Model")));
+  assert.ok(php.classes.includes("User"));
+
+  const ruby = summarizeWithProfile(
+    "app/models/user.rb",
+    ["require 'json'", "class User", "  def save", "  end", "end"].join("\n")
+  ).summary;
+  assert.ok(ruby.imports.includes("json"));
+  assert.ok(ruby.classes.includes("User"));
+
+  const java = summarizeWithProfile(
+    "src/main/java/UserService.java",
+    ["import java.util.List;", "public class UserService {", "    public List find() { return null; }", "}"].join("\n")
+  ).summary;
+  assert.ok(java.imports.includes("java.util.List"));
+  assert.ok(java.classes.includes("UserService"));
+});
+
+test("Vue/Svelte script blocks are parsed with the real compiler", () => {
+  const sfc = [
+    "<template><div /></template>",
+    '<script setup lang="ts">',
+    'import { ref } from "vue";',
+    "const count = ref(0);",
+    "export function increment() { count.value++; }",
+    "</script>",
+  ].join("\n");
+
+  const { summary, quality } = summarizeWithProfile("src/components/Counter.vue", sfc);
+  assert.equal(quality, "ast", "the script block is real TypeScript");
+  assert.ok(summary.imports.includes("vue"));
+  assert.ok(summary.functions.includes("increment"));
+  assert.ok(summary.exports.includes("Counter"));
+});
+
+test("a template-only component still gets an index entry", () => {
+  const { summary, quality } = summarizeWithProfile("src/Logo.vue", "<template><svg /></template>");
+  assert.equal(quality, "heuristic");
+  assert.ok(summary.exports.includes("Logo"));
+});
+
+test("files no profile claims are left alone", () => {
+  assert.equal(profileForPath("notes.txt"), null);
+  assert.equal(profileForPath("Makefile"), null);
+  assert.equal(summarizeWithProfile("notes.txt", "hello"), null);
+  assert.equal(profileForPath("app.module.ts"), null, "TypeScript is handled by the compiler, not a profile");
+  assert.equal(profileForPath("main.py").id, "python");
+});

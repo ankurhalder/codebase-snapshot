@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { summarizeWithProfile } from "./ast/profiles/index.js";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
 import { summarizeTypeScriptSource } from "./ast/ts-parser.js";
 import {
@@ -34,14 +35,17 @@ import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
 import type {
   FileEntry,
+  JsonSummary,
   Manifest,
   ManifestIndexes,
+  MarkdownSummary,
   ResolvedArtifacts,
   ResolvedSnapshotConfig,
   SecretFinding,
   SkipRecord,
   SnapshotConfig,
   SourceSummary,
+  SummaryQuality,
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
@@ -58,7 +62,7 @@ export interface GenerateOptions {
   dryRun?: boolean;
 }
 
-const SUMMARY_EXTENSIONS = [
+const TS_EXTENSIONS = [
   ".ts",
   ".mts",
   ".cts",
@@ -67,29 +71,32 @@ const SUMMARY_EXTENSIONS = [
   ".mjs",
   ".cjs",
   ".jsx",
-  ".json",
-  ".jsonc",
-  ".md",
-  ".mdx",
 ];
 
-function summarizeFile(
-  relativePath: string,
-  redactedContent: string
-): FileEntry["summary"] | undefined {
+interface SummaryOutcome {
+  summary: SourceSummary | JsonSummary | MarkdownSummary;
+  quality: SummaryQuality;
+}
+
+function summarizeFile(relativePath: string, redactedContent: string): SummaryOutcome | undefined {
   const lower = relativePath.toLowerCase();
-  if (!SUMMARY_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
-    return undefined;
-  }
+
   if (lower.endsWith(".json") || lower.endsWith(".jsonc")) {
-    return summarizeJson(redactedContent);
+    return { summary: summarizeJson(redactedContent), quality: "structural" };
   }
   if (lower.endsWith(".md") || lower.endsWith(".mdx")) {
-    return summarizeMarkdown(redactedContent);
+    return { summary: summarizeMarkdown(redactedContent), quality: "structural" };
   }
+
   // Summaries are built from the REDACTED text: a secret inside a Markdown
   // heading used to be masked in the body but emitted verbatim in the summary.
-  return summarizeTypeScriptSource(relativePath, redactedContent);
+  if (TS_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
+    return { summary: summarizeTypeScriptSource(relativePath, redactedContent), quality: "ast" };
+  }
+
+  // Every other language goes through the heuristic profile registry.
+  const profiled = summarizeWithProfile(relativePath, redactedContent);
+  return profiled ? { summary: profiled.summary, quality: profiled.quality } : undefined;
 }
 
 function isSourceSummary(summary: FileEntry["summary"]): summary is SourceSummary {
@@ -520,8 +527,11 @@ export function generateSnapshot(
     }
 
     let summary: FileEntry["summary"];
+    let summaryQuality: SummaryQuality | undefined;
     try {
-      summary = summarizeFile(relativePath, redacted);
+      const outcome = summarizeFile(relativePath, redacted);
+      summary = outcome?.summary;
+      summaryQuality = outcome?.quality;
       if (isSourceSummary(summary) && summary.parseErrors) {
         warnings.push(
           `Parse errors in ${relativePath} (${summary.parseErrors}); its summary is incomplete.`
@@ -550,6 +560,7 @@ export function generateSnapshot(
       includedLines,
       includedBytes: Buffer.byteLength(finalContent, "utf8"),
       summary,
+      summaryQuality,
       content: finalContent,
     });
   }
@@ -791,6 +802,8 @@ export type { ExplainResult } from "./explain.js";
 export { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 export type { ManifestDiff } from "./diff.js";
 export { stripJsonComments } from "./ast/structured.js";
+export { LANGUAGE_PROFILES, profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
+export type { HeuristicResult, LanguageProfile } from "./ast/profiles/index.js";
 export { renumberParts } from "./partitioner/chunker.js";
 export { collectFiles, isSensitivePath, matchesExclude, globToRegExp } from "./scanner/files.js";
 export {
