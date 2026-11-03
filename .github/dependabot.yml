@@ -24,6 +24,12 @@ updates:
       # entry in package.json instead, which keeps tsup 8 working.
       - dependency-name: "tsup"
         update-types: ["version-update:semver-major"]
+      # `typescript` is a *runtime* dependency here: the AST summaries are built
+      # with the real compiler API. A major bump is an upgrade that has to be
+      # done deliberately, not merged automatically — TypeScript 7 does not even
+      # install against the current toolchain (`npm ci` fails).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
