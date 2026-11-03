@@ -1,0 +1,182 @@
+import type { ArtifactSelection, ByteSize } from "../types.js";
+
+/** What the wizard decided, after prompts or flags. */
+export interface WizardAnswers {
+  preset: string;
+  maxPartBytes: ByteSize;
+  largeFileBytes: ByteSize;
+  include: string[];
+  excludePatterns: string[];
+  artifacts: Required<ArtifactSelection>;
+  includeSensitiveFiles: boolean;
+  outDir: string;
+}
+
+export const DEFAULT_ANSWERS: WizardAnswers = {
+  preset: "generic",
+  maxPartBytes: "300k",
+  largeFileBytes: "200k",
+  include: [],
+  excludePatterns: [],
+  artifacts: {
+    readme: true,
+    manifest: true,
+    parts: true,
+    navigation: true,
+    projectTree: true,
+    audit: true,
+    monolith: false,
+  },
+  includeSensitiveFiles: false,
+  outDir: "snapshot",
+};
+
+function list(values: string[]): string {
+  if (values.length === 0) return "[]";
+  return `[${values.map((value) => JSON.stringify(value)).join(", ")}]`;
+}
+
+function size(value: ByteSize): string {
+  return typeof value === "string" ? JSON.stringify(value) : String(value);
+}
+
+const PRESET_NAMES = [
+  "nextjs · react-vite · vue-vite · nuxt · sveltekit · angular · astro",
+  "remix · solid · nest · node-express · node-lib",
+  "python-django · python-fastapi · python-lib · go · rust",
+  "java-spring · dotnet · php-laravel · ruby-rails",
+  "monorepo · docs · infra · generic",
+];
+
+/**
+ * Renders the full, self-documenting config.
+ *
+ * Every setting appears at its current value, commented and grouped, because
+ * most developers never open the documentation — a file that lists only their
+ * changes cannot tell them what else exists. Deleting any line is safe: the
+ * defaults are real.
+ */
+export function renderConfig(answers: WizardAnswers): string {
+  const { artifacts } = answers;
+
+  return `import { defineConfig } from "@ankurhalder/codebase-snapshot";
+
+export default defineConfig({
+  // ── Project ────────────────────────────────────────────────────────────
+  // Which project shape to use. Detected from the repo when omitted.
+  // ${PRESET_NAMES.join("\n  // ")}
+  preset: ${JSON.stringify(answers.preset)},
+
+  // Recorded in the manifest when git cannot report a branch.
+  branch: "main",
+
+  // ── Output ─────────────────────────────────────────────────────────────
+  // Where the snapshot is written.
+  outDir: ${JSON.stringify(answers.outDir)},
+  // Scratch directory; the new snapshot is renamed into place atomically.
+  tmpDir: "snapshot.tmp",
+
+  // ── Size ───────────────────────────────────────────────────────────────
+  // Hard ceiling per part. "300k", 307200 and "1.5mb" are all accepted.
+  maxPartBytes: ${size(answers.maxPartBytes)},
+  // Files above this size get a head/tail preview instead of the full body.
+  largeFileBytes: ${size(answers.largeFileBytes)},
+  previewHeadLines: 80,
+  previewTailLines: 40,
+  // Different ceilings per layer. Unlisted layers use \`default\`.
+  budgets: {
+    default: ${size(answers.maxPartBytes)},
+    byLayer: {},
+  },
+
+  // ── What goes in ───────────────────────────────────────────────────────
+  // Allow-list. Empty means "everything that is not ignored".
+  // Example: ["src/**", "packages/*/src/**"]
+  include: ${list(answers.include)},
+  // Globs or path segments to drop. Example: ["**/*.test.ts", "docs"]
+  excludePatterns: ${list(answers.excludePatterns)},
+
+  // ── Classification ─────────────────────────────────────────────────────
+  // "merge" = the preset's rules plus yours (yours win). "replace" = yours only.
+  layersMode: "merge",
+  // [{ name: "billing", match: "src/features/billing/**" }]
+  layers: [],
+  // [{ kind: "route", match: "src/app/api/**" }]
+  kinds: [],
+
+  // ── Safety ─────────────────────────────────────────────────────────────
+  // .env, *.pem, .npmrc, .ssh/ and friends are skipped unless this is true.
+  includeSensitiveFiles: ${answers.includeSensitiveFiles},
+  secrets: {
+    // [{ rule: "internal-token", pattern: /CORP-[A-Z0-9]{32}/ }]
+    customPatterns: [],
+    // Set true to drop the 21 built-in rules.
+    disableDefaultPatterns: false,
+  },
+
+  // ── Artifacts ──────────────────────────────────────────────────────────
+  artifacts: {
+    readme: ${artifacts.readme},        // README.md
+    manifest: ${artifacts.manifest},      // manifest.json — required by validate and report
+    parts: ${artifacts.parts},         // parts/part-XXX.md
+    navigation: ${artifacts.navigation},    // reports/navigation.md
+    projectTree: ${artifacts.projectTree},   // reports/project-tree.md
+    audit: ${artifacts.audit},         // reports/audit.md
+    monolith: ${artifacts.monolith},     // full-codebase.json + .md (roughly doubles output)
+  },
+  // Skip the monolith above this size. null = no limit.
+  maxMonolithBytes: null,
+
+  // ── Advanced ───────────────────────────────────────────────────────────
+  // afterGenerate: (manifest) => { /* write your own artifact */ }
+  hooks: {},
+});
+`;
+}
+
+/**
+ * The terse variant: only what differs from the defaults.
+ *
+ * `--minimal` exists for people who prefer a short file and will read the docs.
+ */
+export function renderMinimalConfig(answers: WizardAnswers): string {
+  const lines: string[] = [];
+
+  if (answers.preset !== DEFAULT_ANSWERS.preset) lines.push(`  preset: ${JSON.stringify(answers.preset)},`);
+  if (answers.maxPartBytes !== DEFAULT_ANSWERS.maxPartBytes) {
+    lines.push(`  maxPartBytes: ${size(answers.maxPartBytes)},`);
+  }
+  if (answers.largeFileBytes !== DEFAULT_ANSWERS.largeFileBytes) {
+    lines.push(`  largeFileBytes: ${size(answers.largeFileBytes)},`);
+  }
+  if (answers.include.length > 0) lines.push(`  include: ${list(answers.include)},`);
+  if (answers.excludePatterns.length > 0) {
+    lines.push(`  excludePatterns: ${list(answers.excludePatterns)},`);
+  }
+  if (answers.includeSensitiveFiles) lines.push("  includeSensitiveFiles: true,");
+  if (answers.outDir !== DEFAULT_ANSWERS.outDir) lines.push(`  outDir: ${JSON.stringify(answers.outDir)},`);
+
+  const changed = (Object.keys(answers.artifacts) as Array<keyof ArtifactSelection>).filter(
+    (name) => answers.artifacts[name] !== DEFAULT_ANSWERS.artifacts[name]
+  );
+  if (changed.length > 0) {
+    const entries = changed
+      .map((name) => `    ${name}: ${answers.artifacts[name]}`)
+      .join(",\n");
+    lines.push(`  artifacts: {\n${entries},\n  },`);
+  }
+
+  if (lines.length === 0) {
+    return `import { defineConfig } from "@ankurhalder/codebase-snapshot";
+
+export default defineConfig({});
+`;
+  }
+
+  return `import { defineConfig } from "@ankurhalder/codebase-snapshot";
+
+export default defineConfig({
+${lines.join("\n")}
+});
+`;
+}

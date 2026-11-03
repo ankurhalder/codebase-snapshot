@@ -3,9 +3,12 @@ import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 import { explainPath, renderExplainText } from "./explain.js";
-import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig, supportsTypeScriptImports } from "./config.js";
+import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig } from "./config.js";
+import { runInit } from "./wizard/init.js";
+import { PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
+import { getPreset, unknownPresetMessage } from "./presets/index.js";
 import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
 
 const VERSION = GENERATOR_VERSION;
@@ -46,6 +49,12 @@ const CLI_OPTIONS = {
   mode: { type: "string" },
   "dry-run": { type: "boolean" },
   watch: { type: "boolean" },
+  preset: { type: "string" },
+  include: { type: "string" },
+  exclude: { type: "string" },
+  yes: { type: "boolean" },
+  minimal: { type: "boolean" },
+  force: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -85,6 +94,14 @@ Options:
   --format <text|json>          CLI output format (default: text)
   --dry-run                     Compute the snapshot without writing anything
   --watch                       Re-generate whenever the repository changes
+
+  init only:
+  --preset <name>               Force a project preset instead of detecting one
+  --include <globs>             Comma-separated allow-list
+  --exclude <globs>             Comma-separated exclude patterns
+  --minimal                     Write only the settings that differ from defaults
+  --yes                         Accept every default without prompting
+  --force                       Overwrite an existing config
   -h, --help                    Display this help message
   -v, --version                 Display version
 
@@ -99,6 +116,14 @@ interface ParsedInvocation {
   format: OutputFormat;
   dryRun: boolean;
   watch: boolean;
+  preset?: string;
+  /** The size exactly as typed, so the generated config can keep `120k`. */
+  maxPartBytesRaw?: string;
+  include?: string;
+  exclude?: string;
+  yes: boolean;
+  minimal: boolean;
+  force: boolean;
   cwd: string;
   outDir?: string;
   includeMonolith?: boolean;
@@ -260,12 +285,50 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     skipArtifacts = parseArtifactList(String(rawSkip), "--skip-artifacts");
   }
 
+  // These configure `init`, which writes them into the config file. They are not
+  // runtime overrides — `resolveConfig` reads scoping and presets from the config
+  // file only. Accepting them silently here would leave the developer believing a
+  // --preset or --include took effect when the run used the detected defaults.
+  if (command !== "init") {
+    const initOnly: string[] = [];
+    if (values.preset !== undefined) initOnly.push("--preset");
+    if (values.include !== undefined) initOnly.push("--include");
+    if (values.exclude !== undefined) initOnly.push("--exclude");
+    if (values.yes === true) initOnly.push("--yes");
+    if (values.minimal === true) initOnly.push("--minimal");
+    if (values.force === true) initOnly.push("--force");
+    if (initOnly.length > 0) {
+      throw new UsageError(
+        `${initOnly.join(", ")} ${initOnly.length === 1 ? "is" : "are"} only valid with \`init\`. ` +
+          `To scope \`${command}\`, set include/excludePatterns/preset in snapshot.config.ts ` +
+          `(or run \`snap init\` to generate one).`
+      );
+    }
+  }
+
+  // `init --preset <typo>` used to fall back to detection and write a config for
+  // a preset nobody asked for, while still exiting 0. The docs promise a usage
+  // error listing every valid preset, so validate the name here (exit 2) rather
+  // than letting it surface later as a generic failure.
+  if (command === "init" && values.preset !== undefined) {
+    const requested = String(values.preset);
+    if (!getPreset(requested)) throw new UsageError(unknownPresetMessage(requested));
+  }
+
   return {
     command,
     args,
     format: rawFormat as OutputFormat,
     dryRun: values["dry-run"] === true,
     watch: values.watch === true,
+    preset: values.preset === undefined ? undefined : String(values.preset),
+    maxPartBytesRaw:
+      values["max-part-bytes"] === undefined ? undefined : String(values["max-part-bytes"]),
+    include: values.include === undefined ? undefined : String(values.include),
+    exclude: values.exclude === undefined ? undefined : String(values.exclude),
+    yes: values.yes === true,
+    minimal: values.minimal === true,
+    force: values.force === true,
     cwd: values.cwd === undefined ? process.cwd() : path.resolve(String(values.cwd)),
     outDir: values["out-dir"] === undefined ? undefined : String(values["out-dir"]),
     includeMonolith: values["include-monolith"] === true ? true : undefined,
@@ -307,34 +370,78 @@ function emit(format: OutputFormat, payload: unknown, textRenderer: () => void):
   textRenderer();
 }
 
-function runInit(cwd: string): number {
-  const targetName = supportsTypeScriptImports() ? "snapshot.config.ts" : "snapshot.config.mjs";
-  const targetPath = path.join(cwd, targetName);
-  if (fs.existsSync(targetPath)) {
-    warn(`❌ ${targetName} already exists in ${cwd}.`);
+function splitList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+
+/**
+ * Describes why a parsed JSON file is not usable as a snapshot manifest.
+ *
+ * A parseable file is not necessarily a snapshot: rendering a foreign or
+ * truncated manifest used to fail with a raw `TypeError: Cannot read properties
+ * of undefined (reading 'totalFiles')` from inside the text formatter.
+ */
+function describeManifestShapeProblem(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    return "not a JSON object";
+  }
+  const candidate = manifest as Record<string, unknown>;
+
+  const counts = candidate.counts as Record<string, unknown> | undefined;
+  if (!counts || typeof counts !== "object") return "missing `counts`";
+  for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
+    if (typeof counts[key] !== "number") return `missing numeric \`counts.${key}\``;
+  }
+
+  if (!candidate.layers || typeof candidate.layers !== "object") return "missing `layers`";
+  if (!Array.isArray(candidate.files)) return "missing `files` array";
+  return null;
+}
+
+async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
+  try {
+    const result = await runInit({
+      cwd: invocation.cwd,
+      preset: invocation.preset,
+      maxPartBytes: invocation.maxPartBytesRaw ?? invocation.maxPartBytes,
+      include: splitList(invocation.include),
+      exclude: splitList(invocation.exclude),
+      skipArtifacts: invocation.skipArtifacts,
+      includeSensitiveFiles: invocation.includeSensitiveFiles,
+      yes: invocation.yes,
+      minimal: invocation.minimal,
+      force: invocation.force,
+      dryRun: invocation.dryRun,
+    });
+
+    if (invocation.format === "json") {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+
+    if (!result.written) {
+      info(result.configText);
+      return 0;
+    }
+
+    info(`✅ Created ${path.basename(result.configPath)} (preset: ${result.preset})`);
+    if (result.scripts.length > 0) info(`   Added npm scripts: ${result.scripts.join(", ")}`);
+    if (result.gitignoreEntries.length > 0) {
+      info(`   Added to .gitignore: ${result.gitignoreEntries.join(", ")}`);
+    }
+    for (const note of result.notes) info(`   ⚠ ${note}`);
+    info("");
+    info("   Next:  npm run snapshot");
+    return 0;
+  } catch (err) {
+    if (err instanceof PromptCancelled) {
+      warn("❌ Cancelled.");
+      return 1;
+    }
+    warn(`❌ ${(err as Error).message}`);
     return 1;
   }
-
-  const importPath = JSON.stringify(GENERATOR_NAME);
-  const starter = `import { defineConfig } from ${importPath};
-
-export default defineConfig({
-  branch: "main",
-  outDir: "snapshot",
-  maxPartBytes: 300 * 1024,
-  largeFileBytes: 200 * 1024,
-  excludePatterns: [],
-});
-`;
-
-  fs.writeFileSync(targetPath, starter, "utf8");
-  info(`✅ Created ${targetName} in ${cwd}`);
-  if (targetName.endsWith(".mjs")) {
-    info(
-      "   (a .ts config needs Node >= 22.6 to import natively; this Node writes a .mjs instead)"
-    );
-  }
-  return 0;
 }
 
 function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
@@ -377,11 +484,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (invocation.command === "init") {
-    return runInit(invocation.cwd);
+    return await runInitCommand(invocation);
   }
 
   const loaded = await loadConfigFileDetailed(invocation.cwd);
   for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
+  if (loaded.errors.length > 0) {
+    // A config that exists but cannot be read must not silently fall back to the
+    // defaults: the resulting snapshot would ignore every setting the developer
+    // wrote and still report success.
+    warn("❌ The config file could not be read. Fix it, or delete it to use the defaults.");
+    return 1;
+  }
   if (loaded.file) info(`⚙  Using config ${path.relative(process.cwd(), loaded.file) || loaded.file}`);
 
   const resolved = resolveConfig(
@@ -409,7 +523,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (invocation.command === "report") {
-    const manifestPath = path.join(resolved.cwd, resolved.outDir, "manifest.json");
+    // `path.resolve`, not `path.join`: generate resolves outDir against cwd, so a
+    // reader using join would look for "<cwd>\<absolute path>" and report a
+    // missing manifest after a successful generate.
+    const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
     if (!fs.existsSync(manifestPath)) {
       warn(`❌ Manifest not found at ${manifestPath}. Run generate first.`);
       return 1;
@@ -421,6 +538,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       warn(`❌ Could not read ${manifestPath}: ${(err as Error).message}`);
       return 1;
     }
+
+    // A parseable file is not necessarily a snapshot: reading a foreign or
+    // truncated manifest used to fail with a raw `TypeError: Cannot read
+    // properties of undefined (reading 'totalFiles')` instead of a message.
+    const shapeError = describeManifestShapeProblem(manifest);
+    if (shapeError) {
+      warn(`❌ ${manifestPath} is not a snapshot manifest: ${shapeError}`);
+      return 1;
+    }
+
     const validation = validateSnapshot(resolved);
 
     emit(invocation.format, { manifest, validation }, () => {

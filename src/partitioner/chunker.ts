@@ -390,6 +390,7 @@ function renderFileSection(file: FileEntry): string {
     `- Source Lines: ${file.originalLines}`,
     `- Included Lines: ${file.includedLines}`,
     `- SHA-256: ${file.hashSha256}`,
+    ...(file.summaryQuality ? [`- Summary Quality: ${file.summaryQuality}`] : []),
     ...renderSummary(file.summary),
     ...(file.summaryOmitted ? ["- Summary: (omitted: exceeds the part budget)"] : []),
     "",

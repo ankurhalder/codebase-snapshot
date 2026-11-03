@@ -1,0 +1,33 @@
+{
+  "name": "create-codebase-snapshot",
+  "version": "2.1.0",
+  "description": "Set up @ankurhalder/codebase-snapshot in a repository",
+  "license": "MIT",
+  "author": "Ankur Halder <ankur.halder12345@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ankurhalder/codebase-snapshot.git",
+    "directory": "packages/create"
+  },
+  "homepage": "https://github.com/ankurhalder/codebase-snapshot#readme",
+  "bugs": {
+    "url": "https://github.com/ankurhalder/codebase-snapshot/issues"
+  },
+  "type": "module",
+  "bin": {
+    "create-codebase-snapshot": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "README.md"
+  ],
+  "dependencies": {
+    "@ankurhalder/codebase-snapshot": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

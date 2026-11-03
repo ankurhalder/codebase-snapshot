@@ -39,6 +39,17 @@ export interface MarkdownSummary {
   frontmatterKeys: string[];
 }
 
+/**
+ * How a summary was produced.
+ *
+ * `ast`        — a real parser (TypeScript compiler; the script block of a
+ *                Vue/Svelte/Astro component).
+ * `structural` — a real grammar for a data format (JSON, Markdown).
+ * `heuristic`  — line patterns. Useful, but not a parse, and never presented
+ *                as one.
+ */
+export type SummaryQuality = "ast" | "structural" | "heuristic";
+
 export type SkipReason =
   | "asset"
   | "binary"
@@ -79,6 +90,8 @@ export interface FileEntry {
   /** UTF-8 bytes of file content actually emitted into the snapshot. */
   includedBytes: number;
   summary?: SourceSummary | JsonSummary | MarkdownSummary;
+  /** How the summary was produced. Absent when there is no summary. */
+  summaryQuality?: SummaryQuality;
   /** True when the summary alone was too large for the part budget and was dropped. */
   summaryOmitted?: boolean;
   /** Emitted body after redaction/truncation. Never serialized into the manifest. */
@@ -167,6 +180,7 @@ export interface ManifestConfigSnapshot {
   includeSensitiveFiles: boolean;
   artifacts: ResolvedArtifacts;
   include: string[];
+  preset: string;
   layersMode: "merge" | "replace";
   budgets: ResolvedBudgets;
   excludePatterns: string[];
@@ -294,6 +308,8 @@ export interface SnapshotConfig {
   includeSensitiveFiles?: boolean;
   /** Allow-list of globs. When non-empty, only matching files are included. */
   include?: string[];
+  /** Force a preset by name instead of auto-detecting one. */
+  preset?: string;
   /** Switch individual snapshot artifacts off. Everything is on by default. */
   artifacts?: ArtifactSelection;
   /**
@@ -328,6 +344,10 @@ export interface ResolvedSnapshotConfig {
   includeSensitiveFiles: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */
   include: string[];
+  /** The preset that was resolved (detected or forced). */
+  preset: string;
+  /** Ecosystem ignores contributed by the preset, merged with `excludePatterns`. */
+  presetExclude: string[];
   artifacts: ResolvedArtifacts;
   layersMode: "merge" | "replace";
   budgets: ResolvedBudgets;
