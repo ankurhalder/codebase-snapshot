@@ -12,6 +12,20 @@ Requires **Node.js 18 or newer**.
 npx @ankurhalder/codebase-snapshot generate
 ```
 
+If that exits with **no output and no error** instead of generating, your npm has
+resolved the bare spec to a placeholder manifest that carries no executable — npm creates
+a `0.0.0-stage` placeholder version during staged publishing, and some npm builds pick it
+when no version is given. Pin the version or the tag and it works:
+
+```bash
+npx @ankurhalder/codebase-snapshot@latest generate
+npx @ankurhalder/codebase-snapshot@2 generate
+```
+
+`npx -p @ankurhalder/codebase-snapshot codebase-snapshot generate`, `pnpm dlx`,
+`yarn dlx` and `bunx` are unaffected. A normal `npm install -D` followed by `npx snap`
+is unaffected too, and is the more reproducible choice for a project.
+
 Equivalent one-liners for other clients:
 
 ```bash
