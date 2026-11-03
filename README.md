@@ -54,6 +54,11 @@ npx @ankurhalder/codebase-snapshot init --preset react-vite --max-part-bytes 120
 - **TypeScript AST extraction** — directives, imports, exports (including `export *` and anonymous
   defaults), functions, classes, interfaces, types, enums, components, hooks, and route handlers.
 - **Structured summaries** — JSON key shapes and Markdown headings, computed from redacted text.
+- **Built for AI agents** — `snap describe --format json` returns a machine-readable
+  contract (workflow, every option and default, exit codes, presets, safety rules), and
+  `snap skill --install` writes the bundled agent skill into `AGENTS.md`,
+  `.claude/skills/` and `.cursor/rules/` so a zero-context agent discovers the tool
+  automatically. See [docs/agent.md](docs/agent.md).
 - **Zero-config presets** — auto-detects Next.js, Vite, Node/Express/Nest, and plain TypeScript.
 - **Real integrity validation** — verifies source hashes, every emitted `parts/*.md` against its recorded
   `byteSize`/`sha256`, monolith artifacts, and the recorded configuration.
@@ -91,6 +96,37 @@ bun add -d @ankurhalder/codebase-snapshot
 Requires **Node.js 18+**. Every client above is verified in CI, including yarn Berry with
 strict PnP. See [docs/install.md](docs/install.md) for global installs, version pinning,
 and troubleshooting.
+
+---
+
+## 🤖 For AI agents
+
+An agent with **no prior knowledge** of this tool can drive it end to end. Two commands
+exist for exactly that:
+
+```bash
+# Machine-readable contract: workflow, every option + default, exit codes,
+# presets, safety rules and troubleshooting — as JSON on stdout.
+npx @ankurhalder/codebase-snapshot@latest describe --format json
+
+# Write the bundled agent skill where agents look for it:
+# AGENTS.md, .claude/skills/codebase-snapshot/SKILL.md, .cursor/rules/
+npx @ankurhalder/codebase-snapshot@latest skill --install
+```
+
+The typical agent flow, once the contract is read:
+
+```bash
+npx @ankurhalder/codebase-snapshot@latest init --yes   # detect the project, write config
+npx @ankurhalder/codebase-snapshot@latest generate     # write ./snapshot/
+npx @ankurhalder/codebase-snapshot@latest validate     # exit 0 = matches disk
+```
+
+Pin the tag (`@latest` or `@2`): a bare scoped spec can resolve to a placeholder manifest
+with no executable on some npm builds and exit 0 printing nothing.
+
+Details, including the contract schema and the skill's install targets, are in
+[docs/agent.md](docs/agent.md).
 
 ---
 

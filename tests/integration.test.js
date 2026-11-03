@@ -18,6 +18,12 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, "..", "dist", "bin.js");
+
+/** Mirrors the package's own check: Node can `import()` a `.ts` file. */
+function supportsTypeScriptImportsForTests() {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  return major > 22 || (major === 22 && minor >= 6);
+}
 const PACKAGE_JSON = JSON.parse(
   fs.readFileSync(path.join(HERE, "..", "package.json"), "utf8")
 );
@@ -1611,5 +1617,183 @@ test("CLI init writes a config in non-interactive mode", () => {
   assert.ok(text.includes('preset: "go"'));
   assert.ok(text.includes('maxPartBytes: "120k"'));
   assert.ok(text.includes("artifacts:"), "the full annotated config is written by default");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── agent surface (2.2.0) ────────────────────────────────────────────────────
+
+test("describe emits a machine contract an agent can act on", () => {
+  const result = runCli(["describe", "--format", "json"]);
+  assert.equal(result.code, 0, result.stderr);
+  const contract = JSON.parse(result.stdout);
+
+  assert.equal(contract.package, "@ankurhalder/codebase-snapshot");
+  assert.equal(contract.generator, contract.package);
+  assert.match(contract.invocation.oneShot, /@latest/, "the one-shot invocation must be pinned");
+  assert.ok(contract.workflow.length >= 5, "the workflow must be step by step");
+  assert.deepEqual(
+    contract.workflow.map((step) => step.step),
+    contract.workflow.map((_, index) => index + 1),
+    "steps are numbered in order"
+  );
+  assert.equal(contract.presets.length, 25);
+  assert.ok(contract.options.some((option) => option.flag === "--out-dir"));
+  assert.ok(contract.artifacts.some((artifact) => artifact.name === "parts"));
+  assert.equal(contract.exitCodes["2"].startsWith("usage error"), true);
+  assert.ok(contract.troubleshooting.length > 0);
+});
+
+test("describe defaults match the real config defaults", () => {
+  const contract = JSON.parse(runCli(["describe", "--format", "json"]).stdout);
+  const dir = makeRepo("agent-defaults-", { "package.json": '{"name":"fixture"}' });
+  const probe = runCli(["generate", "--cwd", dir, "--dry-run", "--format", "json"]);
+  assert.equal(probe.code, 0, probe.stderr);
+  const manifest = JSON.parse(probe.stdout);
+
+  // If these drift, the contract is lying to agents, so fail loudly.
+  const setting = (key) => contract.config.settings.find((item) => item.key === key);
+  assert.equal(setting("maxPartBytes").default, manifest.config.maxPartBytes);
+  assert.equal(setting("largeFileBytes").default, manifest.config.largeFileBytes);
+  assert.equal(setting("includeMonolith").default, manifest.config.includeMonolith);
+  assert.equal(setting("previewHeadLines").default, manifest.config.previewHeadLines);
+  assert.equal(setting("previewTailLines").default, manifest.config.previewTailLines);
+
+  // outDir is not recorded in manifest.config, so prove it by writing for real.
+  assert.equal(setting("outDir").default, "snapshot");
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+  assert.ok(fs.existsSync(path.join(dir, "snapshot", "manifest.json")));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("describe has a readable text form too", () => {
+  const result = runCli(["describe"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stderr, /Workflow:/);
+  assert.match(result.stderr, /describe --format json/);
+});
+
+test("skill prints a SKILL.md with the frontmatter agents look for", () => {
+  const result = runCli(["skill"]);
+  assert.equal(result.code, 0);
+  // Printed on stdout so an agent can capture it directly.
+  assert.match(result.stdout, /^---\nname: codebase-snapshot\n/);
+  assert.match(result.stdout, /description:/);
+  assert.match(result.stdout, /describe --format json/);
+  assert.match(result.stdout, /@latest/);
+});
+
+test("skill --install writes every place agents look, and is idempotent", () => {
+  const dir = makeRepo("agent-install-", { "package.json": '{"name":"fixture"}' });
+
+  const first = runCli(["skill", "--install", "--cwd", dir, "--format", "json"]);
+  assert.equal(first.code, 0, first.stderr);
+  const written = JSON.parse(first.stdout).written;
+  assert.deepEqual(
+    written.map((item) => item.target).sort(),
+    ["agents", "claude", "cursor"]
+  );
+  assert.ok(fs.existsSync(path.join(dir, "AGENTS.md")));
+  assert.ok(fs.existsSync(path.join(dir, ".claude", "skills", "codebase-snapshot", "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(dir, ".cursor", "rules", "codebase-snapshot.mdc")));
+
+  const second = runCli(["skill", "--install", "--cwd", dir, "--format", "json"]);
+  assert.equal(second.code, 0);
+  assert.ok(
+    JSON.parse(second.stdout).written.every((item) => item.action === "unchanged"),
+    "a second install must not rewrite anything"
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill --install leaves an existing AGENTS.md intact", () => {
+  const dir = makeRepo("agent-agents-md-", {
+    "package.json": '{"name":"fixture"}',
+    "AGENTS.md": "# House rules\n\nUse tabs.\n",
+  });
+  assert.equal(runCli(["skill", "--install", "--cwd", dir]).code, 0);
+
+  const text = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
+  assert.match(text, /# House rules/, "existing content is preserved");
+  assert.match(text, /Use tabs\./);
+  assert.match(text, /codebase-snapshot:skill:start/);
+  assert.match(text, /codebase-snapshot:skill:end/);
+
+  // Re-installing must replace only its own block, never duplicate it.
+  assert.equal(runCli(["skill", "--install", "--cwd", dir]).code, 0);
+  const again = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
+  assert.equal(again, text, "the file must be byte-identical after a re-install");
+  assert.equal(again.match(/codebase-snapshot:skill:start/g).length, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill --target writes only the requested location", () => {
+  const dir = makeRepo("agent-target-", { "package.json": '{"name":"fixture"}' });
+  assert.equal(runCli(["skill", "--install", "--target", "claude", "--cwd", dir]).code, 0);
+  assert.ok(fs.existsSync(path.join(dir, ".claude", "skills", "codebase-snapshot", "SKILL.md")));
+  assert.equal(fs.existsSync(path.join(dir, "AGENTS.md")), false);
+  assert.equal(fs.existsSync(path.join(dir, ".cursor")), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("skill-only flags are rejected elsewhere, and --target is validated", () => {
+  assert.equal(runCli(["skill", "--install", "--target", "nope"]).code, 2);
+  assert.equal(runCli(["generate", "--install"]).code, 2);
+  assert.equal(runCli(["generate", "--target", "claude"]).code, 2);
+});
+
+// ── init → generate round trip (2.2.0) ───────────────────────────────────────
+// `snap init` used to write a config the very next `snap generate` could not
+// load: the file imported `defineConfig` from this package (absent in the npx
+// flow) and was written as `.ts` even in CommonJS projects, where Node refuses
+// `export default`. A zero-context agent hit this on its first run.
+
+test("init writes a config that generate can actually load (CommonJS project)", () => {
+  const dir = makeRepo("rt-cjs-", { "package.json": '{"name":"fixture","version":"1.0.0"}' });
+
+  const init = runCli(["init", "--yes", "--cwd", dir]);
+  assert.equal(init.code, 0, init.stderr);
+
+  const written = fs.readdirSync(dir).filter((name) => name.startsWith("snapshot.config"));
+  assert.equal(written.length, 1, `expected exactly one config, got ${written.join(", ")}`);
+  assert.equal(written[0], "snapshot.config.mjs", "a CommonJS project cannot load a .ts ESM config");
+
+  const text = fs.readFileSync(path.join(dir, written[0]), "utf8");
+  assert.doesNotMatch(text, /@ankurhalder\/codebase-snapshot/, "the config must not import the package");
+
+  // The whole point: the next command works.
+  const generated = runCli(["generate", "--cwd", dir]);
+  assert.equal(generated.code, 0, `generate must load the config it just wrote:\n${generated.stderr}`);
+  assert.ok(fs.existsSync(path.join(dir, "snapshot", "manifest.json")));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("init writes a .ts config for an ESM project when Node can load it", () => {
+  const dir = makeRepo("rt-esm-", {
+    "package.json": '{"name":"fixture","version":"1.0.0","type":"module"}',
+  });
+  const init = runCli(["init", "--yes", "--cwd", dir]);
+  assert.equal(init.code, 0, init.stderr);
+
+  const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
+  if (supportsTypeScriptImportsForTests()) {
+    assert.equal(configName, "snapshot.config.ts");
+  } else {
+    assert.equal(configName, "snapshot.config.mjs");
+  }
+
+  const generated = runCli(["generate", "--cwd", dir]);
+  assert.equal(generated.code, 0, `generate must load ${configName}:\n${generated.stderr}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a generated config is a plain object, not a defineConfig call", () => {
+  const dir = makeRepo("rt-plain-", {
+    "package.json": '{"name":"fixture","version":"1.0.0","type":"module"}',
+  });
+  assert.equal(runCli(["init", "--yes", "--cwd", dir]).code, 0);
+  const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
+  const text = fs.readFileSync(path.join(dir, configName), "utf8");
+  assert.match(text, /export default \{/);
+  assert.doesNotMatch(text, /defineConfig/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

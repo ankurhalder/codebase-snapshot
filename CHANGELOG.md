@@ -4,6 +4,42 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 2.2.0
+
+Built for AI agents. Everything an agent needs is now available as data, and the tool can
+install its own skill where agents look for it.
+
+### Added
+
+- **snap describe** — a machine-readable contract of the whole tool: the invocation that
+  works, an ordered workflow array, every command, every option with its default, the
+  exit-code contract, all 25 presets, the artifact list, config file names, output layout,
+  safety rules and a troubleshooting table. --format json for machines, text for humans.
+  Generated from the same code the CLI runs; a test compares its documented defaults
+  against a real `generate --dry-run` manifest so it cannot drift into lying.
+- **snap skill** — prints the bundled agent skill (to stdout, so it can be redirected),
+  or with `--install` writes it to `AGENTS.md`, `.claude/skills/codebase-snapshot/SKILL.md`
+  and `.cursor/rules/codebase-snapshot.mdc`. `--target claude|agents|cursor|all`.
+  The install is idempotent and replaces only its own marked block, so an existing
+  `AGENTS.md` keeps its conventions.
+- `snap init` now points at `skill --install`.
+- [docs/agent.md](docs/agent.md) explains the contract and the skill for humans.
+
+### Why
+
+`--help` is prose for a person. An agent told "use npx @ankurhalder/codebase-snapshot"
+had to guess option names and failure modes. `describe` removes the guessing, and the
+skill removes the discovery problem: once installed, an agent finds the tool without being
+told it exists.
+
+### Tests
+
+138 pass (130 before): the contract's shape and defaults, skill output and frontmatter,
+installation to all three targets, idempotency, and that an existing `AGENTS.md` is
+preserved.
+
+---
+
 ## 2.1.1
 
 A correctness and contract pass driven by an independent CLI audit of 2.1.0. No new
