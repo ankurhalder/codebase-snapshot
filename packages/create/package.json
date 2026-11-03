@@ -1,6 +1,6 @@
 {
   "name": "create-codebase-snapshot",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Set up @ankurhalder/codebase-snapshot in a repository",
   "license": "MIT",
   "author": "Ankur Halder <ankur.halder12345@gmail.com>",
@@ -22,7 +22,7 @@
     "README.md"
   ],
   "dependencies": {
-    "@ankurhalder/codebase-snapshot": "^2.1.0"
+    "@ankurhalder/codebase-snapshot": "^2.1.1"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -695,6 +695,163 @@ test("report rejects a manifest that is not a snapshot", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ── contract polish (2.1.1) ──────────────────────────────────────────────────
+
+test("validate lists the bookkeeping values that disagree", () => {
+  const dir = makeRepo("pol-m2-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+  });
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+  const manifestPath = path.join(dir, "snapshot", "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.counts.totalFiles = 999;
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+  const result = runCli(["validate", "--cwd", dir]);
+  assert.equal(result.code, 1);
+  // It used to print only "1 manifest bookkeeping value(s) disagree".
+  assert.match(result.stderr, /counts\.totalFiles/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("generate only reports the artifacts it actually wrote", () => {
+  // Human-readable progress goes to stderr; stdout stays pure for --format json.
+  const onlyParts = makeRepo("pol-m3a-", { "package.json": '{"name":"f"}', "a.ts": "export const a=1;\n" });
+  const partsOut = runCli(["generate", "--cwd", onlyParts, "--only-artifacts", "parts"]).stderr;
+  assert.match(partsOut, /Parts written/);
+  assert.doesNotMatch(partsOut, /Reports:/);
+  assert.doesNotMatch(partsOut, /Manifest:/);
+  fs.rmSync(onlyParts, { recursive: true, force: true });
+
+  const noManifest = makeRepo("pol-m3b-", { "package.json": '{"name":"f"}', "a.ts": "export const a=1;\n" });
+  const noManifestOut = runCli(["generate", "--cwd", noManifest, "--skip-artifacts", "manifest"]).stderr;
+  assert.doesNotMatch(noManifestOut, /Manifest:/);
+  fs.rmSync(noManifest, { recursive: true, force: true });
+
+  const none = makeRepo("pol-m3c-", { "package.json": '{"name":"f"}', "a.ts": "export const a=1;\n" });
+  const noneOut = runCli([
+    "generate", "--cwd", none,
+    "--skip-artifacts", "readme,manifest,parts,navigation,projectTree,audit,monolith",
+  ]).stderr;
+  assert.match(noneOut, /all disabled/);
+  fs.rmSync(none, { recursive: true, force: true });
+});
+
+test("a tracked-but-deleted file is reported once, not twice", () => {
+  const dir = makeRepo("pol-l1-", {
+    "package.json": '{"name":"fixture"}',
+    "src/index.ts": "export const a = 1;\n",
+  });
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+  fs.rmSync(path.join(dir, "src", "index.ts"));
+
+  const result = runCli(["validate", "--cwd", dir, "--format", "json"]);
+  assert.equal(result.code, 1);
+  const drift = JSON.parse(result.stdout).drift;
+  assert.deepEqual(drift.missingOnDisk, ["src/index.ts"]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a bad --cwd is a usage error (exit 2), not a generation failure", () => {
+  const dir = makeRepo("pol-l2-", { "package.json": '{"name":"fixture"}', "notes.txt": "x\n" });
+  assert.equal(runCli(["generate", "--cwd", path.join(dir, "notes.txt")]).code, 2);
+  assert.equal(runCli(["generate", "--cwd", path.join(dir, "definitely-missing")]).code, 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a negative option value gets a message that names the fix", () => {
+  const result = runCli(["--max-part-bytes", "-5"]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /looks like another flag/);
+});
+
+test("empty option values are usage errors, not silent defaults", () => {
+  const dir = makeRepo("pol-l4-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  // An unset shell variable used to silently redirect output to ./snapshot.
+  const out = runCli(["generate", "--cwd", dir, "--out-dir", ""]);
+  assert.equal(out.code, 2);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot")), false);
+  assert.equal(runCli(["generate", "--cwd", ""]).code, 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("diff reports missing and malformed targets without raw Node errors", () => {
+  const dir = makeRepo("pol-l5-", {
+    "package.json": '{"name":"fixture"}',
+    "snap/manifest.json": '{"files":[]}',
+  });
+  const missing = runCli(["diff", "nope", "nope"]);
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /does not exist/);
+  assert.doesNotMatch(missing.stderr, /ENOENT/);
+
+  const malformed = runCli(["diff", "snap", "snap"], { cwd: dir });
+  assert.equal(malformed.code, 1);
+  assert.match(malformed.stderr, /no "counts" object/);
+  assert.doesNotMatch(malformed.stderr, /TypeError/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a detached HEAD records the fallback branch instead of 'HEAD'", () => {
+  const dir = makeRepo("pol-l6-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  execFileSync("git", ["checkout", "-q", "--detach", "HEAD"], { cwd: dir, stdio: "ignore" });
+
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(manifest.git.branch, "main", "a detached HEAD cannot name a branch");
+
+  const validated = runCli(["validate", "--cwd", dir]);
+  assert.equal(validated.code, 0);
+  assert.doesNotMatch(validated.stderr, /branch "HEAD"/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a wrong-typed 'snapshot' key in package.json is warned about", () => {
+  const dir = makeRepo("pol-l8-", {
+    "package.json": '{"name":"fixture","snapshot":"not-an-object"}',
+    "a.ts": "export const a=1;\n",
+  });
+  // Not fatal on purpose: other tools use a "snapshot" key too.
+  const result = runCli(["generate", "--cwd", dir]);
+  assert.equal(result.code, 0);
+  assert.match(result.stderr, /must be an object/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the all-artifacts-disabled warning names what is actually written", () => {
+  const dir = makeRepo("pol-l9-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  const result = runCli([
+    "generate", "--cwd", dir,
+    "--skip-artifacts", "readme,manifest,parts,navigation,projectTree,audit,monolith",
+  ]);
+  assert.equal(result.code, 0);
+  // It claimed the directory "will be empty" while the marker is always written.
+  assert.match(result.stderr, /ownership marker/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// `fs.chmod` cannot revoke write access on Windows, so this one is POSIX-only.
+test(
+  "a read-only output directory fails with a clear message",
+  { skip: process.platform === "win32" },
+  () => {
+    const dir = makeRepo("pol-l7-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+    assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+    fs.writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    fs.chmodSync(path.join(dir, "snapshot"), 0o500);
+    try {
+      const result = runCli(["generate", "--cwd", dir]);
+      assert.equal(result.code, 1);
+      assert.match(result.stderr, /permission denied/);
+      assert.ok(fs.existsSync(path.join(dir, "snapshot", "manifest.json")), "previous snapshot survives");
+    } finally {
+      fs.chmodSync(path.join(dir, "snapshot"), 0o700);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+);
+
 // A config that exists but cannot be read must fail, not fall back to defaults:
 // a silent fallback produces a snapshot with none of the developer's settings.
 test("CLI fails when an existing config cannot be parsed", () => {

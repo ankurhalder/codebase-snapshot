@@ -210,10 +210,44 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       strict: true,
     });
   } catch (err) {
-    throw new UsageError((err as Error).message);
+    const message = (err as Error).message;
+
+    // `--max-part-bytes -5` reads as an ambiguous option to the parser, which
+    // then talks about `=--XYZ`. Say what actually happened instead.
+    const ambiguous = /^Option '(--[^']+)' argument is ambiguous/i.exec(message);
+    if (ambiguous) {
+      throw new UsageError(
+        `${ambiguous[1]} received a value that looks like another flag (for example a ` +
+          `negative number). Use the "--option=value" form, and note that sizes must be positive.`
+      );
+    }
+    throw new UsageError(message);
   }
 
   const values = parsed.values as Record<string, string | boolean | undefined>;
+
+  // An unset shell variable expands to "", which used to be accepted as "use the
+  // default" — `--out-dir "$UNSET"` silently wrote to ./snapshot instead of
+  // failing. Every string option now requires a real value.
+  for (const [name, spec] of Object.entries(CLI_OPTIONS)) {
+    if (spec.type !== "string") continue;
+    const raw = values[name];
+    if (raw !== undefined && String(raw).trim() === "") {
+      throw new UsageError(`--${name} requires a value (received an empty string).`);
+    }
+  }
+
+  // A bad path is a usage error (exit 2), not a generation failure, so check it
+  // here rather than letting resolveConfig fail later with exit 1.
+  if (values.cwd !== undefined) {
+    const target = String(values.cwd);
+    if (!fs.existsSync(target)) {
+      throw new UsageError(`--cwd directory does not exist: ${target}`);
+    }
+    if (!fs.statSync(target).isDirectory()) {
+      throw new UsageError(`--cwd is not a directory: ${target}`);
+    }
+  }
 
   if (values.help) {
     process.stdout.write(`${USAGE}\n`);
@@ -465,6 +499,11 @@ function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
     for (const missing of result.drift.missingOnDisk.slice(0, 20)) {
       warn(`  - deleted: ${missing}`);
     }
+    // Bookkeeping mismatches were counted but never listed, so the text output
+    // said "1 value disagrees" without saying which one.
+    for (const mismatch of result.drift.totalsMismatches.slice(0, 20)) {
+      warn(`  - counts: ${mismatch}`);
+    }
   }
   for (const warning of result.warnings) warn(`  ⚠ ${warning}`);
 }
@@ -615,9 +654,25 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       info(
         `   - Total size:    ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
       );
-      info(`   - Parts written: ${manifest.counts.partsCount} under ${resolved.outDir}/parts/`);
-      info(`   - Reports:       ${resolved.outDir}/reports/ (project-tree, navigation, audit)`);
-      info(`   - Manifest:      ${resolved.outDir}/manifest.json`);
+      // Only claim what this run actually wrote: `--skip-artifacts`/`--only-artifacts`
+      // used to leave the summary naming reports and a manifest that do not exist.
+      const { artifacts } = resolved;
+      if (artifacts.parts) {
+        info(`   - Parts written: ${manifest.counts.partsCount} under ${resolved.outDir}/parts/`);
+      }
+      const reports = [
+        artifacts.projectTree && "project-tree",
+        artifacts.navigation && "navigation",
+        artifacts.audit && "audit",
+      ].filter(Boolean);
+      if (reports.length > 0) {
+        info(`   - Reports:       ${resolved.outDir}/reports/ (${reports.join(", ")})`);
+      }
+      if (artifacts.manifest) info(`   - Manifest:      ${resolved.outDir}/manifest.json`);
+      if (artifacts.monolith) info(`   - Monolith:      ${resolved.outDir}/full-codebase.{json,md}`);
+      if (reports.length === 0 && !artifacts.parts && !artifacts.manifest && !artifacts.monolith) {
+        info(`   - Artifacts:     all disabled (only the ownership marker was written)`);
+      }
       info(`   - Fingerprint:   ${manifest.fingerprint}`);
       info(`   - Integrity:     ${manifest.validation.status}`);
       if (manifest.warnings.length > 0) {
@@ -636,6 +691,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     return manifest.validation.status === "passed" ? 0 : 1;
   } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "EACCES") {
+      warn(
+        `❌ Cannot write the snapshot: permission denied under ${resolved.outDir}. ` +
+          `Check the directory's permissions or choose another --out-dir.`
+      );
+      warn(`   (${(err as Error).message})`);
+      return 1;
+    }
     warn(`❌ Failed to generate snapshot: ${(err as Error).message}`);
     return 1;
   }

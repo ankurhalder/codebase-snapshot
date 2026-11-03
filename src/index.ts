@@ -49,7 +49,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "2.1.0";
+export const GENERATOR_VERSION = "2.1.1";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -445,7 +445,9 @@ function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
     );
   }
   if (ARTIFACT_NAMES.every((name) => artifacts[name] === false)) {
-    messages.push("every artifact is disabled: the snapshot directory will be empty.");
+    messages.push(
+      "every artifact is disabled: only the .codebase-snapshot ownership marker will be written."
+    );
   }
   return messages;
 }

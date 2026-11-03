@@ -144,6 +144,10 @@ export function validateSnapshot(
     }
   }
 
+  // A tracked-but-deleted file is seen by both loops above — the read fails, then
+  // it is absent from disk — so it was reported (and counted) twice.
+  drift.missingOnDisk = [...new Set(drift.missingOnDisk)];
+
   // With per-layer budgets the largest legitimate part ceiling is the biggest
   // of them, not `maxPartBytes` alone.
   const maxEffectiveBudget = Math.max(
