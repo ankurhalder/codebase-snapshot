@@ -312,8 +312,19 @@ wrong and retrying it unchanged will fail the same way.
   `jq` or `JSON.parse`.
 - **stderr** carries progress, the human summary, warnings and errors.
 
-So `codebase-snapshot describe --format json > contract.json` and
-`codebase-snapshot validate --format json | jq .drift` both work.
+A failing invocation still writes one JSON document to stdout, so an agent never has to parse an
+empty string:
+
+```json
+{ "error": { "message": "Manifest not found at /repo/snapshot/manifest.json. Run generate first.", "exitCode": 1 } }
+```
+
+The human line stays on stderr and the exit code is unchanged — `{ error: … }` is an addition, not a
+replacement. A successful run never carries an `error` key.
+
+So `codebase-snapshot describe --format json > contract.json`,
+`codebase-snapshot validate --format json | jq .drift` and
+`codebase-snapshot report --format json || jq -r .error.message` all work.
 
 ## Examples
 

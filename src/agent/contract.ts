@@ -183,6 +183,7 @@ export function buildAgentContract(): AgentContract {
         "Pin @latest (or @4) when you need the exact same version on every machine.",
         "Both bin names point at the same file. npm resolves a package by its bin entries, so they must stay aliases of one executable.",
         "Human progress goes to stderr. With --format json the payload on stdout is pure JSON.",
+        "A failing run also writes pure JSON to stdout: { error: { message, exitCode } }. The exit code and the stderr line are unchanged.",
       ],
     },
     workflow: [

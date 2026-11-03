@@ -513,6 +513,22 @@ function emit(format: OutputFormat, payload: unknown, textRenderer: () => void):
   textRenderer();
 }
 
+/**
+ * Reports a failure and returns the exit code.
+ *
+ * The human line goes to stderr, as always. In `--format json` mode a parseable error document also
+ * goes to stdout, because "stdout is empty" is not an answer an agent can act on: it would have to
+ * parse stderr prose and guess. Every JSON-mode invocation now returns exactly one JSON document —
+ * a payload on success, `{ error: { message, exitCode } }` on failure.
+ */
+function fail(format: OutputFormat, message: string, exitCode = 1): number {
+  warn(`❌ ${message}`);
+  if (format === "json") {
+    process.stdout.write(`${JSON.stringify({ error: { message, exitCode } }, null, 2)}\n`);
+  }
+  return exitCode;
+}
+
 function splitList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   return value.split(",").map((entry) => entry.trim()).filter(Boolean);
@@ -636,11 +652,9 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof PromptCancelled) {
-      warn("❌ Cancelled.");
-      return 1;
+      return fail(invocation.format, "Cancelled.");
     }
-    warn(`❌ ${(err as Error).message}`);
-    return 1;
+    return fail(invocation.format, (err as Error).message);
   }
 }
 
@@ -679,8 +693,7 @@ function runSkillCommand(invocation: ParsedInvocation): number {
     info("   Agents that read AGENTS.md, .claude/skills or .cursor/rules will pick this up automatically.");
     return 0;
   } catch (err) {
-    warn(`❌ Could not install the skill: ${(err as Error).message}`);
-    return 1;
+    return fail(invocation.format, `Could not install the skill: ${(err as Error).message}`);
   }
 }
 
@@ -802,8 +815,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
       const shapeError = manifest === undefined ? null : describeManifestShapeProblem(manifest);
       if (shapeError) {
-        warn(`❌ ${manifestPath} is not a snapshot manifest: ${shapeError}`);
-        return 1;
+        return fail(invocation.format, `${manifestPath} is not a snapshot manifest: ${shapeError}`);
       }
     }
     emit(invocation.format, result, () => renderValidateText(result));
@@ -816,15 +828,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     // missing manifest after a successful generate.
     const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
     if (!fs.existsSync(manifestPath)) {
-      warn(`❌ Manifest not found at ${manifestPath}. Run generate first.`);
-      return 1;
+      return fail(invocation.format, `Manifest not found at ${manifestPath}. Run generate first.`);
     }
     let manifest: Manifest;
     try {
       manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Manifest;
     } catch (err) {
-      warn(`❌ Could not read ${manifestPath}: ${(err as Error).message}`);
-      return 1;
+      return fail(invocation.format, `Could not read ${manifestPath}: ${(err as Error).message}`);
     }
 
     // A parseable file is not necessarily a snapshot: reading a foreign or
@@ -832,8 +842,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     // properties of undefined (reading 'totalFiles')` instead of a message.
     const shapeError = describeManifestShapeProblem(manifest);
     if (shapeError) {
-      warn(`❌ ${manifestPath} is not a snapshot manifest: ${shapeError}`);
-      return 1;
+      return fail(invocation.format, `${manifestPath} is not a snapshot manifest: ${shapeError}`);
     }
 
     // `report` describes the snapshot that exists; it does not re-scan the
@@ -883,8 +892,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       emit(invocation.format, diff, () => info(renderDiffText(diff)));
       return 0;
     } catch (err) {
-      warn(`❌ ${(err as Error).message}`);
-      return 1;
+      return fail(invocation.format, (err as Error).message);
     }
   }
 
@@ -977,15 +985,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "EPERM" || code === "EACCES") {
-      warn(
-        `❌ Cannot write the snapshot: permission denied under ${resolved.outDir}. ` +
-          `Check the directory's permissions or choose another --out-dir.`
+      return fail(
+        invocation.format,
+        `Cannot write the snapshot: permission denied under ${resolved.outDir}. ` +
+          `Check the directory's permissions or choose another --out-dir. ` +
+          `(${(err as Error).message})`
       );
-      warn(`   (${(err as Error).message})`);
-      return 1;
     }
-    warn(`❌ Failed to generate snapshot: ${(err as Error).message}`);
-    return 1;
+    return fail(invocation.format, `Failed to generate snapshot: ${(err as Error).message}`);
   }
 }
 

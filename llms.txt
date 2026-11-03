@@ -36,7 +36,9 @@ npx @ankurhalder/codebase-snapshot validate     # exit 0 = snapshot matches the 
 ```
 
 Exit codes: `0` success, `1` drift or refused generation, `2` usage error. Human progress goes
-to stderr; `--format json` payloads go to stdout and are safe to parse.
+to stderr; `--format json` payloads go to stdout and are safe to parse. A failing JSON-mode run
+still writes one parseable document — `{"error":{"message":…,"exitCode":…}}` — so an agent never
+has to parse an empty string or scrape stderr for prose.
 
 ## Notes for agents
 
