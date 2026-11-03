@@ -4,7 +4,7 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
-## Unreleased
+## 4.1.0
 
 ### A UTF-16 source file was invisible, and a Latin-1 one was quietly mangled
 
