@@ -1164,11 +1164,14 @@ function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
  *  - **stdout is the payload channel.** A hook is user code and user code prints: a single log
  *    line from a hook in `--format json` mode produced a document no parser could read. Everything
  *    a hook writes to stdout is redirected to stderr for the duration of the call.
- *  - **a returned promise is tracked, never awaited.** This is a synchronous API, so the promise
- *    cannot be awaited here; the caller attaches a rejection handler, which records the failure as
- *    a warning and re-ships the manifest and marker. Left alone, a rejected async hook became an
- *    unhandled rejection that killed the process *after* it had printed "Snapshot generated …
- *    Integrity: passed" and written its JSON payload.
+ *  - **a returned promise is tracked, never awaited — but the process still waits for it.** This is
+ *    a synchronous API, so the promise cannot be awaited here; the caller attaches a rejection
+ *    handler, which records the failure as a warning and re-ships the manifest and marker. Left
+ *    alone, a rejected async hook became an unhandled rejection that killed the process *after* it
+ *    had printed "Snapshot generated … Integrity: passed" and written its JSON payload. Note what
+ *    "not awaited" does *not* mean: Node will not exit while the hook's own timers, sockets or
+ *    pending I/O are alive, so a hook that schedules an hour of work delays the command by an hour.
+ *    That is a property of the event loop, not of this function, and the docs say so.
  */
 function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): Promise<unknown> | null {
   const hook = config.hooks.afterGenerate;

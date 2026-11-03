@@ -296,6 +296,12 @@ and a rejection is recorded as a warning on the re-shipped manifest and marker. 
 hook writes to stdout is redirected to stderr for the duration of the call, so `--format json`
 stays parseable.
 
+"Not awaited" does not mean "free": Node keeps the process alive while the hook's own timers,
+sockets or pending I/O are outstanding, so a hook that schedules a long job delays the command by
+that long even though the snapshot is already written. Keep `afterGenerate` short — hand long work
+to a background process — or use the programmatic `generateSnapshot`, whose promise you can `await`
+alongside your own work.
+
 A hook may write its own files into the output directory; that is safe across reruns because
 ownership is established by the marker rather than by the filenames present.
 

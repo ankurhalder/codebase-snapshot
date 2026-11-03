@@ -158,7 +158,9 @@ function writeFileOrExplain(target: string, content: string): void {
     const reason =
       code === "EACCES" || code === "EPERM" || code === "EROFS"
         ? `permission denied (${code})`
-        : `${(err as Error).message}`;
+        : code === "EISDIR"
+          ? "it is a directory"
+          : `${(err as Error).message}`;
     throw new Error(`Cannot write ${target}: ${reason}`);
   }
 }
@@ -236,15 +238,51 @@ function addScripts(cwd: string, notes: string[]): string[] {
   return added;
 }
 
-function addGitignore(cwd: string): string[] {
+/**
+ * Adds the snapshot directories to `.gitignore`, and never fails the run over it.
+ *
+ * `init` exists to produce a config; the `.gitignore` line is a convenience. When the entry is a
+ * directory (or cannot be read or written) the previous behaviour was to exit 1 with a raw
+ * `EISDIR` from the *read* — after the config had already been written, so the run both failed and
+ * left state behind. It reports a warning instead, and `init` finishes what it promised.
+ */
+function addGitignore(cwd: string, notes: string[]): string[] {
   const ignorePath = path.join(cwd, ".gitignore");
-  const existing = fs.existsSync(ignorePath) ? fs.readFileSync(ignorePath, "utf8") : "";
+  let existing = "";
+
+  try {
+    if (fs.existsSync(ignorePath)) {
+      if (fs.statSync(ignorePath).isDirectory()) {
+        notes.push(
+          `${ignorePath} is a directory, so it was not updated. Add "snapshot/" and ` +
+            `"snapshot.tmp/" to your .gitignore yourself.`
+        );
+        return [];
+      }
+      existing = fs.readFileSync(ignorePath, "utf8");
+    }
+  } catch (err) {
+    notes.push(
+      `${ignorePath} could not be read (${(err as Error).message}). Add "snapshot/" and ` +
+        `"snapshot.tmp/" to your .gitignore yourself.`
+    );
+    return [];
+  }
+
   const wanted = ["snapshot/", "snapshot.tmp/"];
   const added = wanted.filter((entry) => !existing.split(/\r?\n/).includes(entry));
   if (added.length === 0) return [];
 
   const prefix = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  writeFileOrExplain(ignorePath, `${existing}${prefix}${added.join("\n")}\n`);
+  try {
+    writeFileOrExplain(ignorePath, `${existing}${prefix}${added.join("\n")}\n`);
+  } catch (err) {
+    notes.push(
+      `${(err as Error).message}. Add ${added.map((entry) => `"${entry}"`).join(" and ")} to your ` +
+        ".gitignore yourself."
+    );
+    return [];
+  }
   return added;
 }
 
@@ -459,7 +497,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
 
   writeFileOrExplain(configPath, configText);
   const scripts = addScripts(options.cwd, notes);
-  const gitignoreEntries = addGitignore(options.cwd);
+  const gitignoreEntries = addGitignore(options.cwd, notes);
 
   return {
     configPath,
