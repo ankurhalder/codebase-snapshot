@@ -694,6 +694,16 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
   } catch {
     // The walk never follows a directory link, so it cannot loop and needs no
     // per-directory realpath: the root is resolved once and passed down.
+    // Falling back to a walk changes what is scanned: the walker honours only the
+    // root .gitignore, not nested ones, so gitignored files enter the snapshot and
+    // a "clean" snapshot silently contains them. Refuse instead of guessing.
+    if (fs.existsSync(path.join(cwd, ".git"))) {
+      throw new Error(
+        "This directory is a git repository, but git could not list its files. " +
+          "A fallback scan would ignore nested .gitignore files and include files git ignores. " +
+          "Fix the repository (git status should work) or run outside git."
+      );
+    }
     const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), true);
     candidates = walked.files;
     skipped.push(...walked.skipped);

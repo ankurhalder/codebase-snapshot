@@ -52,7 +52,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.7";
+export const GENERATOR_VERSION = "4.0.8";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -1515,14 +1515,21 @@ export function generateSnapshot(
   assertStagingRootUsable(tmpDir, config.secretRules);
 
   if (dryRun) {
-    runAfterGenerate(config, manifest);
+    // "Dry run — nothing was written" has to be literally true: the hook can write
+    // files and delete parts, and it used to run anyway.
     return manifest;
   }
 
   // Serialise runs that share this staging root *before* staging is touched.
   // The key is `tmpDir`, not `outDir`: two runs with different `outDir`s used to
   // take different locks and then delete each other's staging files.
-  const releaseLock = acquireRunLock(tmpDir);
+  // Two runs with different tmpDirs but the same outDir used to take different locks
+  // and both exit 0, the loser's snapshot silently gone. Lock both, in sorted order.
+  const lockKeys = Array.from(new Set([tmpDir, outDir])).sort();
+  const releases = lockKeys.map((key) => acquireRunLock(key));
+  const releaseLock = (): void => {
+    for (const release of releases.reverse()) release();
+  };
   let stagingDir: string | null = null;
 
   try {

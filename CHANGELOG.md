@@ -4,6 +4,25 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.8
+
+### A dry run could write and delete
+`--dry-run` printed "nothing was written" and then ran `hooks.afterGenerate`. A hook can write
+files anywhere and delete parts of the live snapshot — one did exactly that during a dry run. The
+hook no longer runs when nothing is written.
+
+### Two runs to one output directory both claimed success
+Runs were serialised on `tmpDir` only, so two invocations with different `tmpDir`s but the same
+`outDir` each took their own lock, both exited 0, and one snapshot was silently lost. Both keys are
+locked now, in a fixed order so two runs cannot deadlock: one succeeds, the other refuses.
+
+### A git failure no longer changes what gets scanned
+When `git ls-files` failed (corrupt index, git missing) the scan fell back to a directory walk,
+which honours only the root `.gitignore` and ignores nested ones — a gitignored secrets file
+entered `files[]` with no warning, and the snapshot looked clean. A git checkout whose files git
+cannot list is now an error: fix the repository rather than silently scanning something different.
+---
+
 ## 4.0.7
 
 Wave-2 findings: nine independent critics, one dimension each.
