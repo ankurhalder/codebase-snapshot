@@ -300,27 +300,63 @@ export function resolveSafeOutputDirs(config: {
   return { outDir, tmpDir };
 }
 
-const REPLACEABLE_ENTRIES = new Set([
-  "README.md",
-  "manifest.json",
-  "parts",
-  "reports",
-  "full-codebase.json",
-  "full-codebase.md",
-  ".gitkeep",
-  ".gitignore",
-  ".DS_Store",
-]);
+/**
+ * Placeholder files that may sit in an otherwise-empty output directory.
+ *
+ * They are tolerated, but they are *not* evidence that the directory is ours —
+ * ownership is decided by {@link isOwnOutput}.
+ */
+const PLACEHOLDER_ENTRIES = new Set([".gitkeep", ".gitignore", ".DS_Store"]);
 
 /**
- * Refuses to replace a directory that contains anything this generator did not write.
+ * Marks a directory as written by this generator.
+ *
+ * Written first, before any artifact, so a crash mid-run still leaves proof of
+ * ownership. `manifest.json` cannot serve this purpose alone because
+ * `--skip-artifacts manifest` is a supported combination.
+ */
+const OWNERSHIP_MARKER = ".codebase-snapshot";
+
+function writeOwnershipMarker(dir: string): void {
+  const marker = {
+    generator: GENERATOR_NAME,
+    version: GENERATOR_VERSION,
+    schemaVersion: SCHEMA_VERSION,
+  };
+  fs.writeFileSync(path.join(dir, OWNERSHIP_MARKER), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+}
+
+/**
+ * True when `dir` is a snapshot this generator wrote.
+ *
+ * Filenames alone are not evidence: `README.md` is both an artifact name and an
+ * extremely common *user* filename, so an allowlist of artifact names treated
+ * `--out-dir docs` (containing only `docs/README.md`) as a previous snapshot and
+ * replaced the user's documentation. Ownership therefore requires either our
+ * marker or a manifest that actually parses as one of ours. Extra files are then
+ * expected, not suspicious — `hooks.afterGenerate` is documented to write its
+ * own artifacts into the output directory.
+ */
+function isOwnOutput(dir: string): boolean {
+  if (fs.existsSync(path.join(dir, OWNERSHIP_MARKER))) return true;
+
+  const manifestPath = path.join(dir, "manifest.json");
+  if (!fs.existsSync(manifestPath)) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    return typeof parsed.schemaVersion === "string" || typeof parsed.generator === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuses to replace a directory that this generator did not write.
  *
  * `swapIntoPlace` renames the previous output aside and deletes it, and the
  * scratch directory is deleted outright before every run. Path checks alone
  * cannot make that safe: `outDir: "src"` is a plausible typo, and it used to
- * delete the developer's entire source tree and exit 0. A directory is only
- * replaceable when every top-level entry is one this generator puts there (or a
- * placeholder such as `.gitkeep` in an otherwise-empty directory).
+ * delete the developer's entire source tree and exit 0.
  */
 export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): void {
   if (!fs.existsSync(target)) return;
@@ -331,17 +367,17 @@ export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): v
     );
   }
 
-  const unexpected = fs
-    .readdirSync(target)
-    .filter((name) => !REPLACEABLE_ENTRIES.has(name));
-  if (unexpected.length === 0) return;
+  const entries = fs.readdirSync(target);
+  const meaningful = entries.filter((name) => !PLACEHOLDER_ENTRIES.has(name));
+  if (meaningful.length === 0) return;
+  if (isOwnOutput(target)) return;
 
-  const preview = unexpected.slice(0, 5).join(", ");
-  const more = unexpected.length > 5 ? `, and ${unexpected.length - 5} more` : "";
+  const preview = meaningful.slice(0, 5).join(", ");
+  const more = meaningful.length > 5 ? `, and ${meaningful.length - 5} more` : "";
   throw new Error(
-    `Refusing to replace ${label} ${target}: it contains files this generator did not ` +
-      `write (${preview}${more}). Point ${label} at a new or empty directory, or delete ` +
-      `it yourself first.`
+    `Refusing to replace ${label} ${target}: it exists, is not empty, and does not look like ` +
+      `a snapshot this generator wrote (found ${preview}${more}). Point ${label} at a new or ` +
+      `empty directory, or delete it yourself first.`
   );
 }
 
@@ -770,6 +806,9 @@ export function generateSnapshot(
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
+  // First thing written: if this run crashes, the next one can still tell that
+  // the leftover scratch directory is ours and may be cleared.
+  writeOwnershipMarker(tmpDir);
 
   const partsDir = path.join(tmpDir, "parts");
   const reportsDir = path.join(tmpDir, "reports");

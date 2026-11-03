@@ -67,10 +67,11 @@ function readAllText(root) {
     .join("\n");
 }
 
-function runCli(cliArgs) {
+function runCli(cliArgs, options = {}) {
   const result = spawnSync(process.execPath, [BIN, ...cliArgs], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    ...options,
   });
   return {
     code: result.status ?? 1,
@@ -587,6 +588,59 @@ test("init rejects an unknown preset instead of falling back to detection", () =
   assert.equal(result.code, 2, `expected usage error (2), got ${result.code}`);
   assert.match(result.stderr, /Unknown preset "nope-9000"/);
   assert.equal(fs.existsSync(path.join(dir, "snapshot.config.ts")), false, "no config must be written");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Ownership must not be inferred from filenames: `README.md` is both an artifact
+// name and a very common *user* filename, so a name allowlist treated
+// `--out-dir docs` (holding only docs/README.md) as a previous snapshot and
+// replaced the user's documentation.
+test("generate refuses a directory that merely looks like an artifact name", () => {
+  const userDoc = "# user documentation\n";
+  for (const [label, args, configFile, configBody] of [
+    ["outDir", ["--out-dir", "docs"], null, null],
+    ["tmpDir", [], "snapshot.config.json", JSON.stringify({ tmpDir: "scratch" })],
+  ]) {
+    const target = label === "outDir" ? "docs" : "scratch";
+    const files = {
+      "package.json": '{"name":"fixture"}',
+      "a.ts": "export const a = 1;\n",
+      [`${target}/README.md`]: userDoc,
+    };
+    if (configFile) files[configFile] = configBody;
+    const dir = makeRepo(`cli-own-name-${label}-`, files);
+
+    const result = runCli(["generate", "--cwd", dir, ...args]);
+    assert.equal(result.code, 1, `${label}=${target} must be refused, got ${result.code}`);
+    assert.equal(
+      fs.readFileSync(path.join(dir, target, "README.md"), "utf8"),
+      userDoc,
+      `${label}=${target}: user README must survive`
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// hooks.afterGenerate is documented as the way to write your own artifacts into
+// the output directory. Any ownership check that rejects unknown files makes that
+// feature break reruns forever.
+test("a hook-written artifact does not block later runs", () => {
+  const dir = makeRepo("cli-hook-rerun-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+    "snapshot.config.mjs":
+      'import * as fs from "node:fs";\n' +
+      "export default {\n" +
+      '  hooks: { afterGenerate: () => fs.writeFileSync("snapshot/custom-report.txt", "x") },\n' +
+      "};\n",
+  });
+  for (const run of [1, 2, 3]) {
+    // Run from inside the repo so the hook's relative path resolves the way it
+    // does for a developer typing `snap` in their project.
+    const result = runCli(["generate"], { cwd: dir });
+    assert.equal(result.code, 0, `run ${run} must succeed: ${result.stderr}`);
+    assert.ok(fs.existsSync(path.join(dir, "snapshot", "custom-report.txt")));
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

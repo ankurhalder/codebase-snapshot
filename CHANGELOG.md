@@ -42,6 +42,32 @@ Multi-project support and an interactive setup.
 
 ### Fixed
 
+- **`outDir`/`tmpDir` pointing at an existing directory could destroy it.** A
+  config with `outDir: "src"` or `tmpDir: "src"` deleted the user's source tree
+  and exited 0: the scratch directory was removed outright, and the atomic swap
+  renamed the directory aside, moved the snapshot in, then deleted the backup. A
+  regular file named `snapshot` was destroyed the same way. Both directories are
+  now refused unless they are empty, hold only placeholder dotfiles, or carry
+  proof that a previous run wrote them (a `.codebase-snapshot` marker or a
+  parseable `manifest.json`). Filenames alone are never treated as proof, so an
+  existing `docs/README.md` is safe and hook-written artifacts do not block
+  reruns.
+- **A config that could not be parsed was silently ignored** — a typo produced a
+  snapshot with none of the developer's settings and exit 0. Unparseable configs
+  are now a hard error (exit 1, nothing written). A `.ts` config on a Node without
+  type stripping is still only a warning.
+- **Absolute `--out-dir` was honoured by `generate` but not by the readers.**
+  `validate`, `report` and `explain` joined instead of resolving the path, so they
+  looked for `<cwd>\<absolute path>` and reported a missing manifest immediately
+  after a successful generate.
+- **`--preset`/`--include`/`--exclude`/`--yes`/`--minimal`/`--force` were accepted
+  and ignored outside `init`.** `snap generate --preset nextjs` silently used the
+  detected preset. These are now a usage error (exit 2) on any other command.
+- **`init --preset <typo>` silently fell back to detection**, writing a config for
+  a preset nobody asked for. It is now a usage error listing every valid preset.
+- **Astro components were summarized as markup.** The leading `---` fence — where
+  the TypeScript actually lives — was not parsed, so the common case degraded to
+  `heuristic` quality. It now goes through the compiler like Vue and Svelte.
 - Summaries for `.jsonc` strip comments instead of reporting `invalid-json`.
 - `export default function Foo` records both `Foo` and `default`.
 - Parser diagnostics are counted and surfaced as warnings.

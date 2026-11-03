@@ -228,6 +228,13 @@ export default {
 and `outDir`/`tmpDir` may not contain each other. Writes are atomic: the previous
 snapshot survives until the new one is fully in place.
 
+Both directories are also **refused if they already exist and this generator did
+not write them** — a typo such as `outDir: "src"` would otherwise replace your
+source tree. Ownership is proved by a `.codebase-snapshot` marker (plus a
+parseable `manifest.json` for older output), never by filenames, so an existing
+`docs/README.md` is never mistaken for a previous snapshot. An empty directory,
+or one holding only `.gitkeep`/`.gitignore`/`.DS_Store`, is always accepted.
+
 ## Hooks
 
 ```javascript
@@ -242,6 +249,16 @@ export default {
 
 A throwing hook becomes a warning on the manifest — it never loses a snapshot
 that was already written.
+
+A hook may write its own files into the output directory. That is safe across
+reruns: ownership of the directory is established by a `.codebase-snapshot`
+marker written before any artifact, not by the set of filenames present, so
+custom artifacts never look like someone else's data.
+
+Note that a hook runs in the **process** working directory, so with
+`snap --cwd elsewhere` a relative path resolves against your shell's directory,
+not the target repo. Use the absolute paths on `manifest` (or resolve against
+`outDir` yourself) when passing `--cwd`.
 
 ---
 
