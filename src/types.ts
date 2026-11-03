@@ -76,6 +76,7 @@ export type SkipReason =
   | "excluded";
 
 export interface SkipRecord {
+  /** Path as it may be shown in an artifact: secret spans are masked. */
   path: string;
   reason: SkipReason;
   detail?: string;

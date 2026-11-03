@@ -905,3 +905,95 @@ test("C22: the git path does not follow directory links either", (t) => {
   assert.ok(record, `the link must be reported: ${JSON.stringify(skipped)}`);
   assert.ok(record.reason === "symlink" || record.reason === "outside-root");
 });
+
+// -------------------------------------------------------- path masking, all reasons
+
+const TOKEN_IN_NAME = "AKIA1234567890ABCDEF";
+
+test("a credential file whose NAME holds a token is masked in skipped[], with its reason", (t) => {
+  const dir = tempDir(t);
+  write(dir, "src/a.ts", "export const a = 1;\n");
+  write(dir, `certs/${TOKEN_IN_NAME}.key`, "not a real key\n");
+
+  const { files, skipped } = collectFiles(dir, {});
+
+  assert.deepEqual(files, ["src/a.ts"]);
+  const record = skipped.find((entry) => entry.reason === "sensitive-file");
+  assert.ok(record, JSON.stringify(skipped));
+  assert.equal(record.path.includes(TOKEN_IN_NAME), false, "the skip path must be masked");
+  assert.ok(record.path.includes("[REDACTED"), record.path);
+  assert.equal(
+    record.detail,
+    "credential-bearing file; enable includeSensitiveFiles to emit it",
+    "the reason's detail must survive masking"
+  );
+  assert.equal(
+    JSON.stringify(skipped).includes(TOKEN_IN_NAME),
+    false,
+    "no skip record may carry the token"
+  );
+});
+
+test("gitignored and excluded files with a token in the name are masked too", (t) => {
+  const dir = tempDir(t);
+  write(dir, ".gitignore", `${TOKEN_IN_NAME}.txt\n`);
+  write(dir, `${TOKEN_IN_NAME}.txt`, "note\n");
+  write(dir, `excluded/${TOKEN_IN_NAME}.ts`, "export const x = 1;\n");
+  write(dir, "src/a.ts", "export const a = 1;\n");
+
+  const { skipped } = collectFiles(dir, { excludePatterns: ["excluded"] });
+
+  const gitignored = skipped.find((entry) => entry.reason === "gitignore");
+  assert.ok(gitignored, JSON.stringify(skipped));
+  assert.equal(gitignored.path.includes(TOKEN_IN_NAME), false);
+
+  const excluded = skipped.find((entry) => entry.reason === "excluded");
+  assert.ok(excluded, JSON.stringify(skipped));
+  assert.equal(excluded.path.includes(TOKEN_IN_NAME), false);
+
+  assert.equal(
+    JSON.stringify(skipped).includes(TOKEN_IN_NAME),
+    false,
+    "no skip record may carry the token"
+  );
+});
+
+test("custom secret rules also protect file names", (t) => {
+  const dir = tempDir(t);
+  const corpToken = `CORP-${"A".repeat(32)}`;
+  write(dir, "src/a.ts", "export const a = 1;\n");
+  write(dir, `src/${corpToken}.ts`, "export const x = 1;\n");
+
+  const { files, skipped } = collectFiles(dir, {
+    secretRules: [{ rule: "corp", pattern: /CORP-[A-Z0-9]{32}/ }],
+  });
+
+  assert.deepEqual(files, ["src/a.ts"]);
+  const record = skipped.find((entry) => entry.reason === "sensitive-path");
+  assert.ok(record, JSON.stringify(skipped));
+  assert.ok(record.detail.includes("corp"));
+  assert.equal(
+    JSON.stringify(skipped).includes(corpToken),
+    false,
+    "the custom token must not reach skipped[]"
+  );
+});
+
+test("masking preserves reason and detail, and leaves clean paths alone", (t) => {
+  const dir = tempDir(t);
+  write(dir, `certs/${TOKEN_IN_NAME}.pem`, "not a real key\n");
+  write(dir, "src/fine.ts", "export const a = 1;\n");
+
+  const { skipped } = collectFiles(dir, {});
+
+  const masked = skipped.find((entry) => entry.reason === "sensitive-file");
+  assert.ok(masked, JSON.stringify(skipped));
+  assert.equal(masked.detail, "credential-bearing file; enable includeSensitiveFiles to emit it");
+  assert.equal(masked.path.includes(TOKEN_IN_NAME), false);
+
+  assert.equal(
+    skipped.some((entry) => entry.path === "src/fine.ts"),
+    false,
+    "an included file is not a skip record"
+  );
+});

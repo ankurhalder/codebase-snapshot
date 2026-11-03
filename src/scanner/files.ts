@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { PRESETS } from "../presets/index.js";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { REDACTION_MARKER } from "../security/redact.js";
-import type { SkipRecord } from "../types.js";
+import type { SecretRule, SkipRecord } from "../types.js";
 
 export interface GitInfo {
   branch: string;
@@ -24,6 +24,11 @@ export interface CollectOptions {
    * Default `false`: they are skipped with `reason: "sensitive-file"`.
    */
   includeSensitiveFiles?: boolean;
+  /**
+   * Secret rules used to scan *paths* (defaults are always applied). Pass
+   * `config.secretRules` so `customPatterns` also protect file names.
+   */
+  secretRules?: readonly SecretRule[];
 }
 
 export interface CollectResult {
@@ -184,23 +189,43 @@ export function isSensitivePath(relativePath: string): boolean {
 }
 
 /**
+ * Rules used for path scanning when a caller does not pass `secretRules`.
+ *
+ * `resolveConfig` registers the resolved set (defaults + `customPatterns`), so
+ * every `collectFiles` call in the same run sees custom rules without each call
+ * site having to thread them; an explicit `options.secretRules` always wins.
+ */
+let activeSecretRules: SecretRule[] | null = null;
+
+export function setActiveSecretRules(rules: readonly SecretRule[] | null): void {
+  activeSecretRules = rules === null ? null : [...rules];
+}
+
+function pathScanRules(extraRules: readonly SecretRule[] | undefined): SecretRule[] {
+  const fallback = extraRules ?? activeSecretRules ?? [];
+  return [...DEFAULT_SECRET_PATTERNS, ...fallback];
+}
+
+/**
  * Reports a secret-shaped value in a *path*.
  *
  * File names are emitted verbatim into `project-tree.md`, `navigation.md`,
- * `manifest.files[].relativePath` and the `### FILE:` heading of every part, so
- * a token in a name leaks exactly like a token in a body — and content
- * redaction never sees it. The caller skips such a file and masks the path in
- * the skip record, because a path that leaks a token is worse than a skipped
- * file.
+ * `manifest.files[].relativePath`, the `## Skipped` table of the audit and
+ * `skipped[].path`, so a token in a name leaks exactly like a token in a body —
+ * and content redaction never sees it.
+ *
+ * `extraRules` are the caller's custom patterns. A `valueGroup` rule is masked
+ * whole here: a path has no `key: value` context to anchor on.
  */
 export function findSecretInPath(
-  relativePath: string
+  relativePath: string,
+  extraRules?: readonly SecretRule[]
 ): { rules: string[]; masked: string } | null {
   const posixPath = relativePath.replace(/\\/g, "/");
-  const spans: Array<{ start: number; end: number; rule: string }> = [];
+  const spans: Array<{ start: number; end: number }> = [];
   const rules: string[] = [];
 
-  for (const { rule, pattern } of DEFAULT_SECRET_PATTERNS) {
+  for (const { rule, pattern } of pathScanRules(extraRules)) {
     // A fresh global copy: the shared rule patterns are deliberately stateless
     // (no `g`), and `exec` on a non-global regex never advances `lastIndex` —
     // looping it directly returns the same match forever.
@@ -211,25 +236,51 @@ export function findSecretInPath(
         scan.lastIndex += 1;
         continue;
       }
-      spans.push({ start: match.index, end: match.index + match[0].length, rule });
+      spans.push({ start: match.index, end: match.index + match[0].length });
       if (!rules.includes(rule)) rules.push(rule);
     }
   }
   if (spans.length === 0) return null;
 
+  // Union merge: overlapping matches produce one marker, never a fragment.
   spans.sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
+    else merged.push({ start: span.start, end: span.end });
+  }
+
   let out = "";
   let cursor = 0;
-  for (const span of spans) {
-    if (span.end <= cursor) continue;
-    const start = Math.max(span.start, cursor);
-    out += posixPath.slice(cursor, start);
+  for (const span of merged) {
+    out += posixPath.slice(cursor, span.start);
     out += REDACTION_MARKER;
-    cursor = Math.min(span.end, posixPath.length);
+    cursor = span.end;
   }
   out += posixPath.slice(cursor);
 
   return { rules, masked: out };
+}
+
+/**
+ * Masks the path of every skip record, whatever its reason.
+ *
+ * `findSecretInPath` was only consulted on the `sensitive-path` route, so a
+ * credential-bearing *name* was masked when the reason was `sensitive-path` and
+ * emitted raw when the reason was anything else — `certs/AKIA….key` reached
+ * `manifest.skipped[].path` and the audit table as a `sensitive-file` skip.
+ * Masking in one pass here keeps every future reason covered too; `reason` and
+ * `detail` are preserved untouched.
+ */
+export function maskSkipPaths(
+  records: readonly SkipRecord[],
+  extraRules?: readonly SecretRule[]
+): SkipRecord[] {
+  return records.map((record) => {
+    const hit = findSecretInPath(record.path, extraRules);
+    return hit ? { ...record, path: hit.masked } : record;
+  });
 }
 
 /**
@@ -584,6 +635,7 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
   const includePatterns = options.includePatterns ?? [];
   const excludePatterns = options.excludePatterns ?? [];
   const includeSensitiveFiles = options.includeSensitiveFiles ?? false;
+  const pathRules = options.secretRules;
   const isToolOwned = makeToolOwnedDecider(cwd);
 
   let candidates: string[];
@@ -636,7 +688,9 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
       }
     }
   } catch {
-    const walked = walkDirectory(cwd, cwd, new Set<string>(), true);
+    // The walk never follows a directory link, so it cannot loop and needs no
+    // per-directory realpath: the root is resolved once and passed down.
+    const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), true);
     candidates = walked.files;
     skipped.push(...walked.skipped);
   }
@@ -687,7 +741,7 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
         return false;
       }
 
-      const secret = findSecretInPath(file);
+      const secret = findSecretInPath(file, pathRules);
       if (secret) {
         skipped.push({
           path: secret.masked,
@@ -702,32 +756,45 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
     })
     .sort();
 
-  return { files, skipped };
+  // Every recorded path is masked, whatever the reason: `sensitive-path` used to
+  // be the only route that consulted the rules, so `certs/AKIA….key` reached
+  // `manifest.skipped[].path` and the audit table raw as a `sensitive-file` skip.
+  // Records are masked here as well as at the artifact sinks: this is the value every
+  // consumer sees, and a path that leaks a token is worse than a skipped file.
+  return { files, skipped: maskSkipPaths(skipped, pathRules) };
+}
+
+/**
+ * Real path of the scanned root, resolved once per `collectFiles` call.
+ *
+ * `walkDirectory` used to call `fs.realpathSync` for every directory it entered
+ * — once for the directory and once for the root — which is O(depth) per call on
+ * Windows and therefore O(depth²) for a deep tree (79 s at 1,000 levels). The
+ * walk never follows a directory link, so no per-directory realpath is needed;
+ * only link *targets* are resolved, when one is encountered.
+ */
+function rootRealFor(root: string): string {
+  try {
+    return fs.realpathSync(root);
+  } catch {
+    return root;
+  }
 }
 
 function walkDirectory(
   dir: string,
   baseDir: string,
+  rootReal: string,
   visited: Set<string>,
   isRoot = false
 ): CollectResult {
   const results: CollectResult = { files: [], skipped: [] };
 
-  let realDir: string;
-  try {
-    realDir = fs.realpathSync(dir);
-  } catch {
-    realDir = dir;
-  }
-  if (visited.has(realDir)) return results;
-  visited.add(realDir);
-
-  let rootReal: string;
-  try {
-    rootReal = fs.realpathSync(baseDir);
-  } catch {
-    rootReal = baseDir;
-  }
+  // Directory links are never descended (see the symlink branch below), so the
+  // walk is a tree; the absolute-path guard is cheap insurance against a
+  // filesystem that reports a reparse point as a plain directory.
+  if (visited.has(dir)) return results;
+  visited.add(dir);
 
   const ignoredByGitignore = isRoot ? readGitignoreMatcher(baseDir) : () => false;
 
@@ -735,7 +802,11 @@ function walkDirectory(
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    results.skipped.push({ path: dir, reason: "read-error", detail: "directory unreadable" });
+    results.skipped.push({
+      path: path.relative(baseDir, dir).replace(/\\/g, "/") || ".",
+      reason: "read-error",
+      detail: "directory unreadable",
+    });
     return results;
   }
 
@@ -840,7 +911,7 @@ function walkDirectory(
     }
 
     if (isDirectory) {
-      const nested = walkDirectory(fullPath, baseDir, visited);
+      const nested = walkDirectory(fullPath, baseDir, rootReal, visited);
       results.files.push(...nested.files);
       results.skipped.push(...nested.skipped);
     } else if (isFile) {

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { findSecretInPath } from "./scanner/files.js";
 import type { Manifest } from "./types.js";
 
 export interface ManifestDiff {
@@ -109,12 +110,18 @@ export function compareManifests(before: Manifest, after: Manifest): ManifestDif
   const sort = (values: string[]): string[] =>
     values.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
+  // `diff` prints these paths and `--format json` ships them: a token in a
+  // filename must not come back out of the comparison. Default rules plus the
+  // rules `resolveConfig` registered apply.
+  const mask = (values: string[]): string[] =>
+    values.map((value) => findSecretInPath(value)?.masked ?? value);
+
   return {
     before: side(before),
     after: side(after),
-    added: sort(added),
-    removed: sort(removed),
-    changed: sort(changed),
+    added: mask(sort(added)),
+    removed: mask(sort(removed)),
+    changed: mask(sort(changed)),
     unchanged,
   };
 }

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  collectFiles,
   compareManifests,
   generateProjectTree,
   generateSnapshot,
@@ -196,24 +197,47 @@ test("S10: a tmpDir holding user files is refused and left untouched", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("S10: our own leftover staging directory is cleared", () => {
+test("S10: our own leftover staging run is cleared", () => {
   const dir = repo();
   const id = crypto.randomUUID();
+  const staleRun = "snapshot.tmp/run-999999-deadbeef";
   writeFiles(dir, {
-    "snapshot.tmp/.codebase-snapshot": JSON.stringify({
+    [`${staleRun}/.codebase-snapshot`]: JSON.stringify({
       generator: "@ankurhalder/codebase-snapshot",
-      version: "3.0.1",
+      version: "4.0.1",
       schemaVersion: "3.0.0",
-      createdAt: new Date().toISOString(),
+      // Old enough to be a crash leftover regardless of the pid.
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
       state: "staging",
       id,
     }),
-    "snapshot.tmp/parts/part-001.md": "stale\n",
+    [`${staleRun}/parts/part-001.md`]: "stale\n",
   });
 
   generate(dir);
   assert.equal(exists(dir, "snapshot.tmp"), false, "staging must not survive a run");
   assert.ok(exists(dir, "snapshot/manifest.json"));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("S10: a staging run owned by a live process is never deleted", () => {
+  const dir = repo();
+  const liveRun = `snapshot.tmp/run-${process.pid}-maintained`;
+  writeFiles(dir, {
+    [`${liveRun}/.codebase-snapshot`]: JSON.stringify({
+      generator: "@ankurhalder/codebase-snapshot",
+      version: "4.0.1",
+      schemaVersion: "3.0.0",
+      createdAt: new Date().toISOString(),
+      state: "staging",
+      id: crypto.randomUUID(),
+      pid: process.pid,
+    }),
+    [`${liveRun}/parts/part-001.md`]: "in flight\n",
+  });
+
+  generate(dir);
+  assert.equal(read(dir, `${liveRun}/parts/part-001.md`), "in flight\n");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -554,4 +578,287 @@ test("F3: reactComponents requires JSX or a React base class, not a PascalCase n
     "export function Card() {\n  return <div className=\"card\" />;\n}\n"
   );
   assert.deepEqual(functionComponent.reactComponents, ["Card"]);
+});
+
+// ======================================================= 4.0.1: concurrency
+// Staging used to *be* the shared `tmpDir`, so two runs with different outDirs
+// deleted each other's staging files: both died, or one shipped a manifest that
+// said `validation.status: "passed"` with parts missing from disk.
+
+function assertCompleteSnapshot(dir, outDir) {
+  const manifestPath = path.join(outDir, "manifest.json");
+  assert.ok(exists(dir, manifestPath), `${outDir} has no manifest.json`);
+  const manifest = JSON.parse(read(dir, manifestPath));
+  assert.equal(manifest.validation.status, "passed", `${outDir} shipped a failed manifest`);
+  for (const part of manifest.parts) {
+    assert.ok(
+      exists(dir, path.join(outDir, "parts", part.filename)),
+      `${outDir} manifest lists ${part.filename} but it is not on disk`
+    );
+  }
+  return manifest;
+}
+
+test("PAR-002: concurrent runs with different outDirs leave complete snapshots", async () => {
+  const dir = repo({ "src/b.ts": "export const b = 2;\n", "src/c.ts": "export const c = 3;\n" });
+  const results = await Promise.all([
+    runCli(["generate", "--cwd", dir, "--out-dir", "outA"]),
+    runCli(["generate", "--cwd", dir, "--out-dir", "outB"]),
+  ]);
+
+  assert.ok(
+    results.some((result) => result.code === 0),
+    `at least one run must succeed: ${JSON.stringify(results)}`
+  );
+  for (const result of results) {
+    assert.ok(
+      result.code === 0 || result.code === 1,
+      `a run must exit 0 or fail cleanly, got ${result.code}: ${result.stderr}`
+    );
+    if (result.code === 1) {
+      assert.match(result.stderr, /staging directory|Refusing|Failed to generate/i);
+    }
+  }
+
+  for (const outDir of ["outA", "outB"]) {
+    // A clean refusal leaves nothing behind.
+    if (exists(dir, path.join(outDir, "manifest.json"))) assertCompleteSnapshot(dir, outDir);
+  }
+  assert.equal(exists(dir, "snapshot.tmp"), false, "staging must not survive the runs");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test(
+  "PAR-003: case-only-different outDirs cannot ship a passed-but-corrupt snapshot",
+  { skip: process.platform === "linux" ? "case-sensitive filesystem" : false },
+  async () => {
+    const dir = repo({ "src/b.ts": "export const b = 2;\n" });
+    const results = await Promise.all([
+      runCli(["generate", "--cwd", dir, "--out-dir", "CaseDir"]),
+      runCli(["generate", "--cwd", dir, "--out-dir", "casedir"]),
+    ]);
+
+    for (const result of results) {
+      assert.ok(
+        result.code === 0 || result.code === 1,
+        `a run must exit 0 or fail cleanly, got ${result.code}: ${result.stderr}`
+      );
+    }
+    // On a case-insensitive filesystem both names are the same directory.
+    if (exists(dir, path.join("CaseDir", "manifest.json"))) {
+      assertCompleteSnapshot(dir, "CaseDir");
+    }
+    assert.equal(exists(dir, "snapshot.tmp"), false, "staging must not survive the runs");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+);
+
+// ================================================ 4.0.1: import resolution
+// `resolveSpecifier` scanned every file per unresolved import (O(n²)) and built
+// a RegExp from the candidate path, so `[unmatched` aborted the run and `[id]`
+// matched unrelated files.
+
+test("PAR-008: relative imports resolve by exact path, and metacharacters are inert", () => {
+  const dir = makeDir({
+    "package.json": PACKAGE_JSON,
+    "src/a.ts": [
+      'import { b } from "./b";',
+      'import { c } from "./dir";',
+      'import { d } from "./esm.js";',
+      "export const a = 1;",
+      "",
+    ].join("\n"),
+    "src/b.ts": "export const b = 1;\n",
+    "src/dir/index.ts": "export const c = 1;\n",
+    "src/esm.ts": "export const d = 1;\n",
+    // A Next.js dynamic route with an unresolved import, next to a file whose
+    // name looks like what `[id]` would match as a character class.
+    "src/app/[id]/page.tsx": 'import { m } from "./missing";\nexport default function Page() { return null; }\n',
+    "src/app/i/missing.ts": "export const m = 1;\n",
+    // A legal directory name that used to become an invalid RegExp.
+    "src/[unmatched/page.ts": 'import { x } from "./nope";\nexport const x = 1;\n',
+  });
+
+  const manifest = generate(dir);
+  const central = manifest.indexes.imports.centralFiles;
+
+  for (const expected of ["src/b.ts", "src/dir/index.ts", "src/esm.ts"]) {
+    assert.ok(
+      central.some((entry) => entry.path === expected),
+      `${expected} should be resolved as an import target: ${JSON.stringify(central)}`
+    );
+  }
+  assert.equal(
+    central.some((entry) => entry.path === "src/app/i/missing.ts"),
+    false,
+    "an unresolved ./missing import must not match the [id] route path"
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("PAR-005: import resolution stays linear on a 3,000-file repository", () => {
+  const files = { "package.json": PACKAGE_JSON };
+  for (let index = 0; index < 3000; index += 1) {
+    files[`src/d${index % 30}/f${index}.ts`] =
+      `import { dep } from "./dep-${index}";\nexport const v${index} = ${index};\n`;
+  }
+  const dir = makeDir(files);
+
+  const started = Date.now();
+  const manifest = generate(dir, { outDir: "out" });
+  const elapsed = Date.now() - started;
+
+  assert.equal(manifest.counts.totalFiles, 3001);
+  assert.equal(manifest.indexes.imports.centralFiles.length, 0, "all imports are unresolved");
+  assert.ok(elapsed < 20_000, `generate took ${elapsed} ms for 3,000 unresolved imports`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ================================================ 4.0.1: pathological depth
+// `walkDirectory` called `realpathSync` for every directory it entered, which is
+// O(depth) per call on Windows — O(depth²) for a deep tree.
+
+test("PAR-007: a 400-level directory chain is scanned quickly", () => {
+  const dir = makeDir({ "package.json": PACKAGE_JSON });
+  let current = dir;
+  for (let level = 0; level < 400; level += 1) {
+    current = path.join(current, `d${level % 10}`);
+    fs.mkdirSync(current);
+    if (level % 50 === 0) fs.writeFileSync(path.join(current, "leaf.ts"), "export const leaf = 1;\n");
+  }
+
+  const started = Date.now();
+  const collection = collectFiles(dir, {});
+  const elapsed = Date.now() - started;
+
+  assert.ok(collection.files.length >= 8, `expected the leaf files, got ${collection.files.length}`);
+  assert.ok(elapsed < 10_000, `collectFiles took ${elapsed} ms for 400 levels`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// =================================================== 4.0.1: path masking
+// A token in a *filename* is a secret too. Every artifact and CLI surface that
+// prints a path must mask it with the default rules plus custom rules.
+
+const TOKEN = `ghp_${"A".repeat(36)}`;
+
+test("PAR-001: a token in a filename does not reach the manifest, audit or report", () => {
+  const dir = makeDir({
+    "package.json": PACKAGE_JSON,
+    "src/a.ts": "export const a = 1;\n",
+    [`certs/${TOKEN}.key`]: "placeholder\n",
+    [`bin/${TOKEN}.png`]: Buffer.from([0x00, 0x01, 0x02, 0x00]),
+  });
+
+  generate(dir);
+  for (const artifact of [
+    "snapshot/manifest.json",
+    "snapshot/reports/audit.md",
+    "snapshot/reports/project-tree.md",
+    "snapshot/reports/navigation.md",
+    "snapshot/README.md",
+  ]) {
+    assert.equal(read(dir, artifact).includes(TOKEN), false, `${artifact} leaks the token`);
+  }
+
+  const manifest = JSON.parse(read(dir, "snapshot/manifest.json"));
+  for (const skip of manifest.skipped) {
+    if (skip.reason === "sensitive-file" || skip.reason === "sensitive-path") {
+      assert.match(skip.path, /\[REDACTED/, `skipped path is not masked: ${skip.path}`);
+    }
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("PAR-001: an ownership refusal masks token-named entries", async () => {
+  const dir = repo();
+  writeFiles(dir, { [`victims/${TOKEN}.txt`]: "keep me\n" });
+
+  const result = await runCli(["generate", "--cwd", dir, "--out-dir", "victims"]);
+  assert.equal(result.code, 1, `expected a refusal, got ${result.code}`);
+  assert.match(result.stderr, /Refusing to replace outDir/);
+  assert.equal(result.stderr.includes(TOKEN), false, "the refusal leaks the token");
+  assert.match(result.stderr, /\[REDACTED/);
+  assert.equal(read(dir, `victims/${TOKEN}.txt`), "keep me\n");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("PAR-001: validate masks paths recorded in a manifest", async () => {
+  const dir = repo();
+  generate(dir);
+  const manifest = JSON.parse(read(dir, "snapshot/manifest.json"));
+  manifest.files.push({
+    relativePath: `src/${TOKEN}.ts`,
+    sizeBytes: 10,
+    lines: 1,
+    hashSha256: "0".repeat(64),
+    part: manifest.parts[0]?.filename ?? "part-001.md",
+    layer: "src",
+    kind: "module",
+    language: "typescript",
+    inclusionMode: "full",
+    isLarge: false,
+    isPreviewTruncated: false,
+    originalLines: 1,
+    includedLines: 1,
+    includedBytes: 10,
+  });
+  writeFiles(dir, { "snapshot/manifest.json": JSON.stringify(manifest, null, 2) });
+
+  const validation = validate(dir);
+  assert.equal(validation.valid, false, "a vanished file is drift");
+  assert.equal(JSON.stringify(validation).includes(TOKEN), false, "validate leaks the token");
+  assert.ok(
+    validation.drift.missingOnDisk.some((entry) => entry.includes("[REDACTED")),
+    `expected a masked deleted path, got ${JSON.stringify(validation.drift.missingOnDisk)}`
+  );
+
+  const cli = await runCli(["validate", "--cwd", dir]);
+  assert.equal(cli.code, 1);
+  assert.equal(`${cli.stdout}${cli.stderr}`.includes(TOKEN), false, "validate CLI leaks the token");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("PAR-001: diff masks paths it prints and serializes", () => {
+  const base = {
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    fingerprint: "fingerprint",
+    counts: { totalFiles: 1, totalLines: 1, totalSizeBytes: 1, partsCount: 1 },
+    files: [{ relativePath: "src/a.ts", hashSha256: "a".repeat(64) }],
+  };
+  const changed = {
+    ...base,
+    files: [{ relativePath: `src/${TOKEN}.ts`, hashSha256: "b".repeat(64) }],
+  };
+
+  const diff = compareManifests(base, changed);
+  assert.equal(JSON.stringify(diff).includes(TOKEN), false, "the diff payload leaks the token");
+  assert.equal(renderDiffText(diff).includes(TOKEN), false, "the diff text leaks the token");
+  assert.ok(
+    diff.added.some((entry) => entry.includes("[REDACTED")),
+    `expected a masked added path, got ${JSON.stringify(diff.added)}`
+  );
+});
+
+test("PAR-001: a custom path rule skips the file and keeps it out of every artifact", () => {
+  const dir = makeDir({
+    "package.json": PACKAGE_JSON,
+    "src/a.ts": "export const a = 1;\n",
+    "src/CORP-GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG.ts": "export const corp = 1;\n",
+  });
+
+  const manifest = generate(dir, {
+    secrets: { customPatterns: [{ rule: "corp-token", pattern: /CORP-[A-Z0-9]{32}/ }] },
+  });
+
+  assert.equal(
+    JSON.stringify(manifest).includes("CORP-GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"),
+    false,
+    "the manifest leaks the custom token"
+  );
+  const skipped = manifest.skipped.find((entry) => entry.reason === "sensitive-path");
+  assert.ok(skipped, "the token-named file must be recorded as a sensitive-path skip");
+  assert.match(skipped.path, /\[REDACTED/);
+  assert.equal(read(dir, "snapshot/reports/audit.md").includes("CORP-GGGG"), false);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

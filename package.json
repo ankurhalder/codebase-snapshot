@@ -1,6 +1,6 @@
 {
   "name": "@ankurhalder/codebase-snapshot",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Production-grade LLM codebase snapshot generator, auditor, and AST partitioner",
   "keywords": [
     "codebase",

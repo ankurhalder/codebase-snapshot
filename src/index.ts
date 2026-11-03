@@ -30,7 +30,7 @@ import {
   isBinaryExtension,
   isBinaryFile,
 } from "./scanner/binary.js";
-import { collectFiles, getGitInfo } from "./scanner/files.js";
+import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
@@ -43,6 +43,7 @@ import type {
   ResolvedArtifacts,
   ResolvedSnapshotConfig,
   SecretFinding,
+  SecretRule,
   SkipRecord,
   SnapshotConfig,
   SourceSummary,
@@ -50,7 +51,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.0";
+export const GENERATOR_VERSION = "4.0.1";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -112,7 +113,6 @@ function bump(counts: LayerOrKindCounts, key: string): void {
 
 const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 const IMPORT_CANDIDATE_SUFFIXES = [
-  "",
   ".ts",
   ".tsx",
   ".mts",
@@ -127,29 +127,97 @@ const IMPORT_CANDIDATE_SUFFIXES = [
   "/index.mjs",
 ];
 
+const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+]);
+
+/**
+ * One-pass lookup tables for relative-import resolution.
+ *
+ * `resolveSpecifier` used to fall back to scanning every known file for every
+ * unresolved import — 100k files × 100k imports — and built a RegExp from the
+ * candidate path, so a directory named `[unmatched` aborted the run and `[id]`
+ * matched unrelated files. Both are gone: every candidate is a map lookup, and
+ * no path is ever used as a pattern.
+ */
+interface ImportResolver {
+  byPath: Map<string, string>;
+  byPathFolded: Map<string, string>;
+  byStem: Map<string, string>;
+  byStemFolded: Map<string, string>;
+}
+
+function buildImportResolver(files: FileEntry[]): ImportResolver {
+  const byPath = new Map<string, string>();
+  const byPathFolded = new Map<string, string>();
+  const byStem = new Map<string, string>();
+  const byStemFolded = new Map<string, string>();
+  // First writer wins, so ambiguity resolves to the lexicographically first
+  // path (the scanner hands files over sorted) and stays deterministic.
+  const remember = (map: Map<string, string>, key: string, value: string): void => {
+    if (!map.has(key)) map.set(key, value);
+  };
+
+  for (const file of files) {
+    const relativePath = file.relativePath;
+    remember(byPath, relativePath, relativePath);
+    remember(byPathFolded, relativePath.toLowerCase(), relativePath);
+
+    const extension = path.posix.extname(relativePath);
+    if (!SOURCE_EXTENSIONS.has(extension)) continue;
+    const stem = relativePath.slice(0, -extension.length);
+    remember(byStem, stem, relativePath);
+    remember(byStemFolded, stem.toLowerCase(), relativePath);
+    // `import "./dir"` resolves to `dir/index.ts`.
+    if (path.posix.basename(stem) === "index") {
+      const directory = path.posix.dirname(stem);
+      remember(byStem, directory, relativePath);
+      remember(byStemFolded, directory.toLowerCase(), relativePath);
+    }
+  }
+
+  return { byPath, byPathFolded, byStem, byStemFolded };
+}
+
 /** Best-effort resolution of a relative import to an included file. */
 function resolveSpecifier(
   fromFile: string,
   specifier: string,
-  knownFiles: Set<string>
+  resolver: ImportResolver
 ): string | null {
   if (!RELATIVE_SPECIFIER.test(specifier)) return null;
-  const baseDir = path.posix.dirname(fromFile);
-  const joined = path.posix.normalize(path.posix.join(baseDir, specifier));
-  const candidate = joined.replace(/\.(?:js|mjs|cjs|jsx)$/, "");
+  const joined = path.posix.normalize(
+    path.posix.join(path.posix.dirname(fromFile), specifier)
+  );
+
+  const exact = (key: string): string | null =>
+    resolver.byPath.get(key) ?? resolver.byPathFolded.get(key.toLowerCase()) ?? null;
+
+  const direct = exact(joined);
+  if (direct) return direct;
+
   for (const suffix of IMPORT_CANDIDATE_SUFFIXES) {
-    const withSuffix = `${joined}${suffix}`;
-    if (knownFiles.has(withSuffix)) return withSuffix;
+    const hit = exact(`${joined}${suffix}`);
+    if (hit) return hit;
   }
-  const extensionSwap = new RegExp(`${candidate}\\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$`);
-  for (const file of knownFiles) {
-    if (extensionSwap.test(file)) return file;
-  }
-  return null;
+
+  // An extensionless import (`./x`), a directory import (`./dir` → index), or a
+  // TypeScript-style `./x.js` that actually lives in `./x.ts`.
+  const stem = joined.replace(/\.(?:js|mjs|cjs|jsx)$/, "");
+  const byStem = (key: string): string | null =>
+    resolver.byStem.get(key) ?? resolver.byStemFolded.get(key.toLowerCase()) ?? null;
+  return byStem(joined) ?? byStem(stem);
 }
 
 function buildIndexes(files: FileEntry[]): ManifestIndexes {
-  const knownFiles = new Set(files.map((file) => file.relativePath));
+  const resolver = buildImportResolver(files);
   const importerCounts = new Map<string, number>();
 
   const byFile = files.filter((file) => isSourceSummary(file.summary)).map((file) => {
@@ -163,7 +231,7 @@ function buildIndexes(files: FileEntry[]): ManifestIndexes {
 
   for (const entry of byFile) {
     for (const specifier of entry.imports) {
-      const resolved = resolveSpecifier(entry.path, specifier, knownFiles);
+      const resolved = resolveSpecifier(entry.path, specifier, resolver);
       if (resolved) importerCounts.set(resolved, (importerCounts.get(resolved) ?? 0) + 1);
     }
   }
@@ -311,20 +379,47 @@ export function resolveSafeOutputDirs(config: {
 const PLACEHOLDER_ENTRIES = new Set([".gitkeep", ".gitignore", ".DS_Store"]);
 
 /**
- * The entries this generator writes into a staging directory.
+ * Prefix of a per-run staging directory inside `tmpDir`.
  *
- * Used to decide whether a leftover `tmpDir` can be cleared: anything else in it
- * was not written by us and is left untouched.
+ * Staging used to *be* the `tmpDir` path, so two concurrent runs — even with
+ * different `outDir`s — deleted and rewrote the same files, and one of them
+ * could ship a manifest whose parts the other had removed. Every run now gets
+ * its own directory under the (scanner-ignored) `tmpDir` root, so two runs can
+ * never share a staging path.
  */
-const STAGING_ENTRIES = new Set([
-  ".codebase-snapshot",
-  "manifest.json",
-  "README.md",
-  "parts",
-  "reports",
-  "full-codebase.json",
-  "full-codebase.md",
-]);
+const RUN_DIR_PREFIX = "run-";
+
+/** A staging directory older than this is a crash leftover, not a live run. */
+const STALE_RUN_MS = 60 * 60 * 1000;
+
+/** Masks one path with the default rules plus the caller's custom rules. */
+function maskPathText(value: string, secretRules?: readonly SecretRule[]): string {
+  return findSecretInPath(value, secretRules)?.masked ?? value;
+}
+
+/**
+ * Masks skip-record paths.
+ *
+ * `maskSkipPaths` applies the default rules plus the caller's custom rules; this
+ * wrapper keeps every shipped skip list on one path, so a future in-memory-only
+ * field cannot leak into `manifest.json` unnoticed.
+ */
+function maskSkipRecords(
+  records: readonly SkipRecord[],
+  secretRules?: readonly SecretRule[]
+): SkipRecord[] {
+  return maskSkipPaths(records, secretRules);
+}
+
+/** True when `pid` names a process that still exists (EPERM means it does). */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
 
 /**
  * Marks a directory as written by this generator.
@@ -349,6 +444,8 @@ interface OwnershipMarker {
   state: MarkerState;
   /** Random per-snapshot value; a hand-written marker has no reason to carry one. */
   id: string;
+  /** Process that wrote the marker; used to spot stale staging runs. */
+  pid?: number;
   /** sha256 of the shipped `manifest.json`, when one was written. */
   manifestSha256?: string;
   /** Every entry the snapshot wrote, POSIX-relative, including hook artifacts. */
@@ -396,6 +493,7 @@ function markerPayload(
     createdAt,
     state,
     id,
+    pid: process.pid,
     entries: listEntries(dir),
   };
   const manifestPath = path.join(dir, "manifest.json");
@@ -474,6 +572,7 @@ function readOwnershipMarker(dir: string): MarkerEvidence {
       createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "unknown",
       state: candidate.state,
       id: candidate.id,
+      pid: typeof candidate.pid === "number" ? candidate.pid : undefined,
       manifestSha256:
         typeof candidate.manifestSha256 === "string" ? candidate.manifestSha256 : undefined,
       entries:
@@ -616,13 +715,17 @@ function describeEntries(entries: string[], limit = 5): string {
 /**
  * Refuses to replace a directory that this generator did not write.
  *
- * Path checks alone cannot make the swap and the staging wipe safe: `outDir:
- * "src"` is a plausible typo, and a user directory that happens to contain a
- * `.codebase-snapshot` file or a manifest-shaped JSON document is not a
- * snapshot. `tmpDir` is held to the same standard: it is only cleared when it
- * carries our marker and holds nothing but our artifacts.
+ * Path checks alone cannot make the swap safe: `outDir: "src"` is a plausible
+ * typo, and a user directory that happens to contain a `.codebase-snapshot` file
+ * or a manifest-shaped JSON document is not a snapshot. The staging root is
+ * checked separately by {@link assertStagingRootUsable}, because it holds one
+ * directory per run rather than a single snapshot.
  */
-export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): void {
+export function assertReplaceable(
+  target: string,
+  label: "outDir" | "tmpDir",
+  secretRules?: readonly SecretRule[]
+): void {
   if (!fs.existsSync(target)) return;
 
   if (!fs.statSync(target).isDirectory()) {
@@ -633,38 +736,22 @@ export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): v
 
   const entries = fs.readdirSync(target);
   if (entries.length === 0) return;
-  // Tolerated for outDir only: replacing such a directory loses nothing. A
-  // tmpDir holding a `.gitkeep` belongs to somebody, and is not ours to delete.
-  if (label === "outDir" && entries.every((name) => PLACEHOLDER_ENTRIES.has(name))) return;
+  // Tolerated: replacing such a directory loses nothing.
+  if (entries.every((name) => PLACEHOLDER_ENTRIES.has(name))) return;
 
-  const { marker, problem } = readOwnershipMarker(target);
-
-  if (label === "tmpDir") {
-    if (!marker) {
-      throw new Error(
-        `Refusing to replace tmpDir ${target}: ${problem ?? "it does not carry this generator's marker"}. ` +
-          `This generator only clears a staging directory it wrote. Point tmpDir at a new or ` +
-          `empty directory, or remove ${target} yourself.`
-      );
-    }
-    const unexpected = entries.filter((name) => !STAGING_ENTRIES.has(name));
-    if (unexpected.length > 0) {
-      throw new Error(
-        `Refusing to replace tmpDir ${target}: it holds ${describeEntries(unexpected)}, which this ` +
-          `generator did not write. Point tmpDir at a new or empty directory, or remove those ` +
-          `files yourself.`
-      );
-    }
-    return;
-  }
-
+  const { problem } = readOwnershipMarker(target);
   const verdict = assessSnapshotDirectory(target);
   if (verdict.owned) return;
+
+  // Entry names are user data and may themselves carry a token; the refusal is
+  // printed to stderr and read by an agent like every other artifact.
+  const shownForeign = verdict.foreignEntries.map((name) => maskPathText(name, secretRules));
+  const shownEntries = entries.map((name) => maskPathText(name, secretRules));
 
   if (verdict.foreignEntries.length > 0) {
     throw new Error(
       `Refusing to replace ${label} ${target}: it carries this generator's ownership marker, but ` +
-        `these entries are not part of the snapshot it recorded: ${describeEntries(verdict.foreignEntries)}. ` +
+        `these entries are not part of the snapshot it recorded: ${describeEntries(shownForeign)}. ` +
         `Remove them yourself, or point ${label} at a new or empty directory.`
     );
   }
@@ -672,9 +759,107 @@ export function assertReplaceable(target: string, label: "outDir" | "tmpDir"): v
   const reason =
     verdict.problem ?? problem ?? "it does not look like a snapshot this generator wrote";
   throw new Error(
-    `Refusing to replace ${label} ${target}: ${reason} (found ${describeEntries(entries)}). ` +
+    `Refusing to replace ${label} ${target}: ${reason} (found ${describeEntries(shownEntries)}). ` +
       `Remove the directory yourself, or point ${label} at a new or empty directory.`
   );
+}
+
+/**
+ * Refuses a staging root that holds anything this generator did not write.
+ *
+ * `tmpDir` is a container: each run creates its own `run-*` directory inside it,
+ * so a concurrent run's staging area is expected here. Anything that is not a
+ * `run-*` directory, or a `run-*` directory without our marker and with content
+ * in it, is somebody else's data and nothing is touched.
+ */
+function assertStagingRootUsable(
+  tmpDir: string,
+  secretRules: readonly SecretRule[] | undefined
+): void {
+  if (!fs.existsSync(tmpDir)) return;
+  if (!fs.statSync(tmpDir).isDirectory()) {
+    throw new Error(`Refusing to write into tmpDir ${tmpDir}: it exists but is not a directory.`);
+  }
+
+  const entries = fs.readdirSync(tmpDir);
+  if (entries.length === 0) return;
+
+  const foreign = entries.filter((name) => {
+    const full = path.join(tmpDir, name);
+    if (!name.startsWith(RUN_DIR_PREFIX)) return true;
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(full);
+    } catch {
+      return true;
+    }
+    if (!stats.isDirectory()) return true;
+    const { marker } = readOwnershipMarker(full);
+    if (marker) return false;
+    try {
+      return fs.readdirSync(full).length > 0;
+    } catch {
+      return true;
+    }
+  });
+
+  if (foreign.length > 0) {
+    const shown = describeEntries(foreign.map((name) => maskPathText(name, secretRules)));
+    throw new Error(
+      `Refusing to replace tmpDir ${tmpDir}: it holds ${shown}, which this generator did not ` +
+        `write. Point tmpDir at a new or empty directory, or remove those files yourself.`
+    );
+  }
+}
+
+/**
+ * Removes staging directories left behind by runs that died.
+ *
+ * A `run-*` directory whose marker names a live process is left alone (the lock
+ * normally prevents that situation); one whose process is gone, or whose marker
+ * is older than {@link STALE_RUN_MS}, is a crash leftover and may be cleared.
+ */
+function cleanStaleRunDirs(tmpDir: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(tmpDir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(RUN_DIR_PREFIX)) continue;
+    const full = path.join(tmpDir, name);
+    const { marker } = readOwnershipMarker(full);
+    if (marker) {
+      const created = Date.parse(marker.createdAt);
+      const aged = !Number.isFinite(created) || Date.now() - created > STALE_RUN_MS;
+      const abandoned = typeof marker.pid === "number" && !isProcessAlive(marker.pid);
+      if (aged || abandoned) {
+        try {
+          fs.rmSync(full, { recursive: true, force: true });
+        } catch {
+          // A leftover that cannot be removed is reported by the next write.
+        }
+      }
+      continue;
+    }
+    // No marker: only a directory left by a crash between `mkdir` and the first
+    // write is ours. Anything with content in it is not provably ours.
+    try {
+      if (fs.readdirSync(full).length === 0) fs.rmSync(full, { recursive: true, force: true });
+    } catch {
+      // Ignored: the staging-root guard refuses unreadable entries.
+    }
+  }
+}
+
+/** Removes `dir` when it is empty; `tmpDir` is the staging container. */
+function removeIfEmpty(dir: string): void {
+  try {
+    if (fs.readdirSync(dir).length === 0) fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Not empty, already gone, or not ours to remove: leave it.
+  }
 }
 
 /**
@@ -701,22 +886,22 @@ function ensureParentDirectory(target: string, label: "outDir" | "tmpDir"): void
 }
 
 /**
- * Serialises runs that target the same output directory.
+ * Serialises runs that share a staging root.
  *
- * Staging lives at one fixed path (`tmpDir`), so two concurrent runs interleaved:
- * the loser deleted the winner's `parts/` and the winner still shipped a manifest
- * whose `validation.status` said "passed". The lock lives in the OS temp
- * directory — never inside the repository, where it could be scanned — and
- * records the owning pid so a crashed run's lock does not block forever.
+ * The lock is keyed on the resolved `tmpDir`, not on `outDir`: staging lives
+ * under `tmpDir`, so two runs with different `outDir`s used to take different
+ * locks and then delete each other's staging files. Runs that share a staging
+ * root are serialised; runs with distinct roots proceed independently. The lock
+ * lives in the OS temp directory — never inside the repository, where it could
+ * be scanned — and records the owning pid so a crashed run's lock does not block
+ * forever.
  */
-function acquireRunLock(outDir: string): () => void {
-  const lockPath = path.join(
-    os.tmpdir(),
-    `codebase-snapshot-${sha256Hex(outDir).slice(0, 16)}.lock`
-  );
+function acquireRunLock(stagingRoot: string): () => void {
+  const key = lockKeyFor(stagingRoot);
+  const lockPath = path.join(os.tmpdir(), `codebase-snapshot-${key}.lock`);
   const payload = `${JSON.stringify({
     pid: process.pid,
-    outDir,
+    stagingRoot,
     startedAt: new Date().toISOString(),
   })}\n`;
 
@@ -743,13 +928,30 @@ function acquireRunLock(outDir: string): () => void {
         continue;
       }
       throw new Error(
-        `Another generate run is already writing ${outDir}. Wait for it to finish, or delete ` +
-          `${lockPath} if no other run is active.`
+        `Another generate run is already using the staging directory ${stagingRoot}. Wait for ` +
+          `it to finish, or delete ${lockPath} if no other run is active.`
       );
     }
   }
 
-  throw new Error(`Could not acquire the generate lock for ${outDir}.`);
+  throw new Error(`Could not acquire the generate lock for ${stagingRoot}.`);
+}
+
+/**
+ * Stable lock-file key for a staging root.
+ *
+ * The real path is used when the root exists so `Snapshot.Tmp` and
+ * `snapshot.tmp` cannot take different locks on a case-insensitive filesystem.
+ */
+function lockKeyFor(stagingRoot: string): string {
+  let key = stagingRoot;
+  try {
+    key = fs.realpathSync(stagingRoot);
+  } catch {
+    // Not created yet: the resolved absolute path is already stable per checkout.
+  }
+  if (process.platform === "win32" || process.platform === "darwin") key = key.toLowerCase();
+  return sha256Hex(key).slice(0, 16);
 }
 
 /** True only when the lock names a pid that certainly no longer exists. */
@@ -800,11 +1002,32 @@ function writeManifestAtomically(manifestPath: string, manifest: Manifest): void
 }
 
 /**
- * Moves `tmpDir` into place, keeping the previous output until the new one is
- * fully in place. Falls back to a recursive copy across devices (EXDEV).
+ * Moves the staging directory into place, keeping the previous output until the
+ * new one is fully in place. Falls back to a recursive copy across devices
+ * (EXDEV).
+ *
+ * Two runs can still target the same `outDir` through different staging roots
+ * (e.g. two `--tmp-dir` values), so the swap is retried briefly when it loses
+ * that race instead of failing with a raw ENOENT/ENOTEMPTY from `rename`.
  */
-function swapIntoPlace(tmpDir: string, outDir: string): void {
+function swapIntoPlace(stagingDir: string, outDir: string): void {
   ensureParentDirectory(outDir, "outDir");
+  const deadline = Date.now() + 3_000;
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      swapOnce(stagingDir, outDir);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const racy = code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST" || code === "EPERM";
+      if (!racy || attempt >= 10 || Date.now() > deadline) throw err;
+      sleepSync(50);
+    }
+  }
+}
+
+function swapOnce(stagingDir: string, outDir: string): void {
   const backupDir = `${outDir}.backup-${process.pid}-${Date.now()}`;
   const hadPrevious = fs.existsSync(outDir);
 
@@ -812,11 +1035,11 @@ function swapIntoPlace(tmpDir: string, outDir: string): void {
 
   try {
     try {
-      fs.renameSync(tmpDir, outDir);
+      fs.renameSync(stagingDir, outDir);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EXDEV") {
-        fs.cpSync(tmpDir, outDir, { recursive: true });
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.cpSync(stagingDir, outDir, { recursive: true });
+        fs.rmSync(stagingDir, { recursive: true, force: true });
       } else {
         throw err;
       }
@@ -830,6 +1053,12 @@ function swapIntoPlace(tmpDir: string, outDir: string): void {
     }
     throw err;
   }
+}
+
+/** Blocking sleep used between swap retries; `generate` is synchronous anyway. */
+function sleepSync(milliseconds: number): void {
+  const buffer = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buffer, 0, 0, milliseconds);
 }
 
 /**
@@ -947,12 +1176,13 @@ export function generateSnapshot(
     includePatterns: config.include,
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
+    secretRules: config.secretRules,
   });
 
   const files: FileEntry[] = [];
   /** Full redacted bodies of large files, kept for the monolith only. */
   const monolithBodies = new Map<string, string>();
-  const skipped: SkipRecord[] = [...collection.skipped];
+  const skipped: SkipRecord[] = maskSkipRecords([...collection.skipped], config.secretRules);
   const secretFindings: SecretFinding[] = [];
   const warnings: string[] = [];
   const layerCounts: LayerOrKindCounts = {};
@@ -1046,13 +1276,13 @@ export function generateSnapshot(
       summaryQuality = outcome?.quality;
       if (isSourceSummary(summary) && summary.parseErrors) {
         warnings.push(
-          `Parse errors in ${relativePath} (${summary.parseErrors}); its summary is incomplete.`
+          `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`
         );
       }
     } catch (err) {
       // A single pathological file used to abort the whole run.
       warnings.push(
-        `Summary skipped for ${relativePath}: ${(err as Error).message}`.replace(/\s+/g, " ")
+        `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(/\s+/g, " ")
       );
     }
 
@@ -1176,13 +1406,13 @@ export function generateSnapshot(
       const { content: _content, ...rest } = file;
       return rest;
     }),
-    skipped,
+    skipped: maskSkipRecords(skipped, config.secretRules),
     warnings,
   };
 
   manifest.warnings = [
     ...warnings,
-    ...secretFindings.map((finding) => `${finding.rule} at ${finding.path ?? "unknown"}:${finding.line}`),
+    ...secretFindings.map((finding) => `${finding.rule} at ${maskPathText(finding.path ?? "unknown", config.secretRules)}:${finding.line}`),
   ];
   manifest.totals.warningCount = manifest.warnings.length;
 
@@ -1242,42 +1472,46 @@ export function generateSnapshot(
   // The guards run for a dry run too: a dry run exists to predict the real one,
   // and it used to exit 0 with "Would write 1 part(s)" for an outDir the real
   // run refused.
-  assertReplaceable(tmpDir, "tmpDir");
-  assertReplaceable(outDir, "outDir");
+  assertReplaceable(outDir, "outDir", config.secretRules);
+  assertStagingRootUsable(tmpDir, config.secretRules);
 
   if (dryRun) {
     runAfterGenerate(config, manifest);
     return manifest;
   }
 
-  // Serialise runs that target this outDir *before* staging is touched: the
-  // staging path is fixed, so interleaved runs could delete each other's parts
-  // while both reported success.
-  const releaseLock = acquireRunLock(outDir);
-  let stagingStarted = false;
+  // Serialise runs that share this staging root *before* staging is touched.
+  // The key is `tmpDir`, not `outDir`: two runs with different `outDir`s used to
+  // take different locks and then delete each other's staging files.
+  const releaseLock = acquireRunLock(tmpDir);
+  let stagingDir: string | null = null;
 
   try {
     ensureParentDirectory(outDir, "outDir");
 
-    fs.rmSync(tmpDir, { recursive: true, force: true });
     fs.mkdirSync(tmpDir, { recursive: true });
-    stagingStarted = true;
+    cleanStaleRunDirs(tmpDir);
 
     const snapshotId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
+    // Unique per run, so two runs can never share a staging path even if one
+    // holds a stale lock.
+    stagingDir = path.join(tmpDir, `${RUN_DIR_PREFIX}${process.pid}-${snapshotId.slice(0, 8)}`);
+    fs.mkdirSync(stagingDir);
     // Written before any artifact: if this run dies mid-write, the leftover
     // staging directory is still provably ours and may be cleared next time.
-    writeOwnershipMarker(tmpDir, {
+    writeOwnershipMarker(stagingDir, {
       generator: GENERATOR_NAME,
       version: GENERATOR_VERSION,
       schemaVersion: SCHEMA_VERSION,
       createdAt,
       state: "staging",
       id: snapshotId,
+      pid: process.pid,
     });
 
-    const partsDir = path.join(tmpDir, "parts");
-    const reportsDir = path.join(tmpDir, "reports");
+    const partsDir = path.join(stagingDir, "parts");
+    const reportsDir = path.join(stagingDir, "reports");
     if (artifacts.parts) fs.mkdirSync(partsDir, { recursive: true });
     if (artifacts.navigation || artifacts.projectTree || artifacts.audit) {
       fs.mkdirSync(reportsDir, { recursive: true });
@@ -1299,31 +1533,32 @@ export function generateSnapshot(
     if (artifacts.audit) {
       fs.writeFileSync(
         path.join(reportsDir, "audit.md"),
-        generateAuditReport(manifest, secretFindings),
+        generateAuditReport(manifest, secretFindings, config.secretRules),
         "utf8"
       );
     }
     if (artifacts.readme) {
-      fs.writeFileSync(path.join(tmpDir, "README.md"), generateReadme(manifest), "utf8");
+      fs.writeFileSync(path.join(stagingDir, "README.md"), generateReadme(manifest), "utf8");
     }
     if (artifacts.manifest) {
-      fs.writeFileSync(path.join(tmpDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+      fs.writeFileSync(path.join(stagingDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
     }
 
     if (monolithJson !== null) {
-      fs.writeFileSync(path.join(tmpDir, "full-codebase.json"), monolithJson, "utf8");
+      fs.writeFileSync(path.join(stagingDir, "full-codebase.json"), monolithJson, "utf8");
     }
     if (monolithMarkdown !== null) {
-      fs.writeFileSync(path.join(tmpDir, "full-codebase.md"), monolithMarkdown, "utf8");
+      fs.writeFileSync(path.join(stagingDir, "full-codebase.md"), monolithMarkdown, "utf8");
     }
 
     // The snapshot is whole in staging: record its inventory and manifest digest
     // before the swap, so a crash right after the swap still leaves a directory
     // the next run can prove it wrote.
-    writeOwnershipMarker(tmpDir, markerPayload(tmpDir, "complete", snapshotId, createdAt));
+    writeOwnershipMarker(stagingDir, markerPayload(stagingDir, "complete", snapshotId, createdAt));
 
-    swapIntoPlace(tmpDir, outDir);
-    stagingStarted = false;
+    swapIntoPlace(stagingDir, outDir);
+    // The rename consumed the staging directory; there is nothing left to clean.
+    stagingDir = null;
 
     const warningsBeforeHook = manifest.warnings.length;
     runAfterGenerate(config, manifest);
@@ -1340,17 +1575,20 @@ export function generateSnapshot(
 
     return manifest;
   } catch (err) {
-    if (stagingStarted) {
-      // Nothing this run staged may survive a failure. Everything in `tmpDir`
-      // was written here — the ownership guard refused anything else.
+    if (stagingDir !== null) {
+      // Nothing this run staged may survive a failure. The staging directory is
+      // this run's own (`run-<pid>-<id>`), so clearing it cannot touch another
+      // run's files.
       try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(stagingDir, { recursive: true, force: true });
       } catch {
         // The original failure is the one worth reporting.
       }
     }
     throw err;
   } finally {
+    // Remove the staging container when this run left nothing in it.
+    removeIfEmpty(tmpDir);
     releaseLock();
   }
 }

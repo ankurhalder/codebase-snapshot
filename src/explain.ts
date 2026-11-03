@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { countLines } from "./partitioner/preview.js";
-import { collectFiles } from "./scanner/files.js";
+import { collectFiles, findSecretInPath } from "./scanner/files.js";
 import { isBinaryFile } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
@@ -82,8 +82,11 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   const relative = normalizeTarget(config.cwd, target);
   const absolute = path.join(config.cwd, relative);
 
+  // The echoed path is an artifact too: a token in a filename must not come back
+  // out of xplain.
+  const maskedPath = findSecretInPath(relative, config.secretRules)?.masked ?? relative;
   const result: ExplainResult = {
-    path: relative,
+    path: maskedPath,
     exists: fs.existsSync(absolute),
     included: false,
   };
@@ -92,10 +95,14 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     includePatterns: config.include,
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
+    secretRules: config.secretRules,
   });
 
   if (!collection.files.includes(relative)) {
-    const record = collection.skipped.find((entry) => entry.path === relative);
+    // `collectFiles` masks secret spans in the paths it records, so match either form.
+    const record = collection.skipped.find(
+      (entry) => entry.path === relative || entry.path === maskedPath
+    );
     if (record) {
       result.reason = record.reason;
       result.detail = record.detail;
@@ -142,7 +149,9 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   }
 
   const manifest = readManifest(config);
-  const entry = manifest?.files.find((file) => file.relativePath === relative);
+  const entry = Array.isArray(manifest?.files)
+    ? manifest.files.find((file) => file.relativePath === relative)
+    : undefined;
   result.part = entry?.part ?? null;
   result.inclusionMode = entry?.inclusionMode;
 

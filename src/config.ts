@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
-import { globToRegExp } from "./scanner/files.js";
+import { globToRegExp, setActiveSecretRules } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
 import type {
@@ -960,6 +960,12 @@ export function resolveConfig(
   const secretRules = disableDefaultPatterns
     ? compiledCustomRules
     : [...compileSecretRules(DEFAULT_SECRET_PATTERNS), ...compiledCustomRules];
+
+  // Registered so `collectFiles` scans *paths* with the same rules that redact
+  // content, including `customPatterns`. An explicit `options.secretRules` still
+  // wins, and every command resolves its configuration immediately before it
+  // scans.
+  setActiveSecretRules(secretRules);
 
   const cliMonolith = cliOptions?.includeMonolith;
   const includeMonolith =

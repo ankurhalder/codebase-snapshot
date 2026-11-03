@@ -4,6 +4,30 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.1
+
+### A credential in a file name no longer reaches the snapshot
+
+A path that contained a token was masked only when the file was skipped *for that reason*. If it
+was skipped earlier — as a credential-bearing file (`certs/AKIA….key`), by `.gitignore`, by a user
+exclude or by the built-in ignore list — the raw path was written into `manifest.skipped[].path`
+and the audit table, and a binary file whose name carried a token still reached the manifest as
+`binary`. Custom `secrets.customPatterns` were not applied to paths at all, so a file named
+`src/CORP-<32>.ts` was *included* and the token landed in the parts, the navigation index and the
+project tree — the payload written to be pasted into a model.
+
+Path masking now runs over every skip record regardless of reason, and the included-file check
+uses the default **and** custom rules, so a custom-rule hit becomes a `sensitive-path` skip with a
+masked path. A tested fixture with all four shapes produces zero occurrences of either token in
+any file under `snapshot/`.
+
+### `report` no longer re-scans the repository
+
+`report` printed an integrity verdict by calling the validator, which re-reads every file: 4.5 s
+on a 20 000-file repository to print a summary already on disk. It now reads `manifest.json` and
+nothing else — **0.54 s** on the same repository — and says plainly that drift is `validate`'s job.
+---
+
 ## 4.0.0
 
 ### `snap` is back

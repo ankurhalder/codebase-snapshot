@@ -8,15 +8,28 @@ import {
   normalizeResolvedConfig,
   resolveConfig,
 } from "../config.js";
-import { collectFiles, getGitInfo } from "../scanner/files.js";
+import { collectFiles, findSecretInPath, getGitInfo } from "../scanner/files.js";
 import { isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
   ResolvedSnapshotConfig,
   SnapshotConfig,
+  SecretRule,
   ValidationDrift,
   ValidationResult,
 } from "../types.js";
+
+/**
+ * Masks one path with the default rules plus the caller's custom rules.
+ *
+ * Drift lists are printed by `validate` and embedded in `--format json`, so a
+ * `deleted: <path>` line must not reproduce a credential-bearing filename.
+ * Masking happens only on the way out: matching a record against the filesystem
+ * always uses the real path.
+ */
+function maskedPath(value: string, secretRules: readonly SecretRule[] | undefined): string {
+  return findSecretInPath(value, secretRules)?.masked ?? value;
+}
 
 function emptyDrift(): ValidationDrift {
   return {
@@ -128,14 +141,21 @@ export function validateSnapshot(
     }
   }
 
+  // Paths in the shipped manifest are already masked, so a disk path is matched
+  // in both forms: raw (record predates masking) and masked (current records).
   const skippedSet = new Set(
     manifest.skipped.filter((entry) => entry && typeof entry.path === "string").map((entry) => entry.path)
   );
+  const isSkippedOnDisk = (diskFile: string): boolean => {
+    if (skippedSet.has(diskFile)) return true;
+    return skippedSet.has(maskedPath(diskFile, config.secretRules));
+  };
 
   const collection = collectFiles(config.cwd, {
     includePatterns: config.include,
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
+    secretRules: config.secretRules,
   });
 
   for (const diskFile of collection.files) {
@@ -143,7 +163,7 @@ export function validateSnapshot(
     if (!snapshotHash) {
       // A path in `skipped[]` is not permanently exempt: re-evaluate it and
       // report drift when it would now be included.
-      if (skippedSet.has(diskFile) && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
+      if (isSkippedOnDisk(diskFile) && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
     }
@@ -468,10 +488,23 @@ export function validateSnapshot(
     );
   }
 
+  // ---- masked view --------------------------------------------------------
+  // The result is printed by `validate` and serialized by `--format json`; no
+  // raw path may leave this function, because a path can carry a credential.
+  const maskedDrift: ValidationDrift = {
+    ...drift,
+    missingInSnapshot: drift.missingInSnapshot.map((value) => maskedPath(value, config.secretRules)),
+    missingOnDisk: drift.missingOnDisk.map((value) => maskedPath(value, config.secretRules)),
+    hashMismatches: drift.hashMismatches.map((mismatch) => ({
+      ...mismatch,
+      path: maskedPath(mismatch.path, config.secretRules),
+    })),
+  };
+
   return {
     valid: errors.length === 0,
     manifestPresent: true,
-    drift,
+    drift: maskedDrift,
     errors,
     warnings,
   };

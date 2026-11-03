@@ -1,16 +1,21 @@
-import type { Manifest, SecretFinding } from "../types.js";
+import type { Manifest, SecretFinding, SecretRule } from "../types.js";
+import { findSecretInPath } from "../scanner/files.js";
 
 /**
  * Builds the security/health report.
  *
  * This report deliberately contains **no source text**. It previously printed a
  * 120-character excerpt of every matched line, so each secret that had just been
- * redacted out of `parts/*.md` was written here in clear text.
+ * redacted out of `parts/*.md` was written here in clear text. Paths are masked
+ * with the same rules as the manifest: a token in a *filename* is a secret too,
+ * and the matched-file table and the large-file table both print paths.
  */
 export function generateAuditReport(
   manifest: Manifest,
-  secretFindings: SecretFinding[]
+  secretFindings: SecretFinding[],
+  secretRules?: readonly SecretRule[]
 ): string {
+  const mask = (value: string): string => findSecretInPath(value, secretRules)?.masked ?? value;
   const lines: string[] = [
     "# Codebase Health & Security Audit",
     "",
@@ -47,7 +52,7 @@ export function generateAuditReport(
       "| :--- | :--- | :--- |"
     );
     for (const finding of secretFindings) {
-      lines.push(`| \`${finding.path ?? "unknown"}\` | ${finding.line} | \`${finding.rule}\` |`);
+      lines.push(`| \`${mask(finding.path ?? "unknown")}\` | ${finding.line} | \`${finding.rule}\` |`);
     }
     lines.push("", "### Matches by rule", "", "| Rule | Matches |", "| :--- | :--- |");
     for (const [rule, count] of Array.from(byRule.entries()).sort((a, b) => b[1] - a[1])) {
@@ -70,7 +75,7 @@ export function generateAuditReport(
     for (const file of largeFiles) {
       const sizeKb = (file.sizeBytes / 1024).toFixed(1);
       const status = file.isPreviewTruncated ? "Truncated Head/Tail" : "Full";
-      lines.push(`| \`${file.relativePath}\` | ${sizeKb} KB | ${file.lines} | ${status} |`);
+      lines.push(`| \`${mask(file.relativePath)}\` | ${sizeKb} KB | ${file.lines} | ${status} |`);
     }
     lines.push("");
   }
@@ -115,7 +120,7 @@ export function generateAuditReport(
       "| :--- | :--- | :--- |"
     );
     for (const skip of manifest.skipped) {
-      lines.push(`| \`${skip.path}\` | \`${skip.reason}\` | ${skip.detail ?? "-"} |`);
+      lines.push(`| \`${mask(skip.path)}\` | \`${skip.reason}\` | ${skip.detail ?? "-"} |`);
     }
     lines.push("");
   }
