@@ -97,6 +97,32 @@ Every artifact can be turned off (`--skip-artifacts`, `--only-artifacts`, or the
 
 → [Snapshot output and manifest schema](docs/output.md)
 
+## Built to be trusted with a whole repository
+
+A snapshot is only useful if you can believe it, so the tool is explicit about everything it does
+*not* contain:
+
+- **Nothing is dropped silently.** Every excluded path is recorded in `manifest.skipped[]` with a
+  reason — `binary`, `gitignore`, `default-ignore`, `sensitive-file`, `sensitive-path`, `symlink`,
+  `outside-root`, `read-error`, `not-file`, `nested-repository`, `excluded` — and `explain <path>`
+  answers the same question for any single path.
+- **Encoding is stated, not guessed.** UTF-16 files are transcoded instead of vanishing as
+  "binary"; a file that is not valid UTF-8 is kept but labelled `utf-8-lossy` with the count of
+  undecodable bytes, so you never mistake mojibake for source.
+- **Counts describe what was emitted.** `includedBytes` and `includedLines` are measured from the
+  block in the part, not from the file on disk.
+- **Drift is checked, not assumed.** `validate` compares every file's hash *and* a digest of the
+  settings the snapshot was generated with, so a changed budget, layer rule or secret pattern is
+  drift rather than silence.
+- **Memory is bounded.** Files above 2 MB are not parsed for a structural summary (that is where a 50 MB file
+  used to reach 3 GB of resident memory), and 130 000 files in one directory or a 3 000-level path
+  scan without crashing.
+- **`diff` compares payloads, not just paths.** Two snapshots of identical sources with different
+  settings say so instead of reporting "0 changed".
+- **When git cannot list files** — an interrupted clone, a dehydrated `.git`, `safe.directory` —
+  the run refuses rather than quietly scanning something different, and `--discovery walk` is the
+  documented escape hatch.
+
 ## Supported projects
 
 25 presets, detected automatically from the repository — each contributing layers, kinds,

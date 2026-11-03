@@ -13,7 +13,7 @@ file (with the reason) in `manifest.json`, and reports secrets, large files and 
 
 - [Agent guide](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md): the machine-readable contract and the installable agent skill; the recommended entry point for an AI agent.
 - [Installation](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/install.md): every npm-compatible client, version pinning, troubleshooting a shadowed `npx`.
-- [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md): all 8 commands, all 21 options with defaults, exit codes, examples.
+- [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md): all 8 commands, all 22 options with defaults, exit codes, examples.
 - [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md): every setting and default, the 25 project presets, byte budgets, artifacts, hooks, secret handling.
 - [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md): directory layout and the complete `manifest.json` schema.
 - [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md): every message the tool prints and what to do about it.
@@ -42,12 +42,24 @@ to stderr; `--format json` payloads go to stdout and are safe to parse.
 
 - Pin `@latest` or `@4` when the same version must run on every machine. The bare package name
   also works — both bin entries point at the same file, which is what lets npm resolve it.
+- **If discovery refuses** ("This directory is a git repository, but git could not list its
+  files"), the fix is `--discovery walk`: it scans the tree directly and reads `.gitignore` files
+  itself. `--discovery git` is the opposite — require git and refuse without it. The default,
+  `auto`, uses git when it works and refuses rather than silently changing what the snapshot
+  contains.
 - The output directory is owned by the tool and is replaced atomically. It refuses to replace a
   directory it did not write, so never point `--out-dir` at source code.
 - Credential files (`.env`, `*.pem`, `.npmrc`, `.ssh/`, `.tfstate`) are excluded unless
   `--include-sensitive-files` is given, and they are recorded in `manifest.skipped[]`.
 - Secret-shaped strings inside ordinary files are redacted in the emitted parts; no excerpt of a
   matched line reaches any artifact.
+- `manifest.files[]` carries `encoding` when a file was not plain UTF-8: `utf-16le`/`utf-16be` were
+  transcoded to text, and `utf-8-lossy` means the body contains `U+FFFD` where undecodable bytes
+  were. Its absence means clean UTF-8.
+- `manifest.skipped[]` names a reason for every excluded path — `binary`, `gitignore`,
+  `default-ignore`, `sensitive-file`, `sensitive-path`, `symlink`, `outside-root`, `read-error`,
+  `not-file`, `nested-repository` (a submodule or nested checkout) or `excluded`. `nested-repository`
+  and `not-file` only appear for candidates git listed as a directory.
 
 ## Optional
 
