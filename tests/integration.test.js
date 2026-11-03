@@ -484,6 +484,44 @@ test("CLI rejects unknown flags, unknown commands and bad numbers", () => {
   assert.equal(runCli(["--version"]).code, 0);
 });
 
+// These flags only configure `init`; they are not runtime overrides. Accepting
+// them on `generate` used to be a silent no-op: the run detected its own preset
+// while the developer believed --preset had been applied.
+test("CLI rejects init-only flags on non-init commands", () => {
+  for (const flag of [
+    ["--preset", "nextjs"],
+    ["--include", "src/**"],
+    ["--exclude", "**/*.test.ts"],
+    ["--yes"],
+    ["--minimal"],
+    ["--force"],
+  ]) {
+    const result = runCli(["generate", ...flag]);
+    assert.equal(result.code, 2, `generate ${flag.join(" ")} must be a usage error`);
+    assert.match(result.stderr, /only valid with `init`/);
+  }
+  // ...but they stay valid for init itself.
+  const dir = makeRepo("cli-init-only-", { "package.json": '{"name":"fixture"}' });
+  const init = runCli(["init", "--preset", "go", "--yes", "--cwd", dir]);
+  assert.equal(init.code, 0, init.stderr);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A config that exists but cannot be read must fail, not fall back to defaults:
+// a silent fallback produces a snapshot with none of the developer's settings.
+test("CLI fails when an existing config cannot be parsed", () => {
+  const dir = makeRepo("cli-broken-config-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a=1;\n",
+    "snapshot.config.json": "{ this is not json",
+  });
+  const result = runCli(["generate", "--cwd", dir]);
+  assert.equal(result.code, 1, `expected exit 1, got ${result.code}: ${result.stderr}`);
+  assert.match(result.stderr, /could not be read/);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot")), false, "no snapshot must be written");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("CLI --dry-run writes nothing", () => {
   const dir = makeRepo("cli-dry-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
   const result = runCli(["generate", "--cwd", dir, "--dry-run"]);

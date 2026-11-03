@@ -4,6 +4,15 @@ import { emptySummary, finalizeSummary } from "./shared.js";
 
 const SCRIPT_BLOCK = /<script[^>]*>([\s\S]*?)<\/script>/gi;
 
+/**
+ * The `---` fence at the top of an Astro component.
+ *
+ * In Astro this fence *is* the component's script: it is where imports, props and
+ * all the TypeScript live. Most real `.astro` files have no `<script>` tag at all,
+ * so parsing only `<script>` blocks made the common case fall back to `heuristic`.
+ */
+const ASTRO_FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?=\r?\n|$)/;
+
 function componentName(path: string): string {
   const base = path.split("/").pop() ?? path;
   return base.replace(/\.[^.]+$/, "");
@@ -21,6 +30,13 @@ export const sfcProfile: LanguageProfile = {
   extensions: [".vue", ".svelte", ".astro"],
   summarize(path, content) {
     let script = "";
+
+    // Astro keeps its script in a leading `---` fence rather than a <script> tag.
+    if (path.toLowerCase().endsWith(".astro")) {
+      const frontmatter = ASTRO_FRONTMATTER.exec(content);
+      if (frontmatter) script += `${frontmatter[1]}\n`;
+    }
+
     for (const match of content.matchAll(SCRIPT_BLOCK)) {
       script += `${match[1]}\n`;
     }

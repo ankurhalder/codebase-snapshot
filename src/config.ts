@@ -178,6 +178,16 @@ export interface ConfigLoadResult {
   file: string | null;
   /** Why a candidate config file was ignored. Never silently discarded. */
   warnings: string[];
+  /**
+   * Config files that exist but could not be read.
+   *
+   * These are fatal: a config that fails to parse used to be skipped in favour of
+   * the defaults, which meant a typo silently produced a snapshot with none of the
+   * developer's settings applied. A config that is merely unsupported on this Node
+   * version (a `.ts` file below Node 22.6) stays a warning — nothing is wrong with
+   * the file, and the message already says what to do.
+   */
+  errors: string[];
 }
 
 /** True when this Node can `import()` a `.ts` file natively (type stripping). */
@@ -215,6 +225,7 @@ function parseJsonish(raw: string, file: string): SnapshotConfig {
  */
 export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadResult> {
   const warnings: string[] = [];
+  const errors: string[] = [];
 
   for (const filename of CONFIG_FILENAMES) {
     const fullPath = path.join(cwd, filename);
@@ -226,9 +237,12 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
           config: parseJsonish(fs.readFileSync(fullPath, "utf8"), fullPath),
           file: fullPath,
           warnings,
+          errors,
         };
       } catch (err) {
-        warnings.push((err as Error).message);
+        const message = (err as Error).message;
+        warnings.push(message);
+        errors.push(message);
         continue;
       }
     }
@@ -249,12 +263,16 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       } & SnapshotConfig;
       const config = imported.default ?? imported;
       if (!config || typeof config !== "object") {
-        warnings.push(`${fullPath} does not export a configuration object.`);
+        const message = `${fullPath} does not export a configuration object.`;
+        warnings.push(message);
+        errors.push(message);
         continue;
       }
-      return { config, file: fullPath, warnings };
+      return { config, file: fullPath, warnings, errors };
     } catch (err) {
-      warnings.push(`Could not load ${fullPath}: ${(err as Error).message}`);
+      const message = `Could not load ${fullPath}: ${(err as Error).message}`;
+      warnings.push(message);
+      errors.push(message);
       continue;
     }
   }
@@ -265,14 +283,16 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       const parsed = parseJsonish(fs.readFileSync(pkgJsonPath, "utf8"), pkgJsonPath);
       const snapshotKey = (parsed as unknown as { snapshot?: unknown }).snapshot;
       if (snapshotKey && typeof snapshotKey === "object") {
-        return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings };
+        return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings, errors };
       }
     } catch (err) {
-      warnings.push((err as Error).message);
+      const message = (err as Error).message;
+      warnings.push(message);
+      errors.push(message);
     }
   }
 
-  return { config: null, file: null, warnings };
+  return { config: null, file: null, warnings, errors };
 }
 
 export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null> {

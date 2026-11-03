@@ -459,6 +459,7 @@ test("loadConfigFile reads json, mjs and ts configs and reports failures", async
   const detailed = await loadConfigFileDetailed(broken);
   assert.equal(detailed.config, null);
   assert.ok(detailed.warnings.length > 0, "a broken config must be reported, not swallowed");
+  assert.ok(detailed.errors.length > 0, "a broken config is fatal, not a silent fallback to defaults");
 
   if (supportsTypeScriptImports()) {
     const tsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-ts-"));
@@ -744,6 +745,37 @@ test("a template-only component still gets an index entry", () => {
   const { summary, quality } = summarizeWithProfile("src/Logo.vue", "<template><svg /></template>");
   assert.equal(quality, "heuristic");
   assert.ok(summary.exports.includes("Logo"));
+});
+
+// In Astro the leading `---` fence *is* the component script, and most real
+// components have no <script> tag at all — so parsing only <script> blocks made
+// the common case fall back to heuristic.
+test("Astro frontmatter is parsed as TypeScript, not as markup", () => {
+  const astro = [
+    "---",
+    'import Layout from "../layouts/Base.astro";',
+    'const title: string = "Hello";',
+    "export function greet(name: string) {",
+    "  return `hi ${name}`;",
+    "}",
+    "---",
+    "<Layout><h1>{title}</h1></Layout>",
+  ].join("\n");
+
+  const { summary, quality } = summarizeWithProfile("src/pages/index.astro", astro);
+  assert.equal(quality, "ast", "the --- fence is the component script");
+  assert.ok(summary.imports.length > 0, "imports come from the frontmatter");
+  assert.ok(summary.functions.includes("greet"), "frontmatter functions are extracted");
+  assert.ok(summary.exports.includes("index"), "the component is still indexed");
+});
+
+test("an Astro <script> tag still works without frontmatter", () => {
+  const { summary, quality } = summarizeWithProfile(
+    "src/pages/plain.astro",
+    "<h1>Hi</h1>\n<script>\nexport function ping() { return 1; }\n</script>\n"
+  );
+  assert.equal(quality, "ast");
+  assert.ok(summary.functions.includes("ping"));
 });
 
 test("files no profile claims are left alone", () => {

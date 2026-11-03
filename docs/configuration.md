@@ -135,7 +135,11 @@ Rules are evaluated in order, **first match wins**, with an `other` fallback.
 `layersMode: "merge"` (the default) keeps the detected preset's rules and lets
 yours win by being evaluated first. `"replace"` discards the preset entirely.
 
-Presets are auto-detected: **nextjs** → **vite** → **node** → **default**.
+Presets are auto-detected by specificity: the first match in descending priority wins,
+and `generic` is the fallback. There are 25 of them — see the table above. A framework
+that depends on `vite` still resolves to `react-vite` / `vue-vite` because those detectors
+outrank `node-lib`, and a Next.js app inside a pnpm workspace is still `nextjs`, not
+`monorepo`.
 
 ## Sizing: byte budgets
 

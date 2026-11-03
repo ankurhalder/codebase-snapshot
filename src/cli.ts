@@ -284,6 +284,27 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     skipArtifacts = parseArtifactList(String(rawSkip), "--skip-artifacts");
   }
 
+  // These configure `init`, which writes them into the config file. They are not
+  // runtime overrides — `resolveConfig` reads scoping and presets from the config
+  // file only. Accepting them silently here would leave the developer believing a
+  // --preset or --include took effect when the run used the detected defaults.
+  if (command !== "init") {
+    const initOnly: string[] = [];
+    if (values.preset !== undefined) initOnly.push("--preset");
+    if (values.include !== undefined) initOnly.push("--include");
+    if (values.exclude !== undefined) initOnly.push("--exclude");
+    if (values.yes === true) initOnly.push("--yes");
+    if (values.minimal === true) initOnly.push("--minimal");
+    if (values.force === true) initOnly.push("--force");
+    if (initOnly.length > 0) {
+      throw new UsageError(
+        `${initOnly.join(", ")} ${initOnly.length === 1 ? "is" : "are"} only valid with \`init\`. ` +
+          `To scope \`${command}\`, set include/excludePatterns/preset in snapshot.config.ts ` +
+          `(or run \`snap init\` to generate one).`
+      );
+    }
+  }
+
   return {
     command,
     args,
@@ -434,6 +455,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   const loaded = await loadConfigFileDetailed(invocation.cwd);
   for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
+  if (loaded.errors.length > 0) {
+    // A config that exists but cannot be read must not silently fall back to the
+    // defaults: the resulting snapshot would ignore every setting the developer
+    // wrote and still report success.
+    warn("❌ The config file could not be read. Fix it, or delete it to use the defaults.");
+    return 1;
+  }
   if (loaded.file) info(`⚙  Using config ${path.relative(process.cwd(), loaded.file) || loaded.file}`);
 
   const resolved = resolveConfig(
