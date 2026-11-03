@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { summarizeWithProfile } from "./ast/profiles/index.js";
+import { profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
 import { summarizeTypeScriptSource } from "./ast/ts-parser.js";
 import {
@@ -119,11 +119,35 @@ function isSourceSummary(summary: FileEntry["summary"]): summary is SourceSummar
   return Boolean(summary && typeof summary === "object" && "imports" in summary);
 }
 
+/**
+ * True when this path's language produces a structural summary at all.
+ *
+ * Only used to decide whether skipping a summary for a preview is worth a
+ * warning: a `.log` or `.txt` never had one, so listing it would be noise.
+ */
+function hasStructuralSummary(relativePath: string): boolean {
+  const lower = relativePath.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".jsonc")) return true;
+  if (lower.endsWith(".md") || lower.endsWith(".mdx")) return true;
+  if (TS_EXTENSIONS.some((extension) => lower.endsWith(extension))) return true;
+  return profileForPath(relativePath) !== null;
+}
+
 type LayerOrKindCounts = Record<string, number>;
 
 function bump(counts: LayerOrKindCounts, key: string): void {
   counts[key] = (counts[key] ?? 0) + 1;
 }
+
+/**
+ * A previewed file is not parsed for a structural summary.
+ *
+ * Its body in the snapshot is head/tail only, so a whole-file summary describes
+ * lines no artifact carries; building one anyway meant masking every identifier in
+ * the file for a summary the partitioner discards. Named so the before/after
+ * measurement stays reproducible by flipping this one value.
+ */
+const SKIP_PREVIEW_SUMMARIES = true;
 
 const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 const IMPORT_CANDIDATE_SUFFIXES = [
@@ -1264,6 +1288,16 @@ export function generateSnapshot(
   const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
   /** Files too large to parse for a structural summary, grouped into one warning after the scan. */
   const oversizeSummaryPaths: string[] = [];
+  /**
+   * Previewed files whose language would otherwise get a structural summary.
+   *
+   * A preview carries only head/tail lines, so a whole-file summary describes
+   * lines the snapshot does not contain — and masking every identifier in one for
+   * a summary the partitioner then discards dominated the run (a 1.9 MB `.ts` spent
+   * ~70 % of its wall time in `findSecretInPath` over summary strings). Recorded in
+   * one grouped warning, exactly like the oversize case.
+   */
+  const previewSummaryPaths: string[] = [];
   const layerCounts: LayerOrKindCounts = {};
   const kindCounts: LayerOrKindCounts = {};
 
@@ -1388,7 +1422,13 @@ export function generateSnapshot(
 
     let summary: FileEntry["summary"];
     let summaryQuality: SummaryQuality | undefined;
-    if (rawContent.length > SUMMARY_MAX_SOURCE_CHARS) {
+    if (SKIP_PREVIEW_SUMMARIES && isPreviewTruncated && hasStructuralSummary(relativePath)) {
+      // The body in the snapshot is a head/tail preview, so a whole-file summary
+      // would describe lines no artifact carries. Skipping it is also the single
+      // largest cost saving on a big source file: masking tens of thousands of
+      // identifiers for a summary the partitioner discards.
+      previewSummaryPaths.push(relativePath);
+    } else if (rawContent.length > SUMMARY_MAX_SOURCE_CHARS) {
       // A structural summary of a file this size costs far more memory than the file itself — the
       // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
       // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
@@ -1452,6 +1492,17 @@ export function generateSnapshot(
     encodingBuckets.set(note.encoding, bucket);
   }
   const ENCODING_PATHS_SHOWN = 5;
+  if (previewSummaryPaths.length > 0) {
+    const shown = previewSummaryPaths
+      .slice(0, ENCODING_PATHS_SHOWN)
+      .map((entry) => maskPathText(entry, config.secretRules));
+    const hidden = previewSummaryPaths.length - ENCODING_PATHS_SHOWN;
+    warnings.push(
+      `${previewSummaryPaths.length} file(s) are emitted as head/tail previews and were not parsed for a ` +
+        `structural summary: ${shown.join(", ")}${hidden > 0 ? ` and ${hidden} more` : ""}. ` +
+        "A whole-file summary would describe lines the snapshot does not carry; `explain <path>` names the preview budget."
+    );
+  }
   if (oversizeSummaryPaths.length > 0) {
     const shown = oversizeSummaryPaths
       .slice(0, ENCODING_PATHS_SHOWN)

@@ -911,8 +911,12 @@ test("a summary larger than the part budget is dropped, not emitted oversized", 
   });
 
   const maxPartBytes = 4096;
+  // `largeFileBytes` is above the fixture on purpose: this test is about a WHOLE
+  // file whose summary alone exceeds the part budget. Previewed files are no longer
+  // summarised at all (see tests/summary-preview.test.js), so keeping the default
+  // 200 KB threshold here would test a path that no longer builds a summary.
   const manifest = generateSnapshot(
-    baseConfig(dir, { maxPartBytes, largeFileBytes: 100 })
+    baseConfig(dir, { maxPartBytes, largeFileBytes: 10_000_000 })
   );
 
   for (const part of manifest.parts) {
