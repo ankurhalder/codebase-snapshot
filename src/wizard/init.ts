@@ -93,13 +93,6 @@ const SIZE_CHOICES: Array<{ value: string; label: string; hint: string }> = [
   { value: "custom", label: "Custom…", hint: "type a size like 150k or 1.5mb" },
 ];
 
-function existingConfig(cwd: string): string | null {
-  for (const name of CONFIG_CANDIDATES) {
-    if (fs.existsSync(path.join(cwd, name))) return name;
-  }
-  return null;
-}
-
 /**
  * True when `package.json` already carries a `"snapshot"` config block.
  *
@@ -143,6 +136,58 @@ function topLevelDirs(cwd: string): string[] {
   }
 }
 
+/** Type-only description of a JSON value, so a note never echoes user data. */
+function describeJsonValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  if (typeof value === "object") return "an object";
+  return `a ${typeof value}`;
+}
+
+/**
+ * Writes a file, turning an OS failure into the tool's own phrasing.
+ *
+ * A read-only target used to surface the raw `EPERM: operation not permitted,
+ * open '…'` text, which reads like a crash rather than a refusal.
+ */
+function writeFileOrExplain(target: string, content: string): void {
+  try {
+    fs.writeFileSync(target, content, "utf8");
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const reason =
+      code === "EACCES" || code === "EPERM" || code === "EROFS"
+        ? `permission denied (${code})`
+        : `${(err as Error).message}`;
+    throw new Error(`Cannot write ${target}: ${reason}`);
+  }
+}
+
+/**
+ * True when the generated ES-module config text can be written to `name`.
+ *
+ * The wizard's template is `export default { … }`, so it is only valid in a
+ * `.mjs` file, a `.ts` file, or a `.js` file inside a `"type": "module"` package.
+ */
+function canWriteModuleConfig(name: string, cwd: string): boolean {
+  if (name.endsWith(".mjs") || name.endsWith(".ts")) return true;
+  if (!name.endsWith(".js")) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
+      type?: unknown;
+    };
+    return parsed.type === "module";
+  } catch {
+    return false;
+  }
+}
+
+function configFormatLabel(name: string): string {
+  if (name.endsWith(".js")) return 'CommonJS `.js` (package.json has no "type": "module")';
+  if (name.endsWith(".cjs")) return "CommonJS `.cjs`";
+  return "JSON";
+}
+
 function addScripts(cwd: string, notes: string[]): string[] {
   const packagePath = path.join(cwd, "package.json");
   if (!fs.existsSync(packagePath)) {
@@ -158,10 +203,23 @@ function addScripts(cwd: string, notes: string[]): string[] {
     return [];
   }
 
-  const scripts = (parsed.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {}) as Record<
-    string,
-    string
-  >;
+  // `scripts` must be an object. A string, array or number used to be replaced
+  // with `{}` while the run still reported plain success — a silent data
+  // replacement. Say what happened instead.
+  const declared = parsed.scripts;
+  let scripts: Record<string, unknown>;
+  if (declared === undefined) {
+    scripts = {};
+  } else if (typeof declared === "object" && declared !== null && !Array.isArray(declared)) {
+    scripts = declared as Record<string, unknown>;
+  } else {
+    notes.push(
+      `package.json "scripts" was ${describeJsonValue(declared)}, not an object; it was replaced with an ` +
+        "object holding the snapshot scripts."
+    );
+    scripts = {};
+  }
+
   const added: string[] = [];
   if (!scripts.snapshot) {
     scripts.snapshot = "npx @ankurhalder/codebase-snapshot generate";
@@ -174,7 +232,7 @@ function addScripts(cwd: string, notes: string[]): string[] {
   if (added.length === 0) return [];
 
   parsed.scripts = scripts;
-  fs.writeFileSync(packagePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  writeFileOrExplain(packagePath, `${JSON.stringify(parsed, null, 2)}\n`);
   return added;
 }
 
@@ -186,7 +244,7 @@ function addGitignore(cwd: string): string[] {
   if (added.length === 0) return [];
 
   const prefix = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  fs.writeFileSync(ignorePath, `${existing}${prefix}${added.join("\n")}\n`, "utf8");
+  writeFileOrExplain(ignorePath, `${existing}${prefix}${added.join("\n")}\n`);
   return added;
 }
 
@@ -343,7 +401,26 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
 
   const configText = options.minimal ? renderMinimalConfig(answers) : renderConfig(answers);
-  const configName = chooseConfigFileName(options.cwd);
+  const preferredName = chooseConfigFileName(options.cwd);
+  const presentConfigs = CONFIG_CANDIDATES.filter((name) =>
+    fs.existsSync(path.join(options.cwd, name))
+  );
+  const present = presentConfigs[0] ?? null;
+
+  // More than one config file means the loader silently ignores all but the first
+  // in its own order; say which one wins so the user can delete the rest.
+  if (presentConfigs.length > 1) {
+    notes.push(
+      `Multiple configuration files found (${presentConfigs.join(", ")}); ${present} is the one this ` +
+        "tool loads, and the others are ignored. Delete the extras to avoid confusion."
+    );
+  }
+
+  // With `--force` the file that already exists is the one to rewrite. Choosing a
+  // fresh name beside it wrote a second config file, and the loader's order
+  // (`.mjs` before `.json`, for instance) made the new one silently shadow the
+  // user's: `--force` promised to replace it and instead disabled it.
+  const configName = present !== null && options.force ? present : preferredName;
   const configPath = path.join(options.cwd, configName);
 
   if (options.dryRun) {
@@ -358,10 +435,16 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     };
   }
 
-  const present = existingConfig(options.cwd);
-  if (present && present !== configName && !options.force) {
+  if (present !== null && present !== preferredName && !options.force) {
     throw new Error(
       `A configuration already exists (${present}). Re-run with --force to replace it.`
+    );
+  }
+  if (present !== null && options.force && !canWriteModuleConfig(present, options.cwd)) {
+    throw new Error(
+      `Refusing to replace ${present}: this wizard writes an ES-module config (.ts, .js, .mjs), and ` +
+        `${present} is a ${configFormatLabel(present)} configuration. Writing a new file beside it would ` +
+        `silently shadow it, so delete or rename ${present} yourself and re-run with --force.`
     );
   }
   if (packageJsonHasConfig(options.cwd) && !options.force) {
@@ -374,7 +457,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     throw new Error(`${configName} already exists. Re-run with --force to replace it.`);
   }
 
-  fs.writeFileSync(configPath, configText, "utf8");
+  writeFileOrExplain(configPath, configText);
   const scripts = addScripts(options.cwd, notes);
   const gitignoreEntries = addGitignore(options.cwd);
 
