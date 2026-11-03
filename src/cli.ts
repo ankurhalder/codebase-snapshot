@@ -678,7 +678,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return runSkillCommand(invocation);
   }
 
-  const loaded = invocation.noConfig
+  // `diff` compares two manifests and never needs a repository config; importing one would
+  // execute repository code to answer a question about files. --no-config also skips it.
+  const skipConfig = invocation.noConfig || invocation.command === "diff";
+  const loaded = skipConfig
     ? { config: null, warnings: [], errors: [], file: null }
     : await loadConfigFileDetailed(invocation.cwd);
   if (invocation.noConfig) info("⚙  --no-config: using built-in defaults, config file ignored");
@@ -781,6 +784,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (invocation.command === "diff") {
+    // Comparing two snapshots reads two manifests; a repository config is irrelevant,
+    // and importing one would execute repository code to answer a question about files.
     try {
       const [beforePath, afterPath] = invocation.args;
       const diff = compareManifests(loadManifest(beforePath), loadManifest(afterPath));
@@ -947,7 +952,11 @@ async function runWatchLoop(
       // settings: editing snapshot.config above a watched repository appeared to
       // work (the run happened, the config file's own hash updated) while the
       // budget and scoping stayed at the old values. Reload on every run.
-      const loaded = await loadConfigFileDetailed(invocation.cwd);
+      // `--no-config` promises the config is ignored. The watch loop reloaded it anyway,
+      // executing repository code and applying its filters while printing that it did not.
+      const loaded = invocation.noConfig
+        ? { config: null, warnings: [], errors: [], file: null }
+        : await loadConfigFileDetailed(invocation.cwd);
       if (loaded.errors.length > 0) {
         for (const error of loaded.errors) warn(`⚠ Config: ${error}`);
         warn("❌ The config file could not be read. Fix it, or delete it to use the defaults.");

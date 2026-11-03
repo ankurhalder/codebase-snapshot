@@ -4,6 +4,29 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.9
+
+### The tool executed a config it had been told to ignore
+
+`generate --watch --no-config` printed "config file ignored" and then reloaded the repository
+config on every regeneration, running its side effects and applying its include filter (4 tracked
+files became 1). The watch loop now honours the flag.
+
+`diff` also loaded the repository config, so comparing two manifests executed repository code —
+and `--no-config` was rejected for that command, leaving no way to opt out. `diff` reads two
+manifests and nothing else now; it never loads a config, and the flag is accepted there for
+consistency. Verified: a config that writes a file on import no longer does so during `diff`, and
+still does during `generate`.
+
+### Accepted risk: the ownership marker is evidence, not authentication
+
+A hand-written marker plus a stub manifest with a matching digest can still pass the ownership
+check, because there is no secret involved — anyone who can write those two files can also delete
+the directory directly. The check exists to stop the tool from deleting a directory *it* did not
+create, not to resist an attacker with write access. `SECURITY.md` now says so.
+
+---
+
 ## 4.0.8
 
 ### A dry run could write and delete

@@ -93,7 +93,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "help",
     "version",
   ],
-  diff: ["format", "mode", "help", "version"],
+  diff: ["format", "mode", "no-config", "help", "version"],
   describe: ["format", "mode", "help", "version"],
   init: [
     "cwd",
