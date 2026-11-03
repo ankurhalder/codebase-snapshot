@@ -456,8 +456,8 @@ export function buildAgentContract(): AgentContract {
         "snapshot.config.mjs",
         "snapshot.config.cjs",
         "snapshot.config.json",
-        ".snapshotrc",
         ".snapshotrc.json",
+        ".snapshotrc",
         'package.json → "snapshot" key',
       ],
       settings: [

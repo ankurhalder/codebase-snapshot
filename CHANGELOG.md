@@ -4,6 +4,39 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.2
+
+### The last place a path secret could reach an artifact
+
+4.0.1 masked the path field of every skip record. It did not mask the **detail** beside it, and
+that text names the link target or the exclude pattern: a symlink to `real-ghp_…` and an
+`excludePatterns: ["ghp_…"]` both printed the token in `manifest.skipped[].detail`, the audit
+table and `explain`. Config values recorded for drift detection (`include`, `excludePatterns`,
+layer and kind names) had the same problem. All of them now go through the same rules.
+
+### `--watch` idles again
+
+After 4.0.1's staging changes the watcher fed itself: 15 regenerations in 8 seconds with no edits,
+because Windows reports its own writes with paths the segment filter did not recognise. The
+watcher now also stays quiet for a short window after each run. Measured: one regeneration in nine
+idle seconds, and an edit still triggers exactly one more.
+
+### Honest answers where there used to be silence
+
+- `loadConfigFile()` returned `null` for a config that existed but could not be parsed, so
+  `resolveConfig(await loadConfigFile(cwd))` — the documented example — silently generated on
+  defaults. It now throws, and `loadConfigFileDetailed` already reported the reason.
+- Custom secret rules are no longer stored in a module-level variable: a `collectFiles` call for
+  one project applied the previous project's rules. Every caller passes its own.
+- `describe` lists `.snapshotrc.json` before `.snapshotrc`, matching the real precedence.
+
+### Measured this round
+
+100k files: 56.6 s (was 336.4 s in 4.0.0), 20k: 11.8 s, 100k `validate`: 50.3 s, 100k `report`:
+1.28 s, 50 MB single TypeScript file: 1.33 s. About 60% of the remaining time is Windows file I/O
+— read, stat and open — not parsing or redaction.
+---
+
 ## 4.0.1
 
 ### A credential in a file name no longer reaches the snapshot

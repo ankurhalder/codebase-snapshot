@@ -911,6 +911,12 @@ async function runWatchLoop(
       );
 
   let running = false;
+  // Events caused by our own writes are not always reported with a path this
+  // process can recognise (Windows recursive watch reports them relative to
+  // different roots), so the watcher also stays quiet for a short window after
+  // each run. Without this the writer feeds the watcher and the loop never idles.
+  let quietUntil = 0;
+  const QUIET_MS = 1500;
   const regenerate = async (): Promise<void> => {
     if (running) return;
     running = true;
@@ -953,6 +959,7 @@ async function runWatchLoop(
     } catch (err) {
       warn(`❌ ${(err as Error).message}`);
     } finally {
+      quietUntil = performance.now() + QUIET_MS;
       running = false;
     }
   };
@@ -962,6 +969,7 @@ async function runWatchLoop(
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
+    if (performance.now() < quietUntil) return;
     if (filename) {
       const changed = path.resolve(resolved.cwd, filename.toString());
       if (isGenerated(changed)) return;

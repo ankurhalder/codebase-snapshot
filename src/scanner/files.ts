@@ -195,14 +195,10 @@ export function isSensitivePath(relativePath: string): boolean {
  * every `collectFiles` call in the same run sees custom rules without each call
  * site having to thread them; an explicit `options.secretRules` always wins.
  */
-let activeSecretRules: SecretRule[] | null = null;
 
-export function setActiveSecretRules(rules: readonly SecretRule[] | null): void {
-  activeSecretRules = rules === null ? null : [...rules];
-}
 
 function pathScanRules(extraRules: readonly SecretRule[] | undefined): SecretRule[] {
-  const fallback = extraRules ?? activeSecretRules ?? [];
+  const fallback = extraRules ?? [];
   return [...DEFAULT_SECRET_PATTERNS, ...fallback];
 }
 
@@ -279,7 +275,15 @@ export function maskSkipPaths(
 ): SkipRecord[] {
   return records.map((record) => {
     const hit = findSecretInPath(record.path, extraRules);
-    return hit ? { ...record, path: hit.masked } : record;
+    // `detail` names the link target or the exclude pattern, so it can carry the
+    // same token the path did — it is emitted into the manifest, the audit table
+    // and `explain`, so it is masked with the same rules.
+    const detail = record.detail ? findSecretInPath(record.detail, extraRules) : null;
+    return {
+      ...record,
+      path: hit ? hit.masked : record.path,
+      ...(detail ? { detail: detail.masked } : {}),
+    };
   });
 }
 

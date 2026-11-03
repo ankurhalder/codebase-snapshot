@@ -51,7 +51,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.1";
+export const GENERATOR_VERSION = "4.0.2";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -1341,6 +1341,11 @@ export function generateSnapshot(
 
   const totalContentBytes = files.reduce((total, file) => total + file.includedBytes, 0);
 
+  // Config values are recorded in the manifest so `validate` can detect drift,
+  // and they can themselves contain a credential-shaped string (an exclude
+  // pattern, a layer name). The manifest is an artifact, so they are masked.
+  const maskName = (value: string): string => maskPathText(value, config.secretRules);
+
   const manifest: Manifest = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
@@ -1361,13 +1366,13 @@ export function generateSnapshot(
       includeMonolith: config.includeMonolith,
       includeSensitiveFiles: config.includeSensitiveFiles,
       artifacts: { ...config.artifacts },
-      include: [...config.include],
+      include: [...config.include].map(maskName),
       preset: config.preset,
       layersMode: config.layersMode,
       budgets: { default: config.budgets.default, byLayer: { ...config.budgets.byLayer } },
-      excludePatterns: [...config.excludePatterns],
-      layers: config.layers.map((layer) => layer.name),
-      kinds: config.kinds.map((kind) => kind.kind),
+      excludePatterns: [...config.excludePatterns].map(maskName),
+      layers: config.layers.map((layer) => maskName(layer.name)),
+      kinds: config.kinds.map((kind) => maskName(kind.kind)),
     },
     counts: {
       totalFiles: files.length,

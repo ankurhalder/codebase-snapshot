@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
-import { globToRegExp, setActiveSecretRules } from "./scanner/files.js";
+import { globToRegExp } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
 import type {
@@ -441,6 +441,12 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
 
 export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null> {
   const loaded = await loadConfigFileDetailed(cwd);
+  // A config that exists but cannot be read is an error, not "no config": returning
+  // null here made `resolveConfig(await loadConfigFile(cwd))` silently generate on
+  // defaults while every setting the caller wrote was ignored.
+  if (loaded.errors.length > 0) {
+    throw new Error(`The config file could not be read: ${loaded.errors.join("; ")}`);
+  }
   return loaded.config;
 }
 
@@ -965,7 +971,6 @@ export function resolveConfig(
   // content, including `customPatterns`. An explicit `options.secretRules` still
   // wins, and every command resolves its configuration immediately before it
   // scans.
-  setActiveSecretRules(secretRules);
 
   const cliMonolith = cliOptions?.includeMonolith;
   const includeMonolith =
