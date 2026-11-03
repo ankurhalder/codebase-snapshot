@@ -51,10 +51,87 @@ function walk(dir) {
 
 const files = TARGETS.flatMap((target) => walk(path.join(ROOT, target)));
 
+/**
+ * Blanks out comments, keeping every line and string literal intact.
+ *
+ * The content rules below look for code (`console.`, `: any`), and prose explaining
+ * *why* those are banned contains the same words — a doc comment saying "a `console.log`
+ * in a hook corrupted the payload" is not a violation. Line numbers must not move, so
+ * comments are replaced by spaces rather than removed.
+ */
+function stripComments(text) {
+  let out = "";
+  let i = 0;
+  let inBlock = false;
+  let inLine = false;
+  let quote = null;
+
+  while (i < text.length) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (inBlock) {
+      if (char === "*" && next === "/") {
+        inBlock = false;
+        out += "  ";
+        i += 2;
+        continue;
+      }
+      out += char === "\n" ? "\n" : " ";
+      i += 1;
+      continue;
+    }
+    if (inLine) {
+      if (char === "\n") {
+        inLine = false;
+        out += "\n";
+      } else {
+        out += " ";
+      }
+      i += 1;
+      continue;
+    }
+    if (quote) {
+      out += char;
+      if (char === "\\") {
+        out += next ?? "";
+        i += 2;
+        continue;
+      }
+      if (char === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      inBlock = true;
+      out += "  ";
+      i += 2;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      inLine = true;
+      out += "  ";
+      i += 2;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      out += char;
+      i += 1;
+      continue;
+    }
+    out += char;
+    i += 1;
+  }
+
+  return out;
+}
+
 for (const absolute of files) {
   const relative = path.relative(ROOT, absolute).replace(/\\/g, "/");
   const raw = fs.readFileSync(absolute, "utf8");
   const isSource = relative.startsWith("src/");
+  const codeLines = stripComments(raw).split("\n");
 
   if (raw.includes("\r")) {
     fail(relative, 0, "eol", "file contains CRLF line endings");
@@ -69,6 +146,7 @@ for (const absolute of files) {
   const lines = raw.split("\n");
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
+    const code = codeLines[index] ?? "";
 
     if (line.includes("\t")) {
       fail(relative, lineNumber, "tabs", "tab character (use spaces)");
@@ -90,10 +168,10 @@ for (const absolute of files) {
     }
 
     if (isSource) {
-      if (/\bconsole\./.test(line) && !CONSOLE_ALLOWED.has(relative)) {
+      if (/\bconsole\./.test(code) && !CONSOLE_ALLOWED.has(relative)) {
         fail(relative, lineNumber, "src-console", "console usage outside the CLI layer");
       }
-      if (/\bany\b/.test(line) && /(?::\s*any\b|<any>|\bas\s+any\b)/.test(line)) {
+      if (/\bany\b/.test(code) && /(?::\s*any\b|<any>|\bas\s+any\b)/.test(code)) {
         fail(relative, lineNumber, "explicit-any", "explicit any (use unknown and narrow)");
       }
     }
