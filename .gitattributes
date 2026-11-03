@@ -1,0 +1,19 @@
+# Normalize line endings for every contributor and platform.
+#
+# Every committed blob in this repository is LF, and `scripts/lint.mjs` enforces
+# LF in the working tree ("eol" rule). Without this file, a Windows checkout with
+# `core.autocrlf=true` writes CRLF into the working tree, so `npm run check`
+# fails locally on files nobody touched — while CI (Linux) stays green. Pinning
+# `eol=lf` makes the local gate match CI exactly.
+* text=auto eol=lf
+
+# Binary assets must never be touched by the text conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.tgz binary
