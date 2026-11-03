@@ -1,0 +1,9 @@
+version: 2
+# The suites assert that the redaction engine detects credentials, so they must
+# contain synthetic samples: an AWS example id, a Stripe test key, database URIs
+# with passwords and a JWT. None of them can authenticate against any service and
+# they exist only as detection fixtures, so they are excluded rather than
+# rewritten into shapes the scanner could no longer recognise.
+secret:
+  ignored-paths:
+    - "tests/**"

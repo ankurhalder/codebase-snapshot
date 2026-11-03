@@ -529,7 +529,10 @@ function dropLinkedDirectories(
   for (const candidate of candidates) {
     const parts = candidate.split("/");
     let linkedDir: string | null = null;
-    for (let depth = 1; depth < parts.length; depth += 1) {
+    // `depth <= parts.length` also tests the candidate itself: on a POSIX
+    // checkout git records a symbolic link as an entry in its own right, so a
+    // link to a directory arrived as a file called `aaa-link` and was emitted.
+    for (let depth = 1; depth <= parts.length; depth += 1) {
       const prefix = parts.slice(0, depth).join("/");
       if (isLink(path.join(cwd, prefix))) {
         linkedDir = prefix;
@@ -551,12 +554,13 @@ function dropLinkedDirectories(
       /* broken link: reported below */
     }
     const target = readLinkTarget(absolute, targetReal);
+    const what = linkedDir === candidate ? "symbolic link" : "directory link";
     skipped.push(
       isInside(rootReal, targetReal)
         ? {
             path: linkedDir,
             reason: "symlink",
-            detail: `directory link not followed (target: ${target})`,
+            detail: `${what} not followed (target: ${target})`,
           }
         : {
             path: linkedDir,
