@@ -4,6 +4,189 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.0
+
+### `snap` is back
+
+3.0.0 removed the `snap` alias after I misdiagnosed why `npx @ankurhalder/codebase-snapshot`
+printed nothing. **The removal was unnecessary and this release reverses it** — both
+`codebase-snapshot` and `snap` are published again.
+
+The real cause, confirmed by reading npm's own resolver
+(`libnpmexec/lib/get-bin-from-manifest.js`): npm resolves a package from its `bin` entries, and
+when every entry points at the same file it treats them as aliases and resolves one. Two
+aliases were always fine. What actually broke the bare command was a **stale global install on
+the test machine** — a leftover `npm link` back to the development checkout, which made `npx`
+run that instead of the published package. A clean profile runs the same command correctly, with
+either one or two aliases.
+
+If you ever hit a silent exit 0:
+
+```bash
+npm ls -g --depth=0 | grep codebase-snapshot
+npm rm -g @ankurhalder/codebase-snapshot
+```
+
+### Security: the redaction layer was rebuilt
+
+Independent adversarial review found credentials reaching `parts/*.md` while `audit.md` reported
+them as redacted. That is the worst failure this tool can have — its output is written to be
+pasted into a model — so the layer was rewritten rather than patched.
+
+Leaks that were real and are now closed, each with a regression test:
+
+- **CRLF checkouts.** Line-oriented rules ended in `$`, and a `\r` before the newline stopped the
+  match, so `export TOKEN=…` in a Windows checkout printed in the clear while the byte-identical
+  LF file was redacted. Scanning now splits on `\r\n`, `\n` and `\r` and preserves line numbers.
+- **Trailing comments and trailing spaces.** `export TOKEN=abc # rotate quarterly` leaked because
+  the value had to be the last thing on the line. The rule now matches the value, not the tail.
+- **camelCase keys and short values.** `awsSecret`, `dbPassword: "hunter2"` and similar were never
+  matched because only snake_case spellings were. Credential **names** now drive matching, and the
+  value is masked regardless of length.
+- **Unquoted YAML / docker-compose.** `POSTGRES_PASSWORD: hunter2` is now covered, while
+  expressions (`password: req.body.password`, `getToken()`, `process.env.SECRET`) are explicitly
+  not.
+- **Sensitive file names.** `.env~`, `.env.swp`, `.npmrc ` (trailing space), `.vault-token`,
+  `prod.env`, `secrets.toml` and friends are denied; deny-list matching normalises the name
+  instead of anchoring on the exact spelling.
+- **Secrets in a path.** A filename containing a token is skipped as `sensitive-path` with the
+  path span-masked, instead of being printed in the tree, the navigation index and the manifest.
+- **Authorization headers, and nine vendor prefixes** (`glpat-`, `hvs.`, `s.`, `xoxc/xoxd`,
+  `whsec_`, `dckr_pat_`, `hf_`, `ya29.`) are now detected.
+
+Masking is **span-only**: `dbPassword: "[REDACTED…]"` keeps the key and the rest of the line. That
+also fixed the opposite defect — over-redaction that corrupted ordinary code (`id-token: write`,
+`{ pass: 3 }`, and an unrelated string on a line that also contained a credential) is now
+explicitly negative-tested.
+
+The built-in rule count is now **29** (was 21).
+
+**Known limitations, stated rather than hidden** (see [SECURITY.md](SECURITY.md)): detection is
+pattern-based, so a secret deliberately split across two string literals is not caught, and
+unusual credential shapes can still be missed. Do not treat a clean audit as a guarantee.
+
+### The ownership marker is now evidence, not a filename
+
+`generate` deletes the previous snapshot, and it decides whether it is allowed to by checking
+whether it wrote that directory. The check was forgeable: an empty `.codebase-snapshot` file, or a
+three-key `manifest.json`, was enough to make the tool delete a directory full of someone else's
+files.
+
+`.codebase-snapshot` is now a JSON record — generator name, schema version, a random run id, a
+state, a digest of the manifest and an inventory of everything written. Replacement requires the
+marker to be complete and every file in the directory to be in that inventory; anything else
+blocks the run and is named in the message. The same evidence rule now applies to `tmpDir`, which
+used to be deleted wholesale. Concurrent runs take a per-`outDir` lock, so four simultaneous
+`generate` invocations leave one complete snapshot rather than a manifest describing parts that
+are gone.
+
+### Correctness
+
+- **JSONC comments in strings.** A valid `package.json` containing `//` anywhere in a string
+  (`"build": "tsc && echo done//ok"`) made every command fail with "the config could not be
+  read". The stripper is now a state machine that respects strings and escapes.
+- **Configs that are not objects.** `export default Promise.resolve({…})` was silently treated as
+  an empty config; a thenable, array or primitive is now a hard error naming what it received.
+- **Wrong-typed settings.** `excludePatterns: "src/**"` and `previewHeadLines: 0` were silently
+  ignored. Every setting is now validated, and the error names the setting, the expected shape and
+  what arrived.
+- **`layers` rejected the documented shape.** `{ name: "api", match: … }` — the shape the type
+  declares and the generated config recommends — crashed `generate` with a `TypeError`. Both
+  `layers` and `kinds` are validated up front, `name` is canonical for layers with `layer` as an
+  alias, and a bad rule is an error naming the index rather than a crash.
+- **`preset: "detected"`**, which `describe` published as the default, was rejected as an unknown
+  preset. `detected` and `auto` are now accepted.
+- **Budget precedence.** `--max-part-bytes` lost to `budgets.default`, so the banner said "Part
+  budget: 4 KB" while 151 KB parts were written. The order is now CLI > config `maxPartBytes` >
+  `budgets.default` > 300 KB, and `budgets.byLayer` is capped by the chosen budget.
+- **The output directory was scanned into the next snapshot.** `--out-dir .context` produced a
+  snapshot that included its own previous manifest, so the fingerprint changed on every run and
+  `validate` failed immediately after `generate`. The resolved `outDir`/`tmpDir` are excluded as
+  tool-owned paths, silently and identically on the first run.
+- **The monolith contained previews.** `full-codebase.md` was supposed to be the whole repository
+  in one file, but a 400 KB file contributed about 3 KB — its head/tail preview. The monolith now
+  carries full redacted bodies; `largeFileBytes` governs the parts only.
+- **A failing hook disappeared.** `hooks.afterGenerate` throwing printed a warning, but the
+  manifest had already been written, so the warning was not in it. The manifest is now rewritten
+  with the final warning list (the hook still runs once).
+- **`--out-dir` with a missing parent** failed with a raw `ENOENT` from the rename; parents are
+  now created, an ancestor that is a file is refused cleanly, and a failed run no longer leaves
+  `snapshot.tmp` behind.
+- **`validate` exempted skipped files forever.** A file skipped as binary, then rewritten as
+  source, was never reported as new. Skips are re-evaluated.
+- **`--dry-run` skipped the output guard**, claiming it would write into a directory the real run
+  refuses. A dry run now runs the same guard and exits the same way.
+- **`diff` reported `before undefined undefined file(s)` and exited 0** on a manifest that was not
+  a snapshot. Both sides are validated and the malformed one is named.
+- **`reactComponents` listed plain classes.** A component now requires JSX/`createElement` or a
+  React base class.
+- **A filename could escape a code fence.** A file named ``` ``` ``` closed the `## Files` fence
+  and let the next filename be rendered as live markdown — a prompt-injection vector in a file
+  built for LLMs. Fences are now chosen from their content.
+- **`--watch` never reloaded the config.** Editing the config while watching appeared to work
+  while the old settings stayed in force; a broken config regenerated silently instead of
+  reporting the error.
+- **`reports/audit.md` said "Redacted Content Bytes"** when it meant emitted bytes. Renamed
+  "Emitted Content Bytes".
+
+### CLI honesty
+
+- **Options that do not apply to a command are now rejected** (exit 2) instead of being parsed and
+  ignored: `--watch` is generate-only, `--dry-run` is generate/init, config and size options do
+  not apply to `diff`/`describe`/`skill`. The published `appliesTo` column is now generated from
+  the same table the parser enforces, so the contract cannot drift from the CLI again.
+- **`--no-config`** ignores `snapshot.config.*` and runs on the built-in defaults — useful in a
+  checkout you do not trust, because a `.ts`/`.js`/`.mjs`/`.cjs` config is imported and executed.
+- **`explain` always exits 0** when it can answer; the verdict is `included`/`reason`. Exit 1 now
+  only means the command could not run.
+- **`skill --format json`** emits JSON instead of markdown.
+- **`init` writes `includeMonolith`** (the file now lists every setting, as it claims), honours
+  `--out-dir`, refuses to silently override a `package.json#snapshot` config, and no longer says
+  `Next: npm run snapshot` in a directory with no `package.json`.
+
+### Upgrading from 3.0.0
+
+- **Old snapshots are refused, not replaced.** A snapshot written by 3.0.0 carries a marker in the
+  old format, so `generate` will stop and ask you to remove the directory or point `--out-dir`
+  somewhere else. This is deliberate: the old marker could not prove the directory was ours.
+- `explain` no longer exits 1 for a file that would be skipped.
+- Attention-only flags (`--watch` on `validate`, for example) are now usage errors.
+- With `--include-monolith`, the monolith is much larger, because it now actually contains the
+  code.
+
+### Documentation and packaging
+
+Every document was rewritten against the current behaviour rather than patched:
+
+- **New** [docs/cli.md](docs/cli.md) — every command, every option with its default and which
+  commands it applies to, exit codes, output streams, worked examples.
+- **New** [docs/output.md](docs/output.md) — the snapshot layout and the complete
+  `manifest.json` schema, field by field, including how to read `skipped[]`.
+- **New** [docs/troubleshooting.md](docs/troubleshooting.md) — every message the tool prints,
+  its cause and its fix.
+- **Rewritten** README, [docs/install.md](docs/install.md),
+  [docs/configuration.md](docs/configuration.md) and [docs/agent.md](docs/agent.md).
+- **New** [AGENTS.md](AGENTS.md) for agents working in the repository and
+  [llms.txt](llms.txt) for AI discovery.
+- **New** CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md, issue forms and a pull request
+  template.
+
+Corrections worth calling out, because the old text was wrong:
+
+- The generated config was documented as importing `defineConfig`; it has been a plain object
+  with no imports since 2.2.0, so that it loads when the package is only used through `npx`.
+- The "bin-less placeholder" explanation for the bare `npx` failure has been removed. The
+  placeholder version is unrelated and harmless.
+- `snap init` writes an `.mjs` config for a CommonJS project, not a `.ts` one — the
+  documentation now states the rule.
+
+Packaging: `prepare` was replaced with `prepack`, so installing the package no longer triggers an
+install-script warning, and the published tarball is still built from source. The test suite now
+includes an end-to-end agent simulation that follows the six workflow steps published by
+`describe` and asserts the resulting snapshot.
+
+---
+
 ## 3.0.0
 
 ### BREAKING: the `snap` executable is gone; use `codebase-snapshot`
