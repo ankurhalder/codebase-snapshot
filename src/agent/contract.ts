@@ -9,6 +9,15 @@ export const CONTRACT_VERSION = "1.0.0";
 const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
 
 /**
+ * Major version of the build that generates this contract.
+ *
+ * A step that probes the floating `@latest` tag may only compare this part: the
+ * tag can lag the release (npm propagation) or lead it, so an exact patch in an
+ * `expect` makes the contract's own first step impossible to pass.
+ */
+const MAJOR_VERSION = GENERATOR_VERSION.split(".")[0];
+
+/**
  * The machine-readable description of this tool.
  *
  * Everything an agent needs to use the tool without prior knowledge lives here:
@@ -181,8 +190,16 @@ export function buildAgentContract(): AgentContract {
         step: 1,
         id: "verify",
         run: `npx ${PACKAGE_NAME}@latest --version`,
-        expect: `prints v${GENERATOR_VERSION} on stdout and exits 0`,
-        notes: "If it prints nothing, clear the npm cache and retry, or use `npx -p <pkg> codebase-snapshot`.",
+        // The requirement is the major version; the exact build is context. A
+        // floating tag may print 4.0.7 today and 4.0.9 next week, and an agent
+        // must not conclude that a working tool is broken because of a patch.
+        expect:
+          `prints v${MAJOR_VERSION} or newer on stdout and exits 0 ` +
+          `(this build is v${GENERATOR_VERSION}: compare the major version, not the patch)`,
+        notes:
+          "If it prints an older major than this contract's, the @latest tag is behind the release: " +
+          `pin the major with \`npx ${PACKAGE_NAME}@${MAJOR_VERSION} --version\` instead of retrying @latest. ` +
+          "If it prints nothing, clear the npm cache and retry, or use `npx -p <pkg> codebase-snapshot`.",
       },
       {
         step: 2,
@@ -195,7 +212,10 @@ export function buildAgentContract(): AgentContract {
         step: 3,
         id: "configure",
         run: `npx ${PACKAGE_NAME}@latest init --yes`,
-        expect: "writes snapshot.config.ts listing every setting at its current value",
+        expect:
+          "writes a commented config file listing every setting at its current value: " +
+          "snapshot.config.ts only when the running Node can strip types (>= 22.6) and the project " +
+          'is an ES module (`"type": "module"` in package.json); snapshot.config.mjs otherwise',
         notes:
           "Non-interactive. The detected preset is chosen automatically; override with --preset <name>. " +
           "Skip this step to run on built-in defaults.",
@@ -248,7 +268,9 @@ export function buildAgentContract(): AgentContract {
       {
         name: "init",
         aliases: [],
-        summary: "Write a commented snapshot.config.ts (interactive, or --yes for CI).",
+        summary:
+          "Write a commented config file (snapshot.config.ts only when Node can strip types and the " +
+          "project is an ES module; snapshot.config.mjs otherwise). Interactive, or --yes for CI.",
         positionals: [],
         exits: [0, 1, 2],
       },
@@ -495,7 +517,7 @@ export function buildAgentContract(): AgentContract {
       ],
       notes: [
         "Parts are ordered and budget-limited; a single file larger than the budget becomes a head/tail preview.",
-        "manifest.json.files[] carries relativePath, layer, kind, language, part, inclusionMode, hash and a structural summary.",
+        "manifest.json.files[] carries relativePath, layer, kind, language, part, inclusionMode and hash; `summary` is conditional — it is absent for languages with no structural summary, and `summaryOmitted: true` marks a summary dropped to fit the part budget; encoding appears when the file was not plain UTF-8.",
         "manifest.skipped[] carries the path and the exact reason it was excluded.",
         `The output directory is replaced atomically; ${MIN_MAX_PART_BYTES} bytes is the smallest legal budget.`,
       ],

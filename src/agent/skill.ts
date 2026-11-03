@@ -2,6 +2,15 @@ import { GENERATOR_VERSION } from "../index.js";
 
 const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
 
+/**
+ * Major version of the build that ships this skill.
+ *
+ * The verify step probes the floating `@latest` tag, so it may only compare the
+ * major: the tag can lag or lead the release, and an exact patch would make the
+ * skill's first instruction impossible to satisfy.
+ */
+const MAJOR_VERSION = GENERATOR_VERSION.split(".")[0];
+
 /** Name of the skill as agents see it (directory name, frontmatter `name`). */
 export const SKILL_NAME = "codebase-snapshot";
 
@@ -39,15 +48,19 @@ another model, and reading files one by one would not fit in context.
 This tool is a Node CLI. It needs **Node.js 18 or newer**. You do not need to install it
 globally, and you do not need to clone anything.
 
-**Pin the tag** — \`npx ${PACKAGE_NAME}@latest <command>\` — when you need the same version on
-every machine. The bare package name works too: this package ships exactly one executable,
-which is what lets npm pick it. If a command exits 0 printing nothing, the executable was
-not resolved — clear the npm cache and retry; do not assume the repository is broken.
+**Pin a version** — \`npx ${PACKAGE_NAME}@${MAJOR_VERSION} <command>\` (or an exact release) — when you
+need the same version on every machine. The bare package name works too: this package ships
+exactly one executable, which is what lets npm pick it. If a command exits 0 printing nothing,
+the executable was not resolved — clear the npm cache and retry; do not assume the repository
+is broken.
 
 ## Step by step
 
-1. **Verify the tool.** Run \`npx ${PACKAGE_NAME}@latest --version\`. Expect \`v${GENERATOR_VERSION}\` or
-   newer on stdout. Empty output means you hit the bare-spec problem above.
+1. **Verify the tool.** Run \`npx ${PACKAGE_NAME}@latest --version\`. Expect \`v${MAJOR_VERSION}\` or
+   newer on stdout — compare the major version, not the patch, because the
+   \`@latest\` tag can lag this release. If the printed major is older, pin the
+   major (\`@${MAJOR_VERSION}\`) instead of retrying. Empty output means you hit the
+   bare-spec problem above.
 
 2. **Read the contract, not the prose.** Run
    \`npx ${PACKAGE_NAME}@latest describe --format json\`. It returns the full machine
@@ -61,11 +74,12 @@ not resolved — clear the npm cache and retry; do not assume the repository is 
    \`--format json\` if you want to parse it.
 
 4. **Configure (recommended).** Run \`npx ${PACKAGE_NAME}@latest init --yes\`. It detects
-   the project shape, then writes \`snapshot.config.ts\` (or \`.mjs\` when the project is
-   not an ES module) listing **every** setting at its
-   current value, commented. Pass \`--preset <name>\` only if detection is wrong; the
-   preset names are in the contract. This step is optional: without a config the tool
-   runs on the same defaults.
+   the project shape, then writes a commented config file listing **every** setting at its
+   current value. The filename depends on the project: \`snapshot.config.ts\` only when
+   the running Node can strip types (Node >= 22.6) **and** the project is an ES module
+   (\`"type": "module"\` in package.json); otherwise \`snapshot.config.mjs\`. Pass
+   \`--preset <name>\` only if detection is wrong; the preset names are in the contract.
+   This step is optional: without a config the tool runs on the same defaults.
 
 5. **Generate.** Run \`npx ${PACKAGE_NAME}@latest generate\`. Expect exit 0 and a
    \`./snapshot/\` directory. If you need a different location use \`--out-dir <path>\`; if
@@ -76,9 +90,13 @@ not resolved — clear the npm cache and retry; do not assume the repository is 
 
 7. **Read the output in this order:**
    - \`snapshot/parts/part-*.md\` — the code itself, each file tagged with its layer, kind,
-     language and a structural summary (imports, exports, classes, functions).
+     language and, when it fits the budget, a structural summary (imports, exports,
+     classes, functions). A dropped summary appears as a \`Summary: (omitted …)\` line.
    - \`snapshot/manifest.json\` — the index. \`files[]\` has \`relativePath\`, \`layer\`,
-     \`kind\`, \`language\`, \`part\`, \`inclusionMode\`, \`hashSha256\` and \`summary\`.
+     \`kind\`, \`language\`, \`part\`, \`inclusionMode\` and \`hashSha256\`, plus \`encoding\`
+     when the file was not plain UTF-8. \`summary\` is **optional**: it is absent for
+     languages with no structural summary, and \`summaryOmitted: true\` marks one dropped
+     to fit the part budget — never assume it exists.
      \`skipped[]\` records every excluded file **and why**. Prefer querying this over
      re-reading the parts.
    - \`snapshot/reports/audit.md\` — secrets found, large files, parse diagnostics, git
