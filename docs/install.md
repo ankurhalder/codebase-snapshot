@@ -1,42 +1,33 @@
 # Installation
 
-`@ankurhalder/codebase-snapshot` is published to the public npm registry, so it installs
-with **any** npm-compatible client. There is nothing extra to configure and no second
-registry to add.
+`@ankurhalder/codebase-snapshot` is published to the public npm registry, so it installs with
+**any** npm-compatible client. There is no second registry to add and nothing to configure.
 
 Requires **Node.js 18 or newer**.
 
-## One-off use (no install)
+## One-off use
 
 ```bash
 npx @ankurhalder/codebase-snapshot generate
 ```
 
+This is the shortest path and needs no install. The command is also available as
+`codebase-snapshot` and, once installed, as the short alias `snap`.
+
 Pin the version when you need the same build on every machine:
 
 ```bash
 npx @ankurhalder/codebase-snapshot@latest generate
-npx @ankurhalder/codebase-snapshot@3 generate
+npx @ankurhalder/codebase-snapshot@4 generate
 ```
 
-The bare form works because this package ships **exactly one executable**
-(`codebase-snapshot`). That is deliberate: npm resolves which binary to run by matching the
-typed command against the package's `bin` keys, and no key can contain an `@scope/`, so a
-scoped package with several executables cannot be run by its bare name. If a command ever
-exits with no output, clear the npm cache and retry — see troubleshooting.
+**Why the bare name works.** npm resolves which binary to run from the package's `bin`
+entries. This package declares `codebase-snapshot` and `snap` pointing at the *same file*, so
+npm treats them as aliases and can always resolve one. Keep them aliases: two *different*
+executables under a scoped package name would make the bare form unresolvable.
 
-`npx -p @ankurhalder/codebase-snapshot codebase-snapshot generate`, `pnpm dlx`,
-`yarn dlx` and `bunx` are equivalent. A normal `npm install -D` followed by
-`npx codebase-snapshot` is the more reproducible choice for a project.
-
-Equivalent one-liners for other clients:
-
-```bash
-yarn dlx -p @ankurhalder/codebase-snapshot codebase-snapshot generate   # yarn Berry
-yarn global add @ankurhalder/codebase-snapshot             # yarn classic (installs globally)
-pnpm dlx @ankurhalder/codebase-snapshot generate
-bunx @ankurhalder/codebase-snapshot generate
-```
+If a command exits with no output at all, a stale global install is the usual cause — see
+[Troubleshooting](#troubleshooting).
 
 ## Add to a project
 
@@ -47,18 +38,17 @@ pnpm add -D @ankurhalder/codebase-snapshot
 bun add -d @ankurhalder/codebase-snapshot
 ```
 
-Then run it through your client so it resolves from the project's `node_modules`:
+Then run it through your client so the binary resolves from the project:
 
-```bash
-npx codebase-snapshot generate
-yarn codebase-snapshot generate
-pnpm exec codebase-snapshot generate
-bun run codebase-snapshot generate
-```
+| Client | Run |
+| :--- | :--- |
+| npm | `npx codebase-snapshot generate` |
+| yarn (classic and Berry) | `yarn codebase-snapshot generate` |
+| pnpm | `pnpm exec codebase-snapshot generate` |
+| bun | `bun run codebase-snapshot generate` |
 
-Both `codebase-snapshot` and `codebase-snapshot` are exposed as binaries — pick whichever you prefer.
-
-Adding it to `package.json` scripts works the same everywhere:
+`snap` works everywhere `codebase-snapshot` does. Adding it to `package.json` scripts is the
+most reproducible option:
 
 ```json
 {
@@ -69,85 +59,123 @@ Adding it to `package.json` scripts works the same everywhere:
 }
 ```
 
+`codebase-snapshot init` writes these entries for you.
+
+## One-off runners for other clients
+
+```bash
+yarn dlx -p @ankurhalder/codebase-snapshot codebase-snapshot generate   # yarn Berry
+pnpm dlx @ankurhalder/codebase-snapshot generate
+bunx @ankurhalder/codebase-snapshot generate
+```
+
+## Agent skill
+
+To make a repository discoverable by an AI agent — so it finds this tool without being told
+it exists — run:
+
+```bash
+npx @ankurhalder/codebase-snapshot skill --install
+```
+
+That writes an `AGENTS.md` section, `.claude/skills/codebase-snapshot/SKILL.md` and
+`.cursor/rules/codebase-snapshot.mdc`. Re-running only replaces its own marked block. See
+[Using this with an AI agent](agent.md).
+
+## Verified clients
+
+Every client below installs the published package and runs it successfully; a CI matrix
+enforces this on every pull request, so a change that breaks one fails the build rather than
+a user's terminal.
+
+| Client | Run installed binary with |
+| :--- | :--- |
+| npm 10–11 | `npx codebase-snapshot` |
+| yarn classic 1.22 | `yarn codebase-snapshot` |
+| yarn Berry 4.6 (`nodeLinker: pnp`) | `yarn codebase-snapshot` |
+| pnpm 10 | `pnpm exec codebase-snapshot` |
+| bun 1.4 | `bun run codebase-snapshot` |
+
+Yarn Berry's default **strict PnP** works: there is no `node_modules` directory, and the
+runtime `typescript` dependency still resolves through yarn's `.pnp.cjs` loader.
+
+## Before scanning a repository you do not own
+
+A `snapshot.config.ts`, `.js`, `.mjs` or `.cjs` in the target repository is **imported and
+executed** when the tool runs there — that is what lets a config express a `RegExp` or a
+`match` function. Pointing `--cwd` at a checkout you do not trust therefore runs its code.
+`--no-config` ignores every config file and uses the built-in defaults plus the detected
+preset, and JSON configs are parsed rather than executed. See
+[the trust boundary](../SECURITY.md#trust-boundary).
+
 ## Global install
 
 ```bash
 npm install -g @ankurhalder/codebase-snapshot
-pnpm add -g @ankurhalder/codebase-snapshot
-bun add -g @ankurhalder/codebase-snapshot
 ```
 
-A global install exists for convenience, but pinning the version per project (the
-`-D`/`--save-dev` examples above) is the better default: snapshots are only reproducible
-if the generator version is reproducible.
+Convenient, but prefer pinning per project: snapshots are only reproducible if the generator
+version is. A global install also shadows `npx` for this package — npm will run your global
+copy instead of the published one, which is confusing when the two differ. That is exactly
+the situation described under [Troubleshooting](#troubleshooting).
 
-## Version pinning
+## Workspaces
+
+The binary resolves from the workspace it is installed in. In a monorepo, install it in the
+package that runs the snapshot (usually the root), or use a one-off runner
+(`npx` / `pnpm dlx` / `yarn dlx` / `bunx`) which works from any subdirectory.
+
+## Upgrading
 
 ```bash
-npx @ankurhalder/codebase-snapshot@2 generate
-pnpm dlx @ankurhalder/codebase-snapshot@3.0.0 generate
+npm install -D @ankurhalder/codebase-snapshot@latest
+npx codebase-snapshot generate     # rewrite the snapshot with the new version
 ```
 
-## Verified clients
+`manifest.generator.version` records which version produced a snapshot. Re-run `generate`
+after an upgrade so the snapshot, and the version it records, match the build you are now
+running.
 
-Every client below was used to install the published package and run
-`codebase-snapshot --version` successfully. This matrix is enforced in CI
-(`.github/workflows/ci.yml` → `client-install`), so a change that breaks a client fails
-the build rather than a user's terminal.
+A snapshot written by **3.0.0 or earlier** is refused rather than replaced: its
+`.codebase-snapshot` marker has no per-snapshot id, so the current build cannot prove it wrote
+the directory. Delete the old snapshot directory and generate again.
 
-| Client | Version tested | Run installed binary with |
-| :--- | :--- | :--- |
-| npm | 10.x | `npx codebase-snapshot` |
-| yarn (classic) | 1.22.22 | `yarn codebase-snapshot` |
-| yarn (Berry, `nodeLinker: pnp`) | 4.6.0 | `yarn codebase-snapshot` |
-| pnpm | 10.28.0 | `pnpm exec codebase-snapshot` |
-| bun | 1.4.4 | `bun run codebase-snapshot` |
-
-Yarn Berry's default **strict PnP** mode works: there is no `node_modules` directory, and
-the runtime `typescript` dependency still resolves through yarn's `.pnp.cjs` loader.
-
-## Package manager workspaces
-
-The binary is resolved from the workspace it is installed in. In a monorepo, install it
-in the package that runs the snapshot (usually the root), or use any client's one-off
-runner (`npx` / `pnpm dlx` / `yarn dlx` / `bunx`) which works from any subdirectory.
+See [CHANGELOG](../CHANGELOG.md) for breaking changes — 3.0.0 removed nothing, but it briefly
+did in error; 4.0.0 restored the `snap` alias.
 
 ## Uninstalling
 
 Standard for your client (`npm uninstall`, `yarn remove`, `pnpm remove`, `bun remove`).
-Snapshots already written to `snapshot/` are ordinary files and are left alone.
-
-## Not supported yet
-
-- **`pip`, `brew`, `scoop`, `docker`, and standalone binaries.** These require shipping a
-  prebuilt executable rather than JavaScript, and are tracked as future work in
-  [docs/plans/distribution](../plans/distribution/README.md). Until then, any machine
-  running the tool needs Node 18+.
-- **Deno.** The API can be imported under Deno's npm compatibility, but running the CLI
-  needs a `./bin` subpath export that is not published yet.
+Snapshots already written to the output directory are ordinary files and are left alone.
+If you installed globally, `npm rm -g @ankurhalder/codebase-snapshot` also removes the
+shim that shadows `npx`.
 
 ## Troubleshooting
 
-**`codebase-snapshot: command not found`** — when installed locally (not globally), the binary lives
-in `node_modules/.bin` and is only on your `PATH` inside a package script or a client
-runner. Use `npx codebase-snapshot`, `pnpm exec codebase-snapshot`, `yarn codebase-snapshot`, or `bun run codebase-snapshot`.
+**`codebase-snapshot: command not found`** — when installed locally (not globally) the binary
+lives in `node_modules/.bin` and is only on `PATH` inside a package script or a client
+runner. Use `npx codebase-snapshot`, `pnpm exec codebase-snapshot`,
+`yarn codebase-snapshot` or `bun run codebase-snapshot`.
 
-**`Cannot find module 'typescript'`** — the package declares `typescript` as a runtime
-dependency for AST analysis. If your client prunes or externalizes it (some bundlers and
-`--ignore-scripts` CI setups do), rerun a clean install, or pin `typescript@^5` yourself.
-
-**CI has no Node** — that is not supported yet; this package is JavaScript and needs a
-Node runtime. See the future-work note above.
-
-**`yarn codebase-snapshot` prints extra lines, or breaks a script that parses output** — yarn classic
-wraps everything: it echoes `yarn run 1.22.22`, the resolved command, your tool's output,
-and a `Done in 0.37s.` trailer. For a human that is harmless; for anything that parses
-`codebase-snapshot`'s stdout it is not. In scripts and CI, call the binary directly:
+**A command exits 0 and prints nothing** — almost always a stale **global** install
+shadowing `npx`. Check and remove it:
 
 ```bash
-./node_modules/.bin/codebase-snapshot generate
-npx codebase-snapshot generate          # same, without the yarn wrapper
+npm ls -g --depth=0 | grep codebase-snapshot
+npm rm -g @ankurhalder/codebase-snapshot
 ```
 
-This is why the CI job in this repository reads the version from a line that *is* the
-version rather than taking the first or last line of output.
+Then re-run. If the package is not installed globally, clear the npx cache
+(`npm cache clean --force`) and retry.
+
+**`Cannot find module 'typescript'`** — the package declares `typescript` as a runtime
+dependency for AST analysis. If your client prunes it (some `--ignore-scripts` CI setups do),
+rerun a clean install or pin `typescript@^5` yourself.
+
+**`yarn codebase-snapshot` prints extra lines / breaks a script** — yarn classic wraps
+everything: it echoes `yarn run 1.22.x`, the resolved command, your output, then
+`Done in 0.37s.`. For anything that parses the output, call the binary directly
+(`./node_modules/.bin/codebase-snapshot` or `npx codebase-snapshot`).
+
+More symptoms — refusals, config errors, drift, missing files — are in
+[Troubleshooting](troubleshooting.md).

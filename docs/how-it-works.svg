@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="240" viewBox="0 0 880 240" role="img" aria-label="codebase-snapshot pipeline: a repository is scanned, classified by an auto-detected preset, redacted, packed into size-budgeted parts, and written as a snapshot with a manifest and reports.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+    <style>
+      .box { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.5; }
+      .out { fill: #eef7ee; stroke: #b7e0b7; stroke-width: 1.5; }
+      .t   { font: 600 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+      .s   { font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #57606a; }
+      .m   { font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #57606a; }
+      .l   { stroke: #57606a; stroke-width: 1.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <text class="m" x="16" y="26">codebase-snapshot generate</text>
+
+  <!-- repository -->
+  <rect class="box" x="16" y="70" width="132" height="70" rx="8"/>
+  <text class="t" x="34" y="100">Repository</text>
+  <text class="s" x="34" y="118">any language</text>
+
+  <line class="l" x1="148" y1="105" x2="186" y2="105"/>
+
+  <!-- detect -->
+  <rect class="box" x="186" y="70" width="150" height="70" rx="8"/>
+  <text class="t" x="204" y="96">Detect preset</text>
+  <text class="s" x="204" y="114">25 project shapes</text>
+  <text class="s" x="204" y="130">highest match wins</text>
+
+  <line class="l" x1="336" y1="105" x2="374" y2="105"/>
+
+  <!-- scan -->
+  <rect class="box" x="374" y="70" width="150" height="70" rx="8"/>
+  <text class="t" x="392" y="96">Scan + classify</text>
+  <text class="s" x="392" y="114">layers, kinds, language</text>
+  <text class="s" x="392" y="130">skip rules, git state</text>
+
+  <line class="l" x1="524" y1="105" x2="562" y2="105"/>
+
+  <!-- redact -->
+  <rect class="box" x="562" y="70" width="140" height="70" rx="8"/>
+  <text class="t" x="580" y="96">Redact</text>
+  <text class="s" x="580" y="114">sensitive files out</text>
+  <text class="s" x="580" y="130">matched spans masked</text>
+
+  <line class="l" x1="702" y1="105" x2="740" y2="105"/>
+
+  <!-- pack -->
+  <rect class="out" x="740" y="70" width="124" height="70" rx="8"/>
+  <text class="t" x="758" y="96">Pack by budget</text>
+  <text class="s" x="758" y="114">hard ceiling</text>
+  <text class="s" x="758" y="130">per part</text>
+
+  <!-- output -->
+  <rect class="out" x="740" y="170" width="124" height="54" rx="8"/>
+  <text class="t" x="758" y="192">snapshot/</text>
+  <text class="s" x="758" y="209">parts · manifest · reports</text>
+  <line class="l" x1="802" y1="140" x2="802" y2="168"/>
+
+  <text class="s" x="16" y="196">Deterministic: the same repository produces the same parts and the same manifest fingerprint.</text>
+  <text class="s" x="16" y="214">validate re-hashes the repository against the snapshot and exits non-zero on drift.</text>
+</svg>
