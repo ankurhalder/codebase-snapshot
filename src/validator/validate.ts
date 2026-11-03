@@ -10,7 +10,7 @@ import {
   resolveConfig,
 } from "../config.js";
 import { collectFiles, findSecretInPath, getGitInfo } from "../scanner/files.js";
-import { isBinaryFile } from "../scanner/binary.js";
+import { decodeText, isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
   ResolvedSnapshotConfig,
@@ -52,10 +52,73 @@ function confineToDirectory(directory: string, filename: string): string | null 
   return candidate.startsWith(prefix) ? resolved : null;
 }
 
+/** The newest `run-*` staging directory under `tmpDir`, or null when there is none. */
+function findStagingDirectory(config: ResolvedSnapshotConfig): string | null {
+  const tmpDir = path.resolve(config.cwd, config.tmpDir);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(tmpDir);
+  } catch {
+    return null;
+  }
+  const runs = entries.filter((name) => name.startsWith("run-")).sort();
+  const newest = runs[runs.length - 1];
+  return newest ? path.join(tmpDir, newest) : null;
+}
+
+/**
+ * Explains a missing manifest, and says so differently when a run died.
+ *
+ * `validate` and `report` used to answer "run generate first" whenever `manifest.json` was absent,
+ * including for a directory this generator had already written a marker into. That answer could
+ * never resolve: generation had already run, and it had failed after starting. The marker carries
+ * the state, the run id and the start time, so the message can name them and say what to do.
+ */
+function describeMissingManifest(config: ResolvedSnapshotConfig, manifestPath: string): string {
+  const outDir = path.resolve(config.cwd, config.outDir);
+  const markerPath = path.join(outDir, ".codebase-snapshot");
+
+  let marker: Record<string, unknown> | null = null;
+  try {
+    if (fs.existsSync(markerPath)) {
+      const parsed: unknown = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        marker = parsed as Record<string, unknown>;
+      }
+    }
+  } catch {
+    marker = null;
+  }
+
+  if (marker) {
+    const state = typeof marker.state === "string" ? marker.state : "unknown";
+    const runId = typeof marker.id === "string" ? marker.id : "unknown";
+    const createdAt = typeof marker.createdAt === "string" ? marker.createdAt : "unknown";
+    const staging = findStagingDirectory(config);
+
+    if (state === "staging") {
+      return (
+        `The previous generate run did not finish: ${outDir} holds a .codebase-snapshot marker in ` +
+        `state "staging" (run ${runId}, started ${createdAt}) and no manifest.json. ` +
+        (staging ? `Its staging directory is still at ${staging}. ` : "") +
+        "Run generate again to rebuild the snapshot; if another run is active, wait for it to finish first."
+      );
+    }
+
+    return (
+      `${outDir} carries this generator's ownership marker but no manifest.json, so the snapshot is ` +
+      `incomplete (run ${runId}, recorded ${createdAt}, state "${state}"). Run generate again to rebuild it.`
+    );
+  }
+
+  return `Snapshot manifest not found at: ${manifestPath}. Run generate first.`;
+}
+
 function emptyDrift(): ValidationDrift {
   return {
     missingInSnapshot: [],
     missingOnDisk: [],
+    unreadable: [],
     hashMismatches: [],
     partIssues: [],
     totalsMismatches: [],
@@ -76,11 +139,24 @@ function sha256Hex(buffer: Buffer): string {
  * held NUL bytes then and is plain text now must surface as drift, otherwise
  * `generate` silently adds a file `validate` said was absent.
  */
-function wouldNowBeIncluded(cwd: string, relativePath: string): boolean {
+/** A file skipped as binary is not re-read past this size just to confirm it is still binary. */
+const VERIFY_SNIFF_MAX_BYTES = 8 * 1024 * 1024;
+function wouldNowBeIncluded(cwd: string, relativePath: string, reason?: string): boolean {
   const absolutePath = path.join(cwd, relativePath);
   try {
-    if (!fs.statSync(absolutePath).isFile()) return false;
-    return !isBinaryFile(absolutePath);
+    const stats = fs.statSync(absolutePath);
+    if (!stats.isFile()) return false;
+    if (isBinaryFile(absolutePath)) return false;
+    if (reason !== "binary") return true;
+
+    // `generate` decides "binary" a second time, on the bytes it actually reads: a control-byte
+    // payload, or a NUL past the head scan, is a file the cheap pre-read check above cannot
+    // recognise. Asking only the cheap question made `validate` call a file generate had just
+    // skipped a "new file" — two commands disagreeing about the same tree. A very large skipped
+    // file is not read again: it was skipped as binary, and re-reading a gigabyte to confirm it
+    // would cost more than the answer is worth.
+    if (stats.size > VERIFY_SNIFF_MAX_BYTES) return false;
+    return !decodeText(fs.readFileSync(absolutePath)).binary;
   } catch {
     return false;
   }
@@ -110,11 +186,14 @@ export function validateSnapshot(
   const manifestPath = path.resolve(config.cwd, config.outDir, "manifest.json");
 
   if (!fs.existsSync(manifestPath)) {
+    // "Not found" is the wrong diagnosis when a run died: the directory is there, it even carries
+    // this tool's marker, and the marker says a snapshot was being written. Saying "run generate
+    // first" forever sent the reader round a loop that could not terminate.
     return {
       valid: false,
       manifestPresent: false,
       drift: emptyDrift(),
-      errors: [`Snapshot manifest not found at: ${manifestPath}`],
+      errors: [describeMissingManifest(config, manifestPath)],
       warnings: [],
     };
   }
@@ -164,12 +243,17 @@ export function validateSnapshot(
 
   // Paths in the shipped manifest are already masked, so a disk path is matched
   // in both forms: raw (record predates masking) and masked (current records).
-  const skippedSet = new Set(
-    manifest.skipped.filter((entry) => entry && typeof entry.path === "string").map((entry) => entry.path)
-  );
-  const isSkippedOnDisk = (diskFile: string): boolean => {
-    if (skippedSet.has(diskFile)) return true;
-    return skippedSet.has(maskedPath(diskFile, config.secretRules));
+  const skippedReasons = new Map<string, string>();
+  for (const entry of manifest.skipped) {
+    if (entry && typeof entry.path === "string" && typeof entry.reason === "string") {
+      skippedReasons.set(entry.path, entry.reason);
+    }
+  }
+  /** The recorded reason this disk path was skipped for, or null when it was not. */
+  const skippedReasonOnDisk = (diskFile: string): string | null => {
+    const direct = skippedReasons.get(diskFile);
+    if (direct !== undefined) return direct;
+    return skippedReasons.get(maskedPath(diskFile, config.secretRules)) ?? null;
   };
 
   const collection = collectFiles(config.cwd, {
@@ -184,7 +268,8 @@ export function validateSnapshot(
     if (!snapshotHash) {
       // A path in `skipped[]` is not permanently exempt: re-evaluate it and
       // report drift when it would now be included.
-      if (isSkippedOnDisk(diskFile) && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
+      const skipReason = skippedReasonOnDisk(diskFile);
+      if (skipReason !== null && !wouldNowBeIncluded(config.cwd, diskFile, skipReason)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
     }
@@ -192,8 +277,15 @@ export function validateSnapshot(
     let diskHash: string;
     try {
       diskHash = sha256Hex(fs.readFileSync(path.join(config.cwd, diskFile)));
-    } catch {
-      drift.missingOnDisk.push(diskFile);
+    } catch (err) {
+      // A file that exists but cannot be read is not a deleted file. Filing it under "no longer
+      // exists on disk" sent the reader looking for a file that is right there, and it is a
+      // different problem with a different fix (permissions, not a re-generate).
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        drift.missingOnDisk.push(diskFile);
+      } else {
+        drift.unreadable.push(diskFile);
+      }
       continue;
     }
     if (diskHash !== snapshotHash) {
@@ -315,6 +407,15 @@ export function validateSnapshot(
       "configuration: the settings differ from the ones this snapshot was generated with " +
         "(run generate)"
     );
+  } else if (!recorded?.digest) {
+    // No digest means no way to verify the settings: the per-field fallback below covers only the
+    // fields it knows, so a snapshot written before 4.0.5 — or one with the digest removed — would
+    // pass while `maxMonolithBytes`, `layers`, `kinds` and custom secret rules had changed. A
+    // snapshot whose configuration cannot be checked is not up to date; it is unverifiable.
+    drift.configMismatches.push(
+      "configuration: the manifest records no configuration digest, so settings drift cannot be " +
+        "verified (run generate to record one)"
+    );
   }
   if (recorded && typeof recorded === "object") {
     if (recorded.maxPartBytes !== config.maxPartBytes) {
@@ -340,6 +441,16 @@ export function validateSnapshot(
     if (recorded.includeSensitiveFiles !== config.includeSensitiveFiles) {
       drift.configMismatches.push(
         `includeSensitiveFiles: manifest ${recorded.includeSensitiveFiles} vs current ${config.includeSensitiveFiles}`
+      );
+    }
+    const effectiveDiscovery = config.discovery ?? "auto";
+    const recordedDiscovery = recorded.discovery;
+    if (recordedDiscovery !== undefined && recordedDiscovery !== effectiveDiscovery) {
+      // How files were discovered changes which files a snapshot contains, so it is drift in
+      // exactly the same sense as a changed exclude pattern. Manifests written before this was
+      // recorded carry no key at all, and "not recorded" is not the same as "different".
+      drift.configMismatches.push(
+        `discovery: manifest ${recordedDiscovery} vs current ${effectiveDiscovery}`
       );
     }
     const recordedExcludes = Array.isArray(recorded.excludePatterns)
@@ -531,6 +642,12 @@ export function validateSnapshot(
   if (drift.missingOnDisk.length > 0) {
     errors.push(`${drift.missingOnDisk.length} file(s) in snapshot no longer exist on disk.`);
   }
+  if (drift.unreadable.length > 0) {
+    errors.push(
+      `${drift.unreadable.length} file(s) exist on disk but could not be read, so their content ` +
+        `could not be verified.`
+    );
+  }
   if (drift.hashMismatches.length > 0) {
     errors.push(
       `${drift.hashMismatches.length} file(s) have been modified since the snapshot was generated.`
@@ -557,6 +674,7 @@ export function validateSnapshot(
     ...drift,
     missingInSnapshot: drift.missingInSnapshot.map((value) => maskedPath(value, config.secretRules)),
     missingOnDisk: drift.missingOnDisk.map((value) => maskedPath(value, config.secretRules)),
+    unreadable: drift.unreadable.map((value) => maskedPath(value, config.secretRules)),
     hashMismatches: drift.hashMismatches.map((mismatch) => ({
       ...mismatch,
       path: maskedPath(mismatch.path, config.secretRules),

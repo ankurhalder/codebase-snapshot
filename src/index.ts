@@ -1278,7 +1278,22 @@ export function generateSnapshot(
     try {
       stats = fs.statSync(absolutePath);
       if (!stats.isFile()) {
-        skipped.push({ path: relativePath, reason: "not-file" });
+        // A submodule is a single gitlink, so git lists a path where a file is expected and the
+        // stat answers "directory". Reporting that as `not-file` implied a socket or a FIFO; a
+        // nested checkout is a different fact, and one the reader needs to know: the contents
+        // exist and are simply somebody else's history.
+        const nestedRepository =
+          stats.isDirectory() && fs.existsSync(path.join(absolutePath, ".git"));
+        skipped.push(
+          nestedRepository
+            ? {
+                path: relativePath,
+                reason: "nested-repository" as const,
+                detail:
+                  "a directory belonging to another repository (nested checkout or submodule); its contents are not scanned",
+              }
+            : { path: relativePath, reason: "not-file" }
+        );
         continue;
       }
     } catch {
@@ -1524,6 +1539,7 @@ export function generateSnapshot(
       previewTailLines: config.previewTailLines,
       includeMonolith: config.includeMonolith,
       includeSensitiveFiles: config.includeSensitiveFiles,
+      discovery: config.discovery ?? "auto",
       artifacts: { ...config.artifacts },
       include: [...config.include].map(maskName),
       preset: config.preset,

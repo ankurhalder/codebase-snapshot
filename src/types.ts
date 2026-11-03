@@ -2,6 +2,15 @@ export type Mode = "generate" | "validate" | "report";
 export type OutputFormat = "text" | "json";
 
 /**
+ * How files are discovered.
+ *
+ * `auto` lists files through git when git can do it and walks the tree otherwise; `git` and `walk`
+ * force one path. It is part of the manifest's recorded settings because it decides which files a
+ * snapshot contains — the same repository scanned both ways is two different snapshots.
+ */
+export type DiscoveryMode = "auto" | "git" | "walk";
+
+/**
  * How a file's bytes became text.
  *
  * Absent from a `FileEntry` means plain UTF-8, which is the overwhelmingly common case. The other
@@ -82,7 +91,15 @@ export type SkipReason =
   /** Excluded by a built-in rule: the ignore list, a preset, or an output dir. */
   | "default-ignore"
   /** Excluded by the user's own `excludePatterns` or `include` allow-list. */
-  | "excluded";
+  | "excluded"
+  /**
+   * A directory that belongs to another repository: a nested checkout or a submodule.
+   *
+   * A submodule is a single gitlink entry, so `stat` reports a directory where a file was
+   * expected — which used to be recorded as the generic `not-file`, implying the path was a
+   * socket or a FIFO rather than a repository whose contents are simply somebody else's.
+   */
+  | "nested-repository";
 
 export interface SkipRecord {
   /** Path as it may be shown in an artifact: secret spans are masked. */
@@ -222,6 +239,8 @@ export interface ManifestConfigSnapshot {
   previewTailLines: number;
   includeMonolith: boolean;
   includeSensitiveFiles: boolean;
+  /** How files were discovered; `undefined` on manifests written before this was recorded. */
+  discovery?: DiscoveryMode;
   artifacts: ResolvedArtifacts;
   include: string[];
   preset: string;
@@ -386,6 +405,12 @@ export interface ResolvedSnapshotConfig {
   includeMonolith: boolean;
   maxMonolithBytes: number | null;
   includeSensitiveFiles: boolean;
+  /**
+   * How files are discovered; `auto` picks git when it can list files and walks the tree otherwise.
+   * Optional because a resolved config can arrive from an older caller that never named it — every
+   * reader treats `undefined` as `auto`, so the effective mode is never guessed twice.
+   */
+  discovery?: DiscoveryMode;
   /** Empty means "no allow-list"; every discovered file is a candidate. */
   include: string[];
   /** The preset that was resolved (detected or forced). */
@@ -420,6 +445,8 @@ export interface CliOptions {
 export interface ValidationDrift {
   missingInSnapshot: string[];
   missingOnDisk: string[];
+  /** Files that exist but could not be read, so their content could not be verified. */
+  unreadable: string[];
   hashMismatches: Array<{ path: string; diskHash: string; snapshotHash: string }>;
   /** Emitted `parts/*.md` that are missing or no longer match their recorded hash. */
   partIssues: Array<{ part: string; issue: string }>;

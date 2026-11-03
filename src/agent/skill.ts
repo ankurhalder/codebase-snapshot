@@ -50,7 +50,8 @@ globally, and you do not need to clone anything.
 
 **Pin a version** — \`npx ${PACKAGE_NAME}@${MAJOR_VERSION} <command>\` (or an exact release) — when you
 need the same version on every machine. The bare package name works too: this package ships
-exactly one executable, which is what lets npm pick it. If a command exits 0 printing nothing,
+one executable file, published under two names (\`codebase-snapshot\` and \`snap\`), which is what
+lets npm pick it. If a command exits 0 printing nothing,
 the executable was not resolved — clear the npm cache and retry; do not assume the repository
 is broken.
 
@@ -135,6 +136,9 @@ any of this to get a good first snapshot.
 Run \`npx ${PACKAGE_NAME}@latest skill --install\`. It writes this skill into the
 repository in the places agents look for it by default: an \`AGENTS.md\` section,
 \`.claude/skills/${SKILL_NAME}/SKILL.md\`, and \`.cursor/rules/${SKILL_NAME}.mdc\`. The command
-is idempotent and only replaces its own marked section.
+is idempotent: it replaces its own marked section, and repairs a malformed one (missing,
+duplicated or nested markers) into a single block while leaving the rest of the file alone.
+It refuses a target that resolves outside the repository, so a linked \`.claude/\` cannot
+be used to write elsewhere.
 `;
 }

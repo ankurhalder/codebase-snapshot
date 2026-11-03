@@ -10,6 +10,36 @@ export interface ManifestDiff {
   removed: string[];
   changed: string[];
   unchanged: number;
+  /** What differs beyond the per-file list: the configuration and the emitted payload. */
+  payload: PayloadDiff;
+}
+
+/**
+ * A difference the per-file list cannot express.
+ *
+ * Per-file comparison is `relativePath + hashSha256`, so a run that changes only
+ * the *emitted* payload — `--large-file-bytes` turning a large preview into its
+ * full body, different preview head/tail counts, different redaction rules,
+ * different artifact selection — used to report "0 changed, N unchanged" and
+ * nothing else. The manifests already record the effective-settings digest, the
+ * content fingerprint and the part count, so this block says plainly when the
+ * source files are identical but the snapshot handed to the model is not.
+ */
+export interface PayloadDiff {
+  /** No source file was added, removed or changed. */
+  sourceFilesIdentical: boolean;
+  /** The emitted payload, or the configuration that produced it, differs. */
+  differs: boolean;
+  /** The generator or the effective settings differ, independent of any source edit. */
+  configurationDiffers: boolean;
+  generator: { before: string; after: string };
+  /** `null` when the manifest predates the digest (written before 4.0.5). */
+  configDigest: { before: string | null; after: string | null };
+  fingerprint: { before: string; after: string };
+  partsCount: { before: number; after: number };
+  layers: { before: Record<string, number>; after: Record<string, number> };
+  /** Human-readable statements, rendered by the terminal form. */
+  reasons: string[];
 }
 
 interface DiffSide {
@@ -25,6 +55,103 @@ function side(manifest: Manifest): DiffSide {
     fingerprint: manifest.fingerprint,
     fileCount: manifest.counts.totalFiles,
     partsCount: manifest.counts.partsCount,
+  };
+}
+
+/** Twelve hex characters are enough to compare two digests by eye. */
+function shortDigest(value: string | null): string {
+  return value === null ? "not recorded" : `${value.slice(0, 12)}…`;
+}
+
+/** `layer "api": 2 file(s) → 3 file(s)` for every layer whose count moved. */
+function describeLayerChanges(
+  before: Record<string, number>,
+  after: Record<string, number>
+): string[] {
+  const names = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
+  const changes: string[] = [];
+  for (const name of names) {
+    const was = before[name] ?? 0;
+    const now = after[name] ?? 0;
+    if (was === now) continue;
+    // A layer name is config-supplied and lands in every artifact; mask it like a path.
+    const label = findSecretInPath(name)?.masked ?? name;
+    changes.push(`layer "${label}": ${was} file(s) → ${now} file(s)`);
+  }
+  return changes;
+}
+
+/**
+ * Builds the payload/configuration block.
+ *
+ * `differs` is true when the settings or the generator differ, or when the source
+ * set is identical yet the content fingerprint or the part count moved — the two
+ * cases in which the per-file list says "0 changed" while the emitted snapshot is
+ * different. A source edit alone is already reported by the file list and does
+ * not turn this block on.
+ */
+function describePayloadDiff(
+  before: Manifest,
+  after: Manifest,
+  sourceFilesIdentical: boolean
+): PayloadDiff {
+  const generatorBefore = before.generator?.version ?? "unknown";
+  const generatorAfter = after.generator?.version ?? "unknown";
+  const digestBefore = typeof before.config?.digest === "string" ? before.config.digest : null;
+  const digestAfter = typeof after.config?.digest === "string" ? after.config.digest : null;
+
+  const generatorDiffers = generatorBefore !== generatorAfter;
+  const digestDiffers =
+    digestBefore !== null && digestAfter !== null && digestBefore !== digestAfter;
+  const configurationDiffers = generatorDiffers || digestDiffers;
+
+  const fingerprintDiffers = before.fingerprint !== after.fingerprint;
+  const partsDiffer = before.counts.partsCount !== after.counts.partsCount;
+  const layerChanges = describeLayerChanges(before.layers ?? {}, after.layers ?? {});
+
+  const reasons: string[] = [];
+  if (digestDiffers) {
+    reasons.push(
+      `configuration digest ${shortDigest(digestBefore)} → ${shortDigest(digestAfter)} ` +
+        "(budgets, preview thresholds, redaction rules and artifact selection all count)"
+    );
+  } else if (digestBefore === null || digestAfter === null) {
+    const missing = digestBefore === null && digestAfter !== null
+      ? "before"
+      : digestAfter === null && digestBefore !== null
+        ? "after"
+        : "both";
+    reasons.push(
+      `configuration digest not recorded on the ${missing} side (manifest written before 4.0.5); ` +
+        "compared the content fingerprint and part count instead"
+    );
+  }
+  if (generatorDiffers) {
+    reasons.push(`generator ${generatorBefore} → ${generatorAfter}`);
+  }
+  if (fingerprintDiffers && (sourceFilesIdentical || configurationDiffers)) {
+    reasons.push(
+      `content fingerprint ${shortDigest(before.fingerprint)} → ${shortDigest(after.fingerprint)}` +
+        (sourceFilesIdentical ? " (same source files, packed differently)" : "")
+    );
+  }
+  if (partsDiffer) {
+    reasons.push(`${before.counts.partsCount} part(s) → ${after.counts.partsCount} part(s)`);
+  }
+  reasons.push(...layerChanges);
+
+  return {
+    sourceFilesIdentical,
+    differs:
+      configurationDiffers ||
+      (sourceFilesIdentical && (fingerprintDiffers || partsDiffer || layerChanges.length > 0)),
+    configurationDiffers,
+    generator: { before: generatorBefore, after: generatorAfter },
+    configDigest: { before: digestBefore, after: digestAfter },
+    fingerprint: { before: before.fingerprint, after: after.fingerprint },
+    partsCount: { before: before.counts.partsCount, after: after.counts.partsCount },
+    layers: { before: { ...(before.layers ?? {}) }, after: { ...(after.layers ?? {}) } },
+    reasons,
   };
 }
 
@@ -110,6 +237,9 @@ export function compareManifests(before: Manifest, after: Manifest): ManifestDif
   const sort = (values: string[]): string[] =>
     values.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
+  const sourceFilesIdentical = added.length === 0 && removed.length === 0 && changed.length === 0;
+  const payload = describePayloadDiff(before, after, sourceFilesIdentical);
+
   // `diff` prints these paths and `--format json` ships them: a token in a
   // filename must not come back out of the comparison. Default rules plus the
   // rules `resolveConfig` registered apply.
@@ -123,6 +253,7 @@ export function compareManifests(before: Manifest, after: Manifest): ManifestDif
     removed: mask(sort(removed)),
     changed: mask(sort(changed)),
     unchanged,
+    payload,
   };
 }
 
@@ -184,6 +315,29 @@ export function renderDiffText(diff: ManifestDiff): string {
   section("added:", diff.added);
   section("removed:", diff.removed);
   section("changed:", diff.changed);
+
+  // The per-file list cannot see a settings change that repacks the same sources.
+  // Say it plainly rather than printing "0 changed" and letting the reader assume
+  // the snapshot handed to the model is unchanged.
+  if (diff.payload.differs) {
+    lines.push("", "payload/configuration differs:");
+    for (const reason of diff.payload.reasons) lines.push(`  ! ${reason}`);
+    lines.push(
+      diff.payload.sourceFilesIdentical
+        ? `  source files are identical (${diff.unchanged} unchanged); the snapshot handed to the model differs.`
+        : "  source files differ too; see the file lists above."
+    );
+  } else if (
+    diff.payload.sourceFilesIdentical &&
+    (diff.payload.configDigest.before === null || diff.payload.configDigest.after === null)
+  ) {
+    // Without a digest there is nothing to compare the settings with. Silence
+    // here would read as "the configuration is identical".
+    lines.push(
+      "",
+      "configuration not compared: a manifest has no config digest (written before 4.0.5)."
+    );
+  }
 
   return lines.join("\n");
 }
