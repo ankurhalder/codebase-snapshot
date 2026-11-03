@@ -51,7 +51,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.3";
+export const GENERATOR_VERSION = "4.0.4";
 export const SCHEMA_VERSION = "3.0.0";
 
 
@@ -393,6 +393,20 @@ const RUN_DIR_PREFIX = "run-";
 const STALE_RUN_MS = 60 * 60 * 1000;
 
 /** Masks one path with the default rules plus the caller's custom rules. */
+/** Masks every string inside a summary object, recursively. */
+function maskSummaryStrings(value: unknown, secretRules: readonly SecretRule[]): unknown {
+  if (typeof value === "string") return maskPathText(value, secretRules);
+  if (Array.isArray(value)) return value.map((item) => maskSummaryStrings(item, secretRules));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = maskSummaryStrings(item, secretRules);
+    }
+    return out;
+  }
+  return value;
+}
+
 function maskPathText(value: string, secretRules?: readonly SecretRule[]): string {
   return findSecretInPath(value, secretRules)?.masked ?? value;
 }
@@ -1271,8 +1285,16 @@ export function generateSnapshot(
     let summary: FileEntry["summary"];
     let summaryQuality: SummaryQuality | undefined;
     try {
-      const outcome = summarizeFile(relativePath, redacted);
-      summary = outcome?.summary;
+      // Always parse the original source. Masking a credential-shaped identifier such as
+      // `const secret = previousSecrets[i]` produced syntactically invalid code, so the
+      // parser reported parse errors on files that are perfectly valid TypeScript.
+      const outcome = summarizeFile(relativePath, rawContent);
+      // Parse the raw source (masking an identifier can make valid TypeScript
+      // unparsable), but never let a raw string reach the summary: a secret in a
+      // heading, key or export name is emitted into the manifest and the parts.
+      summary = outcome?.summary
+        ? (maskSummaryStrings(outcome.summary, config.secretRules) as FileEntry["summary"])
+        : undefined;
       summaryQuality = outcome?.quality;
       if (isSourceSummary(summary) && summary.parseErrors) {
         warnings.push(

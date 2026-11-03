@@ -61,7 +61,39 @@ export function generateAuditReport(
     lines.push("");
   }
 
-  lines.push("## 2. Large Files Analysis", "");
+  // Parse diagnostics: the CLI already warns about every file whose AST summary was
+  // incomplete, but the artifact an auditor reads carried none of it.
+  const parseIssues = manifest.files.filter(
+    (file) =>
+      file.summary !== undefined &&
+      typeof file.summary === "object" &&
+      "parseErrors" in file.summary &&
+      typeof (file.summary as { parseErrors?: unknown }).parseErrors === "number" &&
+      (file.summary as { parseErrors: number }).parseErrors > 0
+  );
+  lines.push("## 2. Parse & AST Diagnostics", "");
+  if (parseIssues.length === 0) {
+    lines.push("✅ Every parsed file produced a complete structural summary.", "");
+  } else {
+    lines.push(
+      `${parseIssues.length} file(s) produced an incomplete summary:`,
+      "",
+      "| File | Parse Errors |",
+      "| :--- | ---: |"
+    );
+    for (const file of parseIssues) {
+      const errors = (file.summary as { parseErrors: number }).parseErrors;
+      lines.push(`| \`${mask(file.relativePath)}\` | ${errors} |`);
+    }
+    lines.push(
+      "",
+      "A parse error here means the summary is incomplete, not that the file is excluded —",
+      "the content is still in the parts.",
+      ""
+    );
+  }
+
+  lines.push("## 3. Large Files Analysis", "");
   const largeFiles = manifest.files.filter((file) => file.isLarge);
   if (largeFiles.length === 0) {
     lines.push("✅ No files exceeded the large file budget.", "");
@@ -81,7 +113,7 @@ export function generateAuditReport(
   }
 
   lines.push(
-    "## 3. Architecture Layer Distribution",
+    "## 4. Architecture Layer Distribution",
     "",
     "| Layer | File Count | Percentage |",
     "| :--- | :--- | :--- |"
@@ -96,7 +128,7 @@ export function generateAuditReport(
   lines.push("");
 
   lines.push(
-    "## 4. File Kind Distribution",
+    "## 5. File Kind Distribution",
     "",
     "| Kind | File Count | Percentage |",
     "| :--- | :--- | :--- |"
@@ -109,7 +141,7 @@ export function generateAuditReport(
   }
   lines.push("");
 
-  lines.push("## 5. Skipped / Non-Text Files", "");
+  lines.push("## 6. Skipped / Non-Text Files", "");
   if (manifest.skipped.length === 0) {
     lines.push("No files were skipped.", "");
   } else {

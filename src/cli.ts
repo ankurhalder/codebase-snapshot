@@ -731,7 +731,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       info(`   - Schema:         ${manifest.schemaVersion}`);
       info(`   - Fingerprint:    ${manifest.fingerprint}`);
       info(`   - Files included: ${manifest.counts.totalFiles}`);
-      info(`   - Total lines:    ${manifest.counts.totalLines.toLocaleString()}`);
+      info(`   - Total lines:    ${manifest.counts.totalLines.toLocaleString("en-US")}`);
       info(
         `   - Total size:     ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
       );
@@ -794,7 +794,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     } else {
       info(`\n✅ Snapshot generated in ${elapsed}s:`);
       info(`   - Tracked files: ${manifest.counts.totalFiles}`);
-      info(`   - Total lines:   ${manifest.counts.totalLines.toLocaleString()}`);
+      info(`   - Total lines:   ${manifest.counts.totalLines.toLocaleString("en-US")}`);
       info(
         `   - Total size:    ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
       );
@@ -803,7 +803,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const { artifacts } = resolved;
       if (artifacts.parts) {
         info(
-          `   - Parts written: ${manifest.counts.partsCount} under ${displayOutPath(resolved.cwd, resolved.outDir, "parts")}/`
+          `   - Parts written: ${manifest.counts.partsCount} under ${displayOutPath(resolved.cwd, resolved.outDir, "parts")}`
         );
       }
       const reports = [
@@ -813,7 +813,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       ].filter(Boolean);
       if (reports.length > 0) {
         info(
-          `   - Reports:       ${displayOutPath(resolved.cwd, resolved.outDir, "reports")}/ (${reports.join(", ")})`
+          `   - Reports:       ${displayOutPath(resolved.cwd, resolved.outDir, "reports")} (${reports.join(", ")})`
         );
       }
       if (artifacts.manifest) {
@@ -996,3 +996,26 @@ async function runWatchLoop(
  * exposes `main` and the argument parser without running anything. The
  * executable entry point is `src/bin.ts`.
  */
+
+/**
+ * Run when this file is executed directly.
+ *
+ * `dist/bin.js` calls `main()`, but a stale `node_modules/.bin` shim from an earlier
+ * install can point at `dist/cli.js`. Importing that module to do nothing and exit 0
+ * looked exactly like a successful run with no output.
+ */
+const entryFile = process.argv[1] ?? "";
+const entryName = path.basename(entryFile).toLowerCase();
+const invokedDirectly = entryName === "cli.js" || entryName === "cli.cjs";
+
+if (invokedDirectly) {
+  void main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      process.stderr.write(`❌ ${(err as Error).message}` + "\n");
+      process.exitCode = 1;
+    }
+  );
+}

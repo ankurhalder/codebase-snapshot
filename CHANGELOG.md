@@ -4,6 +4,42 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.4
+
+Five defects found by driving the published package from another agent's environment.
+
+### A stale shim exited 0 without doing anything
+`dist/cli.js` exported `main()` and never called it. `dist/bin.js` is the shipped entry point, but a
+`node_modules/.bin` shim left by an earlier install can point at `cli.js`, which then imported, did
+nothing and exited 0 — indistinguishable from a successful run with empty output. `cli.js` now runs
+itself when it is the entry file, and only then.
+
+### Redaction was breaking the parser
+Structural summaries were built from the **redacted** text, so masking an identifier such as
+`const secret = previousSecrets[i]` produced source the TypeScript parser could not read: 969
+"parse errors" on a codebase that has none, and incomplete summaries everywhere. The parser now
+reads the original source, and every string that leaves a summary — exports, variables, functions,
+classes, headings, JSON keys — is masked before it is written. Structure stays correct; nothing raw
+reaches an artifact.
+
+### Audit diagnostics
+`reports/audit.md` gained a **Parse & AST Diagnostics** section listing every file whose summary
+was incomplete, with its parse-error count. The CLI warned about these; the artifact an auditor
+reads did not.
+
+### Formatting
+- Summary lines no longer mix separators (`snapshot\parts` instead of `snapshot\parts/`).
+- Line counts use `en-US` grouping rather than the host locale, so a CI runner and a developer
+  machine print the same number.
+
+### Known gaps, not fixed here
+`validate` does not compare `layers`, `kinds` or `secrets.customPatterns`, so changing those does
+not register as drift; a changed credential-shaped value compares equal because both sides mask;
+layer and kind **names** from your config are still emitted raw in derived fields; the ownership
+marker can record a hook-written file whose name contains a token; and binary detection samples the
+first 8 KB only.
+---
+
 ## 4.0.3
 
 ### A snapshot could fail its own `validate`
