@@ -253,6 +253,14 @@ export function validateSnapshot(
   }
 
   // ---- recorded configuration --------------------------------------------
+  // The manifest stores config values with secret spans masked, so the current
+  // side is masked the same way before comparing — otherwise a snapshot with an
+  // exclude pattern that looks like a token fails its own validate, and the
+  // mismatch line prints the token.
+  const maskValue = (value: string): string =>
+    findSecretInPath(value, config.secretRules)?.masked ?? value;
+  const currentExcludes = config.excludePatterns.map(maskValue);
+  const currentInclude = config.include.map(maskValue);
   const recorded = manifest.config;
   if (recorded && typeof recorded === "object") {
     if (recorded.maxPartBytes !== config.maxPartBytes) {
@@ -283,15 +291,15 @@ export function validateSnapshot(
     const recordedExcludes = Array.isArray(recorded.excludePatterns)
       ? recorded.excludePatterns
       : [];
-    if (recordedExcludes.join("\u0000") !== config.excludePatterns.join("\u0000")) {
+    if (recordedExcludes.join("\u0000") !== currentExcludes.join("\u0000")) {
       drift.configMismatches.push(
-        `excludePatterns: manifest [${recordedExcludes.join(", ")}] vs current [${config.excludePatterns.join(", ")}]`
+        `excludePatterns: manifest [${recordedExcludes.join(", ")}] vs current [${currentExcludes.join(", ")}]`
       );
     }
     const recordedInclude = Array.isArray(recorded.include) ? recorded.include : [];
-    if (recordedInclude.join("\u0000") !== config.include.join("\u0000")) {
+    if (recordedInclude.join("\u0000") !== currentInclude.join("\u0000")) {
       drift.configMismatches.push(
-        `include: manifest [${recordedInclude.join(", ")}] vs current [${config.include.join(", ")}]`
+        `include: manifest [${recordedInclude.join(", ")}] vs current [${currentInclude.join(", ")}]`
       );
     }
     // Snapshots written before the artifact selection existed do not record it;

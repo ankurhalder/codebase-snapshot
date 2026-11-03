@@ -51,7 +51,7 @@ import type {
 } from "./types.js";
 
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.0.2";
+export const GENERATOR_VERSION = "4.0.3";
 export const SCHEMA_VERSION = "3.0.0";
 
 

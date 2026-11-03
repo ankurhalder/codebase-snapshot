@@ -4,6 +4,24 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.0.3
+
+### A snapshot could fail its own `validate`
+
+4.0.2 masks config values in the manifest, which is right — an `excludePatterns` entry or an
+`include` glob can contain a credential-shaped string. But `validate` compared that masked value
+against the **raw** current config, so a repository that generated cleanly failed validation one
+second later, and the mismatch line printed the very token the mask was hiding.
+
+Both sides are now masked before comparing, and the mismatch text uses the masked form. Verified:
+`generate` then `validate` with `excludePatterns: ["ghp_…"]` exits 0, and the token appears in no
+file under `snapshot/`.
+
+Known and unchanged: a layer or kind **name** supplied in the config is still emitted raw in the
+derived fields (`manifest.layers` keys, `files[].layer`, part headers). It is your own string
+rather than a discovered secret, but it is the same class and will be fixed with the next batch.
+---
+
 ## 4.0.2
 
 ### The last place a path secret could reach an artifact
