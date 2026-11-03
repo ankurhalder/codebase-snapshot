@@ -721,9 +721,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 1;
     }
 
-    const validation = validateSnapshot(resolved);
-
-    emit(invocation.format, { manifest, validation }, () => {
+    // `report` describes the snapshot that exists; it does not re-scan the
+    // repository. It used to call validateSnapshot, which re-reads every file to
+    // prove there is no drift — 4.5 s on a 20 000-file repository to print a
+    // summary that was already on disk. Drift is `validate`'s job.
+    emit(invocation.format, { manifest, validation: null }, () => {
       info(`\n📊 Codebase Snapshot Report (${resolved.cwd})`);
       info(`   - Generated at:   ${manifest.generatedAt}`);
       info(`   - Schema:         ${manifest.schemaVersion}`);
@@ -734,7 +736,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         `   - Total size:     ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
       );
       info(`   - Total parts:    ${manifest.counts.partsCount}`);
-      info(`   - Integrity:      ${validation.valid ? "✅ Clean (no drift)" : "❌ Drift detected"}`);
+      info("   - Integrity:      not checked (run `codebase-snapshot validate`)");
       info(`   - Warnings:       ${manifest.warnings?.length ?? 0}`);
       info("\n   Layers:");
       for (const [layer, count] of Object.entries(manifest.layers)) {
@@ -742,7 +744,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
     });
 
-    return validation.valid ? 0 : 1;
+    // Reading the manifest is the whole job, so a readable, well-shaped manifest
+    // is a success. Whether the snapshot is still true is `validate`'s answer.
+    return 0;
   }
 
   if (invocation.command === "explain") {

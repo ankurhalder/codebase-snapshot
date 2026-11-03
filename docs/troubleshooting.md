@@ -167,7 +167,7 @@ Exit `1` with one line per class of drift:
 **Fix** — re-run `generate`. If it persists, the snapshot directory is being modified by
 something else.
 
-### `report` exits 1
+### `report` exits 1 (only when it cannot read the snapshot)
 
 - `Manifest not found at … Run generate first.` — nothing has been generated yet.
 - `… is not a snapshot manifest: missing \`counts\`` — the file parsed as JSON but is not a

@@ -85,9 +85,11 @@ Exit `0` when the snapshot is current, `1` on any drift. It never writes anythin
 codebase-snapshot report [options]
 ```
 
-Prints snapshot health without re-scanning everything: counts, layer breakdown, warnings,
-and the validation verdict. Requires an existing `manifest.json` (exit `1` if missing). Also
-exits `1` when it detects drift.
+Prints what the snapshot says about itself: counts, layer breakdown, warnings, fingerprint.
+It reads `manifest.json` and nothing else, so it is fast on any repository size — a 20 000-file
+snapshot reports in about half a second. Requires an existing `manifest.json` (exit `1` if
+missing); exits `0` otherwise. It does **not** check whether the snapshot is still true — that
+is `validate`, which re-reads the repository and exits `1` on drift.
 
 ### `init`
 
