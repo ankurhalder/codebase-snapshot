@@ -252,13 +252,27 @@ Inside a git repository the candidate list comes from git, which applies `.gitig
 the scanner runs; those ignored paths are listed separately and recorded too, so a `.gitignore`d
 file or directory appears here with reason `gitignore` in either mode.
 
+A skipped directory is recorded, but the files inside it are never descended to and so have no
+record of their own. For those, `explain` reports the **nearest skipped ancestor** and names it
+in `detail`, whatever the reason — including built-in ignores:
+
+```
+node_modules/dep/index.js
+  included   no
+  reason     default-ignore
+  detail     built-in ignore: directory "node_modules" (not descended) — inherited from the skipped directory `node_modules`
+```
+
+The same applies to a `.gitignore`d tree, where `detail` reads
+``ignored by .gitignore — inherited from the skipped directory `ignored` ``.
+
 `explain` can report two more, which never appear in `skipped[]` because they are about the
 path rather than about a candidate file:
 
 | `reason` | Meaning | Fix |
 | :--- | :--- | :--- |
 | `missing` | `no such file or directory, relative to the configured cwd` — nothing is at that path. | Check the path and `--cwd`. |
-| `not-discovered` | `exists but is not tracked or is otherwise not a candidate` — the file is there but the scanner never offered it, because it sits inside a directory the traversal skips, such as `node_modules`. | Copy it into the repository if you really need it in the snapshot; `include` cannot rescue a skipped directory. |
+| `not-discovered` | `exists but is not tracked or is otherwise not a candidate` — the path exists but nothing accounts for it: no rule, glob or skipped ancestor explains it. The tool's own output directory is pruned this way, so a file under `snapshot/` reports it. | If it sits in a skipped directory you will normally get that directory's reason instead; otherwise copy it into the repository, since `include` cannot rescue a pruned directory. |
 
 Also check `include`: if it is non-empty it acts as an allow-list, and everything else is
 excluded.

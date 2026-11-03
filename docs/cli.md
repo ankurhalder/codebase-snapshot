@@ -171,7 +171,7 @@ With `--format json` the same answer is one object on stdout, with only the keys
 | `path` | The path you asked about, relative to `--cwd` and with POSIX separators. |
 | `exists` | Whether anything is on disk at that path. |
 | `included` | Whether the scanner would include it in the next snapshot. |
-| `reason`, `detail` | Why not, when `included` is `false`. The same strings `manifest.skipped[]` uses, plus `missing` and `not-discovered`. |
+| `reason`, `detail` | Why not, when `included` is `false`. The same strings `manifest.skipped[]` uses, plus `missing` and `not-discovered`. A path with no record of its own inherits the record of the nearest skipped ancestor directory, and `detail` names that ancestor — for example ``ignored by .gitignore — inherited from the skipped directory `ignored` `` or ``built-in ignore: directory "node_modules" (not descended) — inherited from the skipped directory `node_modules` ``. |
 | `layer`, `kind`, `language` | The classification, present only when `included` is `true`. |
 | `layerMatch`, `kindMatch` | Which rule chose the layer or kind. A glob is printed as written (`src/api/**`); a `RegExp` as its literal form (`/\.tsx$/i`); a function matcher, which is what the presets use, as `function (custom predicate)`. Absent when no rule matched and the `other` fallback was used. |
 | `bytes`, `lines` | Size of the file on disk. |
@@ -254,7 +254,7 @@ narrowest cases of the same rule.
 | `--include-sensitive-files` | flag | off | generate, validate, report, explain, init | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
 | `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
-| `--format <text\|json>` | enum | `text` | every command | `json` writes a pure JSON payload to stdout. |
+| `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same eight-command list. |
 | `--dry-run` | flag | off | generate, init | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
 | `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |

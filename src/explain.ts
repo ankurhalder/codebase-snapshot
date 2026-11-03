@@ -10,7 +10,6 @@ import { escapeControls } from "./terminal.js";
 import type {
   Manifest,
   ResolvedSnapshotConfig,
-  SkipReason,
   SkipRecord,
   TextEncoding,
 } from "./types.js";
@@ -70,24 +69,14 @@ function findRuleMatch<T extends { match: unknown }>(
 }
 
 /**
- * Reasons whose ancestor record must not be inherited.
- *
- * A directory that a `.gitignore` excluded is never descended, so the *file*
- * inside it is absent from `skipped[]` while the directory carries the honest
- * record; reporting that record is strictly more useful than `not-discovered`.
- * A built-in ignore is different: `docs/cli.md` documents `not-discovered` with
- * its exact detail string for a file under `node_modules`, and the walker does
- * record `node_modules` itself as `default-ignore`, so inheriting there would
- * quietly change a documented answer that agents already key on.
- */
-const NON_INHERITED_REASONS: ReadonlySet<SkipReason> = new Set<SkipReason>(["default-ignore"]);
-
-/**
  * The nearest recorded skip whose path is a proper directory ancestor of `target`.
  *
  * `collectFiles` records a skipped directory but never its contents, so the only
- * evidence for a file inside an ignored tree is the ancestor's record. The
- * longest matching prefix wins, which is the closest explanation to the file.
+ * evidence for a file inside a skipped tree is the ancestor's record. This
+ * applies to every reason, built-in ignores included: the walker records
+ * `node_modules` as `default-ignore`, so a file inside it names that directory
+ * instead of falling back to `not-discovered`. The longest matching prefix wins,
+ * which is the closest explanation to the file.
  */
 function findRecordedAncestor(
   skipped: readonly SkipRecord[],
@@ -101,7 +90,6 @@ function findRecordedAncestor(
     const isAncestor =
       relative.startsWith(`${ancestorPath}/`) || maskedPath.startsWith(`${ancestorPath}/`);
     if (!isAncestor) continue;
-    if (NON_INHERITED_REASONS.has(record.reason)) continue;
     if (!nearest || ancestorPath.length > nearest.path.length) nearest = record;
   }
   return nearest;
@@ -172,7 +160,7 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
       if (ancestor) {
         result.reason = ancestor.reason;
         result.detail = ancestor.detail
-          ? `${ancestor.detail} (inherited from the skipped directory \`${ancestor.path}\`)`
+          ? `${ancestor.detail} — inherited from the skipped directory \`${ancestor.path}\``
           : `inside the skipped directory \`${ancestor.path}\``;
       } else {
         result.reason = "not-discovered";

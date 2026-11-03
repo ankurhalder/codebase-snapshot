@@ -1,7 +1,7 @@
 import { ARTIFACT_NAMES } from "../config.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, SCHEMA_VERSION } from "../index.js";
 import { PRESETS } from "../presets/registry.js";
-import { optionAppliesTo } from "./option-scope.js";
+import { commandsForOption, optionAppliesTo } from "./option-scope.js";
 
 /** Version of the shape of this document, independent of the package version. */
 export const CONTRACT_VERSION = "1.0.0";
@@ -379,7 +379,12 @@ export function buildAgentContract(): AgentContract {
         flag: "--format",
         type: "string",
         default: "text",
-        appliesTo: optionAppliesTo("format"),
+        // `optionAppliesTo` returns the human prose "all commands" for an option
+        // every command honours, which reads to a machine consumer as a single
+        // command literally named "all commands" -- i.e. a flag that applies
+        // nowhere. `--format` is the only option that hits that branch, so spell
+        // the list out here and keep every entry in the same scoped form.
+        appliesTo: commandsForOption("format").join("/"),
         summary: 'Output format: "text" or "json". JSON goes to stdout, progress to stderr.',
       },
       {

@@ -24,7 +24,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { explainPath, resolveConfig } from "../dist/index.js";
+import { explainPath, generateSnapshot, resolveConfig } from "../dist/index.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, "..", "dist", "bin.js");
@@ -96,19 +96,27 @@ test("DH-14: the ancestor explanation is traceable to the directory that carries
   );
 });
 
-// ------------------------------------------ (b) documented not-discovered
+// --------------------------------- (b) built-in ignore is inherited too
 
-test("DH-15: a file under node_modules still explains as not-discovered", (t) => {
+test("DH-15: a file under node_modules names its ancestor and reason default-ignore", (t) => {
   const dir = makeRepo(t, { nodeModules: true });
   const result = explainPath(configFor(dir), "node_modules/dep/index.js");
 
   assert.equal(result.included, false);
   assert.equal(
     result.reason,
-    "not-discovered",
-    "the documented node_modules answer must not be replaced by an inherited default-ignore"
+    "default-ignore",
+    "the built-in ignore is inherited exactly like a gitignore, so all reasons behave alike"
   );
-  assert.equal(result.detail, DOCUMENTED_NOT_DISCOVERED);
+  assert.ok(
+    result.detail?.includes('built-in ignore: directory "node_modules"'),
+    `expected the directory's own detail, got: ${result.detail}`
+  );
+  assert.ok(
+    result.detail?.includes("inherited from the skipped directory `node_modules`"),
+    `expected the ancestor to be named, got: ${result.detail}`
+  );
+  assert.notEqual(result.detail, DOCUMENTED_NOT_DISCOVERED);
 });
 
 // --------------------------------------------- (c) unreadable names a path
@@ -184,4 +192,127 @@ test("DH-18: a file that is not skipped at all still explains as included", (t) 
   assert.equal(result.included, true);
   assert.equal(result.reason, undefined);
   assert.equal(result.language, "typescript");
+});
+
+// ------------------------------------- (e) genuinely unexplained keeps its string
+
+test("DH-19: a path nothing accounts for still reports not-discovered", (t) => {
+  const dir = makeRepo(t);
+  const config = configFor(dir);
+  generateSnapshot(config);
+
+  // The tool prunes its own output directory without recording it, so this file
+  // exists, has no skip record, and has no skipped ancestor either -- the one
+  // remaining case that is genuinely unexplained.
+  const result = explainPath(config, "snapshot/manifest.json");
+
+  assert.equal(result.exists, true);
+  assert.equal(result.included, false);
+  assert.equal(result.reason, "not-discovered");
+  assert.equal(
+    result.detail,
+    DOCUMENTED_NOT_DISCOVERED,
+    "the not-discovered detail string is documented, so it must not drift"
+  );
+});
+
+// ---------------------------------------- (f) docs quote what the binary prints
+
+test("DH-20: the docs quote the exact reason/detail strings the binary prints", (t) => {
+  const dir = makeRepo(t, { nodeModules: true });
+  const config = configFor(dir);
+  generateSnapshot(config);
+
+  const defaultIgnore = explainPath(config, "node_modules/dep/index.js");
+  const gitignored = explainPath(config, "ignored/secret.txt");
+  const unexplained = explainPath(config, "snapshot/manifest.json");
+
+  const cliDoc = fs.readFileSync(path.join(HERE, "..", "docs", "cli.md"), "utf8");
+  const troubleshootingDoc = fs.readFileSync(
+    path.join(HERE, "..", "docs", "troubleshooting.md"),
+    "utf8"
+  );
+
+  assert.equal(defaultIgnore.reason, "default-ignore");
+  assert.equal(gitignored.reason, "gitignore");
+  assert.equal(unexplained.reason, "not-discovered");
+
+  // Both inherited forms are documented in the CLI key table.
+  for (const [name, detail] of [
+    ["default-ignore", defaultIgnore.detail],
+    ["gitignore", gitignored.detail]
+  ]) {
+    assert.ok(
+      cliDoc.includes(detail),
+      `docs/cli.md must quote the live ${name} detail verbatim, expected: ${detail}`
+    );
+  }
+
+  // The troubleshooting reason table documents all three verbatim.
+  for (const [name, detail] of [
+    ["default-ignore", defaultIgnore.detail],
+    ["gitignore", gitignored.detail],
+    ["not-discovered", unexplained.detail]
+  ]) {
+    assert.ok(
+      troubleshootingDoc.includes(detail),
+      `docs/troubleshooting.md must quote the live ${name} detail verbatim, expected: ${detail}`
+    );
+  }
+});
+
+// ------------------------------------ (g) contract appliesTo has no prose
+
+test("DH-21: no option's appliesTo is prose, and every token is a real command", () => {
+  const result = runCli(["describe", "--format", "json"], HERE);
+  assert.equal(result.code, 0, "describe --format json must succeed");
+
+  const contract = JSON.parse(result.stdout);
+  // `check` is an alias of `validate`; a scope entry uses the canonical name.
+  const COMMANDS = [
+    "generate",
+    "validate",
+    "report",
+    "explain",
+    "init",
+    "diff",
+    "describe",
+    "skill",
+  ];
+
+  assert.ok(
+    Array.isArray(contract.options) && contract.options.length >= 20,
+    `expected the full option table, got ${contract.options?.length}`
+  );
+
+  for (const option of contract.options) {
+    const appliesTo = String(option.appliesTo);
+
+    // The regression this pins: `--format` used to read "all commands", which a
+    // machine consumer parses as one command named "all commands" -- i.e. a flag
+    // that applies to nothing. Literal prose must never come back.
+    assert.ok(
+      !/\ball\b/i.test(appliesTo),
+      `${option.flag} appliesTo must be a command list, not prose: "${appliesTo}"`
+    );
+
+    const tokens = appliesTo.split("/");
+    assert.ok(tokens.length > 0, `${option.flag} has an empty appliesTo`);
+    for (const token of tokens) {
+      assert.ok(token.length > 0, `${option.flag} appliesTo has an empty token: "${appliesTo}"`);
+      assert.ok(
+        COMMANDS.includes(token),
+        `${option.flag} appliesTo names "${token}", which is not one of the eight commands`
+      );
+    }
+  }
+
+  // The specific entry the Lead's sweep caught, asserted by value.
+  const format = contract.options.find((option) => option.flag === "--format");
+  assert.ok(format, "the contract must list --format");
+  assert.equal(
+    format.appliesTo,
+    "generate/validate/report/explain/init/diff/describe/skill",
+    "--format applies everywhere, so its list must name every canonical command"
+  );
 });
