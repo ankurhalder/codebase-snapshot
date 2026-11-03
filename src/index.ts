@@ -23,7 +23,7 @@ import { generateProjectTree } from "./generator/tree.js";
 import { anchorForPath, partitionFiles, renumberParts } from "./partitioner/chunker.js";
 import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
-import { detectPreset } from "./presets/index.js";
+import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
 import {
   isBinaryBuffer,
   isBinaryExtension,
@@ -443,7 +443,7 @@ export function generateSnapshot(
 
   const collection = collectFiles(config.cwd, {
     includePatterns: config.include,
-    excludePatterns: config.excludePatterns,
+    excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
   });
 
@@ -614,6 +614,7 @@ export function generateSnapshot(
       includeSensitiveFiles: config.includeSensitiveFiles,
       artifacts: { ...config.artifacts },
       include: [...config.include],
+      preset: config.preset,
       layersMode: config.layersMode,
       budgets: { default: config.budgets.default, byLayer: { ...config.budgets.byLayer } },
       excludePatterns: [...config.excludePatterns],
@@ -781,6 +782,8 @@ export {
   resolveConfig,
   loadConfigFile,
   detectPreset,
+  getPreset,
+  listPresetNames,
   scanAndRedactSecrets,
   detectLanguage,
   isBinaryExtension,

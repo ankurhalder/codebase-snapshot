@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { detectPreset } from "./presets/index.js";
+import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
 import { globToRegExp } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
@@ -125,6 +125,8 @@ export function normalizeResolvedConfig(
       config.includeMonolith === true
     ),
     include: resolveInclude(config.include),
+    preset: typeof config.preset === "string" ? config.preset : "generic",
+    presetExclude: Array.isArray(config.presetExclude) ? config.presetExclude : [],
     layersMode: config.layersMode === "replace" ? "replace" : "merge",
     budgets:
       config.budgets && typeof config.budgets === "object"
@@ -526,7 +528,16 @@ export function resolveConfig(
   baseDir?: string
 ): ResolvedSnapshotConfig {
   const cwd = resolveCandidateCwd(userConfig ?? null, cliOptions, baseDir);
-  const preset = detectPreset(cwd);
+
+  // A forced preset must exist: silently falling back would leave the developer
+  // believing their layers are in effect when they are not.
+  const forcedPreset = userConfig?.preset;
+  if (forcedPreset !== undefined && !getPreset(forcedPreset)) {
+    throw new Error(
+      `Unknown preset "${forcedPreset}". Expected one of: ${listPresetNames().join(", ")}.`
+    );
+  }
+  const preset = detectPreset(cwd, forcedPreset);
   const layersMode = resolveLayersMode(userConfig?.layersMode);
 
   // `merge` (the default) keeps the preset's rules and lets user rules win by
@@ -585,6 +596,8 @@ export function resolveConfig(
     includeSensitiveFiles:
       cliOptions?.includeSensitiveFiles ?? userConfig?.includeSensitiveFiles ?? false,
     include: resolveInclude(userConfig?.include),
+    preset: preset.presetName,
+    presetExclude: [...preset.exclude],
     artifacts,
     layersMode,
     budgets,

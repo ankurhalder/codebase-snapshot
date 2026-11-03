@@ -1192,3 +1192,20 @@ test("a Python file is summarized, redacted and budgeted like any other", () => 
   assert.ok(!text.includes("AKIA") && !text.includes("sk-proj-AAAAAAAA"), "secrets stay redacted");
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------- preset ecosystem
+
+test("the detected preset contributes its ecosystem ignores", () => {
+  const dir = makeRepo("presetignore-", {
+    "manage.py": "print('x')\n",
+    "app/views.py": "def home():\n    pass\n",
+    "__pycache__/module.cpython-311.pyc": "compiled\n",
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+
+  assert.equal(manifest.config.preset, "python-django");
+  const dropped = manifest.skipped.find((entry) => entry.path.includes("__pycache__"));
+  assert.ok(dropped, "__pycache__ must be skipped by the python preset");
+  assert.equal(dropped.reason, "excluded");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -113,7 +113,7 @@ export function validateSnapshot(
 
   const collection = collectFiles(config.cwd, {
     includePatterns: config.include,
-    excludePatterns: config.excludePatterns,
+    excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
   });
 
@@ -258,6 +258,12 @@ export function validateSnapshot(
           );
         }
       }
+    }
+
+    if (recorded?.preset !== undefined && recorded.preset !== config.preset) {
+      drift.configMismatches.push(
+        `preset: manifest ${recorded.preset} vs current ${config.preset}`
+      );
     }
 
     if (recorded?.layersMode !== undefined && recorded.layersMode !== config.layersMode) {

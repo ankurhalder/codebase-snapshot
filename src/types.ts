@@ -180,6 +180,7 @@ export interface ManifestConfigSnapshot {
   includeSensitiveFiles: boolean;
   artifacts: ResolvedArtifacts;
   include: string[];
+  preset: string;
   layersMode: "merge" | "replace";
   budgets: ResolvedBudgets;
   excludePatterns: string[];
@@ -307,6 +308,8 @@ export interface SnapshotConfig {
   includeSensitiveFiles?: boolean;
   /** Allow-list of globs. When non-empty, only matching files are included. */
   include?: string[];
+  /** Force a preset by name instead of auto-detecting one. */
+  preset?: string;
   /** Switch individual snapshot artifacts off. Everything is on by default. */
   artifacts?: ArtifactSelection;
   /**
@@ -341,6 +344,10 @@ export interface ResolvedSnapshotConfig {
   includeSensitiveFiles: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */
   include: string[];
+  /** The preset that was resolved (detected or forced). */
+  preset: string;
+  /** Ecosystem ignores contributed by the preset, merged with `excludePatterns`. */
+  presetExclude: string[];
   artifacts: ResolvedArtifacts;
   layersMode: "merge" | "replace";
   budgets: ResolvedBudgets;

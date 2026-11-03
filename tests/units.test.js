@@ -11,6 +11,7 @@ import {
   defineConfig,
   detectLanguage,
   detectPreset,
+  listPresetNames,
   generateProjectTree,
   globToRegExp,
   isBinaryBuffer,
@@ -360,17 +361,86 @@ test("resolveConfig strips stateful flags from custom patterns", () => {
 
 test("detectPreset recognises the shipped presets", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preset-"));
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { next: "15.0.0" } }));
+  const setPackage = (deps, extra = {}) =>
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ ...extra, dependencies: deps }));
+
+  setPackage({ next: "15.0.0" });
   assert.equal(detectPreset(dir).presetName, "nextjs");
 
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { vite: "6.0.0" } }));
-  assert.equal(detectPreset(dir).presetName, "vite");
+  setPackage({ nuxt: "3.0.0" });
+  assert.equal(detectPreset(dir).presetName, "nuxt");
 
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { express: "4.0.0" } }));
-  assert.equal(detectPreset(dir).presetName, "node");
+  setPackage({ "@sveltejs/kit": "2.0.0" });
+  assert.equal(detectPreset(dir).presetName, "sveltekit");
 
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: {} }));
-  assert.equal(detectPreset(dir).presetName, "default");
+  setPackage({ astro: "4.0.0" });
+  assert.equal(detectPreset(dir).presetName, "astro");
+
+  setPackage({ "@angular/core": "17.0.0" });
+  assert.equal(detectPreset(dir).presetName, "angular");
+
+  setPackage({ react: "18.0.0", vite: "6.0.0" });
+  assert.equal(detectPreset(dir).presetName, "react-vite");
+
+  setPackage({ vue: "3.0.0", vite: "6.0.0" });
+  assert.equal(detectPreset(dir).presetName, "vue-vite");
+
+  setPackage({ "@nestjs/core": "10.0.0" });
+  assert.equal(detectPreset(dir).presetName, "nest");
+
+  setPackage({ express: "4.0.0" });
+  assert.equal(detectPreset(dir).presetName, "node-express");
+
+  // A workspace root is a monorepo, not just another package.
+  setPackage({}, { workspaces: ["packages/*"] });
+  assert.equal(detectPreset(dir).presetName, "monorepo");
+
+  setPackage({});
+  assert.equal(detectPreset(dir).presetName, "node-lib");
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  const fixture = (prefix, files) => {
+    const made = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(made, name), body);
+    return made;
+  };
+
+  const go = fixture("preset-go-", { "go.mod": "module example.com/app\n" });
+  assert.equal(detectPreset(go).presetName, "go");
+  fs.rmSync(go, { recursive: true, force: true });
+
+  const rust = fixture("preset-rs-", { "Cargo.toml": '[package]\nname = "x"\n' });
+  assert.equal(detectPreset(rust).presetName, "rust");
+  fs.rmSync(rust, { recursive: true, force: true });
+
+  const django = fixture("preset-py-", { "manage.py": "print('x')\n" });
+  assert.equal(detectPreset(django).presetName, "python-django");
+  fs.rmSync(django, { recursive: true, force: true });
+
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "preset-empty-"));
+  assert.equal(detectPreset(empty).presetName, "generic");
+  fs.rmSync(empty, { recursive: true, force: true });
+});
+
+test("the preset registry exposes every preset and honours a forced preset", () => {
+  const names = listPresetNames();
+  for (const expected of [
+    "nextjs", "nuxt", "sveltekit", "remix", "astro", "angular", "solid",
+    "vue-vite", "react-vite", "nest", "node-express", "node-lib",
+    "python-django", "python-fastapi", "python-lib", "go", "rust",
+    "java-spring", "dotnet", "php-laravel", "ruby-rails",
+    "monorepo", "docs", "infra", "generic",
+  ]) {
+    assert.ok(names.includes(expected), `missing preset ${expected}`);
+  }
+  assert.ok(names.length >= 25, `expected at least 25 presets, got ${names.length}`);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preset-force-"));
+  fs.writeFileSync(path.join(dir, "go.mod"), "module x\n");
+
+  assert.equal(detectPreset(dir).presetName, "go");
+  assert.equal(detectPreset(dir, "react-vite").presetName, "react-vite", "a forced preset wins");
+  assert.throws(() => resolveConfig({ cwd: dir, preset: "nope" }), /Unknown preset/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -87,7 +87,7 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
 
   const collection = collectFiles(config.cwd, {
     includePatterns: config.include,
-    excludePatterns: config.excludePatterns,
+    excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
   });
 
