@@ -441,7 +441,11 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
           errors,
         };
       } catch (err) {
-        const message = (err as Error).message;
+        // A read failure (an `EISDIR` from a config that is a directory, a permission error) comes
+        // from `readFileSync` and carries no filename, so a repository with several config files
+        // could not tell which one failed. Parse errors already name the file, hence the check.
+        const raw = (err as Error).message;
+        const message = raw.includes(fullPath) ? raw : `${fullPath}: ${raw}`;
         warnings.push(message);
         errors.push(message);
         continue;
@@ -476,14 +480,21 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
     try {
       const parsed = parseJsonish(fs.readFileSync(pkgJsonPath, "utf8"), pkgJsonPath);
       const snapshotKey = (parsed as unknown as { snapshot?: unknown }).snapshot;
-      if (snapshotKey && typeof snapshotKey === "object") {
+      // `typeof [] === "object"`, so an array used to be handed to the resolver as though it were a
+      // configuration object and then silently ignored — with no warning, against this file's own
+      // rule that a wrong type is a warning, and against the hard error an array throws in a module
+      // config. The array is a wrong type like any other.
+      if (snapshotKey && typeof snapshotKey === "object" && !Array.isArray(snapshotKey)) {
         return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings, errors };
       }
       // A wrong-typed key is a mistake but not proof of intent — plenty of other
       // tools use a "snapshot" key — so warn rather than fail the run. Silently
       // ignoring it was the worst of the three options.
       if (snapshotKey !== undefined) {
-        warnings.push(`${pkgJsonPath}: the "snapshot" key must be an object; it was ignored.`);
+        const kind = Array.isArray(snapshotKey) ? "array" : typeof snapshotKey;
+        warnings.push(
+          `${pkgJsonPath}: the "snapshot" key must be an object; it was ${kind} and was ignored.`
+        );
       }
     } catch (err) {
       const message = (err as Error).message;

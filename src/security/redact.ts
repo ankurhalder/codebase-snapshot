@@ -285,6 +285,16 @@ function expandOverToken(line: string, start: number, end: number): { start: num
   let left = start;
   let right = end;
   while (left > 0 && TOKEN_CHARS_LEFT.test(line[left - 1])) left -= 1;
+  // …but `/` and `+` belong to URLs and file paths as well as to base64 credentials, and walking
+  // left through a path masked the path instead of the token: `https://example.com/v1/<key>` was
+  // emitted as `https://example.[REDACTED]`, which contradicts "only the matched span is masked".
+  // A run that ends against a `.` is a hostname or a filename, and one that ends against a `:` is a
+  // scheme; in both cases the token starts after the last `/` of the run and no further left.
+  const walked = line.slice(left, start);
+  const boundary = left > 0 ? line[left - 1] : "";
+  if (walked.includes("/") && (boundary === "." || boundary === ":")) {
+    left += walked.lastIndexOf("/") + 1;
+  }
   while (right < line.length && TOKEN_CHARS_RIGHT.test(line[right])) right += 1;
   return { start: left, end: right };
 }
