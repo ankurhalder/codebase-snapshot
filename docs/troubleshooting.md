@@ -118,6 +118,20 @@ settings and still report success.
 loadable on your Node version: a `.ts` config needs Node ≥ 22.6 **and** an ES-module project.
 `codebase-snapshot init` picks the right filename for the project automatically.
 
+### `This directory is a git repository, but git could not list its files.`
+
+```
+❌ Failed to generate snapshot: This directory is a git repository, but git could not list its files. A fallback scan would ignore nested .gitignore files and include files git ignores. Fix the repository (git status should work) or run outside git.
+```
+
+`git` is present and a `.git` directory exists, but it cannot list the files — an empty or
+half-initialised `.git`, a permissions problem, or a damaged index. The tool refuses rather
+than falling back, because a walk would produce a different snapshot from the one git would
+have described: nested `.gitignore` files would be missed and ignored files would be included.
+
+**Fix** — make `git status` work in that directory (repair or re-clone the repository), or copy
+the files somewhere without a `.git` and generate there.
+
 ### `Refusing to generate: …`
 
 ```
@@ -200,7 +214,7 @@ npx codebase-snapshot explain src/generated/schema.ts
 | :--- | :--- | :--- |
 | `sensitive-file` | `.env`, `*.pem`, `.npmrc`, `.ssh/`, `.tfstate`, … | `--include-sensitive-files` if you really want it. |
 | `sensitive-path` | The path itself matched a secret rule, so the file is skipped and its path is masked in every artifact. | Rename the file; a path that looks like a key is treated as one. |
-| `binary` | Not text: it contains a NUL byte outside a UTF-16 stream. The `detail` names the file size, and the offset of the first NUL when that byte sits past the 8 MB head scan. | Nothing to do. A UTF-16 file is *not* binary — it is transcoded and reported with `encoding`, not skipped. |
+| `binary` | Not text: it contains a NUL byte outside a UTF-16 stream, or is more than 1% control characters. The `detail` names the file size and the reason — including the offset of the first NUL when that byte sits past the 8 MB head scan. | Nothing to do. A UTF-16 file is *not* binary — it is transcoded and reported with `encoding`, not skipped. |
 | `default-ignore` | A built-in rule, the preset's ecosystem ignores (`node_modules`, `__pycache__`, `target`, `vendor`, …), or the output directory. | A preset's ignores are not configurable; a custom `excludePatterns` can only remove more. |
 | `excluded` | Your own `excludePatterns`, or a path outside a non-empty `include` allow-list. | Remove the pattern, or widen `include`. |
 | `symlink` | Links are not followed (a directory link names its target in `detail`). | Snapshot the target. |
@@ -243,6 +257,10 @@ under a `- Warnings: N` line in the summary, and none of them stops a run:
 - `every artifact is disabled: only the .codebase-snapshot ownership marker will be written.`
 - A `hooks.afterGenerate` error is downgraded to a warning: the snapshot it was called for is
   already written and is not lost.
+- `N file(s) exceed 2 MB and were not parsed for a structural summary: …` — the named files are
+  emitted as head/tail previews without an `imports`/`exports` summary. Parsing them costs several
+  times their own size in memory, which is how a single 50 MB source file used to reach 3.3 GB of
+  resident memory. Nothing to fix; raise the part budget if the preview is too small.
 - `N file(s) are UTF-16LE and were transcoded to UTF-8: …` — those files were UTF-16 and are
   now ordinary text in the snapshot. They are listed in `manifest.files[]` with
   `encoding: "utf-16le"`, or `"utf-16be"`. Nothing to fix; the warning exists because the bytes

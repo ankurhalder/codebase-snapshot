@@ -53,13 +53,15 @@ most reproducible option:
 ```json
 {
   "scripts": {
-    "snapshot": "codebase-snapshot generate",
-    "snapshot:validate": "codebase-snapshot validate"
+    "snapshot": "npx @ankurhalder/codebase-snapshot generate",
+    "snapshot:validate": "npx @ankurhalder/codebase-snapshot validate"
   }
 }
 ```
 
-`codebase-snapshot init` writes these entries for you.
+`codebase-snapshot init` writes these entries for you, in exactly this `npx` form: the bare
+`codebase-snapshot` command only exists on `PATH` inside a client runner or a script that has
+already resolved the package, and `init` does not assume the install has happened yet.
 
 ## One-off runners for other clients
 

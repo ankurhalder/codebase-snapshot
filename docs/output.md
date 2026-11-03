@@ -138,7 +138,9 @@ values — the hash is the whole 64-character digest, never elided.
   are reading is not byte-exact.
 - `summary` and `summaryQuality` are **conditional**. Both keys are present for a language
   with an analyser and both are absent for a shapeless one — a `.gitignore`, a `.txt`. Treat a
-  missing `summary` as "no structural information", not as an empty one.
+  missing `summary` as "no structural information", not as an empty one. A file larger than
+  2 MB gets no summary at all: parsing it costs more memory than the file itself, and its body is
+  a head/tail preview at that size anyway. `manifest.warnings` names those files.
 - `summary` has one of three shapes. Code files get the thirteen keys above (`directives`,
   `imports`, `exports`, `reExports`, `functions`, `classes`, `interfaces`, `types`, `enums`,
   `variables`, `reactComponents`, `hooks`, `routeHandlers`), plus `parseErrors` when the parser
@@ -167,7 +169,7 @@ Reasons, and what each one means:
 | `default-ignore` | A built-in rule caught it, the preset's ecosystem ignores did (`node_modules`, `__pycache__`, `target`, …), or it sat inside an output directory. |
 | `sensitive-file` | Its name is credential-bearing (`.env`, `*.pem`, `.npmrc`, …). |
 | `sensitive-path` | The path itself matched a secret rule. The file is skipped and the path is masked in every artifact. |
-| `binary` | It is not text. `detail` gives the size, and for a file that only reveals itself past the 8 MB head scan, the offset of the first NUL byte. |
+| `binary` | It is not text: it holds a NUL byte outside a UTF-16 stream, or more than 1% control characters (a 4 KB blob of `0x07` is valid UTF-8 but is not text). `detail` gives the size and the reason, including the offset of the first NUL when that byte sits past the 8 MB head scan. |
 | `symlink` | It is a link, and links are not followed. A directory link names its target in `detail`. |
 | `outside-root` | It is a link whose target resolves outside the scanned root. |
 | `gitignore` | A `.gitignore` excluded it, in a scan that is not reading git's index. |
@@ -205,9 +207,10 @@ example). See [Troubleshooting](troubleshooting.md#a-file-is-missing-from-the-sn
   run refuses instead of deleting it.
 - **Ownership is the marker, not a filename.** `.codebase-snapshot` is a JSON record carrying
   this generator's name and `version`, the marker's `schemaVersion`, a `createdAt` timestamp,
-  a per-snapshot `id`, the run `state` (`staging` while it is being written, `complete` once it
-  is whole), the `manifestSha256` digest of the manifest it shipped, and `entries` — the
-  inventory of everything it wrote. A zero-byte marker, a marker that is not JSON, a marker
+  a `pid`, a per-snapshot `id`, the run `state` (`staging` while it is being written, `complete`
+  once it is whole), the `manifestSha256` digest of the manifest it shipped, and `entries` — the
+  inventory of everything it wrote. `pid` is what lets a later run tell a crashed run's staging
+  directory and lock from a live one. A zero-byte marker, a marker that is not JSON, a marker
   written by 3.0.0 (no `id`), a bare `manifest.json`, and a directory with files you added
   after the run are all refused.
   See [Troubleshooting](troubleshooting.md#refusing-to-replace-outdir-).

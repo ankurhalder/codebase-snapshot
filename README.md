@@ -177,7 +177,10 @@ export default {
 ```js
 import { generateSnapshot, resolveConfig, validateSnapshot, loadConfigFile } from "@ankurhalder/codebase-snapshot";
 
-const config = resolveConfig(await loadConfigFile(process.cwd()));
+// Pass the repository explicitly: loadConfigFile returns only the config it found, so a
+// directory with no config file would leave resolveConfig scanning process.cwd() instead.
+const dir = "/path/to/repo";
+const config = resolveConfig(await loadConfigFile(dir), { cwd: dir });
 const manifest = generateSnapshot(config);
 const validation = validateSnapshot(config);
 ```

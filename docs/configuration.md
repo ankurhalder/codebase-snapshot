@@ -68,6 +68,8 @@ export default {
 ```
 
 - `include` is an allow-list of globs. When non-empty, only matching files are considered.
+- `exclude` is accepted as an alias of `excludePatterns` and means the same thing; the resolved
+  config always records it under `excludePatterns`.
 - `excludePatterns` removes files everywhere. Presets contribute their own ecosystem ignores
   on top; those are not removable, only addable to.
 
@@ -270,14 +272,17 @@ snapshot the marker describes.
 export default {
   hooks: {
     afterGenerate: (manifest) => {
-      // runs after a successful generate (and after a dry run)
+      // runs after a real generate; a dry run does not call it
     },
   },
 };
 ```
 
 A throwing hook is downgraded to a warning on the manifest — it never loses a snapshot that
-was already written.
+was already written. A hook may return a promise: it is not awaited (this API is synchronous),
+and a rejection is recorded as a warning on the re-shipped manifest and marker. Anything the
+hook writes to stdout is redirected to stderr for the duration of the call, so `--format json`
+stays parseable.
 
 A hook may write its own files into the output directory; that is safe across reruns because
 ownership is established by the marker rather than by the filenames present.

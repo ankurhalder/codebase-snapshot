@@ -175,6 +175,7 @@ With `--format json` the same answer is one object on stdout, with only the keys
 | `layer`, `kind`, `language` | The classification, present only when `included` is `true`. |
 | `layerMatch`, `kindMatch` | Which rule chose the layer or kind. A glob is printed as written (`src/api/**`); a `RegExp` as its literal form (`/\.tsx$/i`); a function matcher, which is what the presets use, as `function (custom predicate)`. Absent when no rule matched and the `other` fallback was used. |
 | `bytes`, `lines` | Size of the file on disk. |
+| `encoding` | Present only when the file is not plain UTF-8 — `utf-16le`, `utf-16be` or `utf-8-lossy`. |
 | `secretCount`, `secrets` | How many secret rules fire, and the first 20 as `{ rule, line }` — never the matched text. |
 | `part` | The part filename from the last written manifest, or `null` when it is not in that snapshot. |
 | `inclusionMode` | `full` or `preview`, when a part entry exists. |
@@ -262,6 +263,21 @@ config mismatch.
 
 Every option also accepts the `--option=value` form. That form is required for negative
 numbers, which otherwise look like flags.
+
+### `--mode`
+
+`--mode <command>` names the command instead of passing it positionally, which is handy when
+a wrapper builds the argument list. `--mode validate` and `codebase-snapshot validate` are the
+same run. It accepts the nine command names, and it is deliberately strict: asking for two
+different commands is an error rather than a silent winner.
+
+```
+❌ --mode validate contradicts the command "generate". Pass one or the other.
+❌ Unknown --mode "bogus". Expected one of: generate, validate, check, report, init, explain, diff, describe, skill.
+```
+
+`--mode` is not listed in `describe`'s option table or `--help`, on purpose: an agent has no
+reason to use it, and the positional form is the documented one.
 
 ## Exit codes
 
