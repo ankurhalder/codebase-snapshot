@@ -30,6 +30,12 @@ updates:
       # install against the current toolchain (`npm ci` fails).
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # `engines.node` is >= 18 and CI tests 18/20/22, so the type surface must
+      # track a Node version this package actually supports. Typing against a
+      # newer major would let code use APIs absent from every supported runtime.
+      # Raise the Node floor first, then align these types with it.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
