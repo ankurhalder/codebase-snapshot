@@ -20,9 +20,14 @@ Node 18 or newer. There is no database, no service, and no build step beyond `ts
 npm run check      # lint, tsc --noEmit, node --test
 ```
 
-CI additionally runs the suite on Node 18/20/22, audits dependencies, verifies the packed
-tarball's contents, and installs that tarball through npm, yarn classic, yarn Berry (strict
-PnP), pnpm and bun. A red job on any of those is a real failure, not noise.
+```bash
+npm run verify     # the above, plus a check of the tarball that would be published
+```
+
+Verification is local, deliberately. GitHub Actions is used for one thing only — publishing —
+and that workflow runs `npm run verify` before it uploads, so a green `verify` here is the same
+gate a release passes. There is no matrix to wait for, and nothing a pull request can fail that
+you could not have caught on your own machine.
 
 ## What makes a good change here
 

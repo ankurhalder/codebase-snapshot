@@ -116,7 +116,7 @@ It also has two side effects on files you own, and it says so when it does them:
 Nothing else in the repository is touched.
 
 Interactive by default; with `--yes` it accepts every default and never prompts, which is
-what CI and agents should use.
+what agents and release checks should use.
 
 The filename adapts to the project: `.ts` only when the running Node can strip types
 (≥ 22.6) **and** the project is an ES module; otherwise `.mjs`, which loads everywhere. The

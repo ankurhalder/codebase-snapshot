@@ -84,7 +84,7 @@ That writes an `AGENTS.md` section, `.claude/skills/codebase-snapshot/SKILL.md` 
 
 ## Verified clients
 
-Every client below installs the published package and runs it successfully; a CI matrix
+Every client below installs the published package and runs it successfully; the release check
 enforces this on every pull request, so a change that breaks one fails the build rather than
 a user's terminal.
 

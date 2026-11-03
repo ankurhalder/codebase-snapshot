@@ -78,7 +78,9 @@
     "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
     "prepublishOnly": "npm run build",
     "publish:create": "npm publish packages/create --access public",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "pack-check": "node scripts/pack-check.mjs",
+    "verify": "npm run check && npm run pack-check"
   },
   "dependencies": {
     "typescript": "^5.0.0"

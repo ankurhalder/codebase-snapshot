@@ -5,7 +5,6 @@ parts, indexed by a JSON manifest, with a secret audit — in one command.**
 
 [![npm version](https://img.shields.io/npm/v/@ankurhalder/codebase-snapshot.svg)](https://www.npmjs.com/package/@ankurhalder/codebase-snapshot)
 [![npm downloads](https://img.shields.io/npm/dw/@ankurhalder/codebase-snapshot.svg)](https://www.npmjs.com/package/@ankurhalder/codebase-snapshot)
-[![CI](https://github.com/ankurhalder/codebase-snapshot/actions/workflows/ci.yml/badge.svg)](https://github.com/ankurhalder/codebase-snapshot/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 
@@ -32,7 +31,7 @@ deterministically:
 - **An index, not just text.** `manifest.json` lists every included file with its layer, kind,
   language, part, hash and a structural summary — and every *excluded* file with the reason.
 - **Provably current.** `validate` re-hashes the repository against the snapshot and exits
-  non-zero on any drift, so CI can gate on context being fresh.
+  non-zero on any drift, so a pipeline can gate on context being fresh.
 - **Safe by default.** Credential files are skipped unless asked for, secret-shaped strings are
   redacted, and a mistyped output directory cannot delete source code.
 - **Usable by agents, not just humans.** A machine-readable contract and an installable skill
@@ -46,7 +45,7 @@ npm install -D @ankurhalder/codebase-snapshot    # or add it to a project
 ```
 
 Any npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
-each verified in CI. Requires **Node.js 18+**.
+each verified against the packed tarball before release. Requires **Node.js 18+**.
 
 → [Installation guide](docs/install.md)
 

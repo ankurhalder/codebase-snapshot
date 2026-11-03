@@ -64,9 +64,9 @@ npm run build
 ```
 
 `scripts/lint.mjs` enforces LF endings, no `any` in `src`, console usage only in
-`src/cli.ts`/`src/bin.ts`/`scripts/`, and comment/formatting rules. CI additionally runs the
-test suite on Node 18/20/22, audits dependencies, verifies the packed tarball, and installs it
-through npm, yarn classic, yarn Berry (strict PnP), pnpm and bun.
+`src/cli.ts`/`src/bin.ts`/`scripts/`, and comment/formatting rules. `npm run verify` is
+lint + typecheck + tests + a tarball check, and is exactly what the publish workflow runs
+before it uploads — there is no separate CI matrix to wait for.
 
 **Windows note.** The repository ships `.gitattributes` with `eol=lf`; a checkout with
 `core.autocrlf=true` will otherwise fail the lint rule on untouched files.

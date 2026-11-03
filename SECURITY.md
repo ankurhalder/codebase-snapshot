@@ -60,7 +60,7 @@ Reports we want to hear about: any path configuration that deletes or overwrites
 did not create.
 
 **Supply chain.** The package has exactly one runtime dependency (`typescript`), publishes with
-provenance from a pinned GitHub Actions workflow, and every third-party action in CI is pinned
+provenance from a pinned GitHub Actions workflow, and every third-party action in that workflow is pinned
 to a full commit SHA.
 
 ## Trust boundary
