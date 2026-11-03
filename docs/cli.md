@@ -194,6 +194,20 @@ Compares two snapshots and lists added, removed and changed files. Either argume
 snapshot directory or a `manifest.json`. Useful in review: "what changed in the context we
 hand to the model?"
 
+Comparison is per file (`relativePath` + `sha256`), so on its own it cannot see a run that
+repacked the *same* sources differently. `diff` therefore also compares the two manifests'
+`generator.version`, `config.digest`, content fingerprint, part count and layer totals, and
+prints a `payload/configuration differs:` section when the file set is identical but the
+emitted payload — or the configuration that produced it — is not. That covers `--large-file-bytes`
+(a preview becomes a full body), the preview head/tail counts, redaction rules, artifact
+selection and per-layer budgets, none of which move a source hash. The per-file lists and the
+JSON fields `added` / `removed` / `changed` / `unchanged` are unchanged; the extra data is
+under `payload` in `--format json`.
+
+Manifests written before 4.0.5 have no `config.digest`. In that case `diff` compares the
+content fingerprint and the part count only, and prints `configuration not compared: a
+manifest has no config digest (written before 4.0.5).` rather than implying the settings match.
+
 ### `describe`
 
 ```bash
@@ -244,12 +258,13 @@ narrowest cases of the same rule.
 | `--dry-run` | flag | off | generate, init | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
 | `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |
+| `--discovery <mode>` | enum | `auto` | generate, validate, explain | How files are found: `auto` lists through git when git works and refuses when a `.git` directory cannot be listed; `git` requires git; `walk` scans the tree and reads `.gitignore` files directly. The escape hatch for a broken `.git`. |
 | `--preset <name>` | name | detected | *init only* | Force a preset instead of detecting one. |
 | `--include <globs>` | list | unset | *init only* | Allow-list recorded in the generated config. |
 | `--exclude <globs>` | list | unset | *init only* | Exclude globs recorded in the generated config. |
 | `--yes` | flag | off | *init only* | Never prompt; accept every default. |
 | `--minimal` | flag | off | *init only* | Write only settings that differ from the defaults. |
-| `--force` | flag | off | *init only* | Overwrite an existing config. |
+| `--force` | flag | off | *init only* | Replace an existing `.ts`/`.js`/`.mjs` config in place. A JSON-family config is refused, naming the file to remove. |
 | `--install` | flag | off | *skill only* | Write the skill into the repository instead of printing it. |
 | `--target <name>` | enum | `all` | *skill only* | `claude`, `agents`, `cursor` or `all`. |
 | `-h`, `--help` | flag | — | every command | Print usage. |

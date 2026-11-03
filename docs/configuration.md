@@ -64,6 +64,7 @@ see [the trust boundary](../SECURITY.md#trust-boundary).
 export default {
   include: [],                    // allow-list; empty means "everything"
   excludePatterns: [],            // extra excludes, applied on top of the preset's
+  discovery: "auto",              // "auto" | "git" | "walk" — how files are found
 };
 ```
 
@@ -72,6 +73,17 @@ export default {
   config always records it under `excludePatterns`.
 - `excludePatterns` removes files everywhere. Presets contribute their own ecosystem ignores
   on top; those are not removable, only addable to.
+- `discovery` chooses how the file list is produced, and is recorded in `manifest.config`, so
+  changing it shows up as config drift:
+  - `"auto"` (default) — list through `git ls-files` when git can do it; if a `.git` directory
+    exists but git cannot list the files, refuse rather than silently switch methods.
+  - `"git"` — require git; a directory without a usable repository is an error.
+  - `"walk"` — scan the tree and read `.gitignore` files directly (nested ones included), still
+    skipping credential files. Use it when a `.git` directory cannot be listed. It cannot
+    reproduce git's own ignore sources (`.git/info/exclude`, your global `core.excludesFile`),
+    git's inclusion of files that are tracked although a `.gitignore` now matches them, or its
+    treatment of a submodule as a single entry. The same setting is available per run as
+    [`--discovery`](cli.md#options).
 
 Built-in ignores always apply: `.git`, `node_modules`, `.next`, `dist`, `build`, lockfiles,
 minified assets and binaries. Sensitive files are handled separately (see
@@ -316,6 +328,7 @@ export default {
   // ── Scope ────────────────────────────────────────────────
   include: [],
   excludePatterns: [],
+  discovery: "auto",                 // "auto" | "git" | "walk"
 
   // ── Artifacts ────────────────────────────────────────────
   artifacts: {
@@ -369,5 +382,12 @@ npx codebase-snapshot init --preset go --max-part-bytes 200k \
 ```
 
 `--minimal` writes only what differs from the defaults. `--dry-run` prints the config and
-writes nothing. `--force` overwrites an existing config; without it, an existing config is
-left alone and the command exits `1`.
+writes nothing. `--force` replaces an existing ES-module config (`.ts`, `.js`, `.mjs`) in
+place; without it, an existing config is left alone and the command exits `1`.
+
+It will not replace a JSON-family config — `snapshot.config.json`, `.snapshotrc`,
+`.snapshotrc.json`, or the `"snapshot"` key in `package.json` — because this wizard writes an
+ES-module file and a new file beside the old one would silently shadow it. Those cases exit `1`
+with a message naming the file to delete or rename. Note that this means `--force` writing
+`snapshot.config.ts` does shadow a `"snapshot"` key in `package.json`, since a dedicated config
+file always wins.

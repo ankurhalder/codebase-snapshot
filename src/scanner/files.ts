@@ -4,12 +4,32 @@ import * as path from "node:path";
 import { PRESETS } from "../presets/index.js";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { REDACTION_MARKER } from "../security/redact.js";
-import type { SecretRule, SkipRecord } from "../types.js";
+import type { DiscoveryMode, SecretRule, SkipRecord } from "../types.js";
 
 export interface GitInfo {
   branch: string;
   commit: string;
   isDirty: boolean;
+}
+
+/** How candidate files are discovered (the type itself lives in `types.ts`). */
+export type { DiscoveryMode } from "../types.js";
+
+export function isDiscoveryMode(value: unknown): value is DiscoveryMode {
+  return value === "auto" || value === "git" || value === "walk";
+}
+
+/**
+ * The mode used when a caller does not pass one.
+ *
+ * `resolveConfig` registers the resolved value, so `generate`, `validate` and
+ * `explain` honour the `discovery` config key without every call site having to
+ * thread it; an explicit `options.discovery` always wins.
+ */
+let activeDiscovery: DiscoveryMode = "auto";
+
+export function setActiveDiscovery(mode: DiscoveryMode): void {
+  activeDiscovery = mode;
 }
 
 export interface CollectOptions {
@@ -38,6 +58,13 @@ export interface CollectOptions {
    * is an ordinary directory when it is not: dropping it silently was the bug.
    */
   toolOwnedPaths?: readonly string[];
+  /**
+   * How candidates are discovered: `auto` (git when usable, refusal when the
+   * directory claims to be a repository but git cannot list it), `git` (require
+   * git), or `walk` (walk the tree, reading the root `.gitignore` directly).
+   * Defaults to the configured mode, then `auto`.
+   */
+  discovery?: DiscoveryMode;
 }
 
 export interface CollectResult {
@@ -700,6 +727,66 @@ function dropLinkedDirectories(
 }
 
 /**
+ * Lists candidates through `git ls-files`, recording ignored paths as skips.
+ *
+ * Extracted so `collectFiles` can choose between git and the walk without
+ * duplicating the listing logic; a throw from here means git is unusable.
+ */
+function listGitCandidates(
+  cwd: string,
+  skipped: SkipRecord[],
+  isToolOwned: (relativePath: string) => boolean
+): string[] {
+  const stdout = childProcess.execSync(
+    "git ls-files -z --cached --others --exclude-standard",
+    {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+      maxBuffer: 50 * 1024 * 1024,
+    }
+  );
+  let candidates = stdout
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => entry.replace(/\\/g, "/"));
+
+  // `git ls-files` reports the files *below* a directory link, so the link
+  // policy the walker applies has to be re-applied to git's answer.
+  candidates = dropLinkedDirectories(cwd, candidates, skipped);
+
+  // Ignored paths are invisible to `--exclude-standard`. Record them so the
+  // manifest can account for every file that exists but was not emitted.
+  const known = new Set(candidates);
+  for (const ignoredPath of listIgnoredPaths(cwd)) {
+    const trimmed = ignoredPath.replace(/\/+$/, "");
+    if (known.has(trimmed) || known.has(ignoredPath)) continue;
+    if (isToolOwned(trimmed)) continue;
+    if (isSensitivePath(trimmed)) {
+      skipped.push({
+        path: trimmed,
+        reason: "sensitive-file",
+        detail:
+          "credential-bearing file, ignored by .gitignore; enable includeSensitiveFiles to emit it",
+      });
+    } else {
+      // Recorded whether it is a file or a directory: the same `.gitignore`d
+      // path outside a git repository produced a `gitignore` record, and the
+      // manifest must not depend on which discovery path ran.
+      skipped.push({
+        path: trimmed,
+        reason: "gitignore",
+        detail: ignoredPath.endsWith("/")
+          ? "ignored by .gitignore (directory, not descended)"
+          : "ignored by .gitignore",
+      });
+    }
+  }
+
+  return candidates;
+}
+
+/**
  * Collects candidate file paths.
  *
  * Uses `git ls-files -z` when git is available: `-z` is required because the
@@ -718,70 +805,50 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
 
   let candidates: string[];
   const skipped: SkipRecord[] = [];
+  const discovery = options.discovery ?? activeDiscovery;
 
-  try {
-    const stdout = childProcess.execSync(
-      "git ls-files -z --cached --others --exclude-standard",
-      {
-        cwd,
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf8",
-        maxBuffer: 50 * 1024 * 1024,
-      }
-    );
-    candidates = stdout
-      .split("\0")
-      .filter((entry) => entry.length > 0)
-      .map((entry) => entry.replace(/\\/g, "/"));
-
-    // `git ls-files` reports the files *below* a directory link, so the link
-    // policy the walker applies has to be re-applied to git's answer.
-    candidates = dropLinkedDirectories(cwd, candidates, skipped);
-
-    // Ignored paths are invisible to `--exclude-standard`. Record them so the
-    // manifest can account for every file that exists but was not emitted.
-    const known = new Set(candidates);
-    for (const ignoredPath of listIgnoredPaths(cwd)) {
-      const trimmed = ignoredPath.replace(/\/+$/, "");
-      if (known.has(trimmed) || known.has(ignoredPath)) continue;
-      if (isToolOwned(trimmed)) continue;
-      if (isSensitivePath(trimmed)) {
-        skipped.push({
-          path: trimmed,
-          reason: "sensitive-file",
-          detail:
-            "credential-bearing file, ignored by .gitignore; enable includeSensitiveFiles to emit it",
-        });
-      } else {
-        // Recorded whether it is a file or a directory: the same `.gitignore`d
-        // path outside a git repository produced a `gitignore` record, and the
-        // manifest must not depend on which discovery path ran.
-        skipped.push({
-          path: trimmed,
-          reason: "gitignore",
-          detail: ignoredPath.endsWith("/")
-            ? "ignored by .gitignore (directory, not descended)"
-            : "ignored by .gitignore",
-        });
-      }
-    }
-  } catch {
-    // The walk never follows a directory link, so it cannot loop and needs no
-    // per-directory realpath: the root is resolved once and passed down.
-    // Falling back to a walk changes what is scanned: the walker honours only the
-    // root .gitignore, not nested ones, so gitignored files enter the snapshot and
-    // a "clean" snapshot silently contains them. Refuse instead of guessing.
-    if (fs.existsSync(path.join(cwd, ".git"))) {
-      throw new Error(
-        "This directory is a git repository, but git could not list its files. " +
-          "A fallback scan would ignore nested .gitignore files and include files git ignores. " +
-          "Fix the repository (git status should work) or run outside git."
-      );
-    }
+  if (discovery === "walk") {
+    // The documented escape hatch. The walker reads every `.gitignore` it meets —
+    // nested ones included — and still applies the secret deny list. What it cannot
+    // reproduce is git's own ignore sources (`.git/info/exclude`, the global
+    // `core.excludesFile`), git's inclusion of files that are tracked although a
+    // `.gitignore` now matches them, and its treatment of a submodule as a single
+    // entry instead of a tree to descend into.
     const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), toolOwnedPaths);
     candidates = walked.files;
-    // `push(...array)` would pass one argument per element; see the note in `walkDirectory`.
     for (const record of walked.skipped) skipped.push(record);
+  } else {
+    try {
+      candidates = listGitCandidates(cwd, skipped, isToolOwned);
+    } catch {
+      // `git` mode promises git, so a directory without a usable repository is a
+      // refusal rather than a quiet fallback to the walk.
+      if (discovery === "git") {
+        throw new Error(
+          "Discovery mode is `git`, but git could not list this directory's files. " +
+            "Run inside a working repository, or pass --discovery walk (or auto) to scan the tree " +
+            "directly."
+        );
+      }
+      // A walk changes what is scanned, and this directory claims to be a
+      // repository: refuse rather than silently ship a different snapshot. The
+      // reason names only what a walk genuinely cannot reproduce — nested
+      // `.gitignore` files *are* honoured by it.
+      if (fs.existsSync(path.join(cwd, ".git"))) {
+        throw new Error(
+          "This directory is a git repository, but git could not list its files. " +
+            "A plain walk honours .gitignore files, but git also applies .git/info/exclude and " +
+            "your global excludes file, includes files that are tracked although a .gitignore now " +
+            "matches them, and treats a submodule as a single entry. " +
+            "Fix the repository (git status should work), run outside git, or pass " +
+            "--discovery walk to accept those differences."
+        );
+      }
+      const walked = walkDirectory(cwd, cwd, rootRealFor(cwd), new Set<string>(), toolOwnedPaths);
+      candidates = walked.files;
+      // `push(...array)` would pass one argument per element; see the note in `walkDirectory`.
+      for (const record of walked.skipped) skipped.push(record);
+    }
   }
 
   const files = candidates

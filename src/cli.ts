@@ -9,13 +9,14 @@ import { PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import { validateSnapshot } from "./validator/validate.js";
 import { getPreset, unknownPresetMessage } from "./presets/index.js";
+import { isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
 import { buildAgentContract, renderContractText } from "./agent/contract.js";
 import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
-import type { Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
+import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
 import { escapeControls } from "./terminal.js";
 
 const VERSION = GENERATOR_VERSION;
@@ -69,6 +70,7 @@ const CLI_OPTIONS = {
   "dry-run": { type: "boolean" },
   watch: { type: "boolean" },
   "no-config": { type: "boolean" },
+  discovery: { type: "string" },
   preset: { type: "string" },
   include: { type: "string" },
   exclude: { type: "string" },
@@ -118,6 +120,9 @@ Options:
   --dry-run                     Compute the snapshot without writing anything
   --watch                       Re-generate whenever the repository changes
   --no-config                   Ignore snapshot.config.* and use the built-in defaults
+  --discovery <mode>            auto | git | walk — how files are discovered.
+                                auto: git when usable. git: require git. walk: read
+                                .gitignore directly (escape hatch for a broken .git)
 
   init only:
   --preset <name>               Force a project preset instead of detecting one
@@ -168,6 +173,8 @@ interface ParsedInvocation {
   largeFileBytes?: number;
   maxMonolithBytes?: number | null;
   skipArtifacts?: string[];
+  /** How candidates are discovered; `auto` when unset. */
+  discovery?: DiscoveryMode;
 }
 
 export function parsePositiveInteger(
@@ -356,6 +363,16 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     throw new UsageError(`--format must be "text" or "json", received "${rawFormat}".`);
   }
 
+  // An unusable discovery mode is a usage error naming the three valid values:
+  // silently falling back to `auto` would turn the escape hatch into a no-op for
+  // exactly the user who needs it.
+  const rawDiscovery = values.discovery === undefined ? undefined : String(values.discovery);
+  if (rawDiscovery !== undefined && !isDiscoveryMode(rawDiscovery)) {
+    throw new UsageError(
+      `--discovery must be one of: auto, git, walk (received "${rawDiscovery}").`
+    );
+  }
+
   let onlyNamesMonolith = false;
   const rawSkip = values["skip-artifacts"];
   const rawOnly = values["only-artifacts"];
@@ -460,6 +477,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       1
     ),
     skipArtifacts,
+    discovery: isDiscoveryMode(rawDiscovery) ? rawDiscovery : undefined,
   };
 }
 
@@ -531,6 +549,18 @@ function describeManifestShapeProblem(manifest: unknown): string | null {
   if (!counts || typeof counts !== "object") return "missing `counts`";
   for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
     if (typeof counts[key] !== "number") return `missing numeric \`counts.${key}\``;
+    // `-5`, `1.5` and `1e999` are all numbers, and `report` printed each of them verbatim:
+    // "-5 files included", "Total lines: 1.5", "Total size: Infinity MB". A count is a
+    // non-negative integer, or the document is not a snapshot manifest.
+    if (!Number.isSafeInteger(counts[key]) || (counts[key] as number) < 0) {
+      return `\`counts.${key}\` must be a non-negative integer`;
+    }
+  }
+
+  // The fingerprint is a sha256 digest; `validate` used to accept `"12345"` and call the snapshot
+  // current, and `report` printed it as the fingerprint.
+  if (candidate.fingerprint !== undefined && !/^[0-9a-f]{64}$/.test(String(candidate.fingerprint))) {
+    return "`fingerprint` must be a 64-character sha256 hex digest";
   }
 
   if (!candidate.layers || typeof candidate.layers !== "object") return "missing `layers`";
@@ -745,12 +775,31 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       largeFileBytes: invocation.largeFileBytes,
       maxMonolithBytes: invocation.maxMonolithBytes,
       skipArtifacts: invocation.skipArtifacts,
-    },
+      discovery: invocation.discovery,
+    } as Partial<CliOptions> & { discovery?: DiscoveryMode },
     invocation.cwd
   );
 
   if (invocation.command === "validate") {
     const result = validateSnapshot(resolved);
+    // A manifest can parse, carry every array the validator needs, and still be nonsense in the
+    // fields it treats as opaque: `fingerprint: "12345"` passed as "valid and up to date". The
+    // shape check runs only for a result that claims to be valid, so an invalid result keeps the
+    // more specific answer it already has.
+    if (result.valid) {
+      const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      } catch {
+        manifest = undefined; // unreadable or unparseable: `validateSnapshot` already said so
+      }
+      const shapeError = manifest === undefined ? null : describeManifestShapeProblem(manifest);
+      if (shapeError) {
+        warn(`❌ ${manifestPath} is not a snapshot manifest: ${shapeError}`);
+        return 1;
+      }
+    }
     emit(invocation.format, result, () => renderValidateText(result));
     return result.valid ? 0 : 1;
   }
@@ -1131,7 +1180,8 @@ async function runWatchLoop(
           largeFileBytes: invocation.largeFileBytes,
           maxMonolithBytes: invocation.maxMonolithBytes,
           skipArtifacts: invocation.skipArtifacts,
-        },
+          discovery: invocation.discovery,
+        } as Partial<CliOptions> & { discovery?: DiscoveryMode },
         invocation.cwd
       );
       const manifest = generateSnapshot(next, { dryRun: invocation.dryRun });

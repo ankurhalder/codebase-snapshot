@@ -799,6 +799,7 @@ test("the generated config exposes every setting at its default", () => {
   for (const key of [
     "preset:", "branch:", "outDir:", "tmpDir:", "maxPartBytes:", "largeFileBytes:",
     "previewHeadLines:", "previewTailLines:", "budgets:", "include:", "excludePatterns:",
+    "discovery:",
     "layersMode:", "layers:", "kinds:", "includeSensitiveFiles:", "secrets:",
     "customPatterns:", "disableDefaultPatterns:", "artifacts:", "maxMonolithBytes:", "hooks:",
   ]) {

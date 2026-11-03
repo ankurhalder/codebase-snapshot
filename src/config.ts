@@ -4,7 +4,12 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
-import { globToRegExp } from "./scanner/files.js";
+import {
+  globToRegExp,
+  isDiscoveryMode,
+  setActiveDiscovery,
+  type DiscoveryMode,
+} from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
 import type {
@@ -122,8 +127,17 @@ export function isResolvedConfig(value: unknown): value is ResolvedSnapshotConfi
 export function normalizeResolvedConfig(
   config: ResolvedSnapshotConfig
 ): ResolvedSnapshotConfig {
+  // Older resolved configs (or a spread copy of one built before the field
+  // existed) may carry no `discovery`: fall back to `auto`, which is what
+  // discovery did when the mode did not exist.
+  const discovery: DiscoveryMode = isDiscoveryMode(config.discovery)
+    ? config.discovery
+    : "auto";
+  setActiveDiscovery(discovery);
+
   return markResolvedConfig({
     ...config,
+    discovery,
     secretRules: compileSecretRules(config.secretRules),
     artifacts: resolveArtifacts(
       config.artifacts,
@@ -953,6 +967,20 @@ export function resolveConfig(
     | undefined;
   const cwd = resolveCandidateCwd(userConfig ?? null, cliOptions, baseDir ?? configDir);
 
+  // How candidates are found. The CLI flag outranks the config key, an unusable
+  // value is a hard error (never a silent "auto"), and the effective mode is
+  // registered for every scan in this run.
+  const requestedDiscovery =
+    (cliOptions as { discovery?: unknown } | undefined)?.discovery ??
+    (userConfig as { discovery?: unknown } | null | undefined)?.discovery;
+  if (requestedDiscovery !== undefined && !isDiscoveryMode(requestedDiscovery)) {
+    throw new Error(
+      `\`discovery\` must be one of: auto, git, walk (received ${describeValue(requestedDiscovery)}).`
+    );
+  }
+  const discovery: DiscoveryMode = requestedDiscovery ?? "auto";
+  setActiveDiscovery(discovery);
+
   // A forced preset must exist: silently falling back would leave the developer
   // believing their layers are in effect when they are not.
   const forcedPreset = resolvePresetName(userConfig?.preset);
@@ -1109,7 +1137,11 @@ export function resolveConfig(
       userConfig?.excludePatterns ?? (userConfig as { exclude?: unknown } | null)?.exclude
     ),
     secretRules,
-  });
+    // Extra property rather than a `ResolvedSnapshotConfig` field: the resolved
+    // shape is owned elsewhere, and every scan reads it through the registry in
+    // `scanner/files.ts`.
+    discovery,
+  } as ResolvedSnapshotConfig & { discovery: DiscoveryMode });
 }
 
 /**

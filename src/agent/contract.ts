@@ -355,6 +355,13 @@ export function buildAgentContract(): AgentContract {
         summary: "Also emit .env / *.pem / .npmrc style files. Off by default; they are recorded as skipped.",
       },
       {
+        flag: "--discovery",
+        type: "string",
+        default: "auto",
+        appliesTo: optionAppliesTo("discovery"),
+        summary: "How files are discovered: auto (git when usable), git (require git), walk (read the root .gitignore directly; the escape hatch for a .git that cannot be listed).",
+      },
+      {
         flag: "--skip-artifacts",
         type: "string",
         default: "unset",
@@ -496,6 +503,7 @@ export function buildAgentContract(): AgentContract {
         { key: "includeSensitiveFiles", type: "boolean", default: false, summary: "Emit .env / *.pem / credential files." },
         { key: "include", type: "string[]", default: "[]", summary: "Allow-list of globs; empty means everything." },
         { key: "excludePatterns", type: "string[]", default: "[]", summary: "Extra exclude globs." },
+        { key: "discovery", type: '"auto" | "git" | "walk"', default: "auto", summary: "How files are discovered; `walk` scans the tree and reads .gitignore directly when a .git directory cannot be listed." },
         { key: "artifacts", type: "object", default: "all on except monolith", summary: "Per-artifact opt-out." },
         { key: "budgets", type: "object", default: "{ default, byLayer }", summary: "Per-layer byte budgets." },
         { key: "layersMode", type: '"merge" | "replace"', default: "merge", summary: "Whether custom layers extend or replace the preset's." },

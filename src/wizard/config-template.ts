@@ -105,6 +105,10 @@ export function renderConfig(answers: WizardAnswers): string {
   include: ${list(answers.include)},
   // Globs or path segments to drop. Example: ["**/*.test.ts", "docs"]
   excludePatterns: ${list(answers.excludePatterns)},
+  // How candidate files are found: "auto" lists them through git when git can
+  // and walks the tree otherwise; "git" and "walk" force one path, and "walk" is
+  // the escape hatch when .git exists but git cannot list it.
+  discovery: "auto",
 
   // ── Classification ─────────────────────────────────────────────────────
   // "merge" = the preset's rules plus yours (yours win). "replace" = yours only.

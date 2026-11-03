@@ -121,16 +121,40 @@ loadable on your Node version: a `.ts` config needs Node ≥ 22.6 **and** an ES-
 ### `This directory is a git repository, but git could not list its files.`
 
 ```
-❌ Failed to generate snapshot: This directory is a git repository, but git could not list its files. A fallback scan would ignore nested .gitignore files and include files git ignores. Fix the repository (git status should work) or run outside git.
+❌ Failed to generate snapshot: This directory is a git repository, but git could not list its files. A plain walk honours .gitignore files, but git also applies .git/info/exclude and your global excludes file, includes files that are tracked although a .gitignore now matches them, and treats a submodule as a single entry. Fix the repository (git status should work), run outside git, or pass --discovery walk to accept those differences.
 ```
 
 `git` is present and a `.git` directory exists, but it cannot list the files — an empty or
 half-initialised `.git`, a permissions problem, or a damaged index. The tool refuses rather
-than falling back, because a walk would produce a different snapshot from the one git would
-have described: nested `.gitignore` files would be missed and ignored files would be included.
+than silently choosing between two discovery methods: which files are in the snapshot would
+otherwise depend on whether git happened to work.
 
-**Fix** — make `git status` work in that directory (repair or re-clone the repository), or copy
-the files somewhere without a `.git` and generate there.
+**Fix** — make `git status` work in that directory (repair or re-clone the repository), generate
+from a copy that has no `.git` directory, or pass `--discovery walk` to scan the tree anyway.
+The walk reads every `.gitignore` it meets, nested ones included, and still skips credential
+files; what it cannot reproduce is git's own ignore sources (`.git/info/exclude` and your global
+`core.excludesFile`), git's inclusion of files that are tracked although a `.gitignore` now
+matches them, and its treatment of a submodule as one entry instead of a tree.
+
+`--discovery git` says the opposite — require git — so it refuses in a directory that has no
+usable repository:
+
+```
+❌ Failed to generate snapshot: Discovery mode is `git`, but git could not list this directory's files. Run inside a working repository, or pass --discovery walk (or auto) to scan the tree directly.
+```
+
+### `Another generate run is already using the staging directory …`
+
+```
+❌ Failed to generate snapshot: Another generate run is already using the staging directory /repo/snapshot.tmp. Wait for it to finish, or delete /repo/codebase-snapshot-1a2b3c4d5e6f7890.lock if no other run is active.
+```
+
+A second `generate` against the same repository started while the first still held the staging
+directory — two terminals, or a CI job and a developer at once. The lock is advisory and on
+disk, so a run that was killed cannot release it.
+
+**Fix** — wait for the other run, then retry. If no other run is active, the named lock file is
+stale: delete it, and the next run proceeds.
 
 ### `Refusing to generate: …`
 
@@ -222,6 +246,7 @@ npx codebase-snapshot explain src/generated/schema.ts
 | `gitignore` | A `.gitignore` excluded it, in a scan that is not reading git's index. | Remove the entry, or add the path to `include`. |
 | `read-error` | Unreadable file. | Check permissions. |
 | `not-file` | A directory, socket, FIFO. | Expected. |
+| `nested-repository` | A nested checkout or submodule — a directory tracked by a different repository. | Expected; snapshot that repository separately if you need its code. |
 
 Inside a git repository the candidate list comes from git, which applies `.gitignore` before
 the scanner runs; those ignored paths are listed separately and recorded too, so a `.gitignore`d
