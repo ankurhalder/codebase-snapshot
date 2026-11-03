@@ -898,11 +898,140 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 }
 
+/** Coalesce bursts of filesystem events into one run. */
+export const WATCH_DEBOUNCE_MS = 250;
+/**
+ * Unattributed watcher events (no filename) are ignored this long after a run.
+ * Named source events are never ignored: that is how an edit in the quiet
+ * window or during a run reaches the loop.
+ */
+export const WATCH_SETTLE_MS = 1500;
+
+/** Version-control metadata is written by our own git probes; ignore it. */
+const VCS_SEGMENTS = new Set([".git", ".hg", ".svn", ".bzr"]);
+
+export interface WatchState {
+  running: boolean;
+  pending: boolean;
+  settleUntil: number;
+}
+
+export interface WatchPaths {
+  cwd: string;
+  outDir: string;
+  tmpDir: string;
+}
+
+export interface WatchEvent {
+  /** Absolute path, or null when `fs.watch` did not attribute the event. */
+  path: string | null;
+  /** `performance.now()` at delivery. */
+  now: number;
+}
+
+export type WatchAction = "ignore" | "pending" | "schedule";
+
+export interface WatchDecision {
+  state: WatchState;
+  action: WatchAction;
+}
+
+export function initialWatchState(): WatchState {
+  return { running: false, pending: false, settleUntil: 0 };
+}
+
+export function beginWatchRun(state: WatchState): WatchState {
+  return { ...state, running: true, pending: false };
+}
+
+/**
+ * Finish one run. `schedule` is true when a source event arrived while the run
+ * was in flight, so exactly one follow-up run is owed.
+ */
+export function finishWatchRun(
+  state: WatchState,
+  now: number
+): { state: WatchState; schedule: boolean } {
+  return {
+    state: { running: false, pending: false, settleUntil: now + WATCH_SETTLE_MS },
+    schedule: state.pending,
+  };
+}
+
+function comparablePath(value: string): string {
+  const absolute = path.resolve(value);
+  return process.platform === "win32" ? absolute.toLowerCase() : absolute;
+}
+
+function isSameOrInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+/**
+ * True only for the resolved output/staging paths and their contents.
+ *
+ * This deliberately does not match a directory just because its basename is
+ * `docs`: a source directory `src/docs` is not the output directory `docs`.
+ */
+export function isGeneratedWatchPath(candidate: string, paths: WatchPaths): boolean {
+  const absolute = comparablePath(path.resolve(paths.cwd, candidate));
+  const outDir = comparablePath(path.resolve(paths.cwd, paths.outDir));
+  const tmpDir = comparablePath(path.resolve(paths.cwd, paths.tmpDir));
+
+  if (isSameOrInside(outDir, absolute) || isSameOrInside(tmpDir, absolute)) return true;
+
+  // The atomic swap renames the previous output to `<outDir>.backup-<pid>-<time>`
+  // before installing the new directory.
+  const parent = path.dirname(absolute);
+  if (
+    parent === path.dirname(outDir) &&
+    path.basename(absolute).startsWith(`${path.basename(outDir)}.backup-`)
+  ) {
+    return true;
+  }
+
+  return absolute
+    .split(/[\\/]+/)
+    .some((segment) => VCS_SEGMENTS.has(segment));
+}
+
+/**
+ * Decide what one watcher event means.
+ *
+ * - generated paths are always ignored;
+ * - a named source event is `pending` during a run and `schedule` otherwise,
+ *   including inside the settle window (an edit is never swallowed);
+ * - an unattributed event is ignored during a run and for the settle window,
+ *   because Windows does not always name the path our own writes produced.
+ */
+export function decideWatchEvent(
+  state: WatchState,
+  event: WatchEvent,
+  paths: WatchPaths
+): WatchDecision {
+  if (event.path !== null) {
+    if (isGeneratedWatchPath(event.path, paths)) return { state, action: "ignore" };
+  } else if (state.running || event.now < state.settleUntil) {
+    return { state, action: "ignore" };
+  }
+
+  if (state.running) {
+    return { state: { ...state, pending: true }, action: "pending" };
+  }
+  return { state, action: "schedule" };
+}
+
 /**
  * Re-generates on every change under `cwd`.
  *
- * Events inside the output and temporary directories are ignored, otherwise
- * writing a snapshot would immediately schedule the next run and loop forever.
+ * Events inside the resolved output and temporary directories are ignored, so
+ * writing a snapshot cannot feed the watcher. A source event that arrives while
+ * a run is in flight sets a pending flag and gets exactly one follow-up run;
+ * the settle window only suppresses unattributed events.
  */
 async function runWatchLoop(
   invocation: ParsedInvocation,
@@ -911,41 +1040,30 @@ async function runWatchLoop(
   const outDir = path.resolve(resolved.cwd, resolved.outDir);
   const tmpDir = path.resolve(resolved.cwd, resolved.tmpDir);
 
-  // Compare case-insensitively on Windows, where the watcher can report a
-  // different casing than `path.resolve` produced. Filtering by *segment* rather
-  // than by prefix also survives the relative paths `fs.watch` emits. The
-  // `<outDir>.backup-*` directories created by the atomic swap must be ignored
-  // too, or each run schedules the next one forever.
-  //
-  // Version-control metadata is ignored for the same reason: `getGitInfo` runs
-  // `git status`, git touches `.git/index.lock` on every call, and a watcher that
-  // reacted to that regenerated forever — eight times in five idle seconds in a
-  // clean repository, which made `--watch` unusable on the main use case.
-  const VCS_SEGMENTS = new Set([".git", ".hg", ".svn", ".bzr"]);
-  const outName = path.basename(outDir).toLowerCase();
-  const tmpName = path.basename(tmpDir).toLowerCase();
-  const isGenerated = (candidate: string): boolean =>
-    candidate
-      .toLowerCase()
-      .split(/[\\/]/)
-      .some(
-        (segment) =>
-          segment === outName ||
-          segment === tmpName ||
-          segment.startsWith(`${outName}.backup-`) ||
-          VCS_SEGMENTS.has(segment)
-      );
+  const paths: WatchPaths = { cwd: resolved.cwd, outDir, tmpDir };
+  let state = initialWatchState();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
 
-  let running = false;
-  // Events caused by our own writes are not always reported with a path this
-  // process can recognise (Windows recursive watch reports them relative to
-  // different roots), so the watcher also stays quiet for a short window after
-  // each run. Without this the writer feeds the watcher and the loop never idles.
-  let quietUntil = 0;
-  const QUIET_MS = 1500;
+  const schedule = (delay = WATCH_DEBOUNCE_MS): void => {
+    if (stopped) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      void regenerate();
+    }, delay);
+  };
+
   const regenerate = async (): Promise<void> => {
-    if (running) return;
-    running = true;
+    if (state.running) {
+      state = { ...state, pending: true };
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      return;
+    }
+    state = beginWatchRun(state);
     const started = performance.now();
     try {
       // A watcher that keeps the config it started with regenerates with stale
@@ -989,27 +1107,40 @@ async function runWatchLoop(
     } catch (err) {
       warn(`❌ ${(err as Error).message}`);
     } finally {
-      quietUntil = performance.now() + QUIET_MS;
-      running = false;
+      const finished = finishWatchRun(state, performance.now());
+      state = finished.state;
+      if (finished.schedule) schedule(0);
     }
   };
 
   info("👀 Watching for changes. Press Ctrl+C to stop.");
   void regenerate();
 
-  let timer: ReturnType<typeof setTimeout> | null = null;
   const watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
-    if (performance.now() < quietUntil) return;
-    if (filename) {
-      const changed = path.resolve(resolved.cwd, filename.toString());
-      if (isGenerated(changed)) return;
+    const decision = decideWatchEvent(
+      state,
+      {
+        path: filename ? path.resolve(resolved.cwd, filename.toString()) : null,
+        now: performance.now(),
+      },
+      paths
+    );
+    state = decision.state;
+    if (decision.action === "pending") {
+      // The run that is in flight will schedule the single follow-up when it
+      // finishes; a debounce timer now would be consumed by the early return.
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      return;
     }
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void regenerate(), 250);
+    if (decision.action === "schedule") schedule();
   });
 
   await new Promise<void>((resolve) => {
     const stop = (): void => {
+      stopped = true;
       if (timer) clearTimeout(timer);
       watcher.close();
       resolve();
