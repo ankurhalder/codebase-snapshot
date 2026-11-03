@@ -31,7 +31,11 @@ export function detectPreset(cwd: string): {
         ...(parsed.dependencies || {}),
         ...(parsed.devDependencies || {}),
       };
-    } catch {}
+    } catch {
+      // A malformed package.json is not fatal here: preset detection simply
+      // falls back to the default preset.
+      pkgDependencies = {};
+    }
   }
 
   if (hasNextConfig || pkgDependencies["next"]) {
@@ -81,4 +85,3 @@ export {
   DEFAULT_LAYERS,
   DEFAULT_KINDS,
 };
-

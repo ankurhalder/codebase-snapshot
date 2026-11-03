@@ -5,22 +5,120 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Serialize releases: two publishes must never overlap, and an in-flight
+# publish must never be cancelled, hence cancel-in-progress: false.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # workflow_dispatch can be started from any branch, so gate it to main.
+    # `release` events publish the tagged commit (refs/tags/<tag>), so they are
+    # allowed through explicitly and keep working.
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Third-party actions are pinned to full commit SHAs (with the release
+      # version in a trailing comment) so a retagged or hijacked release cannot
+      # silently change what runs during a publish.
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js 20 and npm registry
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
-      - run: npm publish --access public --provenance
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      # Pre-flight: assert the tarball is publishable BEFORE anything reaches
+      # the registry. Same required-file/no-sourcemap contract as CI.
+      - name: Verify tarball before publishing
+        run: |
+          node --input-type=module -e '
+          import { spawnSync } from "node:child_process";
+
+          const REQUIRED = ["dist/index.js", "dist/index.cjs", "dist/index.d.ts", "dist/cli.js", "README.md", "LICENSE"];
+
+          // npm is a .cmd shim on Windows (needs a shell); on Linux/macOS it spawns directly.
+          function pack(args) {
+            return process.platform === "win32"
+              ? spawnSync("npm.cmd " + args.join(" "), { encoding: "utf8", shell: true })
+              : spawnSync("npm", args, { encoding: "utf8" });
+          }
+
+          function listTarballFiles() {
+            const asJson = pack(["pack", "--dry-run", "--json"]);
+            const raw = (asJson.stdout || "").trim();
+
+            if (asJson.status === 0 && raw.startsWith("[")) {
+              try {
+                return JSON.parse(raw).flatMap((entry) => (entry.files || []).map((file) => file.path));
+              } catch {
+                // Older npm builds emit non-JSON output; fall back to parsing notices below.
+              }
+            }
+
+            const plain = pack(["pack", "--dry-run"]);
+            const text = (plain.stdout || "") + "\n" + (plain.stderr || "");
+            if (plain.status !== 0) {
+              console.error("npm pack --dry-run exited with code " + plain.status);
+              console.error(text);
+              return null;
+            }
+
+            const lines = text.split("\n");
+            const start = lines.findIndex((line) => line.includes("Tarball Contents"));
+            if (start === -1) return null;
+
+            const paths = [];
+            for (const line of lines.slice(start + 1)) {
+              // npm >= 9 prints bare headers, older npm wraps them in === banners.
+              if (line.includes("Tarball Details") || line.includes("===")) break;
+              const cleaned = line.replace(/^npm notice\s+/, "").trim();
+              if (!cleaned) continue;
+              paths.push(cleaned.split(/\s+/).pop());
+            }
+            return paths.filter(Boolean);
+          }
+
+          const files = listTarballFiles();
+          if (!files) {
+            console.error("FAIL: could not read the tarball file list from npm pack --dry-run");
+            process.exit(1);
+          }
+
+          console.log("tarball contains " + files.length + " files:");
+          for (const file of files) console.log("  " + file);
+
+          const problems = [];
+          for (const required of REQUIRED) {
+            if (!files.includes(required)) problems.push("missing required file: " + required);
+          }
+          const sourcemaps = files.filter((file) => file.endsWith(".map"));
+          if (sourcemaps.length > 0) problems.push("tarball must not contain .map files: " + sourcemaps.join(", "));
+
+          if (problems.length > 0) {
+            for (const problem of problems) console.error("FAIL: " + problem);
+            process.exit(1);
+          }
+
+          console.log("OK: tarball has every required file and no .map artifacts");
+          '
+
+      - name: Publish to npm with provenance
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-

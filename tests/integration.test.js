@@ -1,0 +1,710 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+import {
+  GENERATOR_VERSION,
+  SCHEMA_VERSION,
+  generateSnapshot,
+  isResolvedConfig,
+  resolveConfig,
+  resolveSafeOutputDirs,
+  validateSnapshot,
+} from "../dist/index.js";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const BIN = path.join(HERE, "..", "dist", "bin.js");
+const PACKAGE_JSON = JSON.parse(
+  fs.readFileSync(path.join(HERE, "..", "package.json"), "utf8")
+);
+
+const AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
+const PEM = [
+  "-----BEGIN RSA PRIVATE KEY-----",
+  "MIIEowIBAAKCAQEASENTINELBODYSECRET1234567890abcdefghijklmn",
+  "mnopqrstuvwxyzSENTINELBODYSECRET111111111111111111111111111",
+  "-----END RSA PRIVATE KEY-----",
+].join("\n");
+
+function makeRepo(prefix, files, { git = true } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  for (const [rel, content] of Object.entries(files)) {
+    const full = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, content);
+  }
+  if (git) {
+    execFileSync("git", ["init", "-q"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+    execFileSync(
+      "git",
+      ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "init"],
+      { cwd: dir, stdio: "ignore" }
+    );
+  }
+  return dir;
+}
+
+function readAll(root) {
+  const out = [];
+  (function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.push(full);
+    }
+  })(root);
+  return out;
+}
+
+function readAllText(root) {
+  return readAll(root)
+    .map((file) => fs.readFileSync(file, "utf8"))
+    .join("\n");
+}
+
+function runCli(cliArgs) {
+  const result = spawnSync(process.execPath, [BIN, ...cliArgs], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    code: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+const baseConfig = (cwd, overrides = {}) =>
+  resolveConfig({ cwd, outDir: "snapshot", tmpDir: "snapshot.tmp", ...overrides });
+
+// -------------------------------------------------------------- version sync
+
+test("GENERATOR_VERSION matches package.json", () => {
+  assert.equal(GENERATOR_VERSION, PACKAGE_JSON.version);
+});
+
+// ------------------------------------------------------------------ generate
+
+test("generate writes the documented layout exactly once", () => {
+  const dir = makeRepo("gen-", {
+    "package.json": '{"name":"fixture"}',
+    "src/index.ts": "export const message = 'hello';\n",
+    "README.md": "# Fixture\n",
+  });
+
+  const manifest = generateSnapshot(baseConfig(dir));
+
+  assert.equal(manifest.schemaVersion, SCHEMA_VERSION);
+  assert.equal(manifest.counts.totalFiles, 3);
+  for (const rel of [
+    "manifest.json",
+    "README.md",
+    "parts/part-001.md",
+    "reports/navigation.md",
+    "reports/project-tree.md",
+    "reports/audit.md",
+  ]) {
+    assert.ok(fs.existsSync(path.join(dir, "snapshot", rel)), `${rel} should exist`);
+  }
+  assert.equal(
+    fs.existsSync(path.join(dir, "snapshot", "project-tree.md")),
+    false,
+    "the duplicate root project-tree.md must not be written"
+  );
+  assert.equal(fs.existsSync(path.join(dir, "snapshot.tmp")), false, "tmp dir is consumed");
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("no artifact leaks a redacted secret", () => {
+  const dir = makeRepo("leak-", {
+    "package.json": '{"name":"fixture"}',
+    "src/aws.ts": `export const awsKey = "${AWS_KEY}"; export const region = "us-east-1";\n`,
+    "src/key.pem": `${PEM}\n`,
+    ".env": "DB_PASSWORD=hunter2\nOPENAI_API_KEY=sk-proj-AAAA1111BBBB2222CCCC3333\n",
+  });
+
+  const manifest = generateSnapshot(baseConfig(dir));
+  const text = readAllText(path.join(dir, "snapshot"));
+
+  assert.ok(!text.includes(AWS_KEY), "the audit report must not re-print a redacted secret");
+  assert.ok(!text.includes("SENTINELBODYSECRET"), "private key bodies must be redacted");
+  assert.ok(!text.includes("hunter2"), ".env values must never reach the snapshot");
+  assert.ok(!text.includes("sk-proj-AAAA1111"), "vendor keys must never reach the snapshot");
+
+  // Sensitive files are skipped, not silently dropped.
+  assert.equal(manifest.files.some((file) => file.relativePath === ".env"), false);
+  assert.ok(manifest.skipped.some((skip) => skip.reason === "sensitive-file"));
+
+  // Span-only redaction keeps the rest of the line.
+  const parts = readAll(path.join(dir, "snapshot", "parts")).map((file) =>
+    fs.readFileSync(file, "utf8")
+  );
+  assert.ok(parts.some((content) => content.includes("us-east-1")));
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("sensitive files are included only when explicitly requested", () => {
+  const dir = makeRepo("sens-", {
+    "package.json": '{"name":"fixture"}',
+    ".env.local": "API_TOKEN=tok_value_123456\n",
+  });
+  const manifest = generateSnapshot(
+    baseConfig(dir, { includeSensitiveFiles: true })
+  );
+  assert.ok(manifest.files.some((file) => file.relativePath === ".env.local"));
+  assert.equal(manifest.config.includeSensitiveFiles, true);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("manifest reports truthful totals, inclusion modes and indexes", () => {
+  const bigLine = `${Array.from({ length: 12 }, (_, i) => (i === 5 ? `export const blob = "${"a".repeat(50000)}";` : `export const v${i} = ${i};`)).join("\n")}\n`;
+  const dir = makeRepo("truth-", {
+    "package.json": '{"name":"fixture"}',
+    "src/a.ts": "import './b';\nexport const a = 1;\n",
+    "src/b.ts": "export const b = 2;\n",
+    "src/big.ts": bigLine,
+  });
+
+  const manifest = generateSnapshot(
+    baseConfig(dir, { largeFileBytes: 1000, previewHeadLines: 2, previewTailLines: 1 })
+  );
+
+  const big = manifest.files.find((file) => file.relativePath === "src/big.ts");
+  assert.ok(big.isLarge);
+  assert.equal(big.isPreviewTruncated, true);
+  assert.equal(big.inclusionMode, "preview");
+
+  assert.equal(
+    manifest.totals.fullFiles + manifest.totals.previewFiles,
+    manifest.totals.includedFiles
+  );
+  assert.equal(manifest.totals.previewFiles, manifest.counts.truncatedPreviewCount);
+  assert.notEqual(
+    manifest.totals.totalContentBytes,
+    manifest.totals.totalSourceBytes,
+    "emitted bytes must be measured, not mirrored from source bytes"
+  );
+
+  assert.ok(manifest.indexes.imports.byFile.length >= 2, "imports index must be populated");
+  assert.ok(
+    manifest.indexes.imports.byFile.some((entry) => entry.path === "src/a.ts"),
+    "per-file imports must be recorded"
+  );
+  assert.ok(Array.isArray(manifest.indexes.directives));
+  assert.equal(manifest.validation.status, "passed");
+  assert.deepEqual(manifest.validation.errors, []);
+  assert.equal(manifest.generator.version, PACKAGE_JSON.version);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("navigation anchors resolve to anchors emitted in the parts", () => {
+  const dir = makeRepo("anchor-", {
+    "package.json": '{"name":"fixture"}',
+    "src/x.ts": "export const x = 1;\n",
+    "src/y.ts": "export const y = 2;\n",
+  });
+  generateSnapshot(baseConfig(dir));
+
+  const navigation = fs.readFileSync(path.join(dir, "snapshot", "reports", "navigation.md"), "utf8");
+  const partText = readAll(path.join(dir, "snapshot", "parts"))
+    .map((file) => fs.readFileSync(file, "utf8"))
+    .join("\n");
+
+  const anchors = [...navigation.matchAll(/\.\.\/parts\/[^)#]*#([a-z0-9-]+)\)/g)].map((m) => m[1]);
+  assert.ok(anchors.length >= 2, "navigation must link to files");
+  for (const anchor of anchors) {
+    assert.ok(
+      partText.includes(`<a id="${anchor}"></a>`),
+      `anchor ${anchor} is not emitted by any part`
+    );
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the part byte budget is a hard bound", () => {
+  const dir = makeRepo("budget-", {
+    "package.json": '{"name":"fixture"}',
+    "vendor.min.js": "const a=1;".repeat(200000),
+    "src/small.ts": "export const s = 1;\n",
+  });
+  const maxPartBytes = 100 * 1024;
+  const manifest = generateSnapshot(
+    baseConfig(dir, { maxPartBytes, largeFileBytes: 50 * 1024 })
+  );
+
+  assert.ok(manifest.parts.length >= 1);
+  for (const part of manifest.parts) {
+    assert.ok(
+      part.byteSize <= maxPartBytes,
+      `${part.filename} is ${part.byteSize}B, budget ${maxPartBytes}B`
+    );
+    const onDisk = fs.statSync(path.join(dir, "snapshot", "parts", part.filename)).size;
+    assert.equal(onDisk, part.byteSize, "recorded byteSize must equal the file on disk");
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("non-ASCII filenames are preserved", () => {
+  const dir = makeRepo("unicode-", {
+    "package.json": '{"name":"fixture"}',
+    "src/café.ts": "export const a = 1;\n",
+    "src/日本語.ts": "export const b = 2;\n",
+  });
+  const manifest = generateSnapshot(baseConfig(dir));
+  const paths = manifest.files.map((file) => file.relativePath);
+  assert.ok(paths.includes("src/café.ts"));
+  assert.ok(paths.includes("src/日本語.ts"));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the non-git fallback honours .gitignore and still skips secrets", () => {
+  const dir = makeRepo(
+    "nogit-",
+    {
+      "package.json": '{"name":"fixture"}',
+      ".gitignore": "secret-notes.txt\n.env\n",
+      "secret-notes.txt": "note\n",
+      ".env": "API_TOKEN=tok_1234567890\n",
+      "src/app.ts": "export const a = 1;\n",
+    },
+    { git: false }
+  );
+
+  const manifest = generateSnapshot(baseConfig(dir));
+  const paths = manifest.files.map((file) => file.relativePath);
+  assert.ok(paths.includes("src/app.ts"));
+  assert.equal(paths.includes("secret-notes.txt"), false, ".gitignore must be honoured without git");
+  assert.equal(paths.includes(".env"), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("monolith artifacts are recorded and fenced safely", () => {
+  const dir = makeRepo("mono-", {
+    "package.json": '{"name":"fixture"}',
+    "docs.md": "# Docs\n\n```js\nconst x = 1;\n```\nINJECTED HEADING\n",
+  });
+  const manifest = generateSnapshot(
+    baseConfig(dir, { includeMonolith: true })
+  );
+
+  assert.ok(manifest.artifacts.fullJson);
+  assert.ok(manifest.artifacts.fullMarkdown);
+
+  const markdown = fs.readFileSync(path.join(dir, "snapshot", "full-codebase.md"), "utf8");
+  // The block must not close on the inner 3-backtick fence.
+  const fence = markdown.match(/^(`{4,})markdown$/m);
+  assert.ok(fence, "a fence longer than the content's longest run must be used");
+
+  const json = fs.readFileSync(path.join(dir, "snapshot", "full-codebase.json"), "utf8");
+  assert.equal(JSON.parse(json).manifest.parts.length, manifest.parts.length);
+
+  // The manifest is written once, already containing the artifact digests.
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+  assert.ok(onDisk.artifacts.fullJson);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("maxMonolithBytes skips oversized artifacts and records a warning", () => {
+  const dir = makeRepo("monomax-", {
+    "package.json": '{"name":"fixture"}',
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const manifest = generateSnapshot(
+    baseConfig(dir, { includeMonolith: true, maxMonolithBytes: 10 })
+  );
+  assert.equal(manifest.artifacts.fullJson, null);
+  assert.ok(manifest.warnings.some((warning) => warning.includes("maxMonolithBytes")));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("monolithContent is not required and the API is synchronous", () => {
+  const dir = makeRepo("sync-", { "package.json": '{"name":"fixture"}' });
+  const result = generateSnapshot(baseConfig(dir));
+  assert.equal(typeof result.then, "undefined", "generateSnapshot must not return a promise");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("dry run computes a manifest without touching the disk", () => {
+  const dir = makeRepo("dry-", { "package.json": '{"name":"fixture"}' });
+  const manifest = generateSnapshot(baseConfig(dir), { dryRun: true });
+  assert.equal(manifest.counts.totalFiles, 1);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot")), false);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot.tmp")), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// -------------------------------------------------------------- output paths
+
+test("unsafe outDir/tmpDir combinations are refused", () => {
+  const cwd = process.cwd();
+  for (const [outDir, tmpDir] of [
+    [".", "snapshot.tmp"],
+    ["./", "snapshot.tmp"],
+    ["..", "snapshot.tmp"],
+    ["out", "out/.tmp"],
+    ["out", "out"],
+    ["snapshot", "."],
+  ]) {
+    assert.throws(
+      () => resolveSafeOutputDirs({ cwd, outDir, tmpDir }),
+      /Refusing to generate/,
+      `expected refusal for outDir=${outDir} tmpDir=${tmpDir}`
+    );
+  }
+  assert.doesNotThrow(() => resolveSafeOutputDirs({ cwd, outDir: "snapshot", tmpDir: "snapshot.tmp" }));
+});
+
+test("generating over an existing snapshot replaces it atomically", () => {
+  const dir = makeRepo("swap-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  generateSnapshot(baseConfig(dir));
+  const first = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+
+  fs.writeFileSync(path.join(dir, "b.ts"), "export const b=2;\n");
+  const second = generateSnapshot(baseConfig(dir));
+
+  assert.equal(first.counts.totalFiles, 2);
+  assert.equal(second.counts.totalFiles, 3);
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(onDisk.counts.totalFiles, 3);
+  const leftovers = fs.readdirSync(dir).filter((name) => name.includes(".backup-"));
+  assert.deepEqual(leftovers, [], "the backup directory must be cleaned up");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------------------------ validate
+
+test("validate passes right after generate", () => {
+  const dir = makeRepo("val-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  const config = baseConfig(dir);
+  generateSnapshot(config);
+  const result = validateSnapshot(config);
+  assert.equal(result.valid, true, result.errors.join("; "));
+  assert.equal(result.manifestPresent, true);
+  assert.deepEqual(result.errors, []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate detects a modified source file", () => {
+  const dir = makeRepo("valmod-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  const config = baseConfig(dir);
+  generateSnapshot(config);
+  fs.writeFileSync(path.join(dir, "a.ts"), "export const a=2;\n");
+  const result = validateSnapshot(config);
+  assert.equal(result.valid, false);
+  assert.equal(result.drift.hashMismatches.length, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate has no phantom drift for invalid UTF-8 files", () => {
+  const dir = makeRepo("valutf-", { "package.json": '{"name":"fixture"}' });
+  fs.writeFileSync(path.join(dir, "latin1.ts"), Buffer.from([0x63, 0x6f, 0x6e, 0x73, 0x74, 0xe9, 0x0a]));
+  const config = baseConfig(dir);
+  generateSnapshot(config);
+  const result = validateSnapshot(config);
+  assert.equal(result.valid, true, result.errors.join("; "));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate detects a deleted or corrupted part", () => {
+  const dir = makeRepo("valpart-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  const config = baseConfig(dir);
+  generateSnapshot(config);
+
+  const partPath = path.join(dir, "snapshot", "parts", "part-001.md");
+  fs.writeFileSync(partPath, "corrupted");
+  const corrupted = validateSnapshot(config);
+  assert.equal(corrupted.valid, false);
+  assert.ok(corrupted.drift.partIssues.length > 0);
+
+  fs.rmSync(partPath);
+  const deleted = validateSnapshot(config);
+  assert.equal(deleted.valid, false);
+  assert.ok(deleted.drift.partIssues.some((issue) => issue.issue.includes("missing")));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate detects configuration drift", () => {
+  const dir = makeRepo("valcfg-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  generateSnapshot(baseConfig(dir, { maxPartBytes: 64 * 1024 }));
+  const result = validateSnapshot(baseConfig(dir, { maxPartBytes: 128 * 1024 }));
+  assert.equal(result.valid, false);
+  assert.ok(result.drift.configMismatches.some((m) => m.includes("maxPartBytes")));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate reports a malformed manifest instead of throwing", () => {
+  const dir = makeRepo("valbad-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  const config = baseConfig(dir);
+  fs.mkdirSync(path.join(dir, "snapshot"), { recursive: true });
+
+  for (const payload of ['{"files":"nope"}', '{"files":[],"skipped":[]}', "not json at all"]) {
+    fs.writeFileSync(path.join(dir, "snapshot", "manifest.json"), payload);
+    const result = validateSnapshot(config);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.length > 0);
+    assert.ok(result.errors.length > 0 && typeof result.errors[0] === "string");
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ----------------------------------------------------------------------- CLI
+
+test("CLI accepts --option=value and emits parseable JSON on stdout", () => {
+  const dir = makeRepo("cli-eq-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+
+  const result = runCli(["generate", `--cwd=${dir}`, "--format=json"]);
+  assert.equal(result.code, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.counts.totalFiles, 2);
+  assert.equal(parsed.schemaVersion, SCHEMA_VERSION);
+
+  const validated = runCli(["validate", `--cwd=${dir}`, "--format", "json"]);
+  assert.equal(validated.code, 0);
+  assert.equal(JSON.parse(validated.stdout).valid, true);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("CLI rejects unknown flags, unknown commands and bad numbers", () => {
+  assert.equal(runCli(["--nonsense"]).code, 2);
+  assert.equal(runCli(["frobnicate"]).code, 2);
+  assert.equal(runCli(["generate", "--max-part-bytes", "abc"]).code, 2);
+  assert.equal(runCli(["generate", "--max-part-bytes", "100"]).code, 2);
+  assert.equal(runCli(["generate", "--format", "yaml"]).code, 2);
+  assert.equal(runCli(["generate", "extra"]).code, 2);
+  assert.equal(runCli(["--version"]).code, 0);
+});
+
+test("CLI --dry-run writes nothing", () => {
+  const dir = makeRepo("cli-dry-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  const result = runCli(["generate", "--cwd", dir, "--dry-run"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /Dry run/);
+  assert.equal(fs.existsSync(path.join(dir, "snapshot")), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("CLI init creates a config the loader can read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cli-init-"));
+  const result = runCli(["init", "--cwd", dir]);
+  assert.equal(result.code, 0, result.stderr);
+  const created = fs.readdirSync(dir).filter((name) => name.startsWith("snapshot.config."));
+  assert.equal(created.length, 1, `expected exactly one config file, got ${created.join(",")}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("CLI exits non-zero when the snapshot has drifted", () => {
+  const dir = makeRepo("cli-drift-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
+  assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+  fs.writeFileSync(path.join(dir, "a.ts"), "export const a = 99;\n");
+  const result = runCli(["validate", "--cwd", dir]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /validation failed/i);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------------ budget vs metadata interplay
+
+test("a summary larger than the part budget is dropped, not emitted oversized", () => {
+  const lines = Array.from({ length: 800 }, (_, i) => `export const variable${i} = ${i};`).join("\n");
+  const dir = makeRepo("bigsum-", {
+    "package.json": '{"name":"fixture"}',
+    "src/huge.ts": `${lines}\n`,
+  });
+
+  const maxPartBytes = 4096;
+  const manifest = generateSnapshot(
+    baseConfig(dir, { maxPartBytes, largeFileBytes: 100 })
+  );
+
+  for (const part of manifest.parts) {
+    assert.ok(part.byteSize <= maxPartBytes, `${part.filename} is ${part.byteSize}B > ${maxPartBytes}B`);
+  }
+  const entry = manifest.files.find((file) => file.relativePath === "src/huge.ts");
+  assert.equal(entry.summaryOmitted, true, "an oversized summary must be dropped and flagged");
+  assert.equal(entry.summary, undefined);
+
+  const text = readAllText(path.join(dir, "snapshot"));
+  assert.ok(text.includes("Summary: (omitted"), "the omission must be visible in the part");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("counts and totals agree when the byte budget (not the line preview) truncates", () => {
+  const dir = makeRepo("cnt-", {
+    "package.json": '{"name":"fixture"}',
+    "src/wide.ts": `const x = "${"a".repeat(50000)}";\n`,
+  });
+
+  const manifest = generateSnapshot(
+    // largeFileBytes is huge, so only byte-budget truncation can apply
+    baseConfig(dir, { maxPartBytes: 8192, largeFileBytes: 10_000_000 })
+  );
+
+  const entry = manifest.files.find((file) => file.relativePath === "src/wide.ts");
+  assert.equal(entry.isPreviewTruncated, true);
+  assert.equal(
+    manifest.counts.truncatedPreviewCount,
+    manifest.totals.previewFiles,
+    "counts.truncatedPreviewCount must match totals.previewFiles"
+  );
+  assert.equal(manifest.totals.previewFiles, 1);
+  assert.equal(manifest.validation.status, "passed", manifest.validation.errors.join("; "));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ------------------------------------------- residuals from adversarial review
+
+test("a spread copy of a resolved config keeps its custom secret rules", () => {
+  const dir = makeRepo("spreadcfg-", {
+    "package.json": '{"name":"fixture"}',
+    "a.txt": "TOKEN_ID=ACME_abcdefgh1234\n",
+  });
+  const resolved = resolveConfig({
+    cwd: dir,
+    outDir: "snapshot",
+    tmpDir: "snapshot.tmp",
+    secrets: { customPatterns: [{ rule: "acme", pattern: /ACME_[a-z0-9]{10}/ }] },
+  });
+
+  // A spread loses the non-enumerable brand; the rules must NOT be dropped.
+  const spread = { ...resolved, maxPartBytes: 64 * 1024 };
+  assert.equal(isResolvedConfig(spread), true);
+
+  const manifest = generateSnapshot(spread);
+  assert.ok(
+    manifest.warnings.some((warning) => warning.includes("acme")),
+    "custom rule must still match after a spread copy"
+  );
+  const text = readAllText(path.join(dir, "snapshot"));
+  assert.ok(!text.includes("ACME_abcdefgh1234"));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("an oversized summary is dropped without zeroing the body", () => {
+  // Summary far larger than the budget (thousands of exports), generous budget:
+  // dropping the summary must free room for the body, not consume it.
+  const lines = Array.from(
+    { length: 20000 },
+    (_, i) => `export const exportedThing${i} = ${i};`
+  ).join("\n");
+  const dir = makeRepo("r3-", {
+    "package.json": '{"name":"fixture"}',
+    "src/huge.ts": `${lines}\n`,
+  });
+
+  const manifest = generateSnapshot(
+    baseConfig(dir, { maxPartBytes: 300 * 1024, largeFileBytes: 10_000_000 })
+  );
+  const entry = manifest.files.find((file) => file.relativePath === "src/huge.ts");
+
+  assert.ok(entry.summaryOmitted === true || entry.includedBytes > 0);
+  assert.ok(
+    entry.includedBytes > 50_000,
+    `body must keep most of the budget, got ${entry.includedBytes} bytes`
+  );
+  for (const part of manifest.parts) {
+    assert.ok(part.byteSize <= 300 * 1024);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a huge layer name cannot push a part over the budget", () => {
+  const hugeLayer = "L".repeat(6000);
+  const dir = makeRepo("hugelayer-", {
+    "package.json": '{"name":"fixture"}',
+    "a.ts": "export const a = 1;\n",
+  });
+
+  const manifest = generateSnapshot(
+    baseConfig(dir, { maxPartBytes: 4096, layers: [{ name: hugeLayer, match: "**" }] })
+  );
+
+  for (const part of manifest.parts) {
+    assert.ok(part.byteSize <= 4096, `${part.filename} is ${part.byteSize}B`);
+  }
+  assert.equal(manifest.validation.status, "passed", manifest.validation.errors.join("; "));
+  const partText = fs.readFileSync(
+    path.join(dir, "snapshot", "parts", manifest.parts[0].filename),
+    "utf8"
+  );
+  assert.ok(!partText.includes(hugeLayer), "metadata must be capped in the rendered part");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate detects tampered counts/totals/budgets", () => {
+  const dir = makeRepo("tamper-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a = 1;\n" });
+  const config = baseConfig(dir);
+  generateSnapshot(config);
+  const manifestPath = path.join(dir, "snapshot", "manifest.json");
+  const pristine = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+
+  const mutations = [
+    ["counts.totalFiles", (m) => { m.counts.totalFiles = 999; }],
+    ["totals.includedFiles", (m) => { m.totals.includedFiles = 999; }],
+    ["totals.totalSourceBytes", (m) => { m.totals.totalSourceBytes = 1; }],
+    ["totals.totalContentBytes", (m) => { m.totals.totalContentBytes = 1; }],
+    ["totals.warningCount", (m) => { m.totals.warningCount = 42; }],
+    ["budgets.maxPartBytes", (m) => { m.budgets.maxPartBytes = 1; }],
+  ];
+
+  for (const [label, mutate] of mutations) {
+    const tampered = JSON.parse(JSON.stringify(pristine));
+    mutate(tampered);
+    fs.writeFileSync(manifestPath, JSON.stringify(tampered, null, 2));
+    const result = validateSnapshot(config);
+    assert.equal(result.valid, false, `${label} tampering must fail validation`);
+    assert.ok(result.drift.totalsMismatches.length > 0, `${label} must be reported`);
+  }
+
+  fs.writeFileSync(manifestPath, JSON.stringify(pristine, null, 2));
+  assert.equal(validateSnapshot(config).valid, true);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("validate warns when HEAD moved past the snapshot commit", () => {
+  const dir = makeRepo("commitdrift-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a = 1;\n" });
+  const config = baseConfig(dir);
+  generateSnapshot(config);
+
+  fs.writeFileSync(path.join(dir, "b.ts"), "export const b = 2;\n");
+  execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "second"], {
+    cwd: dir,
+    stdio: "ignore",
+  });
+
+  const result = validateSnapshot(config);
+  assert.ok(
+    result.warnings.some((warning) => /HEAD is/.test(warning)),
+    `expected a commit warning, got ${JSON.stringify(result.warnings)}`
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a JSON clone of a resolved config fails loudly instead of dropping rules", () => {
+  const dir = makeRepo("lossy-", { "package.json": '{"name":"fixture"}', "a.txt": "x\n" });
+  const resolved = resolveConfig({
+    cwd: dir,
+    outDir: "snapshot",
+    tmpDir: "snapshot.tmp",
+    secrets: { customPatterns: [{ rule: "acme", pattern: /ACME_[a-z0-9]{10}/ }] },
+  });
+
+  // A RegExp becomes {} through JSON, so the clone can no longer carry the
+  // rules. Silently falling back to defaults would let those secrets through.
+  const clone = JSON.parse(JSON.stringify({ ...resolved, cwd: dir }));
+  assert.throws(() => generateSnapshot(clone), /cannot survive JSON serialization/);
+
+  // The object itself still works.
+  assert.doesNotThrow(() => generateSnapshot(resolved));
+  fs.rmSync(dir, { recursive: true, force: true });
+});

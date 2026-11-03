@@ -1,5 +1,12 @@
 import type { Manifest, SecretFinding } from "../types.js";
 
+/**
+ * Builds the security/health report.
+ *
+ * This report deliberately contains **no source text**. It previously printed a
+ * 120-character excerpt of every matched line, so each secret that had just been
+ * redacted out of `parts/*.md` was written here in clear text.
+ */
 export function generateAuditReport(
   manifest: Manifest,
   secretFindings: SecretFinding[]
@@ -12,30 +19,41 @@ export function generateAuditReport(
     `**Total Files:** ${manifest.counts.totalFiles}  `,
     `**Total Lines:** ${manifest.counts.totalLines.toLocaleString()}  `,
     `**Total Size:** ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB  `,
+    `**Redacted Content Bytes:** ${manifest.totals.totalContentBytes.toLocaleString()}  `,
     "",
     "## 1. Security Scan & Redaction",
+    "",
+    "Matched values are replaced in place in `parts/*.md`; no excerpt of a matched",
+    "line is reproduced in this report or anywhere else in the snapshot.",
     "",
   ];
 
   if (secretFindings.length === 0) {
     lines.push("✅ **No secret-like patterns detected.** Clean security scan.", "");
   } else {
+    const byRule = new Map<string, number>();
+    for (const finding of secretFindings) {
+      byRule.set(finding.rule, (byRule.get(finding.rule) ?? 0) + 1);
+    }
+
     lines.push(
       `⚠️ **${secretFindings.length} secret-like pattern(s) identified and redacted:**`,
       "",
-      "| File | Line | Rule | Snippet |",
-      "| :--- | :--- | :--- | :--- |"
+      "| File | Line | Rule |",
+      "| :--- | :--- | :--- |"
     );
-    for (const f of secretFindings) {
-      lines.push(
-        `| \`${f.path ?? "unknown"}\` | ${f.line} | \`${f.rule}\` | \`${f.snippet.replace(/\|/g, "\\|")}\` |`
-      );
+    for (const finding of secretFindings) {
+      lines.push(`| \`${finding.path ?? "unknown"}\` | ${finding.line} | \`${finding.rule}\` |`);
+    }
+    lines.push("", "### Matches by rule", "", "| Rule | Matches |", "| :--- | :--- |");
+    for (const [rule, count] of Array.from(byRule.entries()).sort((a, b) => b[1] - a[1])) {
+      lines.push(`| \`${rule}\` | ${count} |`);
     }
     lines.push("");
   }
 
   lines.push("## 2. Large Files Analysis", "");
-  const largeFiles = manifest.files.filter((f) => f.isLarge);
+  const largeFiles = manifest.files.filter((file) => file.isLarge);
   if (largeFiles.length === 0) {
     lines.push("✅ No files exceeded the large file budget.", "");
   } else {
@@ -45,24 +63,38 @@ export function generateAuditReport(
       "| File | Size (KB) | Lines | Preview Status |",
       "| :--- | :--- | :--- | :--- |"
     );
-    for (const f of largeFiles) {
-      const sizeKb = (f.sizeBytes / 1024).toFixed(1);
-      const status = f.isPreviewTruncated ? "Truncated Head/Tail" : "Full";
-      lines.push(`| \`${f.relativePath}\` | ${sizeKb} KB | ${f.lines} | ${status} |`);
+    for (const file of largeFiles) {
+      const sizeKb = (file.sizeBytes / 1024).toFixed(1);
+      const status = file.isPreviewTruncated ? "Truncated Head/Tail" : "Full";
+      lines.push(`| \`${file.relativePath}\` | ${sizeKb} KB | ${file.lines} | ${status} |`);
     }
     lines.push("");
   }
 
-  lines.push("## 3. Architecture Layer Distribution", "", "| Layer | File Count | Percentage |", "| :--- | :--- | :--- |");
+  lines.push(
+    "## 3. Architecture Layer Distribution",
+    "",
+    "| Layer | File Count | Percentage |",
+    "| :--- | :--- | :--- |"
+  );
   const totalFiles = manifest.counts.totalFiles || 1;
-  for (const [layer, count] of Object.entries(manifest.layers).sort((a, b) => b[1] - a[1])) {
+  for (const [layer, count] of Object.entries(manifest.layers).sort(
+    (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+  )) {
     const pct = ((count / totalFiles) * 100).toFixed(1);
     lines.push(`| \`${layer}\` | ${count} | ${pct}% |`);
   }
   lines.push("");
 
-  lines.push("## 4. File Kind Distribution", "", "| Kind | File Count | Percentage |", "| :--- | :--- | :--- |");
-  for (const [kind, count] of Object.entries(manifest.kinds).sort((a, b) => b[1] - a[1])) {
+  lines.push(
+    "## 4. File Kind Distribution",
+    "",
+    "| Kind | File Count | Percentage |",
+    "| :--- | :--- | :--- |"
+  );
+  for (const [kind, count] of Object.entries(manifest.kinds).sort(
+    (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+  )) {
     const pct = ((count / totalFiles) * 100).toFixed(1);
     lines.push(`| \`${kind}\` | ${count} | ${pct}% |`);
   }
@@ -72,13 +104,17 @@ export function generateAuditReport(
   if (manifest.skipped.length === 0) {
     lines.push("No files were skipped.", "");
   } else {
-    lines.push(`Total skipped: ${manifest.skipped.length}`, "", "| File | Reason | Detail |", "| :--- | :--- | :--- |");
-    for (const s of manifest.skipped) {
-      lines.push(`| \`${s.path}\` | \`${s.reason}\` | ${s.detail ?? "-"} |`);
+    lines.push(
+      `Total skipped: ${manifest.skipped.length}`,
+      "",
+      "| File | Reason | Detail |",
+      "| :--- | :--- | :--- |"
+    );
+    for (const skip of manifest.skipped) {
+      lines.push(`| \`${skip.path}\` | \`${skip.reason}\` | ${skip.detail ?? "-"} |`);
     }
     lines.push("");
   }
 
   return lines.join("\n");
 }
-

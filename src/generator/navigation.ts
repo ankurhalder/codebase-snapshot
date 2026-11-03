@@ -1,5 +1,5 @@
-import type { Manifest } from "../types.js";
 import { anchorForPath } from "../partitioner/chunker.js";
+import type { Manifest } from "../types.js";
 
 export function generateNavigation(manifest: Manifest): string {
   const lines: string[] = [
@@ -14,7 +14,7 @@ export function generateNavigation(manifest: Manifest): string {
   ];
 
   for (const part of manifest.parts) {
-    const sizeKb = (part.bytes / 1024).toFixed(1);
+    const sizeKb = (part.byteSize / 1024).toFixed(1);
     lines.push(
       `| [${part.filename}](../parts/${part.filename}) | ${part.fileCount} | ${sizeKb} KB | ${part.layersCovered.join(", ")} |`
     );
@@ -30,14 +30,15 @@ export function generateNavigation(manifest: Manifest): string {
 
   const filePartMap = new Map<string, string>();
   for (const part of manifest.parts) {
-    for (const f of part.files) {
-      const filePath = typeof f === "string" ? f : (f as any).relativePath;
-      filePartMap.set(filePath, part.filename);
+    for (const file of part.includedFiles) {
+      filePartMap.set(file.relativePath, part.filename);
     }
   }
 
   for (const file of manifest.files) {
-    const partFilename = filePartMap.get(file.relativePath) || "monolith";
+    const partFilename = filePartMap.get(file.relativePath) || file.part || "none";
+    // Anchors are emitted by the chunker immediately before each `### FILE:`
+    // heading, so these links actually resolve.
     const anchor = anchorForPath(file.relativePath);
     const link = `[${file.relativePath}](../parts/${partFilename}#${anchor})`;
     const sizeStr = `${(file.sizeBytes / 1024).toFixed(1)} KB`;
@@ -49,4 +50,3 @@ export function generateNavigation(manifest: Manifest): string {
   lines.push("");
   return lines.join("\n");
 }
-

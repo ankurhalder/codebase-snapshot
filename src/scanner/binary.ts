@@ -15,6 +15,9 @@ export const BINARY_EXTENSIONS = new Set([
   ".zip",
   ".tar",
   ".gz",
+  ".tgz",
+  ".bz2",
+  ".xz",
   ".7z",
   ".rar",
   ".mp3",
@@ -44,23 +47,32 @@ export function isBinaryExtension(filePath: string): boolean {
 
 export function isBinaryBuffer(buffer: Buffer): boolean {
   const checkLength = Math.min(buffer.length, 8192);
-  for (let i = 0; i < checkLength; i++) {
-    if (buffer[i] === 0) return true;
+  for (let index = 0; index < checkLength; index++) {
+    if (buffer[index] === 0) return true;
   }
   return false;
 }
 
 export function isBinaryFile(absolutePath: string): boolean {
   if (isBinaryExtension(absolutePath)) return true;
+
+  let fd: number | undefined;
   try {
-    const fd = fs.openSync(absolutePath, "r");
+    fd = fs.openSync(absolutePath, "r");
     const buffer = Buffer.alloc(8192);
     const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
-    fs.closeSync(fd);
     if (bytesRead === 0) return false;
     return isBinaryBuffer(buffer.subarray(0, bytesRead));
   } catch {
     return false;
+  } finally {
+    // The descriptor used to leak whenever readSync threw.
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
   }
 }
-

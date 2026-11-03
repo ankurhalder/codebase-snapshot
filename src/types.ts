@@ -1,12 +1,19 @@
 export type Mode = "generate" | "validate" | "report";
 export type OutputFormat = "text" | "json";
-export type InclusionMode = "full" | "summary-only";
-export type MonolithContentMode = "full" | "snapshot";
+
+/**
+ * How much of a file made it into the snapshot.
+ * `full`    – the complete file body was emitted.
+ * `preview` – the body was truncated (by lines and/or bytes) before emission.
+ */
+export type InclusionMode = "full" | "preview";
 
 export interface SourceSummary {
   directives: string[];
   imports: string[];
   exports: string[];
+  /** Module specifiers re-exported wholesale via `export * from "..."`. */
+  reExports: string[];
   functions: string[];
   classes: string[];
   interfaces: string[];
@@ -30,20 +37,31 @@ export interface MarkdownSummary {
   frontmatterKeys: string[];
 }
 
+export type SkipReason =
+  | "asset"
+  | "binary"
+  | "read-error"
+  | "not-file"
+  | "sensitive-file"
+  | "symlink"
+  | "excluded";
+
 export interface SkipRecord {
   path: string;
-  reason: "asset" | "binary" | "read-error" | "not-file";
+  reason: SkipReason;
   detail?: string;
 }
 
+/**
+ * One scanned file. Field names are canonical and unique by design:
+ * earlier releases carried `path`/`relativePath`, `sizeBytes`/`bytes` and
+ * `hashSha256`/`sha256` aliases that could only ever agree.
+ */
 export interface FileEntry {
-  path: string;
   relativePath: string;
   sizeBytes: number;
-  bytes: number;
   lines: number;
   hashSha256: string;
-  sha256: string;
   part: string;
   layer: string;
   kind: string;
@@ -51,17 +69,23 @@ export interface FileEntry {
   inclusionMode: InclusionMode;
   isLarge: boolean;
   isPreviewTruncated: boolean;
+  /** Line count of the file on disk. */
   originalLines: number;
+  /** Lines actually emitted into the snapshot. */
   includedLines: number;
+  /** UTF-8 bytes of file content actually emitted into the snapshot. */
+  includedBytes: number;
   summary?: SourceSummary | JsonSummary | MarkdownSummary;
+  /** True when the summary alone was too large for the part budget and was dropped. */
+  summaryOmitted?: boolean;
+  /** Emitted body after redaction/truncation. Never serialized into the manifest. */
   content?: string;
 }
 
 export interface PartFileEntry {
-  path: string;
   relativePath: string;
-  bytes: number;
-  sizeBytes: number;
+  sourceBytes: number;
+  includedBytes: number;
   lines: number;
   layer: string;
   kind: string;
@@ -70,13 +94,12 @@ export interface PartFileEntry {
 export interface PartMetadata {
   index: number;
   filename: string;
-  bytes: number;
+  /** Exact UTF-8 byte length of the emitted part file. */
   byteSize: number;
   sha256: string;
   lines: number;
   fileCount: number;
   layersCovered: string[];
-  files: string[];
   includedFiles: PartFileEntry[];
 }
 
@@ -85,10 +108,20 @@ export interface SecretRule {
   pattern: RegExp;
 }
 
+/** Shape accepted from JSON config files, where `pattern` can only be a string. */
+export interface SecretRuleInput {
+  rule: string;
+  pattern: RegExp | string;
+}
+
+/**
+ * A detected secret. Deliberately carries no excerpt of the matched source:
+ * the previous `snippet` field was the vector by which raw credentials were
+ * written into `reports/audit.md`.
+ */
 export interface SecretFinding {
   rule: string;
   line: number;
-  snippet: string;
   path?: string;
 }
 
@@ -96,7 +129,7 @@ export interface ManifestTotals {
   candidateFiles: number;
   includedFiles: number;
   fullFiles: number;
-  summaryOnlyFiles: number;
+  previewFiles: number;
   skippedFiles: number;
   totalSourceBytes: number;
   totalContentBytes: number;
@@ -121,16 +154,25 @@ export interface ManifestIndexes {
   directives: Array<{ path: string; directives: string[] }>;
 }
 
+/** Effective configuration recorded so `validate` can detect config drift. */
+export interface ManifestConfigSnapshot {
+  maxPartBytes: number;
+  largeFileBytes: number;
+  previewHeadLines: number;
+  previewTailLines: number;
+  includeMonolith: boolean;
+  includeSensitiveFiles: boolean;
+  excludePatterns: string[];
+  layers: string[];
+  kinds: string[];
+}
+
 export interface Manifest {
   schemaVersion: string;
   generatedAt: string;
   generator: {
     name: string;
     version: string;
-    script?: string;
-    mode?: string;
-    maxPartBytes?: number;
-    largeFileBytes?: number;
   };
   git: {
     branch: string;
@@ -141,6 +183,7 @@ export interface Manifest {
     maxPartBytes: number;
     largeFileBytes: number;
   };
+  config: ManifestConfigSnapshot;
   counts: {
     totalFiles: number;
     totalSizeBytes: number;
@@ -152,7 +195,6 @@ export interface Manifest {
   };
   totals: ManifestTotals;
   fingerprint: string;
-  contentFingerprint: string;
   validation: {
     status: "passed" | "failed";
     errors: string[];
@@ -163,7 +205,7 @@ export interface Manifest {
   };
   layers: Record<string, number>;
   kinds: Record<string, number>;
-  indexes?: ManifestIndexes;
+  indexes: ManifestIndexes;
   parts: PartMetadata[];
   files: FileEntry[];
   skipped: SkipRecord[];
@@ -190,13 +232,14 @@ export interface SnapshotConfig {
   previewHeadLines?: number;
   previewTailLines?: number;
   includeMonolith?: boolean;
-  monolithContent?: MonolithContentMode;
   maxMonolithBytes?: number | null;
+  /** Opt in to emitting `.env`/`*.pem`/`.npmrc`/credential files. Default false. */
+  includeSensitiveFiles?: boolean;
   layers?: LayerRule[];
   kinds?: KindRule[];
   excludePatterns?: string[];
   secrets?: {
-    customPatterns?: SecretRule[];
+    customPatterns?: SecretRuleInput[];
     disableDefaultPatterns?: boolean;
   };
 }
@@ -211,8 +254,8 @@ export interface ResolvedSnapshotConfig {
   previewHeadLines: number;
   previewTailLines: number;
   includeMonolith: boolean;
-  monolithContent: MonolithContentMode;
   maxMonolithBytes: number | null;
+  includeSensitiveFiles: boolean;
   layers: LayerRule[];
   kinds: KindRule[];
   excludePatterns: string[];
@@ -223,10 +266,10 @@ export interface CliOptions {
   mode: Mode;
   format: OutputFormat;
   dryRun: boolean;
-  force: boolean;
   cwd?: string;
+  outDir?: string;
   includeMonolith?: boolean;
-  monolithContent?: MonolithContentMode;
+  includeSensitiveFiles?: boolean;
   maxMonolithBytes?: number | null;
   maxPartBytes?: number;
   largeFileBytes?: number;
@@ -236,6 +279,12 @@ export interface ValidationDrift {
   missingInSnapshot: string[];
   missingOnDisk: string[];
   hashMismatches: Array<{ path: string; diskHash: string; snapshotHash: string }>;
+  /** Emitted `parts/*.md` that are missing or no longer match their recorded hash. */
+  partIssues: Array<{ part: string; issue: string }>;
+  /** `counts`/`totals`/`budgets` that disagree with the rest of the manifest. */
+  totalsMismatches: string[];
+  /** Effective-configuration differences between the manifest and the current run. */
+  configMismatches: string[];
 }
 
 export interface ValidationResult {
@@ -243,5 +292,6 @@ export interface ValidationResult {
   manifestPresent: boolean;
   drift: ValidationDrift;
   errors: string[];
+  /** Non-fatal observations (e.g. branch moved on). */
+  warnings: string[];
 }
-

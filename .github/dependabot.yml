@@ -1,0 +1,36 @@
+version: 2
+
+# Automated dependency review: opens grouped PRs for runtime and dev updates and
+# for the pinned GitHub Actions used by CI.
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      runtime:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+      development:
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+    ignore:
+      # tsup 9 is ESM-only and requires Node >= 22.18, so bumping it breaks the
+      # Node 18/20/22 CI matrix and the `engines.node >= 18` contract. The
+      # esbuild advisory (GHSA-g7r4-m6w7-qqqr) is pinned out by the `overrides`
+      # entry in package.json instead, which keeps tsup 8 working.
+      - dependency-name: "tsup"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns: ["*"]

@@ -5,3 +5,9 @@ dist
 snapshot
 snapshot.tmp
 
+# Audit PoC scratch space. The verification scripts (audit/poc/*.mjs,
+# audit/verify/*.mjs) and the reports are tracked; the fixture trees they
+# generate, the copies of this project they clone, and captured command output
+# are regenerable and are deliberately not.
+audit/poc/*/
+audit/poc/*.txt

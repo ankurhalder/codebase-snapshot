@@ -1,6 +1,6 @@
 {
   "name": "@ankurhalder/codebase-snapshot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Production-grade LLM codebase snapshot generator, auditor, and AST partitioner",
   "keywords": [
     "codebase",
@@ -26,22 +26,39 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "bin": {
-    "codebase-snapshot": "./dist/cli.js",
-    "snap": "./dist/cli.js"
+    "codebase-snapshot": "./dist/bin.js",
+    "snap": "./dist/bin.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./cli": {
-      "import": "./dist/cli.js"
-    }
+      "import": {
+        "types": "./dist/cli.d.ts",
+        "default": "./dist/cli.js"
+      },
+      "require": {
+        "types": "./dist/cli.d.cts",
+        "default": "./dist/cli.cjs"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist",
+    "dist/*.js",
+    "dist/*.cjs",
+    "dist/*.d.ts",
+    "dist/*.d.cts",
     "README.md",
     "LICENSE"
   ],
@@ -49,11 +66,19 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "node scripts/lint.mjs",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "pretest": "npm run build",
     "test": "node --test tests/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -63,4 +88,3 @@
     "node": ">=18.0.0"
   }
 }
-

@@ -50,4 +50,3 @@ export const VITE_KINDS: KindRule[] = [
     },
   },
 ];
-

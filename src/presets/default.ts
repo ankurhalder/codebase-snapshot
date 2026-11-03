@@ -45,4 +45,3 @@ export const DEFAULT_KINDS: KindRule[] = [
     },
   },
 ];
-

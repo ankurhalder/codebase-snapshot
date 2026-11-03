@@ -1,0 +1,455 @@
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import test from "node:test";
+
+import {
+  DEFAULT_SECRET_PATTERNS,
+  anchorForPath,
+  countLines,
+  defineConfig,
+  detectLanguage,
+  detectPreset,
+  generateProjectTree,
+  globToRegExp,
+  isBinaryBuffer,
+  isBinaryExtension,
+  isBinaryFile,
+  isResolvedConfig,
+  isSensitivePath,
+  loadConfigFile,
+  loadConfigFileDetailed,
+  matchRule,
+  matchesExclude,
+  resolveConfig,
+  scanAndRedactSecrets,
+  summarizeJson,
+  summarizeMarkdown,
+  summarizeTypeScriptSource,
+  supportsTypeScriptImports,
+  truncatePreview,
+  truncateToBytes,
+} from "../dist/index.js";
+
+// ---------------------------------------------------------------- utilities
+
+test("detectLanguage identifies language from extension and basename", () => {
+  assert.equal(detectLanguage("src/app/page.tsx"), "tsx");
+  assert.equal(detectLanguage("src/lib/utils.ts"), "typescript");
+  assert.equal(detectLanguage("src/lib/utils.mts"), "typescript");
+  assert.equal(detectLanguage("package.json"), "json");
+  assert.equal(detectLanguage("README.md"), "markdown");
+  assert.equal(detectLanguage("Dockerfile"), "dockerfile");
+  assert.equal(detectLanguage(".env.local"), "dotenv");
+});
+
+test("countLines uses one consistent convention", () => {
+  assert.equal(countLines(""), 0);
+  assert.equal(countLines("a"), 1);
+  assert.equal(countLines("a\n"), 1);
+  assert.equal(countLines("a\nb"), 2);
+  assert.equal(countLines("a\nb\n"), 2);
+  assert.equal(countLines("\n"), 1);
+});
+
+test("truncateToBytes never splits a multi-byte character", () => {
+  const text = "héllo wörld";
+  const result = truncateToBytes(text, 4);
+  assert.equal(result.isTruncated, true);
+  assert.ok(!result.content.includes("\uFFFD"));
+  assert.ok(Buffer.byteLength(result.content, "utf8") <= 4);
+  assert.equal(truncateToBytes(text, 1000).isTruncated, false);
+});
+
+test("isBinary helpers detect binary extensions and buffers", () => {
+  assert.equal(isBinaryExtension("image.png"), true);
+  assert.equal(isBinaryExtension("font.woff2"), true);
+  assert.equal(isBinaryExtension("code.ts"), false);
+  assert.equal(isBinaryBuffer(Buffer.from("clean text")), false);
+  assert.equal(isBinaryBuffer(Buffer.from([0x89, 0x50, 0x00, 0x0a])), true);
+  assert.equal(isBinaryFile("does-not-exist.png"), true);
+});
+
+test("truncatePreview preserves head and tail and reports real line counts", () => {
+  const lines = Array.from({ length: 150 }, (_, i) => `line ${i + 1}`).join("\n");
+  const result = truncatePreview(lines, 20, 10);
+  assert.equal(result.isTruncated, true);
+  assert.equal(result.originalLines, 150);
+  assert.equal(result.includedLines, 31);
+  assert.ok(result.content.startsWith("line 1\n"));
+  assert.ok(result.content.endsWith("\nline 150"));
+  assert.ok(result.content.includes("120 lines omitted"));
+
+  const small = truncatePreview("a\nb", 20, 10);
+  assert.equal(small.isTruncated, false);
+  assert.equal(small.originalLines, 2);
+  assert.equal(small.includedLines, 2);
+});
+
+test("summarizeJson and summarizeMarkdown extract structured summaries", () => {
+  const jsonSummary = summarizeJson('{"name":"app","version":"1.0.0","scripts":{}}');
+  assert.equal(jsonSummary.shape, "object");
+  assert.equal(jsonSummary.itemCount, 3);
+  assert.ok(jsonSummary.keys.includes("name"));
+
+  assert.equal(summarizeJson("[1,2,3]").shape, "array");
+  assert.equal(summarizeJson("{bad").shape, "invalid-json");
+  assert.equal(summarizeJson("\uFEFF{\"a\":1}").shape, "object");
+
+  const mdSummary = summarizeMarkdown("# Title\n\n## Subtitle\n\n---\nname: x\n---\n");
+  assert.equal(mdSummary.headings.length, 2);
+  assert.equal(mdSummary.headings[0], "# Title");
+  assert.equal(mdSummary.headings[1], "## Subtitle");
+});
+
+test("summarizeTypeScriptSource extracts declarations, directives and exports", () => {
+  const source = `
+    "use client";
+    import { useState } from "react";
+    import type { User } from "./types";
+
+    export interface Props { id: string }
+    export type Status = "active" | "idle";
+    export function useCounter() { return useState(0); }
+    export function UserCard(props: Props) { return null; }
+    export async function GET(req: Request) { return new Response("ok"); }
+    function notExportedRoute() {}
+    export const PATCH = () => null;
+    const notExported = 1;
+    export * from "./star";
+    export default function () {}
+  `;
+  const summary = summarizeTypeScriptSource("src/test.tsx", source);
+
+  assert.deepEqual(summary.directives, ["use client"]);
+  assert.ok(summary.imports.includes("react"));
+  assert.ok(summary.imports.includes("./star"), "export * records its specifier");
+  assert.ok(summary.reExports.includes("./star"), "export * is tracked separately");
+  assert.ok(summary.interfaces.includes("Props"));
+  assert.ok(summary.types.includes("Status"));
+  assert.ok(summary.hooks.includes("useCounter"));
+  assert.ok(summary.reactComponents.includes("UserCard"));
+  assert.ok(summary.exports.includes("default"), "anonymous default export is recorded");
+
+  // Route handlers must be exported, uniformly for functions and variables.
+  assert.deepEqual(summary.routeHandlers, ["GET", "PATCH"]);
+  assert.ok(!summary.routeHandlers.includes("notExportedRoute"));
+});
+
+test("a deeply nested source file no longer overflows the stack", () => {
+  const chain = Array.from({ length: 20000 }, (_, i) => `a${i}`).join(" && ");
+  const summary = summarizeTypeScriptSource("src/chain.js", `const x = ${chain};`);
+  assert.ok(summary.variables.includes("x"));
+});
+
+test("generateProjectTree is deterministic and marks directories", () => {
+  const tree = generateProjectTree(["src/app/page.tsx", "src/lib/utils.ts", "package.json"]);
+  assert.ok(tree.includes("package.json"));
+  assert.ok(tree.includes("src/"));
+  assert.ok(tree.includes("page.tsx"));
+
+  const a = generateProjectTree(["B.ts", "a.ts", "Ä.ts"]);
+  const b = generateProjectTree(["B.ts", "a.ts", "Ä.ts"]);
+  assert.equal(a, b, "ordering must not depend on locale");
+});
+
+test("anchorForPath is stable and injective", () => {
+  assert.equal(anchorForPath("src/a.ts"), anchorForPath("src/a.ts"));
+  assert.notEqual(anchorForPath("src/a-b.ts"), anchorForPath("src/a/b.ts"));
+  assert.match(anchorForPath("src/App.Page.tsx"), /^[a-z0-9-]+$/);
+});
+
+// ------------------------------------------------------------ path matching
+
+test("globToRegExp and matchesExclude use segment semantics", () => {
+  assert.equal(matchesExclude("test/a.ts", "test"), true);
+  assert.equal(matchesExclude("src/test/b.ts", "test"), true);
+  assert.equal(matchesExclude("contest/entry.ts", "test"), false, "substring match is a bug");
+  assert.equal(matchesExclude("attest/words.ts", "test"), false);
+  assert.equal(matchesExclude("tests/fixtures/a.ts", "tests/fixtures"), true);
+  assert.equal(matchesExclude("src/app/main.ts", "**/*.ts"), true);
+  assert.equal(matchesExclude("src/app/main.js", "**/*.ts"), false);
+  assert.equal(globToRegExp("**/*.ts").test("a/b/c.ts"), true);
+});
+
+test("matchRule gives globs real path-boundary semantics", () => {
+  assert.equal(matchRule("src/app/route.ts", "src/app/**"), true);
+  assert.equal(matchRule("src/apple/pie.ts", "src/app/**"), false, "must not match src/apple");
+  assert.equal(matchRule("src/application/server.ts", "src/app/**"), false);
+  assert.equal(matchRule("src/app2/x.ts", "src/app/**"), false);
+  assert.equal(matchRule("src/features/x/y.ts", "**/features/**"), true);
+  assert.equal(matchRule("a.test.ts", /\.test\.ts$/), true);
+  const stateful = /x/g;
+  assert.equal(matchRule("x", stateful), true);
+  assert.equal(matchRule("x", stateful), true, "a /g rule must not be stateful");
+});
+
+test("isSensitivePath protects credential files but not templates", () => {
+  for (const sensitive of [
+    ".env",
+    ".env.local",
+    ".npmrc",
+    ".netrc",
+    ".git-credentials",
+    "id_rsa",
+    "keys/id_ed25519",
+    "certs/server.pem",
+    "server.key",
+    ".kube/config",
+    "infra/terraform.tfstate",
+  ]) {
+    assert.equal(isSensitivePath(sensitive), true, `${sensitive} should be sensitive`);
+  }
+  for (const deep of [
+    ".env.production.local",
+    ".env.a.b.c",
+    ".env.development",
+    ".env-",
+    ".env_",
+    ".envbackup",
+    ".env_backup",
+    ".netrc.bak",
+    ".npmrc.bak",
+    "id_rsa.bak",
+    "credentials.json",
+    "service-account.json",
+    "secrets.json",
+    "terraform.tfvars",
+  ]) {
+    assert.equal(isSensitivePath(deep), true, `${deep} should be sensitive`);
+  }
+  for (const safe of [
+    ".env.example",
+    ".env.sample",
+    ".env.production.example",
+    "credentials.example.json",
+    "id_rsa.template",
+    ".npmrc.sample",
+    ".environment",
+    "src/index.ts",
+    "certs/server.crt",
+  ]) {
+    assert.equal(isSensitivePath(safe), false, `${safe} should not be sensitive`);
+  }
+});
+
+// -------------------------------------------------------------------- config
+
+test("defineConfig is identity and resolveConfig applies defaults", () => {
+  const config = defineConfig({ branch: "trunk" });
+  assert.equal(config.branch, "trunk");
+
+  const resolved = resolveConfig({ branch: "trunk" }, undefined, process.cwd());
+  assert.equal(resolved.branch, "trunk");
+  assert.equal(resolved.outDir, "snapshot");
+  assert.equal(resolved.tmpDir, "snapshot.tmp");
+  assert.equal(resolved.includeSensitiveFiles, false);
+  assert.ok(resolved.maxPartBytes >= 4096);
+  assert.ok(resolved.secretRules.length >= DEFAULT_SECRET_PATTERNS.length);
+  assert.equal(isResolvedConfig(resolved), true);
+  assert.equal(isResolvedConfig(config), false);
+});
+
+test("resolveConfig honours CLI overrides and rejects a bad cwd", () => {
+  const resolved = resolveConfig({}, { cwd: process.cwd(), maxPartBytes: 8192 }, undefined);
+  assert.equal(resolved.maxPartBytes, 8192);
+  assert.throws(() => resolveConfig({}, { cwd: path.join(os.tmpdir(), "nope-does-not-exist-xyz") }), /does not exist/);
+  assert.throws(
+    () => resolveConfig({ maxPartBytes: 512 }, undefined, process.cwd()),
+    /at least 4096/,
+    "a budget smaller than a part header must be rejected, not silently clamped"
+  );
+});
+
+test("resolveConfig compiles string custom patterns from JSON configs", () => {
+  const resolved = resolveConfig(
+    { secrets: { customPatterns: [{ rule: "corp", pattern: "CORP-[A-Z0-9]{8}" }] } },
+    undefined,
+    process.cwd()
+  );
+  const rule = resolved.secretRules.find((entry) => entry.rule === "corp");
+  assert.ok(rule);
+  assert.ok(rule.pattern instanceof RegExp);
+});
+
+test("resolveConfig strips stateful flags from custom patterns", () => {
+  const resolved = resolveConfig(
+    { secrets: { customPatterns: [{ rule: "tok", pattern: "/TOK_[0-9]+/g" }] } },
+    undefined,
+    process.cwd()
+  );
+  const rule = resolved.secretRules.find((entry) => entry.rule === "tok");
+  assert.ok(rule);
+  assert.ok(!rule.pattern.flags.includes("g"));
+});
+
+test("detectPreset recognises the shipped presets", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preset-"));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { next: "15.0.0" } }));
+  assert.equal(detectPreset(dir).presetName, "nextjs");
+
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { vite: "6.0.0" } }));
+  assert.equal(detectPreset(dir).presetName, "vite");
+
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { express: "4.0.0" } }));
+  assert.equal(detectPreset(dir).presetName, "node");
+
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: {} }));
+  assert.equal(detectPreset(dir).presetName, "default");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("loadConfigFile reads json, mjs and ts configs and reports failures", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-"));
+  fs.writeFileSync(path.join(dir, "snapshot.config.json"), JSON.stringify({ branch: "json-branch" }));
+  const fromJson = await loadConfigFile(dir);
+  assert.equal(fromJson.branch, "json-branch");
+
+  const broken = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-broken-"));
+  fs.writeFileSync(path.join(broken, "snapshot.config.mjs"), "export default { branch: ");
+  const detailed = await loadConfigFileDetailed(broken);
+  assert.equal(detailed.config, null);
+  assert.ok(detailed.warnings.length > 0, "a broken config must be reported, not swallowed");
+
+  if (supportsTypeScriptImports()) {
+    const tsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-ts-"));
+    fs.writeFileSync(path.join(tsDir, "snapshot.config.ts"), "export default { branch: 'ts-branch' };\n");
+    const fromTs = await loadConfigFile(tsDir);
+    assert.equal(fromTs.branch, "ts-branch");
+    fs.rmSync(tsDir, { recursive: true, force: true });
+  }
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(broken, { recursive: true, force: true });
+});
+
+// ------------------------------------------------------------------ security
+
+test("scanAndRedactSecrets redacts only the matched span", () => {
+  const code =
+    'export const awsKey = "AKIAIOSFODNN7EXAMPLE"; export const region = "us-east-1"; const retries = 3;';
+  const { redacted, findings } = scanAndRedactSecrets(code, DEFAULT_SECRET_PATTERNS, "test.ts");
+
+  assert.ok(!redacted.includes("AKIAIOSFODNN7EXAMPLE"));
+  assert.ok(redacted.includes("us-east-1"), "unrelated code on the same line must survive");
+  assert.ok(redacted.includes("retries"));
+  assert.equal(findings[0].rule, "aws-access-key-id");
+  assert.equal(findings[0].path, "test.ts");
+});
+
+test("secret findings never carry source text", () => {
+  const { findings } = scanAndRedactSecrets(
+    'const k = "AKIAIOSFODNN7EXAMPLE";',
+    DEFAULT_SECRET_PATTERNS,
+    "a.ts"
+  );
+  const serialized = JSON.stringify(findings);
+  assert.ok(!serialized.includes("AKIAIOSFODNN7EXAMPLE"));
+  assert.equal(findings[0].snippet, undefined, "the snippet field was the audit.md leak vector");
+});
+
+test("multi-line private keys are redacted as a block", () => {
+  const pem = [
+    "-----BEGIN RSA PRIVATE KEY-----",
+    "MIIEowIBAAKCAQEAsecretbodyline1",
+    "secretbodyline2",
+    "-----END RSA PRIVATE KEY-----",
+    "after = 1;",
+  ].join("\n");
+  const { redacted, findings } = scanAndRedactSecrets(pem, DEFAULT_SECRET_PATTERNS, "id_rsa");
+
+  assert.ok(!redacted.includes("secretbodyline1"));
+  assert.ok(!redacted.includes("secretbodyline2"));
+  assert.ok(!redacted.includes("-----END RSA PRIVATE KEY-----"));
+  assert.ok(redacted.includes("after = 1;"));
+  assert.ok(findings.some((finding) => finding.rule === "private-key-block"));
+});
+
+test("an unterminated private key block (cut by truncation) is still redacted", () => {
+  const pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n";
+  const { redacted } = scanAndRedactSecrets(pem, DEFAULT_SECRET_PATTERNS, "id_ed25519");
+  assert.ok(!redacted.includes("b3BlbnNzaC1rZXktdjEAAAAA"));
+});
+
+test("default patterns cover modern vendor formats and .env assignments", () => {
+  const samples = [
+    ['OPENAI_API_KEY=sk-proj-AAAA1111BBBB2222CCCC3333', "modern/llm provider keys"],
+    ["const k = 'sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaa';", "anthropic keys"],
+    ["npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm tokens"],
+    ["DB_PASSWORD=hunter2", "unquoted .env assignment"],
+    ["SECRET_KEY=supersecretvalue123", "unquoted .env assignment"],
+    ["https://user:s3cr3tpass@example.com/repo.git", "basic-auth URL"],
+    ["GOCSPX-abcdefghijklmnopqrstuvwxyz12", "google oauth secret"],
+    ["github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz0123456789", "github fine-grained PAT"],
+    ["SG." + "a".repeat(22) + "." + "b".repeat(43), "sendgrid keys"],
+    ["dop_v1_" + "a".repeat(64), "digitalocean tokens"],
+    ["AKIAIOSFODNN7EXAMPLE", "aws access key ids"],
+    ['"aws_secret_access_key": "' + "a".repeat(40) + '"', "aws secret in JSON"],
+    // `.invalid` is a reserved TLD that can never resolve, so this fixture
+    // exercises the database-uri rule without ever resembling a usable
+    // credential (and without tripping secret scanning).
+    ["mongodb+srv://testuser:testpass@example.invalid/prod", "database URIs"],
+  ];
+
+  for (const [sample, label] of samples) {
+    const { redacted } = scanAndRedactSecrets(sample, DEFAULT_SECRET_PATTERNS, "sample.txt");
+    assert.ok(redacted.includes("[REDACTED"), `${label} must be redacted: ${sample}`);
+  }
+});
+
+test("ordinary source is not over-redacted", () => {
+  const clean = [
+    "export function add(a: number, b: number) { return a + b; }",
+    "const tokenizer = new Tokenizer();",
+    "password: req.body.password,",
+    "if (authToken !== undefined) return;",
+    "const url = 'https://example.com/api/v1';",
+    "MAX_RETRIES = 3",
+    "const region = 'us-east-1';",
+  ];
+  for (const line of clean) {
+    const { redacted } = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, "clean.ts");
+    assert.equal(redacted, line, `false positive on: ${line}`);
+  }
+});
+
+test("a stateful /g custom rule does not skip every other match", () => {
+  const rule = { rule: "custom-token", pattern: /^X=SECRET_[A-Z]+$/g };
+  const content = Array.from({ length: 8 }, () => "X=SECRET_ABC").join("\n");
+  const { redacted, findings } = scanAndRedactSecrets(content, [rule], "a.txt");
+
+  assert.equal(redacted.split("\n").filter((line) => line.includes("[REDACTED")).length, 8);
+  assert.equal(findings.length, 8);
+});
+
+test("no default rule is quadratic on a long single line", () => {
+  // A single 240 KB identifier used to cost ~5.6 s of CPU in
+  // `env-secret-assignment` because the name was matched with unbounded
+  // quantifiers on both sides of the keyword alternation.
+  const shapes = [
+    "A".repeat(240000),
+    ("API_KEY=" + "x".repeat(50) + " ").repeat(4000),
+    "eyJ".repeat(60000),
+    "a".repeat(240000) + "_TOKEN",
+  ];
+  for (const shape of shapes) {
+    const started = performance.now();
+    scanAndRedactSecrets(shape, DEFAULT_SECRET_PATTERNS, "probe.txt");
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < 1500, `scanning ${shape.length} chars took ${elapsed.toFixed(0)}ms`);
+  }
+});
+
+test("jwt rule is not quadratic on an eyJ-dense line", () => {
+  const line = "eyJ".repeat(20000);
+  const started = performance.now();
+  scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, "blob.txt");
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 2000, `JWT scan took ${elapsed.toFixed(0)}ms on a 60KB eyJ-dense line`);
+  assert.deepEqual(ruleFlagsWithoutState(DEFAULT_SECRET_PATTERNS), []);
+});
+
+function ruleFlagsWithoutState(rules) {
+  return rules.filter((rule) => /[gy]/.test(rule.pattern.flags)).map((rule) => rule.rule);
+}

@@ -1,17 +1,11 @@
+import { fenceForContent } from "../partitioner/chunker.js";
 import type { FileEntry, Manifest } from "../types.js";
 
 export function generateMonolithJson(
   manifest: Manifest,
   filesWithContent: FileEntry[]
 ): string {
-  return JSON.stringify(
-    {
-      manifest,
-      files: filesWithContent,
-    },
-    null,
-    2
-  );
+  return JSON.stringify({ manifest, files: filesWithContent }, null, 2);
 }
 
 export function generateMonolithMarkdown(
@@ -19,17 +13,23 @@ export function generateMonolithMarkdown(
   filesWithContent: FileEntry[]
 ): string {
   const sections = filesWithContent.map((file) => {
+    const content = (file.content ?? "").replace(/\r\n/g, "\n");
+    // Adaptive fence: a fixed 3-backtick fence let any file containing a fenced
+    // block escape its code block and inject document markup.
+    const fence = fenceForContent(content);
+
     return [
       `## File: ${file.relativePath}`,
       "",
       `- **Layer:** \`${file.layer}\``,
       `- **Kind:** \`${file.kind}\``,
-      `- **Lines:** \`${file.lines}\``,
+      `- **Lines:** \`${file.originalLines}\``,
       `- **Size:** \`${file.sizeBytes} B\``,
+      `- **Inclusion:** \`${file.inclusionMode}\``,
       "",
-      `\`\`\`${file.language}`,
-      file.content ?? "",
-      "```",
+      `${fence}${file.language}`,
+      content.endsWith("\n") ? content.slice(0, -1) : content,
+      fence,
       "",
       "---",
       "",
@@ -48,4 +48,3 @@ export function generateMonolithMarkdown(
     ...sections,
   ].join("\n");
 }
-

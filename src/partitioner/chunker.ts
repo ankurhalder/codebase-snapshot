@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
-import type { FileEntry, PartMetadata } from "../types.js";
+import { countLines, truncateToBytes } from "./preview.js";
+import type { FileEntry, PartFileEntry, PartMetadata } from "../types.js";
 
 export interface PartitionedPart {
   filename: string;
@@ -7,153 +8,306 @@ export interface PartitionedPart {
   metadata: PartMetadata;
 }
 
+/**
+ * Worst-case header overhead for a chunk: title, prev/next, counts, fingerprint
+ * and the capped layer/kind summary lines. Reserving it up front guarantees that
+ * a chunk holding a single pre-truncated file always fits.
+ */
+const HEADER_RESERVE_BYTES = 2048;
+const MIN_SECTION_BUDGET_BYTES = 512;
+const MAX_SPLIT_PASSES = 64;
+
+interface PreparedSection {
+  file: FileEntry;
+  text: string;
+  byteSize: number;
+}
+
+/**
+ * Partitions rendered file sections into byte-bounded parts.
+ *
+ * The budget is a hard bound: a section that cannot fit into a part on its own
+ * is byte-truncated (and marked `isPreviewTruncated`) rather than emitted whole.
+ * The previous implementation skipped the flush check for an empty chunk, so one
+ * large file produced a part 13.5x over the configured budget.
+ */
 export function partitionFiles(
   files: FileEntry[],
   maxPartBytes: number,
   contentFingerprint?: string
 ): PartitionedPart[] {
-  const renderedSections = files.map((file) => {
-    const text = renderFileSection(file);
-    return {
-      file,
-      text,
-      byteSize: Buffer.byteLength(text, "utf8"),
-    };
-  });
+  if (files.length === 0) return [];
 
-  const chunks: Array<{ files: FileEntry[]; body: string[]; bytes: number }> = [];
-  let current = { files: [] as FileEntry[], body: [] as string[], bytes: 0 };
-  const flush = (): void => {
-    if (current.files.length === 0) return;
-    chunks.push(current);
-    current = { files: [], body: [], bytes: 0 };
+  const budget = Math.max(MIN_SECTION_BUDGET_BYTES + HEADER_RESERVE_BYTES, maxPartBytes);
+  const sectionBudget = budget - HEADER_RESERVE_BYTES;
+
+  const prepared = files.map((file) => prepareSection(file, sectionBudget));
+
+  let groups = greedyGroups(prepared, budget);
+
+  for (let pass = 0; pass < MAX_SPLIT_PASSES; pass++) {
+    const rendered = renderGroups(groups, contentFingerprint);
+    const oversized = rendered.findIndex((part) => part.metadata.byteSize > budget);
+    if (oversized === -1) return rendered;
+
+    const group = groups[oversized];
+    if (group.length > 1) {
+      const moved = group.pop() as PreparedSection;
+      groups.splice(oversized + 1, 0, [moved]);
+      continue;
+    }
+
+    // A single section still exceeds the budget (its metadata alone is huge):
+    // shrink the body until it fits.
+    const [section] = group;
+    const overflow = rendered[oversized].metadata.byteSize - budget;
+    const currentContent = section.file.content ?? "";
+    const shrinkTo = Math.max(
+      0,
+      Buffer.byteLength(currentContent, "utf8") - overflow - 64
+    );
+    const shrunk = truncateToBytes(currentContent, shrinkTo);
+    if (shrunk.isTruncated) {
+      applyTruncatedContent(section.file, shrunk.content);
+      section.text = renderFileSection(section.file);
+      section.byteSize = Buffer.byteLength(section.text, "utf8");
+      continue;
+    }
+
+    // Last resort: the single section still does not fit, so hard-truncate the
+    // rendered part. The byte bound is a guarantee, not an aspiration.
+    const marker = "\n... [part truncated: cannot fit budget] ...\n";
+    const target = Math.max(0, budget - Buffer.byteLength(marker, "utf8"));
+    const clipped = truncateToBytes(rendered[oversized].markdown, target);
+    rendered[oversized] = rehashPart(rendered[oversized], clipped.content + marker);
+    return rendered;
+  }
+
+  return renderGroups(groups, contentFingerprint);
+}
+
+/** Characters reserved for the omission notice appended to a hard-truncated section. */
+const SECTION_TRUNCATION_NOTICE =
+  "\n... [section truncated: metadata alone exceeds the part budget] ...\n";
+/** Cap on any single metadata value interpolated into a section or header. */
+const METADATA_VALUE_MAX = 200;
+/** Cap on a path shown in the `## Files` list and the `### FILE:` heading. */
+const DISPLAY_PATH_MAX = 300;
+
+/** Shortens a value from the middle so both ends stay recognisable. */
+function capValue(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const half = Math.floor((max - 1) / 2);
+  return `${value.slice(0, half)}…${value.slice(value.length - half)}`;
+}
+
+const capMetadata = (value: string): string => capValue(value, METADATA_VALUE_MAX);
+const displayPath = (value: string): string => capValue(value, DISPLAY_PATH_MAX);
+
+/**
+ * Renders a section and guarantees it fits within `sectionBudget` bytes.
+ *
+ * Order matters: the body is truncated while keeping the summary, then the
+ * summary is dropped if the section still does not fit, then the body is
+ * truncated again with the reclaimed room, and only as a last resort is the
+ * rendered section hard-truncated. Dropping the summary first and truncating
+ * afterwards is what previously collapsed the body to zero bytes while most of
+ * the budget was still free.
+ */
+function prepareSection(file: FileEntry, sectionBudget: number): PreparedSection {
+  let text = renderFileSection(file);
+  let byteSize = Buffer.byteLength(text, "utf8");
+  if (byteSize <= sectionBudget) return { file, text, byteSize };
+
+  const shrinkBody = (): void => {
+    const content = file.content ?? "";
+    const overhead = byteSize - Buffer.byteLength(content, "utf8");
+    const allowed = sectionBudget - overhead - 96;
+    if (allowed <= 0) return;
+    const truncated = truncateToBytes(content, allowed);
+    if (!truncated.isTruncated) return;
+    applyTruncatedContent(file, truncated.content);
+    text = renderFileSection(file);
+    byteSize = Buffer.byteLength(text, "utf8");
   };
 
-  for (const s of renderedSections) {
-    const projectedHeaderBudget = 24_000 + current.files.length * 160;
-    if (
-      current.files.length > 0 &&
-      current.bytes + s.byteSize + projectedHeaderBudget > maxPartBytes
-    ) {
-      flush();
-    }
-    current.files.push(s.file);
-    current.body.push(s.text);
-    current.bytes += s.byteSize;
+  shrinkBody();
+
+  if (byteSize > sectionBudget && file.summary) {
+    file.summary = undefined;
+    file.summaryOmitted = true;
+    text = renderFileSection(file);
+    byteSize = Buffer.byteLength(text, "utf8");
+    // Reclaim the room the summary was occupying.
+    shrinkBody();
   }
-  flush();
 
-  const total = chunks.length;
-  const zeroPad = (index: number, t: number) =>
-    String(index).padStart(Math.max(3, String(t).length), "0");
+  if (byteSize > sectionBudget) {
+    // Fixed metadata (a very long path or layer/kind name) still exceeds the
+    // budget on its own; the hard bound wins over readability.
+    const target = sectionBudget - Buffer.byteLength(SECTION_TRUNCATION_NOTICE, "utf8");
+    const truncated = truncateToBytes(text, Math.max(0, target));
+    text = truncated.content + SECTION_TRUNCATION_NOTICE;
+    byteSize = Buffer.byteLength(text, "utf8");
+  }
 
-  return chunks.map((chunk, index) => {
-    const filename = `part-${zeroPad(index + 1, total)}.md`;
-    for (const f of chunk.files) {
-      f.part = filename;
+  return { file, text, byteSize };
+}
+
+function applyTruncatedContent(file: FileEntry, content: string): void {
+  file.content = content;
+  file.isPreviewTruncated = true;
+  file.inclusionMode = "preview";
+  file.includedBytes = Buffer.byteLength(content, "utf8");
+  file.includedLines = countLines(content);
+}
+
+/** Rebuilds a part's recorded digest/size after its markdown was altered. */
+function rehashPart(part: PartitionedPart, markdown: string): PartitionedPart {
+  return {
+    filename: part.filename,
+    markdown,
+    metadata: {
+      ...part.metadata,
+      byteSize: Buffer.byteLength(markdown, "utf8"),
+      sha256: crypto.createHash("sha256").update(markdown).digest("hex"),
+      lines: countLines(markdown),
+    },
+  };
+}
+
+function greedyGroups(sections: PreparedSection[], budget: number): PreparedSection[][] {
+  const groups: PreparedSection[][] = [];
+  let current: PreparedSection[] = [];
+  let bodyBytes = 0;
+  let pathBytes = 0;
+
+  for (const section of sections) {
+    const sectionPathBytes = Buffer.byteLength(
+      `${displayPath(section.file.relativePath)}\n`,
+      "utf8"
+    );
+    const projected =
+      bodyBytes + section.byteSize + pathBytes + sectionPathBytes + HEADER_RESERVE_BYTES;
+
+    if (current.length > 0 && projected > budget) {
+      groups.push(current);
+      current = [];
+      bodyBytes = 0;
+      pathBytes = 0;
     }
-    const layersCovered = Array.from(new Set(chunk.files.map((f) => f.layer))).sort();
-    const prev = index === 0 ? "none" : `part-${zeroPad(index, total)}.md`;
-    const next =
-      index === total - 1 ? "none" : `part-${zeroPad(index + 2, total)}.md`;
 
+    current.push(section);
+    bodyBytes += section.byteSize;
+    pathBytes += sectionPathBytes;
+  }
+
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+
+function renderGroups(
+  groups: PreparedSection[][],
+  contentFingerprint?: string
+): PartitionedPart[] {
+  const total = groups.length;
+  const zeroPad = (index: number): string =>
+    String(index).padStart(Math.max(3, String(total).length), "0");
+
+  return groups.map((group, index) => {
+    const filename = `part-${zeroPad(index + 1)}.md`;
+    const prev = index === 0 ? "none" : `part-${zeroPad(index)}.md`;
+    const next = index === total - 1 ? "none" : `part-${zeroPad(index + 2)}.md`;
+
+    for (const section of group) {
+      section.file.part = filename;
+    }
+
+    const layersCovered = Array.from(new Set(group.map((s) => s.file.layer))).sort();
     const layerCounts: Record<string, number> = {};
     const kindCounts: Record<string, number> = {};
-    for (const f of chunk.files) {
-      layerCounts[f.layer] = (layerCounts[f.layer] || 0) + 1;
-      kindCounts[f.kind] = (kindCounts[f.kind] || 0) + 1;
+    for (const section of group) {
+      layerCounts[section.file.layer] = (layerCounts[section.file.layer] || 0) + 1;
+      kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
     }
-    const topEntries = (counts: Record<string, number>, limit: number) =>
+    const topEntries = (counts: Record<string, number>, limit: number): string =>
       Object.entries(counts)
-        .sort((a, b) => b[1] - a[1])
+        .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
         .slice(0, limit)
-        .map(([k, v]) => `${k} (${v})`)
+        .map(([key, value]) => `${capMetadata(key)} (${value})`)
         .join(", ");
 
-    let byteSize = 0;
-    let content = "";
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const header = [
-        `# Codebase Snapshot Part ${zeroPad(index + 1, total)} of ${zeroPad(total, total)}`,
-        "",
-        `- Previous: ${prev}`,
-        `- Next: ${next}`,
-        `- Files: ${chunk.files.length}`,
-        `- Byte Size: ${byteSize}`,
-        `- Content Fingerprint: ${contentFingerprint || "none"}`,
-        `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
-        `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
-        "",
-        "## Files",
-        "",
-        "```text",
-        ...chunk.files.map((f) => f.relativePath),
-        "```",
-        "",
-        "## Contents",
-        "",
-      ].join("\n");
+    const header = [
+      `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,
+      "",
+      `- Previous: ${prev}`,
+      `- Next: ${next}`,
+      `- Files: ${group.length}`,
+      `- Content Fingerprint: ${contentFingerprint || "none"}`,
+      `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
+      `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
+      "",
+      "## Files",
+      "",
+      "```text",
+      ...group.map((s) => displayPath(s.file.relativePath)),
+      "```",
+      "",
+      "## Contents",
+      "",
+    ].join("\n");
 
-      content = (header + chunk.body.join("")).replace(/\r\n/g, "\n");
-      const nextByteSize = Buffer.byteLength(content, "utf8");
-      if (nextByteSize === byteSize) break;
-      byteSize = nextByteSize;
-    }
+    const content = (header + group.map((s) => s.text).join("")).replace(/\r\n/g, "\n");
+    const byteSize = Buffer.byteLength(content, "utf8");
+    const sha256 = crypto.createHash("sha256").update(content).digest("hex");
 
-    const sha = crypto.createHash("sha256").update(content).digest("hex");
-    const lines = content.split("\n").length;
-
-    const mappedFiles = chunk.files.map((f) => ({
-      path: f.relativePath,
-      relativePath: f.relativePath,
-      bytes: f.sizeBytes,
-      sizeBytes: f.sizeBytes,
-      lines: f.lines,
-      layer: f.layer,
-      kind: f.kind,
+    const includedFiles: PartFileEntry[] = group.map(({ file }) => ({
+      relativePath: file.relativePath,
+      sourceBytes: file.sizeBytes,
+      includedBytes: file.includedBytes,
+      lines: file.includedLines,
+      layer: file.layer,
+      kind: file.kind,
     }));
 
     const metadata: PartMetadata = {
       index: index + 1,
       filename,
-      bytes: byteSize,
       byteSize,
-      sha256: sha,
-      lines,
-      fileCount: chunk.files.length,
+      sha256,
+      lines: countLines(content),
+      fileCount: group.length,
       layersCovered,
-      files: chunk.files.map((f) => f.relativePath),
-      includedFiles: mappedFiles,
+      includedFiles,
     };
 
-    return {
-      filename,
-      markdown: content,
-      metadata,
-    };
+    return { filename, markdown: content, metadata };
   });
 }
 
 function renderFileSection(file: FileEntry): string {
   const content = file.content ?? "";
   const fence = fenceForContent(content);
-  const summaryLines = renderSummary(file.summary);
+  const anchor = anchorForPath(file.relativePath);
 
   return [
-    `### FILE: ${file.relativePath}`,
+    `<a id="${anchor}"></a>`,
+    `### FILE: ${displayPath(file.relativePath)}`,
     "",
-    `- Layer: ${file.layer}`,
-    `- Kind: ${file.kind}`,
-    `- Language: ${file.language}`,
+    `- Layer: ${capMetadata(file.layer)}`,
+    `- Kind: ${capMetadata(file.kind)}`,
+    `- Language: ${capMetadata(file.language)}`,
     `- Inclusion: ${file.inclusionMode}`,
     `- Source Bytes: ${file.sizeBytes}`,
-    `- Source Lines: ${file.lines}`,
+    `- Source Lines: ${file.originalLines}`,
+    `- Included Lines: ${file.includedLines}`,
     `- SHA-256: ${file.hashSha256}`,
-    ...summaryLines,
+    ...renderSummary(file.summary),
+    ...(file.summaryOmitted ? ["- Summary: (omitted: exceeds the part budget)"] : []),
     "",
-    file.inclusionMode === "summary-only" ? "#### Bounded Preview" : "#### Content",
+    file.inclusionMode === "preview" ? "#### Bounded Preview" : "#### Content",
     "",
-    `${fence}${file.language}`,
+    `${fence}${capMetadata(file.language)}`,
     content.endsWith("\n") ? content.slice(0, -1) : content,
     fence,
     "",
@@ -161,7 +315,11 @@ function renderFileSection(file: FileEntry): string {
   ].join("\n");
 }
 
-function fenceForContent(content: string): string {
+/**
+ * Chooses a fence longer than any backtick run in `content`, so a file that
+ * contains a fenced block cannot break out of its own code block.
+ */
+export function fenceForContent(content: string): string {
   const matches = content.match(/`+/g);
   const maxRun = matches?.reduce((max, run) => Math.max(max, run.length), 0) ?? 0;
   return "`".repeat(Math.max(4, maxRun + 1));
@@ -173,6 +331,18 @@ function renderSummary(summary: FileEntry["summary"]): string[] {
   return ["- Summary:", "```json", JSON.stringify(summary, null, 2), "```"];
 }
 
+/**
+ * Stable, injective anchor for a file path.
+ *
+ * The previous slug was not injective (`src/a-b.ts` and `src/a/b.ts` produced the
+ * same anchor) and, more importantly, no part file ever emitted the anchors that
+ * `reports/navigation.md` linked to — every file link was dead.
+ */
 export function anchorForPath(filePath: string): string {
-  return filePath.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  const slug = filePath
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const digest = crypto.createHash("sha256").update(filePath).digest("hex").slice(0, 8);
+  return `${slug || "file"}-${digest}`;
 }

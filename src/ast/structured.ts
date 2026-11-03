@@ -2,7 +2,7 @@ import type { JsonSummary, MarkdownSummary } from "../types.js";
 
 export function summarizeJson(content: string): JsonSummary {
   try {
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
     if (Array.isArray(parsed)) {
       const sample = parsed[0];
       const sampleKeys =
@@ -44,27 +44,25 @@ export function summarizeJson(content: string): JsonSummary {
 export function summarizeMarkdown(content: string): MarkdownSummary {
   const headings: string[] = [];
   const frontmatterKeys: string[] = [];
-  const lines = content.split("\n");
+  const lines = content.replace(/^\uFEFF/, "").split("\n");
 
   let inFrontmatter = false;
-  let frontmatterDone = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (i === 0 && line.trim() === "---") {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+
+    if (index === 0 && line.trim() === "---") {
       inFrontmatter = true;
       continue;
     }
+
     if (inFrontmatter) {
       if (line.trim() === "---") {
         inFrontmatter = false;
-        frontmatterDone = true;
         continue;
       }
       const match = /^([a-zA-Z0-9_-]+):/.exec(line);
-      if (match) {
-        frontmatterKeys.push(match[1]);
-      }
+      if (match) frontmatterKeys.push(match[1]);
       continue;
     }
 
@@ -79,4 +77,3 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
     frontmatterKeys: Array.from(new Set(frontmatterKeys)).sort(),
   };
 }
-

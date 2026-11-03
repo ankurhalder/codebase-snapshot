@@ -1,6 +1,24 @@
 import ts from "typescript";
 import type { SourceSummary } from "../types.js";
 
+const ROUTE_HANDLER_NAMES = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "DELETE",
+  "PATCH",
+  "HEAD",
+  "OPTIONS",
+]);
+
+/**
+ * Extracts a structural summary from a JS/TS source file.
+ *
+ * The traversal is an explicit stack, not recursion: a generated file with a
+ * long `a && b && …` chain used to overflow the call stack inside our own
+ * visitor and abort the entire snapshot. Callers should still treat a throw as
+ * possible (TypeScript's own parser recurses), so wrap the call.
+ */
 export function summarizeTypeScriptSource(
   relativePath: string,
   content: string
@@ -9,6 +27,7 @@ export function summarizeTypeScriptSource(
     directives: [],
     imports: [],
     exports: [],
+    reExports: [],
     functions: [],
     classes: [],
     interfaces: [],
@@ -20,54 +39,74 @@ export function summarizeTypeScriptSource(
     routeHandlers: [],
   };
 
-  const isJsx = relativePath.endsWith(".tsx") || relativePath.endsWith(".jsx");
+  const lowerPath = relativePath.toLowerCase();
+  const isJsx = lowerPath.endsWith(".tsx") || lowerPath.endsWith(".jsx");
+
   const sourceFile = ts.createSourceFile(
     relativePath,
     content,
     ts.ScriptTarget.Latest,
-    true,
+    /* setParentNodes */ false,
     isJsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   );
 
-  const routeHandlerNames = new Set([
-    "GET",
-    "POST",
-    "PUT",
-    "DELETE",
-    "PATCH",
-    "HEAD",
-    "OPTIONS",
-  ]);
-
-  function isExported(node: ts.Node): boolean {
-    const modifiers = ts.canHaveModifiers(node)
-      ? ts.getModifiers(node)
-      : undefined;
-    return Boolean(
-      modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)
-    );
+  // Module directives ("use client" / "use server") are only meaningful in the
+  // prologue: the first run of string-literal expression statements.
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isExpressionStatement(statement) &&
+      ts.isStringLiteral(statement.expression)
+    ) {
+      const text = statement.expression.text;
+      if (text === "use client" || text === "use server") {
+        summary.directives.push(text);
+      }
+      continue;
+    }
+    break;
   }
 
-  function visit(node: ts.Node) {
-    if (ts.isExpressionStatement(node)) {
-      if (ts.isStringLiteral(node.expression)) {
-        const text = node.expression.text;
-        if (text === "use client" || text === "use server") {
-          summary.directives.push(text);
-        }
-      }
-    }
+  const isExported = (node: ts.Node): boolean => {
+    const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+    return Boolean(modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
+  };
 
-    if (ts.isImportDeclaration(node)) {
-      if (ts.isStringLiteral(node.moduleSpecifier)) {
-        summary.imports.push(node.moduleSpecifier.text);
-      }
+  const isDefault = (node: ts.Node): boolean => {
+    const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+    return Boolean(modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
+  };
+
+  const recordFunctionLike = (name: string, exported: boolean): void => {
+    summary.functions.push(name);
+    if (exported) {
+      summary.exports.push(name);
+      if (ROUTE_HANDLER_NAMES.has(name)) summary.routeHandlers.push(name);
+    }
+    if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
+    if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
+  };
+
+  const stack: ts.Node[] = [sourceFile];
+  while (stack.length > 0) {
+    const node = stack.pop() as ts.Node;
+
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      summary.imports.push(node.moduleSpecifier.text);
     }
 
     if (ts.isExportDeclaration(node)) {
+      if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        summary.imports.push(node.moduleSpecifier.text);
+        if (node.exportClause && ts.isNamespaceExport(node.exportClause)) {
+          summary.exports.push(node.exportClause.name.text);
+        } else if (!node.exportClause) {
+          // `export * from "./x"`
+          summary.reExports.push(node.moduleSpecifier.text);
+        }
+      }
       if (node.exportClause && ts.isNamedExports(node.exportClause)) {
-        for (const el of node.exportClause.elements) {
-          summary.exports.push(el.name.text);
+        for (const element of node.exportClause.elements) {
+          summary.exports.push(element.name.text);
         }
       }
     }
@@ -76,74 +115,83 @@ export function summarizeTypeScriptSource(
       summary.exports.push("default");
     }
 
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      const name = node.name.text;
-      summary.functions.push(name);
-      if (isExported(node)) summary.exports.push(name);
-      if (routeHandlerNames.has(name)) summary.routeHandlers.push(name);
-      if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
-      if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
+    if (ts.isFunctionDeclaration(node)) {
+      const exported = isExported(node);
+      if (node.name) {
+        recordFunctionLike(node.name.text, exported);
+      } else if (isDefault(node)) {
+        // `export default function () {}`
+        summary.exports.push("default");
+      }
     }
 
-    if (ts.isClassDeclaration(node) && node.name) {
-      const name = node.name.text;
-      summary.classes.push(name);
-      if (isExported(node)) summary.exports.push(name);
-      if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
+    if (ts.isClassDeclaration(node)) {
+      if (node.name) {
+        summary.classes.push(node.name.text);
+        if (isExported(node)) summary.exports.push(node.name.text);
+        if (/^[A-Z]/.test(node.name.text)) summary.reactComponents.push(node.name.text);
+      } else if (isDefault(node)) {
+        summary.exports.push("default");
+      }
     }
 
     if (ts.isInterfaceDeclaration(node)) {
-      const name = node.name.text;
-      summary.interfaces.push(name);
-      if (isExported(node)) summary.exports.push(name);
+      summary.interfaces.push(node.name.text);
+      if (isExported(node)) summary.exports.push(node.name.text);
     }
 
     if (ts.isTypeAliasDeclaration(node)) {
-      const name = node.name.text;
-      summary.types.push(name);
-      if (isExported(node)) summary.exports.push(name);
+      summary.types.push(node.name.text);
+      if (isExported(node)) summary.exports.push(node.name.text);
     }
 
     if (ts.isEnumDeclaration(node)) {
-      const name = node.name.text;
-      summary.enums.push(name);
-      if (isExported(node)) summary.exports.push(name);
+      summary.enums.push(node.name.text);
+      if (isExported(node)) summary.exports.push(node.name.text);
     }
 
     if (ts.isVariableStatement(node)) {
       const exported = isExported(node);
-      for (const decl of node.declarationList.declarations) {
-        if (ts.isIdentifier(decl.name)) {
-          const name = decl.name.text;
-          summary.variables.push(name);
-          if (exported) {
-            summary.exports.push(name);
-            if (routeHandlerNames.has(name)) summary.routeHandlers.push(name);
-          }
-          if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
-          if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
+      for (const declaration of node.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name)) continue;
+        const name = declaration.name.text;
+        summary.variables.push(name);
+        if (exported) {
+          summary.exports.push(name);
+          // Route handlers are only handlers when exported, matching the rule
+          // applied to function declarations.
+          if (ROUTE_HANDLER_NAMES.has(name)) summary.routeHandlers.push(name);
         }
+        if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
+        if (/^[A-Z]/.test(name)) summary.reactComponents.push(name);
       }
     }
 
-    ts.forEachChild(node, visit);
+    const children: ts.Node[] = [];
+    ts.forEachChild(node, (child) => {
+      children.push(child);
+    });
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push(children[index]);
+    }
   }
 
-  visit(sourceFile);
+  const dedupeSorted = (values: string[]): string[] =>
+    Array.from(new Set(values)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
-  summary.directives = Array.from(new Set(summary.directives)).sort();
-  summary.imports = Array.from(new Set(summary.imports)).sort();
-  summary.exports = Array.from(new Set(summary.exports)).sort();
-  summary.functions = Array.from(new Set(summary.functions)).sort();
-  summary.classes = Array.from(new Set(summary.classes)).sort();
-  summary.interfaces = Array.from(new Set(summary.interfaces)).sort();
-  summary.types = Array.from(new Set(summary.types)).sort();
-  summary.enums = Array.from(new Set(summary.enums)).sort();
-  summary.variables = Array.from(new Set(summary.variables)).sort();
-  summary.reactComponents = Array.from(new Set(summary.reactComponents)).sort();
-  summary.hooks = Array.from(new Set(summary.hooks)).sort();
-  summary.routeHandlers = Array.from(new Set(summary.routeHandlers)).sort();
+  summary.directives = dedupeSorted(summary.directives);
+  summary.imports = dedupeSorted(summary.imports);
+  summary.exports = dedupeSorted(summary.exports);
+  summary.reExports = dedupeSorted(summary.reExports);
+  summary.functions = dedupeSorted(summary.functions);
+  summary.classes = dedupeSorted(summary.classes);
+  summary.interfaces = dedupeSorted(summary.interfaces);
+  summary.types = dedupeSorted(summary.types);
+  summary.enums = dedupeSorted(summary.enums);
+  summary.variables = dedupeSorted(summary.variables);
+  summary.reactComponents = dedupeSorted(summary.reactComponents);
+  summary.hooks = dedupeSorted(summary.hooks);
+  summary.routeHandlers = dedupeSorted(summary.routeHandlers);
 
   return summary;
 }
-

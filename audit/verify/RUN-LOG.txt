@@ -1,0 +1,411 @@
+# verification run 2026-11-02T20:54:42.325Z
+# node v24.12.0 · win32 x64
+# frozen dist/index.cjs sha256 1e35bfa88d2a3d635461f0511bef1a9172815a2ceae7afb8d6b1c3927118c611
+# scripts: 23
+
+===== v-a1-a4-cli.mjs — 16 PASS / 0 FAIL / exit 0 / 6.3s =====
+PASS A1.cwd-equals :: --cwd=<dir> is honoured by generate and validate :: generate+validate honoured --cwd= (old: ignored -> false drift)
+PASS A1.out-dir-equals :: --out-dir=<path> is honoured :: custom/manifest.json
+PASS A1.numeric-equals :: --max-part-bytes=<n> is honoured (equals form) :: budget 8192, 1 part(s)
+PASS A1.mode-equals :: --mode=<command> is honoured :: --mode=validate ran validate
+PASS A4.unknown flag :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ Unknown option '--nonsense'. To specify a positional argum
+PASS A4.unknown command :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ Unknown command "frobnicate". Expected one of: generate, v
+PASS A4.typo'd command :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ Unknown command "valdate". Expected one of: generate, vali
+PASS A4.two commands :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ Unexpected argument(s): validate. Only one command may be 
+PASS A4.bad --format :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ --format must be "text" or "json", received "yaml".
+PASS A4.--max-part-bytes=abc :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ --max-part-bytes expects a whole number, received "abc".
+PASS A4.--max-part-bytes=0 :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ --max-part-bytes must be at least 4096, received "0".
+PASS A4.--max-part-bytes=4095 :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ --max-part-bytes must be at least 4096, received "4095".
+PASS A4.--max-part-bytes=-5 :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ --max-part-bytes expects a whole number, received "-5".
+PASS A4.--large-file-bytes=abc :: exits 2 with usage, and does not write a snapshot :: exit 2, ❌ --large-file-bytes expects a whole number, received "abc".
+PASS A4.typo-does-not-overwrite :: a typo cannot replace an existing snapshot :: snapshot untouched
+PASS A4.help-version :: --help and --version exit 0 :: v2.0.0
+
+--- 16 passed, 0 failed ---
+
+===== v-a13-ci.mjs — 12 PASS / 0 FAIL / exit 0 / 0.2s =====
+PASS A13.pinned :: every third-party action is pinned to a 40-hex commit SHA :: 4 uses, all pinned
+PASS A13.permissions :: both workflows declare least-privilege permissions :: contents: read (+ id-token: write for provenance)
+PASS A13.concurrency :: both workflows declare concurrency :: ci cancels superseded runs; publish serialises
+PASS A13.gates :: typecheck / coverage / pack gates exist in CI :: typecheck + coverage + tarball contract
+PASS A13.publish-guard :: workflow_dispatch publishing is gated to main :: gated to main, release events allowed
+PASS A13.unused-locals :: noUnusedLocals/noUnusedParameters are on (dead-code gate) :: both on
+PASS A13.lint-wired :: the lint gate is a package script and a CI step :: npm run lint + CI step + npm run check
+PASS A13.lint-clean :: the real tree passes its own lint gate (no false positives) :: lint: 29 file(s) clean
+PASS A13.lint-fails :: the gate fails on injected violations and names the rule :: 6 rules fired on an injected file
+PASS A13.lint-scope :: the gate enforces the advertised rules (structural) :: 9 rules + console allowlist
+PASS A13.dependabot :: dependabot.yml parses as YAML with grouped npm + actions updates :: yaml ok: npm + github-actions, npm groups runtime/development
+PASS A13.audit-step :: CI runs npm audit at a defined level :: run: npm audit --audit-level=high
+
+--- 12 passed, 0 failed ---
+
+===== v-a2-a3-cli.mjs — 8 PASS / 0 FAIL / exit 0 / 4.9s =====
+PASS A2.generate-json :: generate --format json writes one parseable document to stdout :: JSON.parse OK (5114 B), progress on stderr
+PASS A2.validate-json :: validate --format json is parseable :: valid:true with drift.partIssues
+PASS A2.report-json :: report --format json is parseable and carries the manifest :: manifest+validation
+PASS A2.redirect :: stdout survives a shell-style redirect to a file (the audit's reproduce command) :: redirected 6570 B, JSON.parse OK
+PASS A3.fresh-dir :: --dry-run writes nothing at all :: no writes, plan = 3 files / 1 parts
+PASS A3.existing-snapshot :: --dry-run leaves an existing snapshot byte-identical :: 6 files unchanged, no litter (old: full write + rmSync)
+PASS A3.progress :: --dry-run says it wrote nothing :: 🧪 Dry run — nothing was written:
+PASS A3.dead-flags :: the dead --force / --monolith-content flags are gone; --max-monolith-bytes works :: unknown flags exit 2; --max-monolith-bytes skips + warns
+
+--- 8 passed, 0 failed ---
+
+===== v-a5-a9-init-sync.mjs — 6 PASS / 0 FAIL / exit 0 / 2.1s =====
+PASS A5.init :: init writes a config this Node can load, and generate then uses it :: snapshot.config.ts written and loaded
+PASS A5.init-twice :: init refuses to overwrite an existing config :: exit 1, no overwrite
+PASS A5.config-format :: the generated config is a real module with defineConfig() :: snapshot.config.ts: import { defineConfig } from "@ankurhalder/codebase-snapshot";
+PASS A9.sync :: generateSnapshot returns a Manifest, not a Promise :: synchronous Manifest
+PASS A9.await-still-works :: await generateSnapshot(...) keeps working at old call sites :: awaited Manifest
+PASS A9.async-wrapper :: generateSnapshotAsync returns a real Promise :: Promise<Manifest>
+
+--- 6 passed, 0 failed ---
+
+===== v-a6-a10-packaging.mjs — 9 PASS / 0 FAIL / exit 0 / 23.1s =====
+PASS A6.scripts :: prepare (or prepack) exists and builds dist :: scripts.prepare = npm run build
+PASS A7.exports :: exports[./cli] has import+require with per-condition types :: ./cli: import+require+types, root require.types present
+PASS A10.package-json-export :: exports[./package.json] and sideEffects are present :: present
+PASS A10.no-sourcemaps :: the published file list excludes .map files :: dist/*.js,dist/*.cjs,dist/*.d.ts,dist/*.d.cts,README.md,LICENSE
+PASS A6.clean-copy :: the fresh copy really has no dist/ :: no dist
+PASS A6.pack-fresh :: npm pack in a fresh clone builds dist and ships it :: ankurhalder-codebase-snapshot-2.0.0.tgz: 15 files, all entry points present, 0 maps
+PASS A8.npm-test-clean :: npm test passes from a clean checkout (pretest builds first) :: 61 tests passed from a dist-less checkout
+PASS A8.imports :: the suite still imports the built package (mitigated by pretest) :: units->dist, integration->dist (pretest rebuilds dist)
+PASS A7.real-require :: require() and import() of ./cli and ./package.json work through the exports map :: cjs: function 2.0.0 | esm: function 2.0.0
+
+--- 9 passed, 0 failed ---
+
+===== v-c1-dataloss.mjs — 13 PASS / 0 FAIL / exit 0 / 6.3s =====
+PASS C1.guard:outDir '.' :: refused before any write, and the tree is untouched :: Refusing to generate: outDir is the working directory or one of its ance
+PASS C1.guard:outDir './' :: refused before any write, and the tree is untouched :: Refusing to generate: outDir is the working directory or one of its ance
+PASS C1.guard:outDir '..' :: refused before any write, and the tree is untouched :: Refusing to generate: outDir is the working directory or one of its ance
+PASS C1.guard:outDir '' (branded config) :: refused before any write, and the tree is untouched :: Refusing to generate: outDir is the working directory or one of its ance
+PASS C1.guard:outDir = tmpDir :: refused before any write, and the tree is untouched :: Refusing to generate: outDir and tmpDir are the same directory
+PASS C1.guard:tmpDir inside outDir :: refused before any write, and the tree is untouched :: Refusing to generate: tmpDir is inside outDir
+PASS C1.guard:tmpDir is cwd :: refused before any write, and the tree is untouched :: Refusing to generate: tmpDir is the working directory or one of its ance
+PASS C1.previous-snapshot :: a rejected config leaves the previous snapshot intact :: snapshot/manifest.json survived
+PASS C1.atomic-swap :: regeneration replaces the snapshot and leaves no backup/tmp litter :: fingerprints differ, no litter, 5 entries
+    OBS C1.busy-outdir: rename blocked=true code=EBUSY oldManifestIntact=true
+PASS C1.busy-outdir :: a swap that cannot even move the old snapshot away leaves it intact (data safety) :: blocked with EBUSY, old snapshot intact
+PASS C1.exdev-first :: EXDEV on the swap-in falls back to a recursive copy :: written across the volume boundary, tmp cleaned
+PASS C1.exdev-regenerate :: regenerating across the boundary replaces the snapshot cleanly :: old snapshot replaced, no litter on either volume
+PASS C1.resolveSafe-output :: resolveSafeOutputDirs rejects every C1 shape and allows the default :: 5 rejections, default layout allowed
+
+--- 13 passed, 0 failed ---
+
+===== v-c11-ast.mjs — 5 PASS / 0 FAIL / exit 0 / 1.0s =====
+PASS C11.deep-and-chain :: 20k '&&' operands (parser OK, visitor used to recurse) no longer throw :: summary built with 1 variables
+    OBS C11: parser threw directly=true warning=["Summary skipped for src/deep.js: Maximum call stack size exceeded"]
+PASS C11.nested-parens :: 5000 nested parentheses are contained by the per-file try/catch :: run completed, deep.js included, 1 warning(s)
+PASS C11.warning-names-file :: the isolation warning identifies the offending file :: Summary skipped for src/deep.js: Maximum call stack size exceeded
+PASS C11.cli :: the CLI does not crash on a pathological file :: exit 0, no RangeError
+PASS C11.parts-intact :: the pathological file's content is still emitted :: content present
+
+--- 5 passed, 0 failed ---
+
+===== v-c12-matchers.mjs — 7 PASS / 0 FAIL / exit 0 / 0.6s =====
+PASS C12.layer-glob :: 'src/app/**' matches src/app and below, not src/apple/application :: 7/7 path classifications
+PASS C12.substring-rule :: a plain string rule keeps documented substring semantics :: substring semantics for non-glob rules
+PASS C12.exclude-segments :: 'test' excludes test/ paths but not contest/ or attest/ :: 5/5 exclude classifications
+PASS C12.exclude-globs :: real glob excludes: *.lock, **/fixtures/**, src/app/** :: 9/9 glob assertions
+PASS C12.end-to-end-excludes :: excludePatterns:['test'] keeps attest/ and contest/ in the snapshot :: .gitignore, attest/words.ts, contest/entry.ts, src/keep.ts
+PASS C12.end-to-end-layers :: layers with 'src/app/**' do not leak into src/apple/ :: {".gitignore":"other","src/app/route.ts":"app","src/apple/pie.ts":"other","src/application/server.ts":"other"}
+PASS C12.end-to-end-glob-exclude :: excludePatterns:['*.lock'] drops only lock files :: only src/keep.ts remained
+
+--- 7 passed, 0 failed ---
+
+===== v-c15-config.mjs — 8 PASS / 0 FAIL / exit 0 / 0.3s =====
+PASS C15.hash-percent-dir :: a config in a directory containing # and % still loads :: loaded from percent%41dir
+PASS C15.error-not-swallowed :: a broken config is reported, not silently ignored :: …snapshot.config.js: Unexpected token ';'
+PASS C15.ts-config :: a .ts config loads on this Node and is gated by supportsTypeScriptImports :: loaded
+PASS C15.invalid-json :: a malformed JSON config is reported :: Could not parse C:\Users\ankur\AppData\Local\Temp\csv-c15d-fbcvkK\snap
+PASS C15.package-json-key :: the package.json snapshot key is still honoured :: loaded from package.json
+PASS A12.baseDir :: resolveConfig(cfg, undefined, dir) uses the config's directory :: csv-c15f-WsDaNu
+PASS A12.cwd-validated :: a nonexistent cwd is rejected up front :: Working directory does not exist: C:\Users\ankur\AppData\Local\Temp\cs
+PASS A12.file-as-cwd :: a file used as cwd is rejected :: Working directory is not a directory: C:\Users\ankur\AppData\Local\Tem
+
+--- 8 passed, 0 failed ---
+
+===== v-c16-18-19.mjs — 10 PASS / 0 FAIL / exit 0 / 0.5s =====
+    OBS C16: files=["link-dir/hidden.ts","real-dir/inner.ts","real-file.ts"] skipped=["link-dir:symlink"]
+PASS C16.junction-recorded :: a junction in the no-git walk produces a visible skip record :: followed directory symlink
+    SKIP C16.file-symlink: symlink creation refused (EPERM) — fixed by inspection
+PASS C16.file-symlink :: a file symlink is followed and recorded (or the OS refuses to create it) :: not applicable in this environment
+PASS C18.deterministic-order :: tree ordering is code-unit, not locale collation :: Banana.ts,Z.ts,a.ts,apple.ts,b.ts,zebra.ts,Ärger.ts,ä.ts
+PASS C18.dir-marker :: directories are marked with a trailing slash :: src/ marked, a.ts not
+PASS C18.cap :: a very large tree is truncated instead of emitted unbounded :: 401 KB, truncated marker present
+PASS C18.collision :: a file/dir name collision is unreachable on a real filesystem (informational) :: OS refuses the collision, so the synthetic PoC case cannot occur
+PASS C19.mts-cts :: self-generated .mts/.cts files are summarised :: b.mts, c.cts, d.ts all summarised
+PASS C19.anonymous-default :: anonymous default exports are recorded :: function, class and assignment all record 'default'
+PASS C19.export-star :: `export * from './star'` is recorded as import and re-export :: imports + reExports both carry ./star
+PASS C19.route-handlers :: only exported route handlers are recorded :: GET+POST (exported only), DELETE/PATCH excluded
+
+--- 10 passed, 0 failed ---
+
+===== v-c2-nonascii.mjs — 5 PASS / 0 FAIL / exit 0 / 1.0s =====
+PASS C2.collect-git :: git ls-files -z returns every non-ASCII path verbatim :: 9/9 collected, 0 read-errors
+PASS C2.manifest :: all paths appear in the manifest with a real hash :: 9 files, all hashed and parted
+PASS C2.parts :: the emitted parts contain the real filenames :: 9/9 headings present
+PASS C2.walk-fallback :: the non-git walk also preserves non-ASCII names :: 9/9 collected without git
+PASS C2.roundtrip :: generate -> validate on a unicode repo reports no drift :: valid:true
+
+--- 5 passed, 0 failed ---
+
+===== v-c20-rejected.mjs — 5 PASS / 0 FAIL / exit 0 / 0.8s =====
+PASS C20.bytes-exact :: claim A (self-referential byteSize) stays false: recorded size == real size :: 2 parts, delta 0 at every digit boundary
+PASS C20.crlf-safe :: claim B (CRLF overshoot) stays safe: emitted parts are smaller, not larger :: no \r in output, within budget
+PASS C20.empty-repo :: claim R (empty repo) stays coherent: no NaN, no divide-by-zero, valid :: 0 parts, valid:true, no NaN
+PASS C20.file-url :: claim G (file://C: URLs) stays rejected: configs load via pathToFileURL :: win32 path imported fine (snapshot.config.mjs)
+PASS C20.symlink-recursion :: claim J (infinite recursion) stays false: a self-referential junction terminates :: 1 files, walk terminated
+
+--- 5 passed, 0 failed ---
+
+===== v-c3-hash.mjs — 7 PASS / 0 FAIL / exit 0 / 1.0s =====
+PASS C3.single-domain :: manifest hashes equal sha256 of the raw bytes on disk :: 6/6 match the raw-byte hash
+PASS C3.validate-clean :: validate is clean immediately after generate (old: permanent drift) :: valid:true, 0 hashMismatches
+PASS C3.regenerate-clean :: regenerating cannot re-introduce drift :: valid:true after 2 regenerations
+PASS C3.detects-real-change :: a genuine byte change is still reported (validator not neutered) :: 1 hashMismatch reported
+PASS C3.invalid-utf8-edited :: editing an invalid-UTF-8 file is detected too :: detected
+PASS C3.no-lossy-content :: invalid UTF-8 content is included, not silently dropped as binary :: 6/6 included
+PASS C3.utf8-roundtrip :: the decoded text really is lossy here (so the check is meaningful) :: 2 fixtures are genuinely lossy under utf8 round-trip
+
+--- 7 passed, 0 failed ---
+
+===== v-c4-budget.mjs — 19 PASS / 0 FAIL / exit 0 / 3.1s =====
+PASS C4.huge-line :: a 4.16 MB single-line file now fits the 307 KB budget :: worst part 305331 B vs budget 307200 B (old: 4,160,812 B = 13.54x)
+PASS C4.huge-line-content :: the truncated part keeps head content and does not split UTF-8 :: 1 part(s), all <= 307200 B, no U+FFFD
+PASS C4.boundary :: content sized to land exactly on the budget boundary stays inside it :: bodies 2000-3600 B all fit 4096 B (closest 2210 B)
+PASS C4.floor-4096 :: the CLI minimum budget (4096) is respected for a multi-file repo :: 40 parts, worst 1400 B <= 4096 B
+PASS C4.many-tiny :: many tiny files fill the budget instead of wasting it :: 3 parts, min fill 98% (old: 55%)
+PASS C4.long-path :: a near-maximum-length path still produces a within-budget part :: path 123 B, parts <= 4096 B
+PASS C4.byteSize-exact :: recorded part byteSize equals the file size on disk (claim A) :: 12 parts, byteSize exact
+    OBS C4.summary-metadata: worst part=305319 B budget=307200 ratio=0.99x status=passed summaryOmitted=true
+PASS C4.summary-metadata :: a file whose SUMMARY alone exceeds the budget is still bounded :: worst 305319 B <= 307200 B, summary dropped, body retained
+PASS C4.summary-adversarial :: small summary + huge path + 4096 B budget stays bounded :: 1 part(s) <= 4096 B with a 144 char path
+    OBS C4.fixed-metadata: worst part=1241 B budget=4096 status=passed errors=0
+PASS C4.fixed-metadata :: FIXED — a 6,000-char layer name no longer breaks a 4096 B budget :: worst 1241 B <= 4096 B, status passed (was 12,588 B / failed)
+    OBS C4.fixed-metadata-kind: worst=1237 B budget=4096 status=passed
+PASS C4.fixed-metadata-kind :: a 10,000-char kind name is bounded at a 4096 B budget :: worst 1237 B <= 4096 B
+    OBS C4.fixed-metadata-path: worst=2528 B budget=4096 recordedPathLen=10007 anchorLen=1979 sectionTruncated=true
+PASS C4.fixed-metadata-path :: a 10,000-char path is bounded and kept whole in includedFiles :: worst 2528 B, full path kept, anchor 1979 chars, section truncated
+    OBS C4.fixed-metadata-path-elision: fileLineLen=309 elided=true listEntryLen=299 part=1481 B
+PASS C4.fixed-metadata-path-elision :: a path above the display cap renders middle-elided :: heading 309 chars with …, list entry 299 chars
+    OBS C4.fixed-metadata-many: parts=15 worst=2085 B budget=4096 status=passed
+PASS C4.fixed-metadata-many :: every file carrying a huge layer name still fits the cumulative header :: 15 parts, worst 2085 B <= 4096 B
+PASS C4.counters :: counts.truncatedPreviewCount equals totals.previewFiles across configs :: default=1, largeFileBytes huge + small budget=2, largeFileBytes tiny=2, both=2
+PASS C4.floor-rejected :: a sub-floor budget is rejected loudly (intended API floor) :: maxPartBytes must be at least 4096 bytes (received 100).
+    OBS C4.summary-drop-body: summary file emitted 304715 B of 400003 B; control .txt emitted 304764 B; budget 307200
+PASS C4.summary-drop-body :: FIXED — dropping the summary reclaims the room for the body :: 304715 B emitted (was 0 B)
+    OBS C4.summary-drop-tail: size=322152 includedBytes=161868 omittoed=true truncated=true tailPresent=true budget=307200
+PASS C4.summary-drop-tail :: the emitted body still reaches the END of a summary-heavy file :: head + tail present, body 161868 B
+    OBS C4.summary-drop-many: size=557779 includedBytes=304703 summaryOmitted=true status=passed parts=1
+PASS C4.summary-drop-many :: a file with 20,000 exported symbols (huge summary) keeps its body :: 304703 B of body emitted, head present, front-anchored truncation
+
+--- 19 passed, 0 failed ---
+
+===== v-c5-c6-validate.mjs — 26 PASS / 0 FAIL / exit 0 / 8.1s =====
+PASS C5.shape:missing files :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:missing skipped :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:missing parts :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:empty object :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:files not an array :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:null document :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:array document :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:string document :: returns {valid:false} instead of throwing :: C:\Users\ankur\AppData\Local\Temp\csv-c5-UYDZXB\snapshot\manifest.json
+PASS C5.shape:invalid json :: returns {valid:false} instead of throwing :: Failed to parse snapshot manifest: Expected property name or '}' in JS
+PASS C5.cli-clean :: the CLI reports a broken manifest without a stack trace :: exit 1, no stack trace (❌ Snapshot validation failed:)
+PASS C6.clean :: a freshly generated snapshot validates clean :: valid:true
+PASS C6.deleted-part :: a deleted parts/*.md is detected :: missing from snapshot/parts
+PASS C6.garbled-part :: a corrupted parts/*.md is detected :: 2 issues (size + hash)
+PASS C6.tampered-part-metadata :: tampered part byteSize/sha256 in the manifest is detected :: 2 part issues
+PASS C6.config-drift :: generating with one budget and validating with another is drift :: maxPartBytes: manifest 307200 vs current 100000
+PASS C6.exclude-drift :: a different excludePatterns set is drift :: excludePatterns: manifest [] vs current [src/]
+PASS C6.extra-file :: a new file on disk is reported as missingInSnapshot :: src/c.ts reported
+PASS C6.deleted-file :: a file removed from disk is reported as missingOnDisk :: docs/readme.md reported
+PASS C6.bookkeeping :: parts[].fileCount vs files[] is cross-checked :: totals mismatch reported
+PASS C6.monolith :: a missing monolith artefact declared in the manifest is detected :: missing full-codebase.md reported
+    OBS C6.pristine: valid=true totalsMismatches=[] warnings=[]
+PASS C6.pristine :: a pristine manifest still validates clean (no false positives) :: valid:true, 0 totalsMismatches, 0 warnings
+    OBS C6.totals-matrix: detected=15/15 
+PASS C6.totals-matrix :: every tampered totals/counts/budget field is detected :: 15/15 tamper cases detected with a named mismatch
+PASS C6.totals-detail :: the reported mismatch names the field and both values :: totals.includedFiles: manifest 999 vs actual 4
+    OBS C6.git-commit: manifest=ef5b56cd HEAD=43732984 valid=true warnings=["Snapshot was generated at commit ef5b56cd but HEAD is 43732984."]
+PASS C6.git-commit :: a commit after generation produces a warning naming both revisions :: Snapshot was generated at commit ef5b56cd but HEAD is 43732984.
+    OBS C6.git-dirty: valid=false warnings=["Working tree has uncommitted changes."]
+PASS C6.git-dirty :: an uncommitted change produces a dirty-tree warning :: Working tree has uncommitted changes.
+    OBS C6.git: manifest.branch=main manifest.commit=ea16c748 HEAD=2e297e2 valid=true warnings=["Snapshot was generated at commit ea16c748 but HEAD is 2e297e2e."]
+PASS C6.RESIDUAL-git :: git branch/commit drift after generate (no file changes) :: Snapshot was generated at commit ea16c748 but HEAD is 2e297e2e.
+
+--- 26 passed, 0 failed ---
+
+===== v-c7-c14-manifest.mjs — 19 PASS / 0 FAIL / exit 0 / 2.1s =====
+PASS C7.inclusion-mode :: a large-but-untruncated file is 'full', not 'summary-only' :: isLarge=true inclusionMode=full
+PASS C7.totals :: fullFiles/previewFiles are derived from truncation, not from size :: fullFiles=10 previewFiles=1
+PASS C7.truncated-heading :: a genuinely truncated file is a 'preview' under the right heading :: preview + Bounded Preview + omission marker
+PASS C8.anchors-resolve :: every navigation.md file link resolves to an emitted anchor :: 11/11 anchors resolve
+PASS C8.injective :: anchorForPath is injective for colliding slugs :: src-a-b-ts-33d4be26 != src-a-b-ts-eb704146
+PASS C9.monolith-fence :: a file containing ``` cannot escape the monolith code fence :: fences 4,4 backticks, injection stayed inside
+PASS C10.status-computed :: validation.status is 'passed' only when nothing failed :: passed with 0 errors
+PASS C10.status-consistency :: status is a function of validation.errors across adversarial fixtures :: normal=passed/0, huge line=passed/0, huge summary=passed/0, huge layer name=passed/0, empty=passed/0
+    OBS C10.status-derived-in-build: derivation found in dist/index.cjs=true
+PASS C10.status-derived-in-build :: the shipped bundle computes status instead of hardcoding it :: condition present, no hardcoded literal
+PASS C10.declared-failure-honoured :: a manifest declaring itself failed is treated as invalid by validate :: declared failure surfaced to consumers
+PASS C10.cli-exit :: the CLI exit code tracks the computed status :: exit 0 on a passing run (failed path unreachable, cited by inspection)
+PASS C10.no-generator-script :: generator.script is gone from the manifest :: generator = {name, version}
+PASS C13.indexes :: imports/directives/features indexes are populated :: byFile=9 directives=1 features=billing
+PASS C14.content-bytes :: totalContentBytes reflects emitted content, not source bytes :: 4722 vs source 11642
+PASS C17.countLines :: one line-count convention :: 7/7 conventions
+PASS C17.manifest-lines :: manifest line counts match the convention :: two=2 empty=0 onlynewline=1 total=419
+PASS C17.preview-lines :: truncatePreview originalLines/includedLines describe the emitted text :: original=400 included=121 elements=121, 280 omitted
+PASS A11.no-duplicate-fields :: FileEntry/PartMetadata carry no legacy aliases :: files: 15 keys, parts: 8 keys
+    OBS NEW.counters: counts.truncatedPreviewCount=1 totals.previewFiles=1 file.isPreviewTruncated=false
+PASS NEW.counters :: REGRESSION PROBE — counts.truncatedPreviewCount vs totals.previewFiles agree :: both 1
+
+--- 19 passed, 0 failed ---
+
+===== v-s1-audit-leak.mjs — 17 PASS / 0 FAIL / exit 0 / 1.0s =====
+PASS S1.0 :: fixture sources really contain the secrets (grep is able to fail) :: 6 artifacts emitted
+PASS S1.aws-access-key-id :: no emitted artifact contains the aws access key id :: absent from all files
+PASS S1.aws-secret-key :: no emitted artifact contains the aws secret key :: absent from all files
+PASS S1.jwt :: no emitted artifact contains the jwt :: absent from all files
+PASS S1.mongo-uri-creds :: no emitted artifact contains the mongo uri creds :: absent from all files
+PASS S1.openai-key :: no emitted artifact contains the openai key :: absent from all files
+PASS S1.npm-token :: no emitted artifact contains the npm token :: absent from all files
+PASS S1.github-pat :: no emitted artifact contains the github pat :: absent from all files
+PASS S1.sendgrid-key :: no emitted artifact contains the sendgrid key :: absent from all files
+PASS S1.frontmatter-password :: no emitted artifact contains the frontmatter password :: absent from all files
+PASS S1.pem-body-line-1 :: no emitted artifact contains the pem body line 1 :: absent from all files
+PASS S1.pem-body-line-2 :: no emitted artifact contains the pem body line 2 :: absent from all files
+PASS S1.pem-body-line-3 :: no emitted artifact contains the pem body line 3 :: absent from all files
+PASS S1.audit-md :: reports/audit.md carries no source excerpt at all :: only path/line/rule columns
+PASS S1.findings :: the scan still reports the findings it redacted :: 12 findings, none carrying a value
+PASS S1.monolith :: full-codebase.json/.md are also clean (includeMonolith) :: monolith artifacts clean
+PASS S1.env-sensitive :: .env is skipped by default (so its value cannot leak either) :: .env not emitted
+
+--- 17 passed, 0 failed ---
+
+===== v-s2-pem.mjs — 9 PASS / 0 FAIL / exit 0 / 1.4s =====
+PASS S2.terminated :: a complete RSA private key leaves no body line in any artifact :: 4/4 body lines absent
+PASS S2.reconstruct :: the emitted part cannot be rebuilt into a key by re-adding the header :: 0/4 body lines recoverable
+PASS S2.unterminated :: a key whose END marker is missing still loses its body :: 4/4 body lines absent
+PASS S2.crlf :: CRLF private key is masked as a block :: masked
+PASS S2.headers :: EC / ENCRYPTED / PGP / PKCS#8 headers are all recognised :: 5/5 headers block-masked
+PASS S2.preview-truncated :: a key inside a >200 KB file is masked before preview truncation :: masked inside a 420 KB file
+PASS S2.json-singleline :: a key embedded in one JSON line (literal \n escapes) is masked :: masked
+PASS S2.line-numbers :: masking preserves line numbers of later findings :: block line 2, following finding line 8
+PASS S2.adversarial-observations :: record residual PEM shapes (informational) :: blank-line-in-body retains post-blank body: true | indented+unterminated retains body: true | lowercase header retains body: true
+
+--- 9 passed, 0 failed ---
+
+===== v-s3-coverage.mjs — 5 PASS / 0 FAIL / exit 0 / 0.3s =====
+    CAUGHT aws access key id (aws-access-key-id)
+    CAUGHT aws secret key in JSON (aws-secret-access-key)
+    CAUGHT github fine-grained PAT (github-token)
+    CAUGHT slack incoming webhook (slack-webhook-url)
+    CAUGHT google oauth client secret (google-oauth-client-secret)
+    CAUGHT openai sk-proj (openai-anthropic-key)
+    CAUGHT openai legacy sk- (openai-anthropic-key)
+    CAUGHT anthropic key (openai-anthropic-key)
+    CAUGHT npm token (npm-token)
+    CAUGHT npm _authToken line (npm-token)
+    CAUGHT pypi token (pypi-token)
+    CAUGHT sendgrid key (sendgrid-key)
+    CAUGHT twilio api key (twilio-api-key)
+    CAUGHT digitalocean token (digitalocean-token)
+    CAUGHT azure storage AccountKey (azure-storage-account-key)
+    CAUGHT encrypted PEM header (private-key-header)
+    CAUGHT basic auth in URL (basic-auth-url)
+    CAUGHT unquoted .env API_KEY (env-secret-assignment)
+    CAUGHT unquoted .env SECRET_KEY (env-secret-assignment)
+    CAUGHT unquoted .env AUTH_TOKEN (env-secret-assignment)
+    CAUGHT unquoted .env PASSWORD (env-secret-assignment)
+    CAUGHT unquoted .env DB_PASSWORD (env-secret-assignment)
+    CAUGHT quoted secret with base64 padding (generic-secret-assignment,env-secret-assignment)
+    CAUGHT quoted secret with + / chars (generic-secret-assignment,env-secret-assignment)
+    CAUGHT JSON password field (generic-secret-assignment)
+    CAUGHT jwt (jwt-token)
+    CAUGHT google api key (google-api-key)
+    CAUGHT stripe live key (stripe-secret-key)
+    CAUGHT slack bot token (slack-token)
+    CAUGHT mongodb uri creds (database-uri-credentials)
+    CAUGHT postgres uri creds (database-uri-credentials)
+    CAUGHT quoted apiKey in .ts (generic-secret-assignment)
+    missed unkeyed random in URL query (control) (-)
+    missed unkeyed high-entropy const (control) (-)
+    missed bearer token (control) (-)
+PASS S3.matrix :: coverage matrix over 36 realistic families :: 32/35 caught
+PASS S3.fixlist :: every family named in the audit's fix list is now caught :: 32 required families caught
+PASS S3.discriminating :: unkeyed high-entropy controls are still missed (matrix is not rubber-stamping) :: 3/3 controls still missed, as expected
+PASS S3.ratio :: overall catch rate improved far beyond the reported 11/36 :: 32/35 (was 11/36)
+PASS S3.precision :: no false positives on this package's own source (src/ only) :: 0 findings across src/ (25 files)
+
+--- 5 passed, 0 failed ---
+
+===== v-s4-s7-s9-rules.mjs — 18 PASS / 0 FAIL / exit 0 / 1.2s =====
+PASS S4.g-flag :: a /g custom rule redacts every match, not every other one :: 8/8 lines redacted (old: 4/8)
+PASS S4.determinism :: identical files produce identical redaction (no cross-file lastIndex) :: byte-identical across files
+PASS S4.lastIndex :: the caller's RegExp object is not left mutated :: both lines masked, lastIndex=0
+PASS S4.overlap :: overlapping rules mask the span without leaking or looping :: 3 findings, one mask per span
+PASS S4.marker-rule :: a rule matching the redaction marker cannot resurrect a secret :: secret still gone
+PASS S7.span-only :: only the matched span is replaced; neighbouring code survives :: unrelated code preserved (old: whole line lost)
+PASS S7.multi :: two secrets on one line are both masked and code between them survives :: both masked, doWork() preserved
+    OBS S9.brand-spread (re-test): {...resolvedConfig} keeps secretRules (custom rule kept: true, value leaked: false)
+PASS S9.json-config :: awaitable loader path :: loaded, compiled, redacted (old: pattern.test is not a function)
+PASS S9.invalid-regex :: an invalid pattern string raises a clear error, not a TypeError :: Invalid regular expression for secret rule "bad": Invalid regular expression: 
+PASS S9.type-error :: a non-string, non-RegExp pattern is rejected with a clear message :: Secret rule "num" has a pattern that is neither a RegExp nor a string.
+    OBS R2.spread: direct findings=1 leaked=false | spread findings=1 leaked=false
+PASS R2.spread :: FIXED — {...resolvedConfig, override} keeps the compiled secret rules :: spread keeps the rule; secret absent
+    OBS R2.structuredClone: findings=1 leaked=false isResolvedConfig(clone)=true
+PASS R2.structuredClone :: a structuredClone of a function-free resolved config keeps the rules :: clone keeps the rule (structural match, no brand needed)
+    OBS R2.structuredClone-preset: threw=true name=DataCloneError (preset layers/kinds carry function matchers)
+PASS R2.structuredClone-preset :: OBSERVE — the default preset makes structuredClone throw (function matchers) :: DataCloneError: inherent to function matchers, unrelated to the brand
+    OBS R2.gflag: findings=8 survivors=0
+PASS R2.spread-gflag :: a spread config with a /g custom rule stays stateless after recompilation :: 8/8 masked through the spread
+    OBS R2.stringPattern: findings=1 leaked=false
+PASS R2.spread-string-pattern :: a spread config whose secretRules hold string patterns still compiles :: compiled from source text
+    OBS R2.almost: reResolved=true budget=307200 findings=0 leaked=true
+PASS R2.almost-resolved :: an object missing one resolved-only field is treated as a USER config (no crash) :: re-resolved as a user config, defaults applied, no crash
+PASS R2.user-contract :: the documented user-config path still applies custom patterns :: user config path unchanged
+    OBS R2.json: isResolved=false findings=0 leaked=true (RegExp serialises to {})
+PASS R2.json-round-trip :: OBSERVE — JSON.parse(JSON.stringify(resolved)) cannot carry RegExp rules :: reverts to defaults by construction (RegExp → {}); no signal raised
+
+--- 17 passed, 0 failed ---
+
+===== v-s5-sensitive.mjs — 10 PASS / 0 FAIL / exit 0 / 1.5s =====
+PASS S5.git-path :: every credential file is skipped with reason sensitive-file (git layout) :: 14/14 skipped, 0 leaked
+PASS S5.templates :: template .env files are still included (allowlist works) :: 3 templates included
+PASS S5.walk-fallback :: the non-git walk path applies the same deny list :: 14 files skipped in walk mode
+PASS S5.opt-in :: includeSensitiveFiles:true emits them, and detectable values are redacted :: .env + id_rsa included, both values masked
+PASS S5.env-variants :: every real-world .env.<suffix> variant is treated as sensitive :: 10/10 variants skipped
+PASS S5.residuals-covered :: the credential filenames recorded in the first pass are now denied :: 7 denied, 6 allowed
+    OBS S5.remaining-allowed: .env-, .env_, .netrc.bak
+PASS S5.observed-gaps :: OBSERVE — remaining allowed shapes of the same class (recorded, not scored) :: .env-, .env_, .netrc.bak still allowed
+PASS S5.templates-new :: template variants stay includable, including multi-suffix ones :: 5 templates allowed, 2 look-alikes blocked
+    OBS S5.bypass-hunt: DENIED   .ENV, .Env.Local, .env-bak, .env_backup, .env.bak, .env.backup, .env.old, .envrc, .env.prod.d/.env, config/.env.local, service-account.json, credentials.json, .aws/config
+    OBS S5.bypass-hunt: ALLOWED  .env-, .env_, .env., env, ENV, keys/id_rsa.pub, id_ed25519.pub, .netrc.bak
+PASS S5.bypass-hunt :: adversarial .env-adjacent names: record which are (not) denied :: 13 denied / 8 allowed of 21 probes
+    OBS S5: isSensitivePath(".env.production.local")=true emitted=false value-leaked=false
+PASS S5.env-double-suffix-repro :: reproduce .env.production.local end-to-end :: skipped as sensitive-file, value absent
+
+--- 10 passed, 0 failed ---
+
+===== v-s6-summary.mjs — 4 PASS / 0 FAIL / exit 0 / 0.4s =====
+PASS S6.manifest-summary :: manifest summaries carry no secret :: absent from every emitted artifact
+PASS S6.summary-shape :: the summary still describes the document, from redacted text :: 3 headings, secrets replaced by the marker
+    OBS S6: frontmatterKeys=["title"] (db_password name lost with its redacted value)
+PASS S6.frontmatter :: frontmatter values are not emitted; ordinary keys survive :: keys=title
+PASS S6.body :: the emitted body is redacted too (control) :: marker present
+
+--- 4 passed, 0 failed ---
+
+===== v-s8-redos.mjs — 7 PASS / 0 FAIL / exit 0 / 1.8s =====
+PASS S8.jwt-1mb :: 1 MB eyJ-dense single line is bounded (old: ~31 s/MB extrapolated) :: 1025 KB in 632 ms (old ~31000 ms)
+PASS S8.reported-shape :: the audit's exact 300 KB base64(json) shape is now cheap (was 2783 ms) :: 300 KB, 330 seeds, 2 ms (old 2783 ms)
+PASS S8.realistic :: a 1.2 MB base64(JSON) single line stays cheap :: 1276 KB in 22 ms
+PASS S8.scaling :: jwt cost scales linearly with line length :: 4x input => 4.0x time
+PASS R1.env-redos :: REGRESSION (found during remediation, now fixed) — env-secret-assignment is linear :: 0 ms @60 KB, 0 ms @120 KB
+    OBS: 240 KB KEY-dense line => 2 ms of CPU in one file
+PASS R1.env-redos-e2e :: REGRESSION (found during remediation, now fixed) — 240 KB KEY-dense line is cheap :: 2 ms (was 5630 ms before the bound)
+    OBS S8.all-rules: 21 rules x 14 shapes = 294 runs; worst = aws-access-key-id/aws-prefix 1ms, digitalocean-token/pem-prefix 1ms, aws-access-key-id/pem-prefix 1ms
+PASS S8.all-rules :: no default rule is super-linear on any adversarial 200 KB line :: 294 runs, worst 1 ms (aws-access-key-id/aws-prefix)
+
+--- 7 passed, 0 failed ---

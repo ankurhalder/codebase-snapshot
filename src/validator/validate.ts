@@ -1,115 +1,386 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { collectFiles } from "../scanner/files.js";
-import type { Manifest, ResolvedSnapshotConfig, ValidationResult } from "../types.js";
+import {
+  assertUsableConfigInput,
+  isResolvedConfig,
+  normalizeResolvedConfig,
+  resolveConfig,
+} from "../config.js";
+import { collectFiles, getGitInfo } from "../scanner/files.js";
+import type {
+  Manifest,
+  ResolvedSnapshotConfig,
+  SnapshotConfig,
+  ValidationDrift,
+  ValidationResult,
+} from "../types.js";
 
-export function validateSnapshot(config: ResolvedSnapshotConfig): ValidationResult {
+function emptyDrift(): ValidationDrift {
+  return {
+    missingInSnapshot: [],
+    missingOnDisk: [],
+    hashMismatches: [],
+    partIssues: [],
+    totalsMismatches: [],
+    configMismatches: [],
+  };
+}
+
+function sha256Hex(buffer: Buffer): string {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+/**
+ * Validates a generated snapshot against the working tree and against the
+ * recorded configuration.
+ *
+ * Beyond source-file hashes this now also:
+ * - refuses a manifest that does not have the expected shape (previously threw
+ *   an uncaught `TypeError`),
+ * - verifies every emitted `parts/*.md` against its recorded `byteSize`/`sha256`
+ *   (previously a deleted or corrupted part still reported `valid: true`),
+ * - re-checks the effective configuration and the part/file bookkeeping,
+ * - verifies monolith artefact digests when present.
+ */
+export function validateSnapshot(
+  configInput: ResolvedSnapshotConfig | SnapshotConfig
+): ValidationResult {
+  assertUsableConfigInput(configInput);
+
+  const config = isResolvedConfig(configInput)
+    ? normalizeResolvedConfig(configInput)
+    : resolveConfig(configInput);
   const manifestPath = path.join(config.cwd, config.outDir, "manifest.json");
 
   if (!fs.existsSync(manifestPath)) {
     return {
       valid: false,
       manifestPresent: false,
-      drift: {
-        missingInSnapshot: [],
-        missingOnDisk: [],
-        hashMismatches: [],
-      },
+      drift: emptyDrift(),
       errors: [`Snapshot manifest not found at: ${manifestPath}`],
+      warnings: [],
     };
   }
 
   let manifest: Manifest;
   try {
-    const raw = fs.readFileSync(manifestPath, "utf8");
-    manifest = JSON.parse(raw);
-  } catch (err: any) {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Manifest;
+  } catch (err) {
     return {
       valid: false,
       manifestPresent: true,
-      drift: {
-        missingInSnapshot: [],
-        missingOnDisk: [],
-        hashMismatches: [],
-      },
-      errors: [`Failed to parse snapshot manifest: ${err.message}`],
+      drift: emptyDrift(),
+      errors: [`Failed to parse snapshot manifest: ${(err as Error).message}`],
+      warnings: [],
     };
   }
 
-  const manifestFileMap = new Map<string, string>();
-  for (const f of manifest.files) {
-    manifestFileMap.set(f.relativePath, f.hashSha256);
+  if (
+    !manifest ||
+    typeof manifest !== "object" ||
+    !Array.isArray(manifest.files) ||
+    !Array.isArray(manifest.skipped) ||
+    !Array.isArray(manifest.parts)
+  ) {
+    return {
+      valid: false,
+      manifestPresent: true,
+      drift: emptyDrift(),
+      errors: [
+        `${manifestPath} is not a snapshot manifest v3: expected arrays for "files", "skipped" and "parts".`,
+      ],
+      warnings: [],
+    };
   }
 
-  const skippedSet = new Set(manifest.skipped.map((s) => s.path));
-  const currentDiskFiles = collectFiles(config.cwd, config.excludePatterns);
+  const drift = emptyDrift();
+  const warnings: string[] = [];
+  const snapshotDir = path.join(config.cwd, config.outDir);
 
-  const missingInSnapshot: string[] = [];
-  const missingOnDisk: string[] = [];
-  const hashMismatches: Array<{
-    path: string;
-    diskHash: string;
-    snapshotHash: string;
-  }> = [];
+  // ---- source files -------------------------------------------------------
+  const manifestFileMap = new Map<string, string>();
+  for (const file of manifest.files) {
+    if (file && typeof file.relativePath === "string") {
+      manifestFileMap.set(file.relativePath, file.hashSha256);
+    }
+  }
 
-  for (const diskFile of currentDiskFiles) {
+  const skippedSet = new Set(
+    manifest.skipped.filter((entry) => entry && typeof entry.path === "string").map((entry) => entry.path)
+  );
+
+  const collection = collectFiles(config.cwd, {
+    excludePatterns: config.excludePatterns,
+    includeSensitiveFiles: config.includeSensitiveFiles,
+  });
+
+  for (const diskFile of collection.files) {
     if (skippedSet.has(diskFile)) continue;
     const snapshotHash = manifestFileMap.get(diskFile);
-
     if (!snapshotHash) {
-      missingInSnapshot.push(diskFile);
+      drift.missingInSnapshot.push(diskFile);
       continue;
     }
 
-    const fullDiskPath = path.join(config.cwd, diskFile);
+    let diskHash: string;
     try {
-      const content = fs.readFileSync(fullDiskPath);
-      const diskHash = crypto.createHash("sha256").update(content).digest("hex");
-      if (diskHash !== snapshotHash) {
-        hashMismatches.push({
-          path: diskFile,
-          diskHash,
-          snapshotHash,
-        });
-      }
+      diskHash = sha256Hex(fs.readFileSync(path.join(config.cwd, diskFile)));
     } catch {
-      missingOnDisk.push(diskFile);
+      drift.missingOnDisk.push(diskFile);
+      continue;
+    }
+    if (diskHash !== snapshotHash) {
+      drift.hashMismatches.push({ path: diskFile, diskHash, snapshotHash });
     }
   }
 
   for (const snapshotFile of manifestFileMap.keys()) {
-    const fullPath = path.join(config.cwd, snapshotFile);
-    if (!fs.existsSync(fullPath)) {
-      missingOnDisk.push(snapshotFile);
+    if (!fs.existsSync(path.join(config.cwd, snapshotFile))) {
+      drift.missingOnDisk.push(snapshotFile);
     }
   }
 
-  const errors: string[] = [];
-  if (missingInSnapshot.length > 0) {
-    errors.push(`${missingInSnapshot.length} file(s) on disk are missing from the snapshot.`);
-  }
-  if (missingOnDisk.length > 0) {
-    errors.push(`${missingOnDisk.length} file(s) in snapshot no longer exist on disk.`);
-  }
-  if (hashMismatches.length > 0) {
-    errors.push(`${hashMismatches.length} file(s) have been modified since the snapshot was generated.`);
+  // ---- emitted parts ------------------------------------------------------
+  const partNames = new Set<string>();
+  for (const part of manifest.parts) {
+    if (!part || typeof part.filename !== "string") continue;
+    partNames.add(part.filename);
+
+    const partPath = path.join(snapshotDir, "parts", part.filename);
+    let buffer: Buffer;
+    try {
+      buffer = fs.readFileSync(partPath);
+    } catch {
+      drift.partIssues.push({ part: part.filename, issue: "missing from snapshot/parts" });
+      continue;
+    }
+    if (buffer.length !== part.byteSize) {
+      drift.partIssues.push({
+        part: part.filename,
+        issue: `byteSize is ${part.byteSize} in the manifest but ${buffer.length} on disk`,
+      });
+    }
+    if (sha256Hex(buffer) !== part.sha256) {
+      drift.partIssues.push({ part: part.filename, issue: "sha256 does not match the manifest" });
+    }
+    if (buffer.length > config.maxPartBytes) {
+      drift.partIssues.push({
+        part: part.filename,
+        issue: `${buffer.length} B exceeds maxPartBytes ${config.maxPartBytes} B`,
+      });
+    }
   }
 
-  const valid =
-    missingInSnapshot.length === 0 &&
-    missingOnDisk.length === 0 &&
-    hashMismatches.length === 0;
+  const filesInParts = manifest.parts.reduce(
+    (total, part) => total + (typeof part?.fileCount === "number" ? part.fileCount : 0),
+    0
+  );
+  if (filesInParts !== manifest.files.length) {
+    drift.partIssues.push({
+      part: "(totals)",
+      issue: `parts list ${filesInParts} file(s) but the manifest lists ${manifest.files.length}`,
+    });
+  }
+  for (const file of manifest.files) {
+    if (file?.part && !partNames.has(file.part)) {
+      drift.partIssues.push({
+        part: file.part,
+        issue: `${file.relativePath} points at a part that is not in the manifest`,
+      });
+    }
+  }
+
+  // ---- recorded configuration --------------------------------------------
+  const recorded = manifest.config;
+  if (recorded && typeof recorded === "object") {
+    if (recorded.maxPartBytes !== config.maxPartBytes) {
+      drift.configMismatches.push(
+        `maxPartBytes: manifest ${recorded.maxPartBytes} vs current ${config.maxPartBytes}`
+      );
+    }
+    if (recorded.largeFileBytes !== config.largeFileBytes) {
+      drift.configMismatches.push(
+        `largeFileBytes: manifest ${recorded.largeFileBytes} vs current ${config.largeFileBytes}`
+      );
+    }
+    if (recorded.previewHeadLines !== config.previewHeadLines) {
+      drift.configMismatches.push(
+        `previewHeadLines: manifest ${recorded.previewHeadLines} vs current ${config.previewHeadLines}`
+      );
+    }
+    if (recorded.previewTailLines !== config.previewTailLines) {
+      drift.configMismatches.push(
+        `previewTailLines: manifest ${recorded.previewTailLines} vs current ${config.previewTailLines}`
+      );
+    }
+    if (recorded.includeSensitiveFiles !== config.includeSensitiveFiles) {
+      drift.configMismatches.push(
+        `includeSensitiveFiles: manifest ${recorded.includeSensitiveFiles} vs current ${config.includeSensitiveFiles}`
+      );
+    }
+    const recordedExcludes = Array.isArray(recorded.excludePatterns)
+      ? recorded.excludePatterns
+      : [];
+    if (recordedExcludes.join("\u0000") !== config.excludePatterns.join("\u0000")) {
+      drift.configMismatches.push(
+        `excludePatterns: manifest [${recordedExcludes.join(", ")}] vs current [${config.excludePatterns.join(", ")}]`
+      );
+    }
+  } else {
+    drift.configMismatches.push("manifest does not record the effective configuration");
+  }
+
+  // ---- internal bookkeeping ----------------------------------------------
+  // A manifest whose counts/totals/budgets disagree with its own file and part
+  // lists is not trustworthy, even if every hash happens to match.
+  const totalsMismatches = drift.totalsMismatches;
+  const expectEqual = (label: string, recordedValue: unknown, actual: number): void => {
+    if (recordedValue !== actual) {
+      totalsMismatches.push(`${label}: manifest ${String(recordedValue)} vs actual ${actual}`);
+    }
+  };
+
+  const counts = manifest.counts ?? ({} as Manifest["counts"]);
+  const totals = manifest.totals ?? ({} as Manifest["totals"]);
+  const sumSourceBytes = manifest.files.reduce(
+    (total, file) => total + (typeof file?.sizeBytes === "number" ? file.sizeBytes : 0),
+    0
+  );
+  const sumIncludedBytes = manifest.parts.reduce(
+    (total, part) =>
+      total +
+      (Array.isArray(part?.includedFiles)
+        ? part.includedFiles.reduce(
+            (inner, entry) =>
+              inner + (typeof entry?.includedBytes === "number" ? entry.includedBytes : 0),
+            0
+          )
+        : 0),
+    0
+  );
+
+  expectEqual("counts.totalFiles", counts.totalFiles, manifest.files.length);
+  expectEqual("counts.partsCount", counts.partsCount, manifest.parts.length);
+  expectEqual("counts.skippedCount", counts.skippedCount, manifest.skipped.length);
+  expectEqual("counts.totalSizeBytes", counts.totalSizeBytes, sumSourceBytes);
+  expectEqual("totals.includedFiles", totals.includedFiles, manifest.files.length);
+  expectEqual("totals.partCount", totals.partCount, manifest.parts.length);
+  expectEqual("totals.skippedFiles", totals.skippedFiles, manifest.skipped.length);
+  expectEqual("totals.totalSourceBytes", totals.totalSourceBytes, sumSourceBytes);
+  expectEqual("totals.totalContentBytes", totals.totalContentBytes, sumIncludedBytes);
+  expectEqual(
+    "totals.candidateFiles",
+    totals.candidateFiles,
+    manifest.files.length + manifest.skipped.length
+  );
+  expectEqual(
+    "totals.warningCount",
+    totals.warningCount,
+    Array.isArray(manifest.warnings) ? manifest.warnings.length : 0
+  );
+  if (
+    typeof totals.fullFiles === "number" &&
+    typeof totals.previewFiles === "number" &&
+    totals.fullFiles + totals.previewFiles !== manifest.files.length
+  ) {
+    totalsMismatches.push(
+      `totals.fullFiles + previewFiles (${totals.fullFiles} + ${totals.previewFiles}) != ${manifest.files.length} files`
+    );
+  }
+  if (manifest.budgets && manifest.budgets.maxPartBytes !== config.maxPartBytes) {
+    totalsMismatches.push(
+      `budgets.maxPartBytes: manifest ${manifest.budgets.maxPartBytes} vs current ${config.maxPartBytes}`
+    );
+  }
+  if (manifest.budgets && manifest.budgets.largeFileBytes !== config.largeFileBytes) {
+    totalsMismatches.push(
+      `budgets.largeFileBytes: manifest ${manifest.budgets.largeFileBytes} vs current ${config.largeFileBytes}`
+    );
+  }
+
+  // ---- git ----------------------------------------------------------------
+  if (manifest.git && typeof manifest.git.commit === "string") {
+    const current = getGitInfo(config.cwd, config.branch);
+    if (
+      manifest.git.commit !== "unknown" &&
+      current.commit !== "unknown" &&
+      manifest.git.commit !== current.commit
+    ) {
+      warnings.push(
+        `Snapshot was generated at commit ${manifest.git.commit.slice(0, 8)} but HEAD is ${current.commit.slice(0, 8)}.`
+      );
+    }
+    if (current.isDirty) {
+      warnings.push("Working tree has uncommitted changes.");
+    }
+  }
+
+  // ---- declared integrity -------------------------------------------------
+  if (manifest.validation && manifest.validation.status === "failed") {
+    const declared = Array.isArray(manifest.validation.errors)
+      ? manifest.validation.errors
+      : [];
+    for (const error of declared) {
+      drift.configMismatches.push(`manifest declared itself invalid: ${error}`);
+    }
+  }
+
+  // ---- monolith artefacts -------------------------------------------------
+  for (const [key, artifact] of [
+    ["full-codebase.json", manifest.artifacts?.fullJson],
+    ["full-codebase.md", manifest.artifacts?.fullMarkdown],
+  ] as const) {
+    if (!artifact) continue;
+    const artifactPath = path.join(snapshotDir, key);
+    try {
+      const buffer = fs.readFileSync(artifactPath);
+      if (sha256Hex(buffer) !== artifact.sha256 || buffer.length !== artifact.byteSize) {
+        drift.partIssues.push({ part: key, issue: "artifact does not match its recorded digest" });
+      }
+    } catch {
+      drift.partIssues.push({ part: key, issue: "declared artifact is missing" });
+    }
+  }
+
+  // ---- git ----------------------------------------------------------------
+  if (manifest.git && manifest.git.branch && manifest.git.branch !== config.branch) {
+    warnings.push(
+      `Snapshot was generated on branch "${manifest.git.branch}" but the configured branch is "${config.branch}".`
+    );
+  }
+
+  const errors: string[] = [];
+  if (drift.missingInSnapshot.length > 0) {
+    errors.push(`${drift.missingInSnapshot.length} file(s) on disk are missing from the snapshot.`);
+  }
+  if (drift.missingOnDisk.length > 0) {
+    errors.push(`${drift.missingOnDisk.length} file(s) in snapshot no longer exist on disk.`);
+  }
+  if (drift.hashMismatches.length > 0) {
+    errors.push(
+      `${drift.hashMismatches.length} file(s) have been modified since the snapshot was generated.`
+    );
+  }
+  if (drift.partIssues.length > 0) {
+    errors.push(`${drift.partIssues.length} snapshot artefact problem(s) detected.`);
+  }
+  if (drift.totalsMismatches.length > 0) {
+    errors.push(
+      `${drift.totalsMismatches.length} manifest bookkeeping value(s) disagree with the snapshot contents.`
+    );
+  }
+  if (drift.configMismatches.length > 0) {
+    errors.push(
+      `${drift.configMismatches.length} configuration mismatch(es) between the manifest and this run.`
+    );
+  }
 
   return {
-    valid,
+    valid: errors.length === 0,
     manifestPresent: true,
-    drift: {
-      missingInSnapshot,
-      missingOnDisk,
-      hashMismatches,
-    },
+    drift,
     errors,
+    warnings,
   };
 }
-
