@@ -160,19 +160,19 @@ jobs:
         include:
           - client: npm
             install_cmd: npm install -D "./$TARBALL"
-            exec_cmd: npx snap
+            exec_cmd: npx codebase-snapshot
           - client: yarn-classic
             install_cmd: npx --yes yarn@1.22.22 add -D "./$TARBALL"
-            exec_cmd: npx --yes yarn@1.22.22 snap
+            exec_cmd: npx --yes yarn@1.22.22 codebase-snapshot
           - client: yarn-berry-pnp
             install_cmd: corepack yarn add -D "./$TARBALL"
-            exec_cmd: corepack yarn snap
+            exec_cmd: corepack yarn codebase-snapshot
           - client: pnpm
             install_cmd: npx --yes pnpm@10 add -D "./$TARBALL"
-            exec_cmd: npx --yes pnpm@10 exec snap
+            exec_cmd: npx --yes pnpm@10 exec codebase-snapshot
           - client: bun
             install_cmd: npx --yes bun@1.4 add -d "./$TARBALL"
-            exec_cmd: npx --yes bun@1.4 run snap
+            exec_cmd: npx --yes bun@1.4 run codebase-snapshot
     env:
       # corepack otherwise blocks on an interactive download prompt.
       COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'

@@ -70,7 +70,7 @@ const CONFIG_CANDIDATES = [
  * A `.ts` config is only usable when Node can strip types *and* the package is an
  * ES module: Node applies the enclosing `package.json` `type` field to a `.ts`
  * file, so an `export default` config in a CommonJS project fails to load. That
- * made `snap init` write a file the next `snap generate` refused to read. `.mjs`
+ * made `codebase-snapshot init` write a file the next `codebase-snapshot generate` refused to read. `.mjs`
  * works everywhere, so it is the safe default.
  */
 export function chooseConfigFileName(cwd: string): string {

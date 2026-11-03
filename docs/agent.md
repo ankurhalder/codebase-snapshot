@@ -60,7 +60,7 @@ between `<!-- codebase-snapshot:skill:start -->` and
 `<!-- codebase-snapshot:skill:end -->`, so an `AGENTS.md` that already documents your
 conventions keeps them. `--format json` reports what was created, updated or unchanged.
 
-`snap init` prints a reminder about this; it never installs the skill on its own.
+`codebase-snapshot init` prints a reminder about this; it never installs the skill on its own.
 
 ## Why both a contract and a skill
 

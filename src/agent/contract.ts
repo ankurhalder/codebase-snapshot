@@ -16,7 +16,7 @@ const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
  * names and the output layout. It exists because `--help` is prose written for a
  * human, and an agent with no context cannot reliably parse prose.
  *
- * `snap describe --format json` prints this. Keep it in sync with the CLI — the
+ * `codebase-snapshot describe --format json` prints this. Keep it in sync with the CLI — the
  * test suite asserts that the defaults here match `resolveConfig`'s defaults, so
  * drift fails the build rather than misleading an agent.
  */
@@ -166,11 +166,12 @@ export function buildAgentContract(): AgentContract {
     requires: { node: ">=18.0.0", dependencies: ["typescript"] },
     invocation: {
       oneShot: `npx ${PACKAGE_NAME}@latest`,
-      installed: "npx snap",
-      bins: ["snap", "codebase-snapshot"],
+      installed: "npx codebase-snapshot",
+      bins: ["codebase-snapshot"],
       notes: [
-        `Pin the tag (${PACKAGE_NAME}@latest or @2) instead of the bare package name.`,
-        "A bare scoped spec can resolve to a bin-less placeholder on some npm builds and exit 0 with no output; a pinned spec cannot.",
+        `The bare package name also works: npx ${PACKAGE_NAME} <command>.`,
+        "Pin @latest (or @2) when you need the exact same version on every machine.",
+        "This package exposes exactly one executable on purpose: npm cannot infer which one to run for a scoped package that ships several.",
         "Human progress goes to stderr. With --format json the payload on stdout is pure JSON.",
       ],
     },
@@ -180,7 +181,7 @@ export function buildAgentContract(): AgentContract {
         id: "verify",
         run: `npx ${PACKAGE_NAME}@latest --version`,
         expect: "prints v2.x.x on stdout and exits 0",
-        notes: "If it prints nothing, re-run with @latest explicitly, or use `npx -p <pkg> snap`.",
+        notes: "If it prints nothing, clear the npm cache and retry, or use `npx -p <pkg> codebase-snapshot`.",
       },
       {
         step: 2,
@@ -498,8 +499,10 @@ export function buildAgentContract(): AgentContract {
     troubleshooting: [
       {
         symptom: "Command prints nothing and exits 0",
-        cause: "A bare scoped spec resolved to a bin-less placeholder manifest on this npm build.",
-        fix: `Use the pinned form: npx ${PACKAGE_NAME}@latest ...`,
+        cause:
+          "The executable was not found: an offline or partially populated npm cache, or an npm proxy " +
+          "serving an incomplete manifest.",
+        fix: `Clear the npx cache (npm cache clean --force), then run npx ${PACKAGE_NAME}@latest <command>.`,
       },
       {
         symptom: "Exit 1 with 'Refusing to replace outDir'",

@@ -256,7 +256,7 @@ marker written before any artifact, not by the set of filenames present, so
 custom artifacts never look like someone else's data.
 
 Note that a hook runs in the **process** working directory, so with
-`snap --cwd elsewhere` a relative path resolves against your shell's directory,
+`codebase-snapshot --cwd elsewhere` a relative path resolves against your shell's directory,
 not the target repo. Use the absolute paths on `manifest` (or resolve against
 `outDir` yourself) when passing `--cwd`.
 
@@ -276,7 +276,7 @@ not the target repo. Use the absolute paths on `manifest` (or resolve against
 ## `explain`
 
 ```
-$ snap explain src/app/page.tsx
+$ codebase-snapshot explain src/app/page.tsx
 
 src/app/page.tsx
 
@@ -293,7 +293,7 @@ src/app/page.tsx
 Excluded paths say why:
 
 ```
-$ snap explain .env
+$ codebase-snapshot explain .env
 
 .env
 
@@ -308,7 +308,7 @@ same data as an object.
 ## `diff`
 
 ```
-$ snap diff old-snapshot new-snapshot
+$ codebase-snapshot diff old-snapshot new-snapshot
 
 before  2026-11-03T10:00:00.000Z  812 file(s), 4 part(s)
 after   2026-11-03T11:30:00.000Z  820 file(s), 4 part(s)
