@@ -1,6 +1,14 @@
 # 2.1.0 — Multi-project support and an interactive setup
 
-Status: **planning** · Branch `feat/2.1.0` · Target: 2.1.0 (minor, additive)
+Status: **shipped** · Branch `feat/2.1.0` · Target: 2.1.0 (minor, additive)
+
+| Milestone | State |
+| :--- | :--- |
+| M1 language profiles | ✅ 8 profiles + SFC script blocks, `summaryQuality` recorded and rendered |
+| M2 preset registry | ✅ 25 presets, priority detection, per-ecosystem ignores |
+| M3 prompt toolkit | ✅ zero-dependency select / multiselect / confirm / text |
+| M4 `init` wizard + `create-*` | ✅ 8 screens, full flag parity, `packages/create` |
+| M5 docs + release prep | ✅ config reference, CHANGELOG, README, version bump |
 
 ---
 
