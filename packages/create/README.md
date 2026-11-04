@@ -21,7 +21,6 @@ npm create codebase-snapshot -- --preset react-vite --yes
 | :--- | :--- |
 | `--preset <name>` | Force a project preset instead of detecting one |
 | `--yes` | Accept every default without prompting |
-| `--minimal` | Write only the settings that differ from defaults |
 | `--force` | Overwrite an existing config |
 
 ## What it writes
@@ -30,7 +29,7 @@ npm create codebase-snapshot -- --preset react-vite --yes
 | :--- | :--- |
 | `snapshot.config.ts` / `snapshot.config.mjs` | Every setting at its default. `.ts` needs an ES-module `package.json` and Node ≥ 22.6; `.mjs` is used otherwise, because a `.ts` config is loaded with the enclosing package's module type. |
 | `package.json` → `scripts.snapshot`, `scripts.snapshot:validate` | Skipped when there is no `package.json` to hold them. |
-| `package.json` → `devDependencies` | `@ankurhalder/codebase-snapshot` at the range this scaffolder shipped with. |
+| `package.json` → `devDependencies` | `@ankurhalder/codebase-snapshot` at the version this scaffolder shipped with. A range you already declared is never overwritten. |
 | `.gitignore` | `snapshot/`, `snapshot.tmp/`. |
 
 The generated scripts run `npx @ankurhalder/codebase-snapshot …`, and `npx` uses the

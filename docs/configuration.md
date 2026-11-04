@@ -387,9 +387,9 @@ npx codebase-snapshot init --preset go --max-part-bytes 200k \
     --include "cmd/**,internal/**" --exclude "**/*_test.go" --yes
 ```
 
-`--minimal` writes only what differs from the defaults. `--dry-run` prints the config and
-writes nothing. `--force` replaces an existing ES-module config (`.ts`, `.js`, `.mjs`) in
-place; without it, an existing config is left alone and the command exits `1`.
+`--dry-run` prints the config and writes nothing. `--force` replaces an existing ES-module
+config (`.ts`, `.js`, `.mjs`) in place; without it, an existing config is left alone and the
+command exits `1`.
 
 It will not replace a JSON-family config — `snapshot.config.json`, `.snapshotrc`,
 `.snapshotrc.json`, or the `"snapshot"` key in `package.json` — because this wizard writes an

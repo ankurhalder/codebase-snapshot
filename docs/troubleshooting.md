@@ -49,7 +49,7 @@ column is in the [CLI reference](cli.md#options).
 | Message | Fix |
 | :--- | :--- |
 | `Unknown command "frobnicate". Expected one of: …` | Use one of the commands in the [CLI reference](cli.md). |
-| `--preset does not apply to \`generate\` and was not applied. It is accepted by: \`init\`. To scope a run, set include/excludePatterns/preset in snapshot.config.ts (or run \`codebase-snapshot init\` to generate one).` | `--preset`, `--include`, `--exclude`, `--yes`, `--minimal` and `--force` configure `init`, which writes them into the config. Set them at generation time in `snapshot.config.ts` instead. |
+| `--preset does not apply to \`generate\` and was not applied. It is accepted by: \`init\`. To scope a run, set include/excludePatterns/preset in snapshot.config.ts (or run \`codebase-snapshot init\` to generate one).` | `--preset`, `--include`, `--exclude`, `--yes` and `--force` configure `init`, which writes them into the config. Set them at generation time in `snapshot.config.ts` instead. |
 | `--install does not apply to \`generate\` and was not applied. It is accepted by: \`skill\`.` | `--install` and `--target` configure `skill` only. |
 | `--cwd directory does not exist: …` / `--cwd is not a directory: …` | Point `--cwd` at an existing repository directory. |
 | `--out-dir requires a value (received an empty string).` | An unset shell variable expanded to nothing. Quote it or drop the flag. Every string option rejects `""` rather than silently using the default. |
