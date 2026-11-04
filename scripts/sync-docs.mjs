@@ -34,7 +34,9 @@ const VALUES = {
 
 /** Every documentation file that may carry a synchronised value. */
 function targets() {
-  const list = ["README.md", "SECURITY.md", "CHANGELOG.md", "AGENTS.md", "llms.txt", "CONTRIBUTING.md"];
+  // CHANGELOG.md is deliberately absent: it records what happened at each version, and
+  // rewriting a past entry would falsify that record instead of maintaining it.
+  const list = ["README.md", "SECURITY.md", "AGENTS.md", "llms.txt", "CONTRIBUTING.md"];
   const docs = path.join(ROOT, "docs");
   if (fs.existsSync(docs)) {
     for (const name of fs.readdirSync(docs)) {
