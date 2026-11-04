@@ -4,6 +4,18 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.4.1
+
+### `setup` ran the install with npm's own environment, which could refuse it
+
+Running `setup` through `npx` — the documented way — put the parent npm's resolved configuration
+into `npm_config_*` variables, and the nested `npm install` inherited them. With an npm that
+supports an `allowScripts` switch the child aborted with
+`EALLOWSCRIPTS: --allow-scripts is not allowed in project-scoped installs`, so the install was
+skipped and only a warning said so. The nested run now gets the caller's environment minus
+`npm_config_*` (and npm's lifecycle variables), so it reads the project's own `.npmrc` and flags —
+which is the point of using the project's package manager at all. A shim-based test pins it: the
+package manager is invoked, and none of npm's config reaches it.
 ## 4.4.0
 
 ### One command that does the whole first run

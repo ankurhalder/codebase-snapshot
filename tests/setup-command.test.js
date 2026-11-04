@@ -129,3 +129,60 @@ test("setup refuses to replace a directory it does not own, after writing the co
     "the user's file is untouched"
   );
 });
+
+test("setup installs with a clean environment, even when npm exec poisoned it", (t) => {
+  // The bug this pins: run through `npx`/`npm exec`, the child `npm install` inherits the parent
+  // npm's resolved config in `npm_config_*`, and with an npm that supports an `allowScripts`
+  // switch it aborted with `EALLOWSCRIPTS: --allow-scripts is not allowed in project-scoped
+  // installs`. A test-only shim stands in for npm and records what it was given.
+  const dir = makeRepo(t, { "package-lock.json": "{}\n" });
+  const shimDir = path.join(dir, "shim");
+  fs.mkdirSync(shimDir, { recursive: true });
+  const record = path.join(dir, "install-record.txt");
+  const isWindows = process.platform === "win32";
+  const shim = path.join(shimDir, isWindows ? "npm.cmd" : "npm");
+  fs.writeFileSync(
+    shim,
+    isWindows
+      ? [
+          "@echo off",
+          'if defined npm_config_allow_scripts echo LEAKED>>"%SETUP_SHIM_RECORD%"',
+          'echo RAN>>"%SETUP_SHIM_RECORD%"',
+          "exit /b 0",
+          "",
+        ].join("\r\n")
+      : [
+          "#!/bin/sh",
+          'if [ -n "$npm_config_allow_scripts" ]; then echo LEAKED >> "$SETUP_SHIM_RECORD"; fi',
+          'echo RAN >> "$SETUP_SHIM_RECORD"',
+          "exit 0",
+          "",
+        ].join("\n")
+  );
+  if (!isWindows) fs.chmodSync(shim, 0o755);
+
+  const result = spawnSync(
+    process.execPath,
+    [BIN, "setup", "--cwd", dir],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        Path: `${shimDir}${path.delimiter}${process.env.Path ?? process.env.PATH ?? ""}`,
+        npm_config_allow_scripts: "1",
+        SETUP_SHIM_RECORD: record,
+      },
+    }
+  );
+  if (result.error) throw result.error;
+
+  const recorded = fs.existsSync(record) ? fs.readFileSync(record, "utf8") : "";
+  assert.match(recorded, /RAN/, `the package manager was not invoked: ${result.stderr}`);
+  assert.equal(
+    recorded.includes("LEAKED"),
+    false,
+    "npm's own config must not reach the nested install"
+  );
+  assert.match(result.stderr ?? "", /Installed dependencies/);
+});

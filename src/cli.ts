@@ -667,6 +667,26 @@ interface InstallOutcome {
   detail: string;
 }
 
+/**
+ * The environment a nested package-manager run gets: the caller's, minus npm's own config.
+ *
+ * Running `setup` through `npx`/`npm exec` puts the parent npm's resolved config into
+ * `npm_config_*` variables, and a child that inherits them is not the `npm install` a user would
+ * type — with an npm that supports an `allowScripts` switch, the child aborted with
+ * `EALLOWSCRIPTS: --allow-scripts is not allowed in project-scoped installs`. Stripping them makes
+ * the child read the project's own `.npmrc` and flags, which is the whole point of using the
+ * project's package manager.
+ */
+export function cleanInstallEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const cleaned: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (/^npm_config_/i.test(key)) continue;
+    if (key === "npm_lifecycle_event" || key === "npm_lifecycle_script") continue;
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
 /** Installs the repository's dependencies, turning any failure into a reportable outcome. */
 function installDependencies(cwd: string): InstallOutcome {
   const manager = detectPackageManager(cwd);
@@ -678,6 +698,7 @@ function installDependencies(cwd: string): InstallOutcome {
     // npm, pnpm and yarn ship as `.cmd` shims on Windows, which spawnSync cannot exec directly.
     shell: process.platform === "win32",
     timeout: INSTALL_TIMEOUT_MS,
+    env: cleanInstallEnv(),
   });
   const seconds = `${((performance.now() - started) / 1000).toFixed(1)}s`;
   if (result.error) {
