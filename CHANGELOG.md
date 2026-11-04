@@ -1,6 +1,69 @@
 # Changelog
 
-All notable changes to `@ankurhalder/codebase-snapshot`.
+All notable changes to `codebase-snapshot`.
+
+---
+
+## 4.5.0
+
+### The package is now `codebase-snapshot`, unscoped
+
+**Breaking:** published as `codebase-snapshot` rather than `@ankurhalder/codebase-snapshot`.
+
+The old name is **deprecated, not unpublished**, so existing instructions keep working:
+
+```bash
+npx @ankurhalder/codebase-snapshot generate   # still resolves, now prints a deprecation notice
+npx codebase-snapshot generate                # the supported name from 4.5.0
+```
+
+Why: npm's search index ranks on text match rather than downloads — a package with a few thousand
+weekly downloads outranks one with a hundred million when the query matches its name better — so a
+name that *is* the phrase people search is the strongest free signal available. Doing this at
+version 4.5.0 with no dependents costs one migration; doing it after documentation, articles and
+tutorials all point at the scoped name costs far more.
+
+The rename is not cosmetic. The package name is written into every ownership marker and every
+manifest, and the output-directory guard compares it exactly, so renaming it naively would have made
+**every snapshot written by 1.0–4.4.x unrecognisable to its own tool** — the tool would have refused
+to update its own output. Ownership now accepts the legacy spelling and rewrites it to the current
+name on the next run, so an existing snapshot keeps working and is upgraded in place.
+
+### Metadata and discoverability
+
+- `keywords` went from 9 to 20, chosen by measured position rather than intuition — phrases like
+  `codebase-to-prompt` and `repo-to-llm` that describe how people actually ask for this.
+- The `description` now contains the word "codebase" and names the clients people search for.
+- The README's 16 relative links became absolute. On npmjs.com — the most-linked page the package
+  has — every documentation link was resolving to a 404.
+- The README states build provenance, which the release pipeline has been producing since 4.0.0
+  without ever mentioning.
+
+### Documentation site
+
+The docs now have a crawlable home at <https://codebase-snapshot.ankurhalder.com>, generated from
+`README.md` and `docs/` in this repository, with a sitemap, its own `robots.txt`, an `llms.txt` at
+the site root and a Markdown twin per page. GitHub's `robots.txt` blocks directory-tree and raw-file
+paths and publishes no repository sitemap, so `docs/` had no crawlable entry point before this.
+
+The GitHub wiki is closed. The same prose was being maintained in the wiki, `docs/` and the README
+with no canonical copy; `Home.md` is now a single pointer and the other pages are one-line stubs so
+inbound links keep resolving.
+
+### New guides
+
+- [Feeding a codebase to ChatGPT, Claude or Cursor](docs/how-to-feed-a-repo-to-claude.md)
+- [Budgeting LLM context](docs/how-to-context-budget.md)
+- Comparisons with [repomix](docs/vs-repomix.md), [gitingest](docs/vs-gitingest.md) and
+  [code2prompt](docs/vs-code2prompt.md), each stating where the alternative is the better choice
+
+### Tooling
+
+- `npm run seo-rank` measures this package's position in npm and GitHub search for a fixed query
+  set, appends to `seo-log.jsonl`, and `--check` fails when a query we hold slips. It runs weekly in
+  CI.
+- `npm run site` renders the documentation site; `scripts/check-site-links.mjs` fails the deploy on
+  an unresolvable internal link.
 
 ---
 
