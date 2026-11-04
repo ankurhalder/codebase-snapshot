@@ -1,0 +1,61 @@
+name: Deprecate a version
+
+# Marks published versions as dead without deleting them.
+#
+# Deletion needs account-level rights that the CI token does not have — unpublish
+# is refused, even for a version minutes old. Deprecation is the supported,
+# reversible equivalent: the version stays installable for anyone who pinned it,
+# and the registry tells everyone else not to.
+#
+# The spec must be an exact version, so a mistyped input cannot deprecate a whole
+# package or the current release by accident.
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Exact version to deprecate, e.g. codebase-snapshot@4.5.0"
+        required: true
+        type: string
+      message:
+        description: "Deprecation message shown on npm"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a non-exact spec
+        run: |
+          case "${{ inputs.spec }}" in
+            *@*.*.*) echo "deprecating ${{ inputs.spec }}" ;;
+            *) echo "::error::spec must be an exact version like name@1.2.3 — refusing to touch a range"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Deprecate
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm deprecate "${{ inputs.spec }}" "${{ inputs.message }}"
+
+      - name: Confirm the registry agrees
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            message="$(npm view "${{ inputs.spec }}" deprecated 2>/dev/null || true)"
+            if [ -n "$message" ]; then
+              echo "deprecated: $message"
+              exit 0
+            fi
+            echo "not visible yet (attempt $attempt); waiting for replication"
+            sleep 20
+          done
+          echo "::error::the registry still reports no deprecation for ${{ inputs.spec }}"
+          exit 1
