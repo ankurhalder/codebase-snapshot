@@ -176,16 +176,29 @@ test("a credential-shaped hook error is masked in the manifest and on stdout", (
 });
 
 // ------------------------------------------------------------------ item 7b
-test("maxPartBytes below largeFileBytes warns once with both values", (t) => {
+test("a part budget below largeFileBytes warns only when it actually cuts a file", (t) => {
   const cwd = tempDir(t);
   writePackage(cwd);
   write(cwd, "src/a.ts", "export const a = 1;\n");
 
-  const manifest = generateSnapshot({ cwd, maxPartBytes: 4096, largeFileBytes: 8192 });
-  const matches = manifest.warnings.filter((warning) =>
-    /maxPartBytes \(4096 B\) is below largeFileBytes \(8192 B\)/.test(warning)
+  // Nothing is big enough to be cut, so the configuration alone stays quiet: several presets
+  // recommend a part budget below the default large-file threshold (node-lib is 120 KB against
+  // 200 KB), so warning on the configuration alone fired on every one of their repositories.
+  const quiet = generateSnapshot({ cwd, outDir: "quiet", maxPartBytes: 4096, largeFileBytes: 8192 });
+  assert.deepEqual(
+    quiet.warnings.filter((warning) => /is below largeFileBytes/.test(warning)),
+    [],
+    "no file was cut, so there is nothing to warn about"
   );
-  assert.equal(matches.length, 1, `expected exactly one warning, got ${JSON.stringify(manifest.warnings)}`);
+
+  // A file between the two budgets IS cut by the part budget, and that is worth one warning
+  // naming both values.
+  write(cwd, "src/big.ts", `export const big = "${"x".repeat(6000)}";\n`);
+  const loud = generateSnapshot({ cwd, outDir: "loud", maxPartBytes: 4096, largeFileBytes: 8192 });
+  const matches = loud.warnings.filter((warning) => /is below largeFileBytes/.test(warning));
+  assert.equal(matches.length, 1, `expected exactly one warning, got ${JSON.stringify(loud.warnings)}`);
+  assert.match(matches[0], /4096 B/);
+  assert.match(matches[0], /8192 B/);
 });
 
 // ------------------------------------------------------------------ item 22

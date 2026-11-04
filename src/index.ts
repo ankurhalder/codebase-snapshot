@@ -1316,14 +1316,14 @@ export function generateSnapshot(
   const warnings: string[] = [];
   // A part budget below `largeFileBytes` is the configuration that cuts a file by
   // the partitioner's byte budget while `isLarge` stays false, so nothing in the
-  // snapshot explains why the body is incomplete. Say so once, with both values.
-  if (config.maxPartBytes < config.largeFileBytes) {
-    warnings.push(
-      `maxPartBytes (${config.maxPartBytes} B) is below largeFileBytes (${config.largeFileBytes} B): ` +
-        "files between those sizes are cut by the part budget rather than marked as large previews. " +
-        "Increase maxPartBytes or lower largeFileBytes."
-    );
-  }
+  // snapshot explains why the body is incomplete. Reported at the end of the run, and only when a
+  // file was actually cut by the part budget: several presets recommend a part budget below the
+  // default large-file threshold (node-lib is 120 KB against 200 KB), so warning on the
+  // configuration alone fired on every one of their repositories, truncation or not.
+  const budgetOrderCutsFiles = (): boolean => {
+    if (config.maxPartBytes >= config.largeFileBytes) return false;
+    return files.some((file) => file.isPreviewTruncated && !file.isLarge);
+  };
   /** Files that were not plain UTF-8, grouped into one warning after the scan. */
   const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
   /** Files too large to parse for a structural summary, grouped into one warning after the scan. */
@@ -1714,6 +1714,17 @@ export function generateSnapshot(
   // the per-line detail lives in `reports/audit.md`, where an auditor looks for it.
   manifest.totals.redactedLines = secretFindings.length;
   manifest.totals.warningCount = manifest.warnings.length;
+
+  // Reported here, where the truncation counts exist: the configuration alone is not enough to
+  // justify a warning (see `budgetOrderCutsFiles`).
+  if (budgetOrderCutsFiles()) {
+    manifest.warnings.push(
+      `maxPartBytes (${config.maxPartBytes} B) is below largeFileBytes (${config.largeFileBytes} B), ` +
+        "so files cut by the part budget are not marked as large previews. " +
+        "Increase maxPartBytes or lower largeFileBytes."
+    );
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
 
   // The per-line detail lives only in `reports/audit.md`. With that artifact disabled the count
   // would be the only trace left, so the manifest says so instead of losing it silently.

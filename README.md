@@ -27,7 +27,8 @@ small, and picking what matters by hand does not scale or repeat. `codebase-snap
 deterministically:
 
 - **One file per part, never over budget.** `maxPartBytes` is a hard ceiling. A file bigger
-  than the budget becomes a head/tail preview rather than blowing the limit.
+  than the budget is truncated with an explicit omission marker naming the budget rather than
+  blowing the limit — and above `largeFileBytes` it becomes a head/tail excerpt instead.
 - **An index, not just text.** `manifest.json` lists every included file with its layer, kind,
   language, part, hash and a structural summary — and every *excluded* file with the reason.
 - **Provably current.** `validate` re-hashes the repository against the snapshot and exits

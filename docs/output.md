@@ -38,10 +38,11 @@ same persistently. The ownership marker is always written.
 ## Parts
 
 Each `part-NNN.md` holds whole files under the byte budget (`maxPartBytes`, default 300 KB).
-A file larger than the budget is not split mid-file: it is emitted as a head/tail preview and
-marked as truncated. Each file section is tagged with its layer, kind, language and a
-structural summary (imports, exports, classes, functions) so a reader can navigate without
-opening every file.
+A file larger than the budget is not split mid-file: it is truncated and carries an omission
+marker naming the budget that cut it (`... [347 lines omitted: part budget 1887 B] ...`). A file
+above `largeFileBytes` is emitted as a head/tail excerpt instead, with the same marker. Each file
+section is tagged with its layer, kind, language and a structural summary (imports, exports,
+classes, functions) so a reader can navigate without opening every file.
 
 Parts are packed in a stable order, so the same input produces the same content — which is
 what makes `manifest.fingerprint` meaningful.
