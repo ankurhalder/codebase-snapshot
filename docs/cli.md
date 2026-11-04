@@ -124,7 +124,7 @@ The whole first run in one command, with defaults and no prompts:
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^<!--@version-->0.9.0<!--/@version-->
+   Added devDependency: codebase-snapshot ^0.9.0
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -161,7 +161,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^<!--@version-->0.9.0<!--/@version-->
+   Added devDependency: codebase-snapshot ^0.9.0
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 

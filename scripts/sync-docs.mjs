@@ -59,6 +59,13 @@ for (const relative of targets()) {
     after = after.replace(pattern, (_match, open, close) => `${open}${value}${close}`);
   }
 
+  // Code-block examples cannot carry HTML-comment markers: inside a fence the
+  // comment is literal text, so the syntax leaks into the rendered page. They are
+  // matched by shape instead, which keeps the source readable.
+  after = after.replace(
+    /(Added devDependency: codebase-snapshot \^)\d+\.\d+\.\d+/g,
+    `$1${VALUES.version}`
+  );
   if (after !== before) {
     stale.push(relative);
     if (!check) fs.writeFileSync(absolute, after, "utf8");
