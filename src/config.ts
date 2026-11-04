@@ -341,6 +341,56 @@ const isThenable = (value: object): boolean =>
   typeof (value as { then?: unknown }).then === "function";
 
 /**
+ * Every key a configuration file may carry.
+ *
+ * This is `SnapshotConfig` plus the two spellings that are read through casts: `discovery`
+ * (validated separately) and `exclude` (the flag spelling of `excludePatterns`).
+ */
+const CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "artifacts",
+  "branch",
+  "budgets",
+  "cwd",
+  "discovery",
+  "exclude",
+  "excludePatterns",
+  "hooks",
+  "include",
+  "includeMonolith",
+  "includeSensitiveFiles",
+  "kinds",
+  "largeFileBytes",
+  "layers",
+  "layersMode",
+  "maxMonolithBytes",
+  "maxPartBytes",
+  "outDir",
+  "preset",
+  "previewHeadLines",
+  "previewTailLines",
+  "secrets",
+  "tmpDir",
+]);
+
+/**
+ * Rejects a setting the tool does not have, naming it.
+ *
+ * An unknown key used to be dropped without a word: `{ maxPartByte: 4096 }` generated with the
+ * default budget at exit 0, so the user believed an override had been applied. That is the silent
+ * fallback this project forbids, and it also protects the generated file's promise that it lists
+ * every setting — a key absent from this list is not one.
+ */
+function assertKnownConfigKeys(value: Record<string, unknown>, file: string): void {
+  const unknownKeys = Object.keys(value).filter((key) => !CONFIG_KEYS.has(key));
+  if (unknownKeys.length === 0) return;
+  const listed = unknownKeys.map((key) => `\`${key}\``).join(", ");
+  throw new Error(
+    `${file} has unknown setting(s): ${listed}. Check the spelling against docs/configuration.md, ` +
+      "or run `codebase-snapshot init --force` to write a config that lists every setting."
+  );
+}
+
+/**
  * Reads what a config module exported.
  *
  * A `Promise` used to pass the `typeof === "object"` check, so
@@ -376,6 +426,7 @@ function readConfigExport(exported: unknown, file: string): SnapshotConfig {
         "export a plain object (`const config = {…}; export default config;`)."
     );
   }
+  assertKnownConfigKeys(exported as Record<string, unknown>, file);
   return exported as SnapshotConfig;
 }
 
@@ -434,12 +485,16 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
 
     if (filename.endsWith(".json") || filename === ".snapshotrc") {
       try {
-        return {
-          config: parseJsonish(fs.readFileSync(fullPath, "utf8"), fullPath),
-          file: fullPath,
-          warnings,
-          errors,
-        };
+        // The same guard a module config gets: this file is the configuration, so a typo in it
+        // would otherwise be accepted and silently ignored.
+        const config = parseJsonish(fs.readFileSync(fullPath, "utf8"), fullPath);
+        if (config === null || typeof config !== "object" || Array.isArray(config)) {
+          throw new Error(
+            `${fullPath} does not hold a configuration object (received ${describeValue(config)}).`
+          );
+        }
+        assertKnownConfigKeys(config as Record<string, unknown>, fullPath);
+        return { config, file: fullPath, warnings, errors };
       } catch (err) {
         // A read failure (an `EISDIR` from a config that is a directory, a permission error) comes
         // from `readFileSync` and carries no filename, so a repository with several config files
@@ -465,7 +520,12 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       // naive `file://${fullPath}` concatenation does not. The import goes
       // through a cache-busting helper so a reload sees the file on disk now.
       const imported = await importConfigModule(fullPath);
-      const config = readConfigExport(imported.default ?? imported, fullPath);
+      // `default ?? imported` erased a deliberate `export default null`: the nullish fallback
+      // substituted the module namespace, which is an object, so `readConfigExport` never saw the
+      // null and the run generated with built-in defaults at exit 0. Distinguish "no default
+      // export" from "the default export is null".
+      const hasDefault = Object.prototype.hasOwnProperty.call(imported, "default");
+      const config = readConfigExport(hasDefault ? imported.default : imported, fullPath);
       return { config, file: fullPath, warnings, errors };
     } catch (err) {
       const message = `Could not load ${fullPath}: ${(err as Error).message}`;

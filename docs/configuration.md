@@ -260,8 +260,11 @@ makes an audit entry mean something.
 Redaction is **fail-closed**, so a placeholder is indistinguishable from a secret: a
 `.env.example` whose line reads `JWT_SECRET=replace-with-base64url-48-bytes` is masked like a
 live key would be, and a test fixture literal such as `process.env.X_SECRET = "test-value"` is
-masked too. That is the intended trade-off — the alternative is guessing which values are
-throwaway — and it is worth knowing before you hand the snapshot to a model and find the
+masked too. The same holds for an environment reference written as a quoted value —
+`password: "${DB_PASSWORD}"` is masked exactly like a literal password, because the rule sees a
+credential-shaped key followed by a string and a `${…}` reference cannot be told apart from a
+secret by shape alone. That is the intended trade-off — the alternative is guessing which values
+are throwaway — and it is worth knowing before you hand the snapshot to a model and find the
 template less readable than the original. To narrow it, remove a rule by name with
 `disableDefaultPatterns: true` plus your own `customPatterns`.
 

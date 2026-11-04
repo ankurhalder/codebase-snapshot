@@ -19,10 +19,40 @@ const HEADER_RESERVE_BYTES = 2048 + Buffer.byteLength(UNTRUSTED_CONTENT_NOTICE, 
 const MIN_SECTION_BUDGET_BYTES = 512;
 const MAX_SPLIT_PASSES = 64;
 
+/** Bytes reserved for the `[N lines omitted]` notice a budget-cut body must carry. */
+const BUDGET_MARKER_RESERVE = 96;
+
+/** Recognises a marker already appended, so a second shrink does not cut it in half. */
+const BUDGET_MARKER_SUFFIX = /\n\.\.\. \[\d+ lines omitted: part budget \d+ B\] \.\.\.$/;
+
 interface PreparedSection {
   file: FileEntry;
   text: string;
   byteSize: number;
+}
+
+/**
+ * Truncates to `maxBytes` and appends the omission notice the preview route has always carried.
+ *
+ * The marker is mandatory (item 8): a body cut by the part budget with no marker reads like a
+ * complete file, and an agent counting lines has no way to see the cut. `budget` names the byte
+ * budget that forced it, so a reader can tell `largeFileBytes` from `maxPartBytes`.
+ */
+function truncateWithBudgetMarker(
+  content: string,
+  maxBytes: number,
+  budget: number
+): { content: string; isTruncated: boolean } {
+  const base = content.replace(BUDGET_MARKER_SUFFIX, "");
+  const baseLines = countLines(base);
+  const truncated = truncateToBytes(base, Math.max(0, maxBytes));
+  if (!truncated.isTruncated) return { content: base, isTruncated: false };
+  const keptLines = countLines(truncated.content);
+  const omitted = Math.max(1, baseLines - keptLines);
+  return {
+    content: `${truncated.content}\n... [${omitted} lines omitted: part budget ${budget} B] ...`,
+    isTruncated: true,
+  };
 }
 
 /**
@@ -66,9 +96,9 @@ export function partitionFiles(
     const currentContent = section.file.content ?? "";
     const shrinkTo = Math.max(
       0,
-      Buffer.byteLength(currentContent, "utf8") - overflow - 64
+      Buffer.byteLength(currentContent, "utf8") - overflow - BUDGET_MARKER_RESERVE
     );
-    const shrunk = truncateToBytes(currentContent, shrinkTo);
+    const shrunk = truncateWithBudgetMarker(currentContent, shrinkTo, budget);
     if (shrunk.isTruncated) {
       applyTruncatedContent(section.file, shrunk.content);
       section.text = renderFileSection(section.file);
@@ -233,9 +263,9 @@ function prepareSection(file: FileEntry, sectionBudget: number): PreparedSection
   const shrinkBody = (): void => {
     const content = file.content ?? "";
     const overhead = byteSize - Buffer.byteLength(content, "utf8");
-    const allowed = sectionBudget - overhead - 96;
+    const allowed = sectionBudget - overhead - BUDGET_MARKER_RESERVE;
     if (allowed <= 0) return;
-    const truncated = truncateToBytes(content, allowed);
+    const truncated = truncateWithBudgetMarker(content, allowed, sectionBudget);
     if (!truncated.isTruncated) return;
     applyTruncatedContent(file, truncated.content);
     text = renderFileSection(file);
@@ -406,7 +436,7 @@ function renderGroups(
  * (the part is written with LF). A number an agent uses to budget context must be the number of
  * bytes it will actually read.
  */
-function emittedBody(content: string): string {
+export function emittedBody(content: string): string {
   const normalised = content.replace(/\r\n/g, "\n");
   return normalised.endsWith("\n") ? normalised.slice(0, -1) : normalised;
 }

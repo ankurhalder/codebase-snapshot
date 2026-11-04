@@ -450,12 +450,36 @@ interface GitignoreRule {
 }
 
 /**
+ * Removes the trailing spaces gitignore(5) says are insignificant.
+ *
+ * A trailing space is only significant when it is escaped, so `name\ ` keeps its
+ * space and `name ` does not. Walking back from the end and counting the
+ * preceding backslashes is what distinguishes the two: an odd count means the
+ * space itself is escaped.
+ */
+function trimUnescapedTrailingSpaces(line: string): string {
+  let end = line.length;
+  while (end > 0 && (line[end - 1] === " " || line[end - 1] === "\t")) {
+    let backslashes = 0;
+    for (let i = end - 2; i >= 0 && line[i] === "\\"; i--) backslashes += 1;
+    if (backslashes % 2 === 1) break;
+    end -= 1;
+  }
+  return line.slice(0, end);
+}
+
+/**
  * Parses `<dir>/.gitignore` into ordered rules. A missing or unreadable file has none.
  *
  * Only the rules are returned, not a matcher, because a matcher needs the directory it was read
  * for: nested `.gitignore` files were ignored entirely, so a `dist/` rule inside `packages/foo`
  * had no effect in a non-git checkout while git honoured it — the same repository produced two
  * different snapshots depending on whether `.git` was readable.
+ *
+ * The line grammar follows gitignore(5) rather than "trim and look at the first character":
+ * `\#` and `\!` are literal leading characters, not a comment and not a negation, and a trailing
+ * space only counts when it is backslash-escaped. Treating them as ordinary characters made a
+ * `walk` scan include files that git ignores.
  */
 function readGitignoreRules(dir: string): GitignoreRule[] {
   const gitignorePath = path.join(dir, ".gitignore");
@@ -467,16 +491,87 @@ function readGitignoreRules(dir: string): GitignoreRule[] {
   }
 
   const rules: GitignoreRule[] = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const negated = trimmed.startsWith("!");
-    let pattern = negated ? trimmed.slice(1) : trimmed;
+  for (const rawLine of raw.split("\n")) {
+    const line = trimUnescapedTrailingSpaces(rawLine.replace(/\r$/, ""));
+    if (!line) continue;
+    // An unescaped `#` opens a comment; `\#` is the literal character.
+    if (line.startsWith("#")) continue;
+
+    let negated = false;
+    let pattern = line;
+    if (pattern.startsWith("!")) {
+      negated = true;
+      pattern = pattern.slice(1);
+    } else if (pattern.startsWith("\\#") || pattern.startsWith("\\!")) {
+      // Escape consumed: the remaining pattern is a literal `#` or `!`.
+      pattern = pattern.slice(1);
+    }
+
     const dirOnly = pattern.endsWith("/");
     if (dirOnly) pattern = pattern.slice(0, -1);
     if (pattern) rules.push({ pattern, negated, dirOnly });
   }
   return rules;
+}
+
+/** Escapes one literal character for use inside a RegExp body. */
+function escapeRegExpChar(character: string): string {
+  return /[\\^$.*+?()[\]{}|/]/.test(character) ? `\\${character}` : character;
+}
+
+/**
+ * Matches a gitignore pattern that contains backslash escapes.
+ *
+ * `globToRegExp` normalises every `\` to `/` (it is fed user globs, where that is
+ * the Windows convenience), which destroys gitignore escapes: `spaced\ .ts`
+ * became the path `spaced/ .ts`. Here a backslash always escapes the next
+ * character, so an escaped space, `#`, `!` or glob metacharacter stays literal.
+ */
+function matchEscapedGitignorePattern(target: string, pattern: string): boolean {
+  const anchored = pattern.startsWith("/");
+  const body = anchored ? pattern.slice(1) : pattern;
+  let source = "";
+  for (let i = 0; i < body.length; i++) {
+    const character = body[i];
+    if (character === "\\") {
+      const next = body[i + 1];
+      if (next !== undefined) {
+        source += escapeRegExpChar(next);
+        i += 1;
+      } else {
+        source += "\\\\";
+      }
+      continue;
+    }
+    if (character === "*") {
+      if (body[i + 1] === "*") {
+        i += 1;
+        if (body[i + 1] === "/") {
+          i += 1;
+          source += "(?:.*/)?";
+        } else {
+          source += ".*";
+        }
+      } else {
+        source += "[^/]*";
+      }
+      continue;
+    }
+    if (character === "?") {
+      source += "[^/]";
+      continue;
+    }
+    source += escapeRegExpChar(character);
+  }
+  const prefix = anchored || body.includes("/") ? "^" : "(?:^|.*/)";
+  return new RegExp(`${prefix}${source}(?:/.*)?$`).test(target);
+}
+
+/** Matches `target` against one gitignore rule, honouring backslash escapes. */
+function matchesGitignorePattern(target: string, pattern: string): boolean {
+  return pattern.includes("\\")
+    ? matchEscapedGitignorePattern(target, pattern)
+    : matchesExclude(target, pattern);
 }
 
 /** One `.gitignore` file together with the directory it governs, relative to the scan root. */
@@ -511,7 +606,7 @@ function gitignoreVerdict(
     let layerVerdict: boolean | null = null;
     for (const rule of layer.rules) {
       const target = rule.dirOnly ? scoped.replace(/\/.*$/, "") : scoped;
-      if (matchesExclude(target, rule.pattern)) layerVerdict = !rule.negated;
+      if (matchesGitignorePattern(target, rule.pattern)) layerVerdict = !rule.negated;
     }
     if (layerVerdict !== null) verdict = layerVerdict;
   }

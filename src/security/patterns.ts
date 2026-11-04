@@ -65,9 +65,19 @@ const NOT_A_LITERAL_VALUE =
  * `id-token: write` readable.
  */
 const UNQUOTED_LITERAL =
-  "(?![0-9]+(?![A-Za-z0-9_+=/.-]))([A-Za-z0-9_+=/-]{1,512})(?![A-Za-z0-9_+=/.-]|\\()";
+  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_+=/%:~-]{1,512})(?![A-Za-z0-9_+=/%:.~-]|\\()";
 const UNQUOTED_AMBIGUOUS_LITERAL =
-  "(?![0-9]+(?![A-Za-z0-9_+=/.-]))([A-Za-z0-9_+=/-]{8,512})(?![A-Za-z0-9_+=/.-]|\\()";
+  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_+=/%:~-]{8,512})(?![A-Za-z0-9_+=/%:.~-]|\\()";
+
+/**
+ * The value of a quoted assignment, escaped pairs included.
+ *
+ * `[^"'\n]{1,512}` stopped at the first backslash, so
+ * `{"password": "p\"ssw0rd"}` was masked to `"[REDACTED…]"ssw0rd"` — most of the value left in
+ * clear, and the line left syntactically broken. `\\.` consumes the escaped pair, so the match
+ * ends at the real closing quote.
+ */
+const QUOTED_VALUE = String.raw`((?:[^"'\\\n]|\\.){1,512})`;
 
 /**
  * `id-token` / `id_token` is a GitHub Actions permission, not a credential: the
@@ -229,7 +239,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // the key name.
     rule: "credential-assignment",
     pattern: new RegExp(
-      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${STRONG_CREDENTIAL_NAME})\\s{0,8}[:=]\\s{0,8}(["'\`])([^"'\`\\n]{1,512})\\1`,
+      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${STRONG_CREDENTIAL_NAME})\\s{0,8}[:=]\\s{0,8}(["'\`])${QUOTED_VALUE}\\1`,
       "i"
     ),
     valueGroup: 2,
@@ -239,7 +249,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // are accepted only against a quoted value long enough to be a credential.
     rule: "credential-assignment-weak",
     pattern: new RegExp(
-      `(?:["']${WEAK_CREDENTIAL_NAME}["']|${WEAK_CREDENTIAL_NAME})\\s{0,8}[:=]\\s{0,8}(["'\`])([^"'\`\\n]{8,512})\\1`,
+      `(?:["']${WEAK_CREDENTIAL_NAME}["']|${WEAK_CREDENTIAL_NAME})\\s{0,8}[:=]\\s{0,8}(["'\`])${QUOTED_VALUE}\\1`,
       "i"
     ),
     valueGroup: 2,

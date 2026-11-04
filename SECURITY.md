@@ -100,6 +100,9 @@ when `--no-config` was passed.
 
 - The declared behaviour of `--include-sensitive-files` or a `customPatterns` redaction rule the
   user configured themselves.
+- Obfuscated forms: a credential that is base64-wrapped, packed inside an archive, encoded, or
+  otherwise not recognisable by shape is not something the redaction rules can find, and a
+  report that one survived this way is out of scope rather than a defect.
 - Secrets that are already committed to a public repository, unless the tool emits them into a
   snapshot they would otherwise not appear in.
 - Anything that requires an attacker to already control the machine running the tool.

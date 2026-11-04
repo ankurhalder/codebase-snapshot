@@ -1,6 +1,6 @@
 import type { Manifest, SecretFinding, SecretRule } from "../types.js";
 import { findSecretInPath } from "../scanner/files.js";
-import { codeCell, escapeControls, formatNumber, tableCell } from "../terminal.js";
+import { codeCell, escapeControls, formatNumber, inlineCode, tableCell } from "../terminal.js";
 
 /**
  * Builds the security/health report.
@@ -30,7 +30,7 @@ export function generateAuditReport(
     "# Codebase Health & Security Audit",
     "",
     `**Generated:** ${manifest.generatedAt}  `,
-    `**Git Branch:** \`${manifest.git.branch}\` (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})  `,
+    `**Git Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})  `,
     `**Total Files:** ${formatNumber(manifest.counts.totalFiles)}  `,
     `**Total Lines:** ${formatNumber(manifest.counts.totalLines)}  `,
     `**Total Size:** ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB  `,
@@ -108,22 +108,36 @@ export function generateAuditReport(
   }
 
   lines.push("## 3. Large Files Analysis", "");
+  // Truncation has two independent causes: a file over `largeFileBytes` is reduced to a head/tail
+  // preview before partitioning, and a file that then does not fit `maxPartBytes` is cut again by
+  // the chunker. The old section counted only the first, so a snapshot whose previews were clipped
+  // by the part budget reported "no files exceeded the large file budget" with a straight face.
   const largeFiles = manifest.files.filter((file) => file.isLarge);
-  if (largeFiles.length === 0) {
-    lines.push("✅ No files exceeded the large file budget.", "");
+  const truncatedFiles = manifest.files.filter((file) => file.isPreviewTruncated);
+  const affected = manifest.files.filter((file) => file.isLarge || file.isPreviewTruncated);
+  if (affected.length === 0) {
+    lines.push("✅ No files exceeded the large file budget and none were truncated.", "");
   } else {
     lines.push(
-      `Found ${largeFiles.length} file(s) exceeding the large file budget (${(manifest.budgets.largeFileBytes / 1024).toFixed(0)} KB):`,
+      `Found ${formatNumber(largeFiles.length)} file(s) over the large-file budget (${(manifest.budgets.largeFileBytes / 1024).toFixed(0)} KB) and ${formatNumber(truncatedFiles.length)} file(s) truncated by a budget:`,
       "",
-      "| File | Size (KB) | Lines | Preview Status |",
-      "| :--- | :--- | :--- | :--- |"
+      "| File | Size (B) | Source Lines | Included Bytes | Included Lines | Status | Cut by |",
+      "| :--- | ---: | ---: | ---: | ---: | :--- | :--- |"
     );
-    for (const file of largeFiles) {
-      const sizeKb = (file.sizeBytes / 1024).toFixed(1);
-      const status = file.isPreviewTruncated ? "Truncated Head/Tail" : "Full";
-      lines.push(`| ${code(file.relativePath)} | ${sizeKb} KB | ${file.lines} | ${status} |`);
+    for (const file of affected) {
+      const status = file.isPreviewTruncated ? "Truncated" : "Full";
+      // `isLarge` is set by the size threshold before partitioning; anything false there was cut
+      // by the part budget. A large file can additionally be clipped by the part budget.
+      const cutBy = file.isLarge ? "largeFileBytes" : "maxPartBytes";
+      lines.push(
+        `| ${code(file.relativePath)} | ${file.sizeBytes} | ${file.lines} | ${file.includedBytes} | ${file.includedLines} | ${status} | ${cutBy} |`
+      );
     }
-    lines.push("");
+    lines.push(
+      "",
+      `Truncated: ${formatNumber(truncatedFiles.length)} of ${formatNumber(manifest.counts.totalFiles)} file(s); every truncated block carries a \`[N lines omitted]\` notice naming its budget.`,
+      ""
+    );
   }
 
   lines.push(

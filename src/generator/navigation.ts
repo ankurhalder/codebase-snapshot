@@ -2,6 +2,21 @@ import { anchorForPath } from "../partitioner/chunker.js";
 import { codeCell, tableCell } from "../terminal.js";
 import type { Manifest } from "../types.js";
 
+/**
+ * Escapes a Markdown link **label**.
+ *
+ * `tableCell` covers pipes, control characters and newlines, but a filename can
+ * legally contain brackets: `[src/a](b).ts](…)` parses as a live link to `b`,
+ * not as a label — the file directory could be made to point anywhere. Backslash
+ * and both brackets are escaped so the label stays inert text.
+ */
+function linkLabel(value: string): string {
+  // The path's own backslashes and brackets are escaped first; `tableCell` then re-spells control
+  // and bidi characters. Doing it in that order keeps the `\u202E` spelling single-backslash —
+  // escaping after `tableCell` would double the backslash it just introduced.
+  return tableCell(value.replace(/[\\[\]()]/g, "\\$&"));
+}
+
 export function generateNavigation(manifest: Manifest): string {
   const lines: string[] = [
     "# Codebase Navigation Index",
@@ -43,7 +58,7 @@ export function generateNavigation(manifest: Manifest): string {
     // escaped: the anchor is a hex digest and the part name is generated, so the
     // link target stays byte-identical to what the chunker wrote.
     const anchor = anchorForPath(file.relativePath);
-    const link = `[${tableCell(file.relativePath)}](../parts/${partFilename}#${anchor})`;
+    const link = `[${linkLabel(file.relativePath)}](../parts/${partFilename}#${anchor})`;
     const sizeStr = `${(file.sizeBytes / 1024).toFixed(1)} KB`;
     lines.push(
       `| ${link} | ${codeCell(partFilename)} | ${codeCell(file.layer)} | ${codeCell(file.kind)} | ${file.lines} | ${sizeStr} |`

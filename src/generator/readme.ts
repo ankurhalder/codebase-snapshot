@@ -1,6 +1,6 @@
 import type { ResolvedArtifacts } from "../types.js";
 import type { Manifest } from "../types.js";
-import { UNTRUSTED_CONTENT_NOTICE, formatNumber, tableCell } from "../terminal.js";
+import { UNTRUSTED_CONTENT_NOTICE, escapeControls, formatNumber, inlineCode, tableCell } from "../terminal.js";
 
 /**
  * Renders the snapshot's own README.
@@ -52,7 +52,7 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
     "",
     `- **Generated At:** \`${manifest.generatedAt}\``,
     `- **Schema Version:** \`${manifest.schemaVersion}\``,
-    `- **Branch:** \`${manifest.git.branch}\` (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})`,
+    `- **Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})`,
     `- **Total Tracked Files:** \`${manifest.counts.totalFiles}\``,
     `- **Total Code Lines:** \`${formatNumber(manifest.counts.totalLines)}\``,
     `- **Total Size:** \`${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB\``,

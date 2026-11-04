@@ -25,6 +25,12 @@ With `--include-monolith` you also get `full-codebase.json` and `full-codebase.m
 whole repository in one file. They are off by default because they grow without bound;
 `--max-monolith-bytes` skips them when they would exceed a size you set.
 
+`full-codebase.json` embeds its own `files[]` array, and its `includedBytes` / `includedLines`
+describe the monolith's raw content — the file as it was read — so they differ from the same
+fields in `manifest.json` for the same file. `manifest.json` reports what the part emitted
+(CRLF normalised, the trailing newline not counted); the monolith reports the content it
+embedded. Compare a file's fields within one artifact, not across the two.
+
 Every artifact can be turned off. `--skip-artifacts parts` omits the parts,
 `--only-artifacts manifest` writes nothing but the manifest, and `config.artifacts` does the
 same persistently. The ownership marker is always written.
@@ -37,8 +43,16 @@ marked as truncated. Each file section is tagged with its layer, kind, language 
 structural summary (imports, exports, classes, functions) so a reader can navigate without
 opening every file.
 
-Parts are packed in a stable order, so the same input produces the same output — which is
+Parts are packed in a stable order, so the same input produces the same content — which is
 what makes `manifest.fingerprint` meaningful.
+
+Two runs over unchanged input are **not** byte-identical everywhere, and the difference is
+deliberate bookkeeping rather than content. `manifest.json`, the snapshot's `README.md`,
+`reports/audit.md` and `.codebase-snapshot` differ on every run — they carry a timestamp, and the
+marker also carries a fresh run id and pid. `parts/*.md`, `reports/navigation.md` and
+`reports/project-tree.md` are **byte-identical** across runs, and `manifest.fingerprint` is stable.
+So: diff the parts, the navigation index or the tree to see whether the *content* changed, and
+diff the manifest only when you need to know that a run happened.
 
 ## Manifest
 
@@ -152,6 +166,11 @@ values — the hash is the whole 64-character digest, never elided.
 - `summaryQuality` is `ast` (parsed by the TypeScript compiler), `structural` (JSON or
   Markdown shape) or `heuristic` (pattern-matched). It tells you how much to trust the
   summary: `heuristic` means a line scan, not a parse.
+- The summary block is written **as-is** into the part, so a control or bidi character that
+  appears in a source file can appear inside the fenced JSON too — the same reason the file
+  body is emitted raw. Names are escaped where a path is *displayed* (part headers, the tree,
+  navigation, audit, `explain`), but the two raw regions — the summary fence and the body —
+  reproduce the repository's bytes. Treat the whole part as untrusted data, not just the body.
 
 Querying this array is usually faster and cheaper than re-reading the parts.
 
@@ -187,6 +206,15 @@ git is present.
 rather than a decision about a candidate file: `missing` (nothing exists at that path) and
 `not-discovered` (the path exists but was never a candidate — inside `node_modules`, for
 example). See [Troubleshooting](troubleshooting.md#a-file-is-missing-from-the-snapshot).
+
+**Ignored trees are recorded at two granularities**, which is why `explain` can answer
+`not-discovered` for a directory you can see in `skipped[]`. A *built-in* ignore
+(`node_modules`, `dist`, `.next`, …) is recorded once, as the directory itself, and its contents
+are never enumerated — `explain node_modules/pkg/i.js` inherits that record and says
+`default-ignore`. A *preset ecosystem* ignore (`__pycache__`, `target`, `vendor`, …) is recorded
+per file, so `explain app/__pycache__` — the directory — finds no record of its own and answers
+`not-discovered`, while `explain app/__pycache__/mod.pyc` says `default-ignore`. Neither is an
+omission: the directory and its files are all accounted for, just not at the same level.
 
 ## Safety
 

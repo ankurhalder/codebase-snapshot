@@ -3,6 +3,7 @@ import type { ArtifactSelection, ByteSize } from "../types.js";
 /** What the wizard decided, after prompts or flags. */
 export interface WizardAnswers {
   preset: string;
+  branch: string;
   maxPartBytes: ByteSize;
   largeFileBytes: ByteSize;
   include: string[];
@@ -14,6 +15,7 @@ export interface WizardAnswers {
 
 export const DEFAULT_ANSWERS: WizardAnswers = {
   preset: "generic",
+  branch: "main",
   maxPartBytes: "300k",
   largeFileBytes: "200k",
   include: [],
@@ -88,8 +90,9 @@ export function renderConfig(answers: WizardAnswers): string {
   // ${PRESET_NAMES.join("\n  // ")}
   preset: ${JSON.stringify(answers.preset)},
 
-  // Recorded in the manifest when git cannot report a branch.
-  branch: "main",
+  // The repository's actual branch. Used only when git cannot report one — a
+  // detached HEAD, or a directory that is not a repository.
+  branch: ${JSON.stringify(answers.branch)},
 
   // ── Output ─────────────────────────────────────────────────────────────
   // Where the snapshot is written.

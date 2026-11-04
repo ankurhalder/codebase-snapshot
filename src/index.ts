@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -59,14 +60,17 @@ export { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
 export const SCHEMA_VERSION = "3.0.0";
 
 /**
- * Files larger than this are not parsed for a structural summary.
+ * Files whose UTF-8 body is larger than this are not parsed for a structural summary.
  *
  * The parser's AST costs far more than the text it reads — a 50 MB source file peaked at 3.3 GB
  * resident — and a file this large is emitted as a head/tail preview, so a summary of it would
  * describe something the snapshot does not contain. Two megabytes is well above every hand-written
  * source file and below the point where parsing becomes the dominant cost.
+ *
+ * The comparison is in bytes, not UTF-16 code units: a 3-byte-per-character file of 2 M characters
+ * is 6 MB, and measuring characters let it through the ceiling the warning claims to enforce.
  */
-const SUMMARY_MAX_SOURCE_CHARS = 2 * 1024 * 1024;
+const SUMMARY_MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 
 
 function sha256Hex(input: string | Buffer): string {
@@ -1162,8 +1166,10 @@ function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
  * would be the worse outcome. Two further rules:
  *
  *  - **stdout is the payload channel.** A hook is user code and user code prints: a single log
- *    line from a hook in `--format json` mode produced a document no parser could read. Everything
- *    a hook writes to stdout is redirected to stderr for the duration of the call.
+ *    line from a hook in `--format json` mode produced a document no parser could read. Writes made
+ *    inside the hook's async context are routed to stderr — including the ones that arrive after an
+ *    `await`, which is where the previous blanket redirect stopped working. The caller's own writes
+ *    (the JSON payload) happen outside that context and keep going to stdout.
  *  - **a returned promise is tracked, never awaited — but the process still waits for it.** This is
  *    a synchronous API, so the promise cannot be awaited here; the caller attaches a rejection
  *    handler, which records the failure as a warning and re-ships the manifest and marker. Left
@@ -1177,24 +1183,45 @@ function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): P
   const hook = config.hooks.afterGenerate;
   if (!hook) return null;
 
-  const stdoutWrite = process.stdout.write.bind(process.stdout);
-  const stderrWrite = process.stderr.write.bind(process.stderr);
+  const stdoutWrite = process.stdout.write.bind(process.stdout) as (
+    ...args: unknown[]
+  ) => boolean;
+  const stderrWrite = process.stderr.write.bind(process.stderr) as (
+    ...args: unknown[]
+  ) => boolean;
+  // AsyncLocalStorage tells the hook's writes apart from the caller's without a
+  // time window: a continuation after an `await` is still inside `hookScope`,
+  // while the payload the CLI prints right after this call is not.
+  const hookScope = new AsyncLocalStorage<true>();
+  const patchedWrite = ((...args: unknown[]): boolean =>
+    hookScope.getStore() === true ? stderrWrite(...args) : stdoutWrite(...args)) as typeof process.stdout.write;
+  const restoreStdout = (): void => {
+    if (process.stdout.write === patchedWrite) process.stdout.write = stdoutWrite as typeof process.stdout.write;
+  };
   let returned: unknown;
 
   try {
-    process.stdout.write = stderrWrite as typeof process.stdout.write;
-    returned = hook(manifest);
+    process.stdout.write = patchedWrite;
+    returned = hookScope.run(true, () => hook(manifest));
   } catch (err) {
-    manifest.warnings.push(`hooks.afterGenerate failed: ${(err as Error).message}`);
+    restoreStdout();
+    // The message is user code and can quote a credential (an error string from an
+    // HTTP client carries the URL, a key reference carries the key). It is the one
+    // repo-adjacent string that used to reach the manifest unmasked.
+    const message = maskPathText((err as Error).message, config.secretRules);
+    manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
     manifest.totals.warningCount = manifest.warnings.length;
     return null;
-  } finally {
-    process.stdout.write = stdoutWrite;
   }
 
   const thenable = returned as { then?: unknown } | null | undefined;
-  if (!thenable || typeof thenable.then !== "function") return null;
-  return Promise.resolve(returned);
+  if (!thenable || typeof thenable.then !== "function") {
+    restoreStdout();
+    return null;
+  }
+  // The patched write stays installed until the hook settles; only writes made in
+  // the hook's context are diverted, so the caller's payload is unaffected.
+  return Promise.resolve(returned).finally(restoreStdout);
 }
 
 /**
@@ -1287,6 +1314,16 @@ export function generateSnapshot(
   const skipped: SkipRecord[] = maskSkipRecords([...collection.skipped], config.secretRules);
   const secretFindings: SecretFinding[] = [];
   const warnings: string[] = [];
+  // A part budget below `largeFileBytes` is the configuration that cuts a file by
+  // the partitioner's byte budget while `isLarge` stays false, so nothing in the
+  // snapshot explains why the body is incomplete. Say so once, with both values.
+  if (config.maxPartBytes < config.largeFileBytes) {
+    warnings.push(
+      `maxPartBytes (${config.maxPartBytes} B) is below largeFileBytes (${config.largeFileBytes} B): ` +
+        "files between those sizes are cut by the part budget rather than marked as large previews. " +
+        "Increase maxPartBytes or lower largeFileBytes."
+    );
+  }
   /** Files that were not plain UTF-8, grouped into one warning after the scan. */
   const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
   /** Files too large to parse for a structural summary, grouped into one warning after the scan. */
@@ -1354,7 +1391,24 @@ export function generateSnapshot(
     // The pre-read NUL scan gives up after BINARY_SCAN_BYTES so a huge blob is never pulled into
     // memory; this is the complete check, on the buffer that had to be read anyway. A file of
     // 8 MB of text with a NUL at byte 8 388 672 used to be emitted as text.
-    const decoded = decodeText(buffer);
+    let decoded: ReturnType<typeof decodeText>;
+    try {
+      decoded = decodeText(buffer);
+    } catch (err) {
+      // V8 refuses to materialise a string past roughly 512 MiB, and the failure
+      // (a plain RangeError with no path in it) used to abort the whole run. One
+      // enormous text file must not take the snapshot down; record it and keep
+      // going, exactly like any other unreadable file.
+      skipped.push({
+        path: relativePath,
+        reason: "read-error",
+        detail: `Size: ${stats.size} B; could not be decoded: ${(err as Error).message}`.replace(
+          /\s+/g,
+          " "
+        ),
+      });
+      continue;
+    }
     if (decoded.binary) {
       skipped.push({
         path: relativePath,
@@ -1428,7 +1482,7 @@ export function generateSnapshot(
     // Size first, then preview: a 3 MB file is both, and "exceeds 2 MB" is the more useful of the
     // two true statements — it names the ceiling that kept the run bounded. The preview rule then
     // covers the 200 KB–2 MB band, where the file is small enough to have been parsed before.
-    if (rawContent.length > SUMMARY_MAX_SOURCE_CHARS) {
+    if (Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES) {
       // A structural summary of a file this size costs far more memory than the file itself — the
       // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
       // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
@@ -1515,7 +1569,7 @@ export function generateSnapshot(
       .map((entry) => maskPathText(entry, config.secretRules));
     const hidden = oversizeSummaryPaths.length - ENCODING_PATHS_SHOWN;
     warnings.push(
-      `${oversizeSummaryPaths.length} file(s) exceed ${Math.round(SUMMARY_MAX_SOURCE_CHARS / (1024 * 1024))} MB and were not parsed for a structural summary: ` +
+      `${oversizeSummaryPaths.length} file(s) exceed ${Math.round(SUMMARY_MAX_SOURCE_BYTES / (1024 * 1024))} MB and were not parsed for a structural summary: ` +
         `${shown.join(", ")}${hidden > 0 ? ` and ${hidden} more` : ""}. Their bodies are emitted as head/tail previews.`
     );
   }
@@ -1671,8 +1725,32 @@ export function generateSnapshot(
     manifest.totals.warningCount = manifest.warnings.length;
   }
 
-  // Monolith artefacts are computed BEFORE the manifest is serialized, so the
-  // manifest is written exactly once and already contains the artifact digests.
+  for (const message of artifactWarnings(config.artifacts)) manifest.warnings.push(message);
+  manifest.totals.warningCount = manifest.warnings.length;
+
+  // The project tree is depth-capped (src/generator/tree.ts). When the cap bit, the
+  // artifact carries the marker but a reader of the manifest learns nothing, so the
+  // truncation is also a warning. Built here — before the monolith embeds this
+  // manifest — so both views agree.
+  let projectTree: string | null = null;
+  if (config.artifacts.projectTree) {
+    projectTree = generateProjectTree(files.map((file) => file.relativePath));
+    const depthMarker = /\[tree truncated at (\d+) levels\]/.exec(projectTree);
+    if (depthMarker) {
+      manifest.warnings.push(
+        `reports/project-tree.md was truncated at the ${depthMarker[1]}-level depth cap: ` +
+          "deeper directories are not listed there."
+      );
+      manifest.totals.warningCount = manifest.warnings.length;
+    }
+  }
+
+  // Monolith artefacts are serialised LAST, after every warning they have to
+  // describe and after the markdown digest they embed, so the manifest inside
+  // full-codebase.json agrees with the shipped one. The JSON cannot record its own
+  // sha256 (a file containing its own digest has no fixed point), so its embedded
+  // copy keeps `artifacts.fullJson: null`; the shipped manifest records the real
+  // digest and both files are written from these exact strings.
   let monolithJson: string | null = null;
   let monolithMarkdown: string | null = null;
   if (config.includeMonolith) {
@@ -1691,19 +1769,9 @@ export function generateSnapshot(
         includedLines: countLines(content),
       };
     });
-    const json = generateMonolithJson(manifest, fullFiles);
-    const markdown = generateMonolithMarkdown(manifest, fullFiles);
-    const jsonBytes = Buffer.byteLength(json, "utf8");
-    const markdownBytes = Buffer.byteLength(markdown, "utf8");
 
-    if (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes) {
-      monolithJson = json;
-      manifest.artifacts.fullJson = { byteSize: jsonBytes, sha256: sha256Hex(json) };
-    } else {
-      manifest.warnings.push(
-        `full-codebase.json skipped: ${jsonBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
-      );
-    }
+    const markdown = generateMonolithMarkdown(manifest, fullFiles);
+    const markdownBytes = Buffer.byteLength(markdown, "utf8");
     if (!config.maxMonolithBytes || markdownBytes <= config.maxMonolithBytes) {
       monolithMarkdown = markdown;
       manifest.artifacts.fullMarkdown = {
@@ -1716,10 +1784,21 @@ export function generateSnapshot(
       );
     }
     manifest.totals.warningCount = manifest.warnings.length;
-  }
 
-  for (const message of artifactWarnings(config.artifacts)) manifest.warnings.push(message);
-  manifest.totals.warningCount = manifest.warnings.length;
+    // Last: the JSON embeds the manifest, so it now carries the markdown digest and
+    // every warning produced above (artifact warnings, monolith skips).
+    const json = generateMonolithJson(manifest, fullFiles);
+    const jsonBytes = Buffer.byteLength(json, "utf8");
+    if (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes) {
+      monolithJson = json;
+      manifest.artifacts.fullJson = { byteSize: jsonBytes, sha256: sha256Hex(json) };
+    } else {
+      manifest.warnings.push(
+        `full-codebase.json skipped: ${jsonBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
+      );
+    }
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
 
   const { outDir, tmpDir } = resolveSafeOutputDirs(config);
   const { artifacts } = config;
@@ -1785,8 +1864,7 @@ export function generateSnapshot(
       }
     }
 
-    if (artifacts.projectTree) {
-      const projectTree = generateProjectTree(files.map((file) => file.relativePath));
+    if (projectTree !== null) {
       fs.writeFileSync(path.join(reportsDir, "project-tree.md"), projectTree, "utf8");
     }
     if (artifacts.navigation) {
@@ -1842,7 +1920,12 @@ export function generateSnapshot(
       // The hook is still running. A rejection cannot be awaited from here, so it is recorded and
       // re-shipped when it lands — never left to become an unhandled rejection.
       pendingHook.catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
+        // Hook messages are user code and can quote a credential; mask before it
+        // becomes a warning in the manifest and on stdout.
+        const message = maskPathText(
+          err instanceof Error ? err.message : String(err),
+          config.secretRules
+        );
         manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
         manifest.totals.warningCount = manifest.warnings.length;
         try {

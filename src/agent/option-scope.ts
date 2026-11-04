@@ -22,6 +22,25 @@ export type CommandName =
   | "describe"
   | "skill";
 
+/** `check` is an alias of `validate`; appliesTo names the canonical command only. */
+const VALIDATE_OPTIONS = [
+  "cwd",
+  "out-dir",
+  "max-part-bytes",
+  "large-file-bytes",
+  "max-monolith-bytes",
+  "include-monolith",
+  "include-sensitive-files",
+  "skip-artifacts",
+  "only-artifacts",
+  "no-config",
+  "discovery",
+  "format",
+  "mode",
+  "help",
+  "version",
+] as const;
+
 /**
  * `cwd` is absent from `describe` and `diff`: neither reads the repository, and
  * `diff` resolves its two positional arguments against the process directory.
@@ -46,23 +65,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "help",
     "version",
   ],
-  validate: [
-    "cwd",
-    "out-dir",
-    "max-part-bytes",
-    "large-file-bytes",
-    "max-monolith-bytes",
-    "include-monolith",
-    "include-sensitive-files",
-    "skip-artifacts",
-    "only-artifacts",
-    "no-config",
-    "discovery",
-    "format",
-    "mode",
-    "help",
-    "version",
-  ],
+  validate: VALIDATE_OPTIONS,
   report: [
     "cwd",
     "out-dir",

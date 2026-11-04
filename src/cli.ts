@@ -7,7 +7,10 @@ import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig } 
 import { runInit } from "./wizard/init.js";
 import { PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
-import { validateSnapshot } from "./validator/validate.js";
+import {
+  describeManifestShapeProblem,
+  validateSnapshot,
+} from "./validator/validate.js";
 import { getPreset, unknownPresetMessage } from "./presets/index.js";
 import { isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
 import { buildAgentContract, renderContractText } from "./agent/contract.js";
@@ -137,7 +140,7 @@ Options:
   -h, --help                    Display this help message
   -v, --version                 Display version
 
-All options also accept the --option=value form.
+All value-taking options also accept the --option=value form.
 Human-readable progress is written to stderr; payloads (--format json) go to stdout.
 Agents with no prior knowledge of this tool should start with: describe --format json
 `.trim();
@@ -243,6 +246,8 @@ function parseArtifactList(raw: string, flag: string): string[] {
 export function parseCliArgs(argv: string[]): ParsedInvocation {
   let parsed: ReturnType<typeof parseArgs>;
   try {
+    // Repeated value options follow Node parseArgs' last-wins rule; repeated boolean flags are
+    // idempotent. This is intentional and deliberately not rejected as a usage error.
     parsed = parseArgs({
       args: argv,
       options: CLI_OPTIONS,
@@ -545,42 +550,6 @@ function displayOutPath(cwd: string, outDir: string, ...segments: string[]): str
 }
 
 /**
- * Describes why a parsed JSON file is not usable as a snapshot manifest.
- *
- * A parseable file is not necessarily a snapshot: rendering a foreign or
- * truncated manifest used to fail with a raw `TypeError: Cannot read properties
- * of undefined (reading 'totalFiles')` from inside the text formatter.
- */
-function describeManifestShapeProblem(manifest: unknown): string | null {
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
-    return "not a JSON object";
-  }
-  const candidate = manifest as Record<string, unknown>;
-
-  const counts = candidate.counts as Record<string, unknown> | undefined;
-  if (!counts || typeof counts !== "object") return "missing `counts`";
-  for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
-    if (typeof counts[key] !== "number") return `missing numeric \`counts.${key}\``;
-    // `-5`, `1.5` and `1e999` are all numbers, and `report` printed each of them verbatim:
-    // "-5 files included", "Total lines: 1.5", "Total size: Infinity MB". A count is a
-    // non-negative integer, or the document is not a snapshot manifest.
-    if (!Number.isSafeInteger(counts[key]) || (counts[key] as number) < 0) {
-      return `\`counts.${key}\` must be a non-negative integer`;
-    }
-  }
-
-  // The fingerprint is a sha256 digest; `validate` used to accept `"12345"` and call the snapshot
-  // current, and `report` printed it as the fingerprint.
-  if (candidate.fingerprint !== undefined && !/^[0-9a-f]{64}$/.test(String(candidate.fingerprint))) {
-    return "`fingerprint` must be a 64-character sha256 hex digest";
-  }
-
-  if (!candidate.layers || typeof candidate.layers !== "object") return "missing `layers`";
-  if (!Array.isArray(candidate.files)) return "missing `files` array";
-  return null;
-}
-
-/**
  * The first command the user should run after `init`.
  *
  * It has to be runnable exactly as printed. `npm run snapshot` needs the script *and*
@@ -733,6 +702,31 @@ function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
   for (const warning of result.warnings) warn(`  ⚠ ${warning}`);
 }
 
+/**
+ * Effective `--format` from raw argv, read before parsing can reject the rest.
+ *
+ * Usage errors used to bypass `fail()` and leave stdout empty in JSON mode. This mirrors the
+ * parser's own last-wins rule for repeated value options and stops at `--`, where a format-looking
+ * token is a positional argument rather than an option.
+ */
+function requestsJsonFormat(argv: readonly string[]): boolean {
+  let format: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--") break;
+    if (argument === "--format") {
+      const next = argv[index + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        format = next;
+        index += 1;
+      }
+      continue;
+    }
+    if (argument.startsWith("--format=")) format = argument.slice("--format=".length);
+  }
+  return format === "json";
+}
+
 /** Runs the CLI and returns the process exit code. */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   let invocation: ParsedInvocation;
@@ -742,6 +736,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     if (err instanceof HelpRequested) return 0;
     if (err instanceof UsageError) {
       process.stderr.write(`❌ ${err.message}\n\n${USAGE}\n`);
+      if (requestsJsonFormat(argv)) {
+        process.stdout.write(
+          `${JSON.stringify({ error: { message: err.message, exitCode: 2 } }, null, 2)}\n`
+        );
+      }
       return 2;
     }
     throw err;

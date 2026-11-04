@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { findSecretInPath } from "./scanner/files.js";
+import { describeManifestShapeProblem } from "./validator/validate.js";
 import type { Manifest } from "./types.js";
 
 export interface ManifestDiff {
@@ -37,6 +38,24 @@ export interface PayloadDiff {
   configDigest: { before: string | null; after: string | null };
   fingerprint: { before: string; after: string };
   partsCount: { before: number; after: number };
+  /**
+   * The `schemaVersion` of both manifests.
+   *
+   * Two snapshots written under different schema versions can carry the same file
+   * hashes and still mean different things, so a mismatch is reported as a
+   * difference (never as a crash) and turns the payload block on.
+   */
+  schemaVersion: { before: string; after: string };
+  /**
+   * The `parts` array compared entry by entry: a part added, removed, or
+   * re-rendered (different `byteSize`, `sha256`, `lines` or `fileCount`).
+   *
+   * The per-file list compares `relativePath + hashSha256` only, so a hand-edited
+   * or older manifest whose parts were repacked, renamed or deleted used to produce
+   * "+0 -0 ~0 =N unchanged" and exit 0. This block is rendered independently of
+   * `differs`, because a source edit already legitimately turns the file lists on.
+   */
+  partsManifest: { differs: boolean; changes: string[] };
   layers: { before: Record<string, number>; after: Record<string, number> };
   /** Human-readable statements, rendered by the terminal form. */
   reasons: string[];
@@ -81,6 +100,59 @@ function describeLayerChanges(
   return changes;
 }
 
+type PartMetadata = Manifest["parts"][number];
+
+/**
+ * One statement for every part that was added, removed or re-rendered.
+ *
+ * Compared by `filename`, then by the metadata that makes the part a different
+ * artifact: `sha256`, `byteSize`, `lines` and `fileCount`. Part names are our own
+ * (`part-001.md`), but a hand-edited manifest can hold anything, and these lines
+ * are printed and serialized, so a token in a name is masked like every other path.
+ */
+function describePartChanges(
+  before: readonly PartMetadata[],
+  after: readonly PartMetadata[]
+): string[] {
+  const index = (parts: readonly PartMetadata[]): Map<string, PartMetadata> => {
+    const map = new Map<string, PartMetadata>();
+    for (const part of parts) {
+      if (part && typeof part.filename === "string") map.set(part.filename, part);
+    }
+    return map;
+  };
+  const left = index(before);
+  const right = index(after);
+  const label = (filename: string): string => findSecretInPath(filename)?.masked ?? filename;
+  const changes: string[] = [];
+
+  for (const [filename, part] of right) {
+    const previous = left.get(filename);
+    if (previous === undefined) {
+      changes.push(`part added: ${label(filename)}`);
+      continue;
+    }
+    const moved: string[] = [];
+    if (previous.sha256 !== part.sha256) {
+      moved.push(`sha256 ${shortDigest(previous.sha256)} → ${shortDigest(part.sha256)}`);
+    }
+    if (previous.byteSize !== part.byteSize) {
+      moved.push(`byteSize ${previous.byteSize} → ${part.byteSize}`);
+    }
+    if (previous.lines !== part.lines) {
+      moved.push(`lines ${previous.lines} → ${part.lines}`);
+    }
+    if (previous.fileCount !== part.fileCount) {
+      moved.push(`fileCount ${previous.fileCount} → ${part.fileCount}`);
+    }
+    if (moved.length > 0) changes.push(`part ${label(filename)}: ${moved.join(", ")}`);
+  }
+  for (const filename of left.keys()) {
+    if (!right.has(filename)) changes.push(`part removed: ${label(filename)}`);
+  }
+  return changes;
+}
+
 /**
  * Builds the payload/configuration block.
  *
@@ -99,17 +171,28 @@ function describePayloadDiff(
   const generatorAfter = after.generator?.version ?? "unknown";
   const digestBefore = typeof before.config?.digest === "string" ? before.config.digest : null;
   const digestAfter = typeof after.config?.digest === "string" ? after.config.digest : null;
+  // A hand-built object can omit either side; say "unknown" rather than print
+  // `undefined` into the reason line and the JSON payload.
+  const schemaBefore = typeof before.schemaVersion === "string" ? before.schemaVersion : "unknown";
+  const schemaAfter = typeof after.schemaVersion === "string" ? after.schemaVersion : "unknown";
 
   const generatorDiffers = generatorBefore !== generatorAfter;
   const digestDiffers =
     digestBefore !== null && digestAfter !== null && digestBefore !== digestAfter;
-  const configurationDiffers = generatorDiffers || digestDiffers;
+  const schemaDiffers = schemaBefore !== schemaAfter;
+  const configurationDiffers = generatorDiffers || digestDiffers || schemaDiffers;
 
   const fingerprintDiffers = before.fingerprint !== after.fingerprint;
   const partsDiffer = before.counts.partsCount !== after.counts.partsCount;
+  const partChanges = describePartChanges(before.parts ?? [], after.parts ?? []);
   const layerChanges = describeLayerChanges(before.layers ?? {}, after.layers ?? {});
 
   const reasons: string[] = [];
+  if (schemaDiffers) {
+    reasons.push(
+      `schema version ${schemaBefore} → ${schemaAfter} (the two manifests describe different formats)`
+    );
+  }
   if (digestDiffers) {
     reasons.push(
       `configuration digest ${shortDigest(digestBefore)} → ${shortDigest(digestAfter)} ` +
@@ -150,6 +233,8 @@ function describePayloadDiff(
     configDigest: { before: digestBefore, after: digestAfter },
     fingerprint: { before: before.fingerprint, after: after.fingerprint },
     partsCount: { before: before.counts.partsCount, after: after.counts.partsCount },
+    schemaVersion: { before: schemaBefore, after: schemaAfter },
+    partsManifest: { differs: partChanges.length > 0, changes: partChanges },
     layers: { before: { ...(before.layers ?? {}) }, after: { ...(after.layers ?? {}) } },
     reasons,
   };
@@ -166,14 +251,15 @@ function hashMap(manifest: Manifest): Map<string, string> {
 }
 
 /**
- * Describes why a parsed value cannot be used as a snapshot manifest.
+ * The narrow precondition of the in-memory comparison.
  *
- * A parseable JSON object is not necessarily a manifest: `{ "counts": {},
- * "files": [] }` used to be accepted, and `diff` then printed
- * `before  undefined  undefined file(s)` and exited 0. The checks mirror what
- * `validate` requires before it will inspect a manifest at all.
+ * `loadManifest` enforces the full manifest shape with `describeManifestShapeProblem`
+ * — the same guard `validate` and `report` use — so everything the CLI compares has
+ * been checked there. `compareManifests` is also a library entry point, and comparing
+ * two file lists reads only `files` and the counts, so this checks exactly that and
+ * names the side that is malformed instead of letting `undefined` reach the output.
  */
-function manifestProblem(value: unknown): string | null {
+function comparableProblem(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "not a JSON object";
   const candidate = value as Record<string, unknown>;
 
@@ -191,19 +277,18 @@ function manifestProblem(value: unknown): string | null {
   if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
     return 'no "counts" object';
   }
-  for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
+  for (const key of ["totalFiles", "partsCount"]) {
     if (typeof (counts as Record<string, unknown>)[key] !== "number") {
       return `no numeric "counts.${key}"`;
     }
   }
 
   if (typeof candidate.generatedAt !== "string") return 'no "generatedAt"';
-  if (typeof candidate.fingerprint !== "string") return 'no "fingerprint"';
   return null;
 }
 
 function assertUsableManifest(value: unknown, label: string): asserts value is Manifest {
-  const problem = manifestProblem(value);
+  const problem = comparableProblem(value);
   if (problem) {
     throw new Error(`The ${label} manifest is not a snapshot manifest this tool wrote: ${problem}.`);
   }
@@ -284,7 +369,10 @@ export function loadManifest(target: string): Manifest {
     throw new Error(`Could not parse ${manifestPath}: ${(err as Error).message}`);
   }
 
-  const problem = manifestProblem(parsed);
+  // One shared guard with `validate` and `report`: a manifest whose `fingerprint`,
+  // `generatedAt`, `schemaVersion` or required arrays are missing is rejected here,
+  // before the comparison can report "+0 -0 ~0 =N unchanged" for it.
+  const problem = describeManifestShapeProblem(parsed);
   if (problem) {
     throw new Error(
       `${manifestPath} is not a usable snapshot manifest: ${problem}. ` +
@@ -337,6 +425,14 @@ export function renderDiffText(diff: ManifestDiff): string {
       "",
       "configuration not compared: a manifest has no config digest (written before 4.0.5)."
     );
+  }
+
+  // The file list compares paths and hashes; a part that was renamed, re-packed or
+  // hand-edited is invisible there. Rendered whether or not the block above fired,
+  // because a source edit legitimately turns the block above on by itself.
+  if (diff.payload.partsManifest.differs) {
+    lines.push("", "parts manifest differs:");
+    for (const change of diff.payload.partsManifest.changes) lines.push(`  ! ${change}`);
   }
 
   return lines.join("\n");

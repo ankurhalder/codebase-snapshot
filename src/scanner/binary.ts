@@ -19,8 +19,12 @@ export const BINARY_EXTENSIONS = new Set([
   ".tar",
   ".gz",
   ".tgz",
+  ".br",
   ".bz2",
   ".xz",
+  ".zst",
+  ".lz4",
+  ".lzma",
   ".7z",
   ".rar",
   ".mp3",
@@ -260,6 +264,26 @@ export function decodeText(buffer: Buffer): DecodedText {
       encoding: "utf-8",
       invalidBytes: 0,
       binary: false,
+    };
+  }
+
+  // A compressed blob that is not in `BINARY_EXTENSIONS` fails UTF-8 decoding rather than
+  // containing a NUL, so it used to reach the parts as mojibake: ripgrep's 186-byte
+  // `sherlock.br` (Brotli, 79 undecodable bytes) was emitted `full` as 341 bytes of U+FFFD —
+  // the one case where the artifact is larger than the source and says nothing.
+  //
+  // The bar is deliberately high — at least 32 undecodable bytes AND at least a third of the
+  // file — because a *text* file can be a third non-ASCII in the wrong encoding: a Latin-1
+  // French or German document is full of single bytes that are invalid UTF-8, and turning those
+  // into `binary` skips would drop real source files. Compressed data sits far above this line
+  // (Brotli's fixture is 42%).
+  if (invalidBytes >= 32 && invalidBytes * 3 >= buffer.length) {
+    return {
+      text: "",
+      encoding: "utf-8",
+      invalidBytes,
+      binary: true,
+      binaryReason: `${invalidBytes} of ${buffer.length} bytes are not UTF-8; treated as binary`,
     };
   }
 

@@ -340,6 +340,11 @@ wrong and retrying it unchanged will fail the same way.
 - **stdout** carries the payload. With `--format json` it is pure JSON, safe to pipe into
   `jq` or `JSON.parse`.
 - **stderr** carries progress, the human summary, warnings and errors.
+- **In text mode the human result is on stderr, and stdout is empty.** That holds for every
+  command: `report`, `explain`, `diff` and `validate` print their answer — tables, verdicts,
+  drift lines — to stderr, and `generate` prints its summary there too. Redirecting
+  `command > file.txt` therefore writes an empty file in text mode; use `--format json` when
+  you want the output on stdout.
 
 A failing invocation still writes one JSON document to stdout, so an agent never has to parse an
 empty string:

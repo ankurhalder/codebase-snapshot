@@ -255,7 +255,9 @@ export function buildAgentContract(): AgentContract {
       {
         name: "validate",
         aliases: ["check"],
-        summary: "Compare the snapshot on disk with the repository; exit 1 on drift.",
+        summary:
+          "Compare the snapshot on disk with the repository; exit 1 on drift. " +
+          "`check` is an alias of `validate`.",
         positionals: [],
         exits: [0, 1],
       },
@@ -388,6 +390,16 @@ export function buildAgentContract(): AgentContract {
         // as every other option — no prose sentinel a machine consumer could misread.
         appliesTo: optionAppliesTo("format"),
         summary: 'Output format: "text" or "json". JSON goes to stdout, progress to stderr.',
+      },
+      {
+        flag: "--mode",
+        type: "string",
+        default: "generate",
+        appliesTo: optionAppliesTo("mode"),
+        summary:
+          "Select the command when no command word is given. Values: generate, validate, check, " +
+          "report, init, explain, diff, describe, skill. A command word and --mode must name the same " +
+          "command; a contradiction is a usage error (exit 2).",
       },
       {
         flag: "--cwd",

@@ -32,6 +32,11 @@ deterministically:
   language, part, hash and a structural summary — and every *excluded* file with the reason.
 - **Provably current.** `validate` re-hashes the repository against the snapshot and exits
   non-zero on any drift, so a pipeline can gate on context being fresh.
+- **Deterministic where it matters.** Two runs over unchanged input give byte-identical
+  `parts/`, `reports/navigation.md` and `reports/project-tree.md`, and the same
+  `manifest.fingerprint`. Only `manifest.json`, the snapshot's `README.md`,
+  `reports/audit.md` and `.codebase-snapshot` change between runs, because they carry
+  timestamps, a run id and a pid.
 - **Safe by default.** Credential files are skipped unless asked for, secret-shaped strings are
   redacted, and a mistyped output directory cannot delete source code.
 - **Usable by agents, not just humans.** A machine-readable contract and an installable skill
@@ -179,7 +184,7 @@ npx @ankurhalder/codebase-snapshot skill --install
 An agent told only "use `npx @ankurhalder/codebase-snapshot`" can read the contract, follow its
 ordered workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-→ [Using this with an AI agent](docs/agent.md) · [AGENTS.md](AGENTS.md) · [llms.txt](llms.txt)
+→ [Using this with an AI agent](docs/agent.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
 
 ## Configuration
 
@@ -245,8 +250,8 @@ both. The CLI and the API share one implementation, so anything the CLI does is 
 
 ## Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[code of conduct](CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome — see [CONTRIBUTING.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/CONTRIBUTING.md) and the
+[code of conduct](https://github.com/ankurhalder/codebase-snapshot/blob/main/CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 

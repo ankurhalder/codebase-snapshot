@@ -163,6 +163,91 @@ function wouldNowBeIncluded(cwd: string, relativePath: string, reason?: string):
 }
 
 /**
+ * Describes why a parsed JSON value is not usable as a snapshot manifest.
+ *
+ * One guard for every command that reads a manifest from disk. `validate` used to
+ * accept a manifest whose `fingerprint` had been deleted and call the snapshot
+ * "valid and up to date", `report` printed `undefined` for the same file, and
+ * `diff` rejected it with a private copy of these rules — three answers to one
+ * question. A manifest is:
+ *
+ * - a JSON object (not an array, not a primitive),
+ * - with non-negative integer counts (`totalFiles`, `totalLines`, `totalSizeBytes`, `partsCount`),
+ * - with a `generatedAt` string and a `schemaVersion` string,
+ * - with a `fingerprint` that is exactly 64 lowercase hex characters (a sha256),
+ * - with `files`, `skipped` and `parts` arrays, each entry carrying the field the
+ *   rest of the tool indexes by (`relativePath`, `filename`),
+ * - with a `totals` object (`report` reads `totals.redactedLines`) and a `layers` object.
+ *
+ * Returns `null` when the value is usable, otherwise one sentence naming the
+ * first problem. Callers prefix it with the path they read.
+ */
+export function describeManifestShapeProblem(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "not a JSON object";
+  const candidate = value as Record<string, unknown>;
+
+  const counts = candidate.counts;
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
+    return 'no "counts" object';
+  }
+  for (const key of ["totalFiles", "totalLines", "totalSizeBytes", "partsCount"]) {
+    const count = (counts as Record<string, unknown>)[key];
+    if (typeof count !== "number") return `missing numeric \`counts.${key}\``;
+    // `-5`, `1.5` and `1e999` are all numbers, and `report` printed each of them
+    // verbatim: "-5 files included", "Total lines: 1.5". A count is a non-negative
+    // integer, or the document is not a snapshot manifest.
+    if (!Number.isSafeInteger(count) || count < 0) {
+      return `\`counts.${key}\` must be a non-negative integer`;
+    }
+  }
+
+  if (typeof candidate.generatedAt !== "string" || candidate.generatedAt.trim() === "") {
+    return 'missing "generatedAt" timestamp';
+  }
+  if (typeof candidate.schemaVersion !== "string" || candidate.schemaVersion.trim() === "") {
+    return 'missing "schemaVersion"';
+  }
+  if (
+    typeof candidate.fingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/.test(candidate.fingerprint)
+  ) {
+    return '`fingerprint` must be a 64-character lowercase sha256 hex digest';
+  }
+
+  // `report` reads `totals.redactedLines`; a missing object used to crash the text
+  // renderer after it had already printed half a report.
+  if (!candidate.totals || typeof candidate.totals !== "object" || Array.isArray(candidate.totals)) {
+    return 'missing "totals" object';
+  }
+
+  if (!Array.isArray(candidate.files)) return 'missing "files" array';
+  for (const entry of candidate.files) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return 'a "files" entry is not an object';
+    }
+    if (typeof (entry as Record<string, unknown>).relativePath !== "string") {
+      return 'a "files" entry has no "relativePath"';
+    }
+  }
+
+  if (!Array.isArray(candidate.skipped)) return 'missing "skipped" array';
+  if (!Array.isArray(candidate.parts)) return 'missing "parts" array';
+  for (const entry of candidate.parts) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return 'a "parts" entry is not an object';
+    }
+    if (typeof (entry as Record<string, unknown>).filename !== "string") {
+      return 'a "parts" entry has no "filename"';
+    }
+  }
+
+  if (!candidate.layers || typeof candidate.layers !== "object" || Array.isArray(candidate.layers)) {
+    return 'missing "layers" object';
+  }
+  return null;
+}
+
+/**
  * Validates a generated snapshot against the working tree and against the
  * recorded configuration.
  *
@@ -211,20 +296,16 @@ export function validateSnapshot(
     };
   }
 
-  if (
-    !manifest ||
-    typeof manifest !== "object" ||
-    !Array.isArray(manifest.files) ||
-    !Array.isArray(manifest.skipped) ||
-    !Array.isArray(manifest.parts)
-  ) {
+  // The same guard `report` and `diff` use, so the three commands agree about what
+  // a manifest is. The array-only check this replaced accepted a manifest whose
+  // `fingerprint` had been deleted, and answered "valid and up to date".
+  const shapeProblem = describeManifestShapeProblem(manifest);
+  if (shapeProblem) {
     return {
       valid: false,
       manifestPresent: true,
       drift: emptyDrift(),
-      errors: [
-        `${manifestPath} is not a snapshot manifest v3: expected arrays for "files", "skipped" and "parts".`,
-      ],
+      errors: [`${manifestPath} is not a snapshot manifest: ${shapeProblem}`],
       warnings: [],
     };
   }

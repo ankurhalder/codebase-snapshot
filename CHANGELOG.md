@@ -4,7 +4,143 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
-## Unreleased
+## 4.2.0
+
+Every change here came out of a full audit of the tool against eight real repositories and an
+adversarial review of every module. The three defects that mattered most were all in the two
+promises this package leads with — "never leak secrets" and "machine-readable output".
+
+### Two ways a secret kept its tail
+
+A quoted credential containing an escaped quote was masked only up to the backslash:
+`JSON.parse('{"password": "p\"ssw0rd"})` was emitted as
+`"[REDACTED: potential secret-like value omitted from snapshot]"ssw0rd"` — most of the value in
+clear, and the line left syntactically broken. An unquoted value stopped at the first character
+outside `[A-Za-z0-9_+=/-]`, so a percent-encoded token kept its tail:
+`?access_token=abc%2Edef&scope=read` lost `abc` and shipped `%2Edef`. Both value classes now
+describe the value they are masking — escaped pairs are consumed by the quoted rule, and `%`,
+`:` and `~` are token characters — and the mask replaces the whole value.
+
+### A compressed fixture was emitted as mojibake, at twice its own size
+
+`.br` was missing from `BINARY_EXTENSIONS`, so ripgrep's 186-byte `sherlock.br` failed UTF-8
+decoding instead of being recognised as binary: it was emitted `full` as 341 bytes containing 78
+U+FFFD — the one case where the artifact is larger than its source and says nothing. `.br` (and
+`zst`, `lz4`, `lzma`) are now in the list, and a second guard catches the next unknown format:
+at least 32 undecodable bytes **and** at least a third of the file means binary. The bar is high
+on purpose — a Latin-1 document is legitimately full of invalid UTF-8 bytes and must stay
+`utf-8-lossy`.
+
+### A config that exported nothing ran on the built-in defaults
+
+`export default null;` was erased by a nullish fallback (`imported.default ?? imported`), so the
+module namespace stood in for the config, every setting was ignored, and the run generated with
+the defaults at exit 0. The loader now distinguishes "no default export" from "the default
+export is null" and refuses with the same message every other wrong export gets.
+
+### An unknown setting was dropped in silence
+
+`{ maxPartByte: 4096 }` generated with the default budget at exit 0 — the typo was invisible, and
+it is the silent fallback this project forbids. A config file (module, JSON or `.snapshotrc`)
+now rejects any key that is not a setting, naming it and pointing at the generated config as the
+list of what exists.
+
+### `--format json` produced nothing when the arguments were wrong
+
+Every usage error — unknown flag, unknown command, bad value, missing `--cwd`, wrong arity —
+exited 2 with **0 bytes** on stdout, while the docs promised one parseable document per JSON-mode
+invocation. The format is now read from raw argv before validation, so the error document is
+emitted for usage errors too; the human line stays on stderr.
+
+### An async hook could append to the JSON payload
+
+The stdout redirect that keeps `console.log` inside a hook out of the payload wrapped only the
+synchronous call. A hook that logged after an `await` appended its text after the JSON, so
+`--format json` output was no longer parseable while the command still exited 0. The redirect now
+lives until the returned promise settles, and the payload is written to the real stdout exactly
+once.
+
+### Truncation was invisible in the audit
+
+`reports/audit.md` printed "✅ No files exceeded the large file budget" while a third of a
+document was missing from the snapshot, because the cut came from `maxPartBytes` rather than
+`largeFileBytes`. It is structural for the `docs` preset, whose 100 KB part budget sits *below*
+the 200 KB large-file threshold. Section 3 now reports truncation from either cause, with bytes,
+lines and a `Cut by` column, and `generate` warns when `maxPartBytes < largeFileBytes`.
+
+### A part-budget cut carried no marker
+
+When the part budget was the binding constraint the block simply stopped — no
+`[N lines omitted]` anywhere, and the manifest said `truncated: true` while the artifact read as
+complete. Every budget-forced cut now carries a marker naming the budget
+(`… [19940 lines omitted: part budget 1887 B] …`), recomputed correctly when a second shrink pass
+runs.
+
+### The preview tail window lost lines on newline-terminated files
+
+`content.split("\n")` yields a trailing empty element, which consumed a tail slot: a 10-line file
+at `previewHeadLines: 2`, `previewTailLines: 2` emitted `line 1`, `line 2`, an omission marker and
+**no tail at all**, while `includedLines` claimed one more line than the block carried. The tail
+window and the omission count now describe what is emitted.
+
+### A filename could inject a link into `reports/navigation.md`
+
+The link label escaped `|` and control characters but not brackets, so a file named `b](b).ts`
+produced `[src/b](b).ts](…)` — a live Markdown link to `b` — and `x](/evil).ts` linked to `/evil`.
+The label is escaped; the link target and anchor are unchanged.
+
+### A deep directory tree crashed the run
+
+The project-tree walker recursed per directory, so a ~6,000-level chain overflowed the stack after
+76 s and wrote **no snapshot**. The walk is iterative, the output order is unchanged, and the tree
+is capped at 512 levels with a marker and a warning.
+
+### One oversized text file aborted the whole run
+
+A file over ~512 MiB of *text* threw `Cannot create a string longer than 0x1fffffe8 characters`
+from inside the run, with no `skipped[]` record; the equivalent *binary* file was skipped
+correctly. A decode failure is now a per-file `read-error` skip and the run continues.
+
+### `validate`, `report` and `diff` now agree on what a snapshot is
+
+`validate` called a manifest "valid and up to date" with `fingerprint` deleted, `report` printed
+`undefined`, and `diff` rejected the same file. One shared guard now requires `generatedAt`,
+`schemaVersion`, a 64-character lowercase `fingerprint`, `counts`, `totals`, `layers` and the
+`files`/`skipped`/`parts` arrays, and all three commands use it.
+
+### `diff` notices a schema or a parts change
+
+A copy with `schemaVersion: "9.9.9"`, a deleted `parts` array, or a changed part digest was
+reported as `+0 -0 ~0 =N unchanged`. `diff` now reports a schema mismatch as a difference and
+compares part metadata by filename.
+
+### `--discovery walk` now honours `.gitignore` escapes
+
+`\#hashfile.ts`, `\!bangfile.ts` and `spaced\ .ts` were all *included* in walk mode while git
+ignored them — the parser trimmed and sniffed first characters, and the matcher normalised `\` to
+`/`. The parser follows gitignore(5)'s line grammar and an escape-aware matcher handles patterns
+containing a backslash; plain `!` negation is unchanged.
+
+### `init` writes the repository's real branch
+
+The generated config always said `branch: "main"`, so on any repository whose default branch is
+`master` or `vNext` the first `validate` printed a branch-mismatch warning the user never caused.
+It now records the branch `getGitInfo` reports and falls back to `"main"` only when git cannot
+report one.
+
+### The contract publishes `check` and `--mode`, and stops over-promising `--option=value`
+
+`check` is documented as an alias of `validate`, the hidden `--mode` selector is in
+`describe.options` with its values and contradictions, and the help sentence now says
+"value-taking options" — booleans never accepted `=true`.
+
+### Documentation
+
+The complete list of corrections is in the wiki and `docs/`: option counts, the removed `agents`
+skill target, `--tmp-dir` (a config key, not a flag), the `--watch` message, the shipped README's
+404 links (`CHANGELOG.md` and `SECURITY.md` now ship; the rest are absolute URLs), and
+measurement-backed statements for determinism, text-mode output streams, monolith byte counts and
+ignore granularity.
 
 ### The generated config was a lint warning in every Next.js project
 

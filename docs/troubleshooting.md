@@ -55,8 +55,13 @@ column is in the [CLI reference](cli.md#options).
 | `--out-dir requires a value (received an empty string).` | An unset shell variable expanded to nothing. Quote it or drop the flag. Every string option rejects `""` rather than silently using the default. |
 | `--max-part-bytes received a value that looks like another flag (for example a negative number). Use the "--option=value" form, and note that sizes must be positive.` | A negative number reads as a flag. Use `--max-part-bytes=-5`, and note that sizes must be positive. |
 | `Unknown preset "nope". Expected one of: …` | The message lists all 25 valid names. |
-| `--target must be one of: claude, agents, cursor, all (received "bogus").` | Fix the value. |
+| `--target must be one of: claude, cursor, all (received "bogus").` | Fix the value. |
 | `diff expects exactly two arguments …` / `explain expects exactly one path.` | Fix the arity. |
+
+The `agents` target was removed in 4.1.1: `skill --install` writes only into the two registries
+agent tools read by name (`.claude/skills/` and `.cursor/rules/`) and never writes `AGENTS.md`,
+which is your repository's own agent contract. To put the skill there, print it and paste it
+yourself: `codebase-snapshot skill >> AGENTS.md`.
 
 ## Exit code 1 — the state was wrong
 

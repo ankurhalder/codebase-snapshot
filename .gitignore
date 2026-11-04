@@ -4,6 +4,7 @@ dist
 *.log
 snapshot
 snapshot.tmp
+coverage/
 
 # Audit PoC scratch space. The verification scripts (audit/poc/*.mjs,
 # audit/verify/*.mjs) and the reports are tracked; the fixture trees they

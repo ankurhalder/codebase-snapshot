@@ -51,9 +51,13 @@ export function truncatePreview(
     };
   }
 
-  const head = lines.slice(0, headLines);
-  const tail = tailLines > 0 ? lines.slice(lines.length - tailLines) : [];
-  const omitted = total - headLines - tailLines;
+  // A newline-terminated source splits with a trailing "" that is not a line of its
+  // own. Keeping it in the window spent one tail slot on nothing and made the
+  // omission notice claim one line fewer than it hid.
+  const window = content.endsWith("\n") ? lines.slice(0, -1) : lines;
+  const head = window.slice(0, headLines);
+  const tail = tailLines > 0 ? window.slice(window.length - tailLines) : [];
+  const omitted = total - head.length - tail.length;
 
   const result = [
     ...head,
@@ -65,6 +69,8 @@ export function truncatePreview(
     content: result,
     isTruncated: true,
     originalLines: total,
-    includedLines: headLines + tailLines + 1,
+    // Head + notice + tail is exactly what is emitted; counting the slice is
+    // wrong when the source ended with a newline (the trailing "" issue above).
+    includedLines: head.length + tail.length + 1,
   };
 }

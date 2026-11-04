@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { ARTIFACT_NAMES, parseByteSize, supportsTypeScriptImports } from "../config.js";
 import { appendGitignoreEntries } from "../gitignore.js";
 import { detectPreset, listPresetNames } from "../presets/index.js";
+import { getGitInfo } from "../scanner/files.js";
 import type { ArtifactSelection, ByteSize } from "../types.js";
 import { GENERATOR_NAME, GENERATOR_VERSION } from "../version.js";
 import {
@@ -367,6 +368,12 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
 
   const answers: WizardAnswers = {
     preset: detected.presetName,
+    // The repository's own branch, read the same way the generator reads it.
+    // `getGitInfo` already falls back to "main" when git cannot report one, so a
+    // directory that is not a repository, or a detached HEAD, still gets the
+    // documented default. Writing "main" unconditionally made every later
+    // `validate` warn about a mismatch the user never caused.
+    branch: getGitInfo(options.cwd).branch,
     maxPartBytes:
       options.maxPartBytes ??
       detected.recommendedBudget ??

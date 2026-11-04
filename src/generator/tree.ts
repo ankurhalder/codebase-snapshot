@@ -9,14 +9,37 @@ import { escapeControls } from "../terminal.js";
  * are suffixed with `/` so a file and a directory with the same name are no
  * longer indistinguishable, and the output is capped so a huge repository cannot
  * produce an unbounded report.
+ *
+ * The walk is iterative: the recursive version blew the stack on a repository
+ * with ~6000 nested directories ("Maximum call stack size exceeded", exit 1, no
+ * snapshot at all). Depth is also capped — a hostile checkout cannot force an
+ * unbounded number of indentation levels through this report.
  */
 const MAX_TREE_LINES = 20_000;
+const MAX_TREE_DEPTH = 512;
+
+interface TreeNode {
+  children: Map<string, TreeNode>;
+}
+
+interface WalkFrame {
+  node: TreeNode;
+  prefix: string;
+  depth: number;
+  keys: string[];
+  index: number;
+}
+
+function childKeys(node: TreeNode): string[] {
+  return Array.from(node.children.keys()).sort((a, b) => {
+    const aIsDir = node.children.get(a)!.children.size > 0;
+    const bIsDir = node.children.get(b)!.children.size > 0;
+    if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
 
 export function generateProjectTree(filePaths: string[]): string {
-  interface TreeNode {
-    children: Map<string, TreeNode>;
-  }
-
   const root: TreeNode = { children: new Map() };
 
   for (const filePath of filePaths) {
@@ -34,38 +57,46 @@ export function generateProjectTree(filePaths: string[]): string {
 
   const lines: string[] = ["."];
   let truncatedAt = -1;
+  let depthTruncated = false;
 
-  function walk(node: TreeNode, prefix: string): void {
-    if (truncatedAt !== -1) return;
-
-    const keys = Array.from(node.children.keys()).sort((a, b) => {
-      const aIsDir = node.children.get(a)!.children.size > 0;
-      const bIsDir = node.children.get(b)!.children.size > 0;
-      if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-      return a < b ? -1 : a > b ? 1 : 0;
-    });
-
-    keys.forEach((key, index) => {
-      if (truncatedAt !== -1) return;
-      const isLast = index === keys.length - 1;
-      const child = node.children.get(key)!;
-      const isDirectory = child.children.size > 0;
-      // Sorting stays on the raw name; only the rendered label is escaped, so a
-      // bidi override in a name cannot reorder the tree visually or the list.
-      const label = escapeControls(key);
-      lines.push(`${prefix}${isLast ? "└── " : "├── "}${label}${isDirectory ? "/" : ""}`);
-      if (lines.length >= MAX_TREE_LINES) {
-        truncatedAt = lines.length;
-        return;
-      }
-      walk(child, prefix + (isLast ? "    " : "│   "));
+  const stack: WalkFrame[] = [{ node: root, prefix: "", depth: 0, keys: childKeys(root), index: 0 }];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.index >= frame.keys.length) {
+      stack.pop();
+      continue;
+    }
+    const key = frame.keys[frame.index];
+    frame.index += 1;
+    const isLast = frame.index === frame.keys.length;
+    const child = frame.node.children.get(key)!;
+    const isDirectory = child.children.size > 0;
+    // Sorting stays on the raw name; only the rendered label is escaped, so a
+    // bidi override in a name cannot reorder the tree visually or the list.
+    const label = escapeControls(key);
+    lines.push(`${frame.prefix}${isLast ? "└── " : "├── "}${label}${isDirectory ? "/" : ""}`);
+    if (lines.length >= MAX_TREE_LINES) {
+      truncatedAt = lines.length;
+      break;
+    }
+    if (!isDirectory) continue;
+    if (frame.depth + 1 > MAX_TREE_DEPTH) {
+      depthTruncated = true;
+      continue;
+    }
+    stack.push({
+      node: child,
+      prefix: frame.prefix + (isLast ? "    " : "│   "),
+      depth: frame.depth + 1,
+      keys: childKeys(child),
+      index: 0,
     });
   }
 
-  walk(root, "");
-
   if (truncatedAt !== -1) {
     lines.push(`... [tree truncated at ${MAX_TREE_LINES} lines] ...`);
+  } else if (depthTruncated) {
+    lines.push(`... [tree truncated at ${MAX_TREE_DEPTH} levels] ...`);
   }
 
   // Chosen from the rendered tree: a filename may contain a backtick run, and a
