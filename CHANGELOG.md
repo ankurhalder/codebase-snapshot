@@ -60,7 +60,7 @@ name on the next run, so an existing snapshot keeps working and is upgraded in p
 
 ### Documentation site
 
-The docs now have a crawlable home at <https://codebase-snapshot.ankurhalder.com>, generated from
+The docs now have a crawlable home at <https://ankurhalder.github.io/codebase-snapshot/>, generated from
 `README.md` and `docs/` in this repository, with a sitemap, its own `robots.txt`, an `llms.txt` at
 the site root and a Markdown twin per page. GitHub's `robots.txt` blocks directory-tree and raw-file
 paths and publishes no repository sitemap, so `docs/` had no crawlable entry point before this.

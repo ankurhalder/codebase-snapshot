@@ -6,8 +6,12 @@ Only the latest published release receives security fixes.
 
 | Version | Supported |
 | :--- | :--- |
-| 4.x | ✅ |
-| 3.x and older | ❌ |
+| 0.9.x | ✅ |
+| anything older | ❌ |
+
+The number line restarted at 0.9.0 when the package moved to the unscoped `codebase-snapshot` name,
+so 0.9.x is newer than 4.4.1, not older. That is explained in full in the
+[changelog](CHANGELOG.md#a-note-on-version-numbers).
 
 ## Reporting a vulnerability
 
