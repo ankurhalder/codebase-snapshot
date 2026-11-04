@@ -101,6 +101,50 @@ snapshot reports in about half a second. Requires an existing `manifest.json` (e
 missing); exits `0` otherwise. It does **not** check whether the snapshot is still true — that
 is `validate`, which re-reads the repository and exits `1` on drift.
 
+### `setup`
+
+```bash
+codebase-snapshot setup
+```
+
+The whole first run in one command, with defaults and no prompts:
+
+1. Detects the project preset.
+2. Writes `snapshot.config.ts` (or `.mjs`) — **only when the repository has none**. An existing
+   config is kept byte for byte and the output says `Keeping …`.
+3. Adds `scripts.snapshot`, `scripts.snapshot:validate`, the `devDependencies` entry and the
+   `.gitignore` entries, exactly as `init` does.
+4. Installs dependencies with the package manager the repository already uses — a lockfile
+   decides (`bun.lockb`, `pnpm-lock.yaml`, `yarn.lock`, otherwise npm). A failed install is a
+   warning, not a dead end: the snapshot is still generated.
+5. Generates through the normal `generate` command, so the summary, the output-directory guard and
+   the `--format json` document are the ones a plain run produces.
+
+```
+🚀 Setup for: /path/to/repo
+✅ Created snapshot.config.ts (preset: nextjs)
+   Added npm scripts: snapshot, snapshot:validate
+   Added devDependency: @ankurhalder/codebase-snapshot ^4.4.0
+   Added to .gitignore: snapshot/, snapshot.tmp/
+⏳ Installing dependencies…
+✅ Installed dependencies (npm install, 2.1s)
+✅ Snapshot generated in 0.16s:
+   - Tracked files: 128
+   …
+   Next:  npm run snapshot
+```
+
+- `--no-install` skips step 4 — CI, an offline machine, or a lockfile you would rather no package
+  manager touched.
+- `--dry-run` prints the plan and the config it would write, and writes nothing.
+- `--force` rewrites an existing config; `--preset`, `--include`, `--exclude`, `--out-dir`,
+  `--max-part-bytes`, `--include-sensitive-files` and `--skip-artifacts` behave as they do for
+  `generate` and `init`.
+- `--format json` emits **one** document:
+  `{ "setup": { configPath, configReused, preset, scripts, dependency, gitignoreEntries, install, notes }, "manifest": { … } }`,
+  where `manifest` is the same object `generate --format json` writes.
+- If `outDir` holds files this tool did not write, `setup` still refuses to replace it (exit 1,
+  naming the entries) after writing the config — the guard is not weakened by the convenience.
 ### `init`
 
 ```bash

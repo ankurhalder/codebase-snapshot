@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
@@ -24,11 +25,15 @@ import { escapeControls, formatNumber } from "./terminal.js";
 
 const VERSION = GENERATOR_VERSION;
 
+/** How long `setup` waits for the dependency install before reporting it as failed. */
+const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
+
 type Command =
   | "generate"
   | "validate"
   | "report"
   | "init"
+  | "setup"
   | "explain"
   | "diff"
   | "describe"
@@ -40,6 +45,7 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["check", "validate"],
   ["report", "report"],
   ["init", "init"],
+  ["setup", "setup"],
   ["explain", "explain"],
   ["diff", "diff"],
   ["describe", "describe"],
@@ -52,6 +58,7 @@ const COMMAND_ARITY: Record<Command, number> = {
   validate: 0,
   report: 0,
   init: 0,
+  setup: 0,
   explain: 1,
   diff: 2,
   describe: 0,
@@ -80,6 +87,7 @@ const CLI_OPTIONS = {
   yes: { type: "boolean" },
   force: { type: "boolean" },
   install: { type: "boolean" },
+  "no-install": { type: "boolean" },
   target: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -96,6 +104,7 @@ Usage:
   codebase-snapshot [command] [options]
 
 Commands:
+  setup                Everything at once: config, scripts, dependency, install, generate
   generate (default)   Generate a complete partitioned codebase snapshot
   validate, check      Validate snapshot integrity and check for drift
   init                 Generate a starter snapshot.config file
@@ -133,6 +142,10 @@ Options:
   --yes                         Accept every default without prompting
   --force                       Overwrite an existing config
 
+  setup only:
+  --no-install                  Skip installing the dependency before generating
+  --preset / --include / --exclude / --force   As for init
+
   skill only:
   --install                     Write the skill into the repository instead of printing
   --target <name>               claude | cursor | all (default: all)
@@ -161,6 +174,8 @@ interface ParsedInvocation {
   exclude?: string;
   yes: boolean;
   force: boolean;
+  /** `setup` only: skip the dependency install. */
+  noInstall: boolean;
   /** `skill` only: write the skill into the repository instead of printing it. */
   install: boolean;
   /** `skill` only: which location(s) to write. */
@@ -456,6 +471,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     yes: values.yes === true,
     force: values.force === true,
     install: values.install === true,
+    noInstall: values["no-install"] === true,
     target: values.target === undefined ? undefined : String(values.target),
     cwd: values.cwd === undefined ? process.cwd() : path.resolve(String(values.cwd)),
     outDir: values["out-dir"] === undefined ? undefined : String(values["out-dir"]),
@@ -576,8 +592,7 @@ function nextStepHint(cwd: string, scriptsAddedNow: boolean): string {
   return installed ? "npm run snapshot" : "npm install && npm run snapshot";
 }
 
-async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
-  try {
+async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  try {
     const result = await runInit({
       cwd: invocation.cwd,
       preset: invocation.preset,
@@ -618,6 +633,221 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     if (err instanceof PromptCancelled) {
       return fail(invocation.format, "Cancelled.");
     }
+    return fail(invocation.format, (err as Error).message);
+  }
+}
+
+/** One package manager and the command that installs the declared dependencies. */
+interface PackageManager {
+  name: string;
+  command: string;
+  args: string[];
+}
+
+/**
+ * The package manager this repository already uses, read from its lockfile.
+ *
+ * A lockfile is the only honest signal: running `npm install` inside a pnpm workspace rewrites a
+ * lockfile the project's own tooling owns, and the snapshot is not worth that.
+ */
+function detectPackageManager(cwd: string): PackageManager {
+  const has = (name: string): boolean => fs.existsSync(path.join(cwd, name));
+  if (has("bun.lockb") || has("bun.lock")) return { name: "bun", command: "bun", args: ["install"] };
+  if (has("pnpm-lock.yaml")) return { name: "pnpm", command: "pnpm", args: ["install"] };
+  if (has("yarn.lock")) return { name: "yarn", command: "yarn", args: ["install"] };
+  return { name: "npm", command: "npm", args: ["install"] };
+}
+
+interface InstallOutcome {
+  manager: string;
+  /** The command as printed, so a failure can be reproduced by hand. */
+  command: string;
+  ok: boolean;
+  /** Elapsed time, or the failure reason. */
+  detail: string;
+}
+
+/** Installs the repository's dependencies, turning any failure into a reportable outcome. */
+function installDependencies(cwd: string): InstallOutcome {
+  const manager = detectPackageManager(cwd);
+  const command = `${manager.command} ${manager.args.join(" ")}`;
+  const started = performance.now();
+  const result = spawnSync(manager.command, manager.args, {
+    cwd,
+    encoding: "utf8",
+    // npm, pnpm and yarn ship as `.cmd` shims on Windows, which spawnSync cannot exec directly.
+    shell: process.platform === "win32",
+    timeout: INSTALL_TIMEOUT_MS,
+  });
+  const seconds = `${((performance.now() - started) / 1000).toFixed(1)}s`;
+  if (result.error) {
+    return { manager: manager.name, command, ok: false, detail: `${result.error.message} (${seconds})` };
+  }
+  if (result.status !== 0) {
+    const tail = `${result.stderr ?? ""}${result.stdout ?? ""}`
+      .trim()
+      .split(/\r?\n/)
+      .slice(-3)
+      .join(" | ");
+    return { manager: manager.name, command, ok: false, detail: `exit ${result.status}: ${tail} (${seconds})` };
+  }
+  return { manager: manager.name, command, ok: true, detail: seconds };
+}
+
+/**
+ * Runs `fn` with stdout captured.
+ *
+ * `setup` generates through the normal `generate` command so every guard, summary line and JSON
+ * document is byte-for-byte what a plain generate produces; capturing lets it merge that document
+ * into the one `setup` owes a machine consumer instead of printing two.
+ */
+async function captureStdout(fn: () => Promise<number>): Promise<{ code: number; text: string }> {
+  const original = process.stdout.write.bind(process.stdout);
+  let text = "";
+  process.stdout.write = ((chunk: unknown): boolean => {
+    text += typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString("utf8");
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const code = await fn();
+    return { code, text };
+  } finally {
+    process.stdout.write = original;
+  }
+}
+
+/**
+ * `setup` — the whole first-run experience in one command.
+ *
+ * Writes the config (only when the repository has none), adds the npm scripts, the devDependency
+ * and the `.gitignore` entries, installs the dependency with the project's own package manager,
+ * and generates the first snapshot. Every step reports itself; a failed install is a warning rather
+ * than a dead end, because the snapshot can still be generated through `npx`, and `--no-install`
+ * exists for CI and offline machines.
+ */
+async function runSetupCommand(invocation: ParsedInvocation): Promise<number> {
+  try {
+    const init = await runInit({
+      cwd: invocation.cwd,
+      preset: invocation.preset,
+      outDir: invocation.outDir,
+      maxPartBytes: invocation.maxPartBytesRaw ?? invocation.maxPartBytes,
+      include: splitList(invocation.include),
+      exclude: splitList(invocation.exclude),
+      skipArtifacts: invocation.skipArtifacts,
+      includeSensitiveFiles: invocation.includeSensitiveFiles,
+      yes: true,
+      force: invocation.force,
+      reuseConfig: true,
+      dryRun: invocation.dryRun,
+    });
+
+    if (invocation.dryRun) {
+      const manager = invocation.noInstall ? null : detectPackageManager(invocation.cwd).name;
+      if (invocation.format === "json") {
+        process.stdout.write(
+          `${JSON.stringify(
+            {
+              dryRun: true,
+              configPath: init.configPath,
+              configReused: init.reused,
+              preset: init.preset,
+              install: manager,
+              configText: init.configText,
+            },
+            null,
+            2
+          )}\n`
+        );
+        return 0;
+      }
+      info("\n🧪 Dry run — setup would:");
+      info(
+        `   1. ${init.reused ? `keep ${path.basename(init.configPath)}` : `write ${path.basename(init.configPath)} (preset: ${init.preset})`}`
+      );
+      info("   2. add the npm scripts, the devDependency and the .gitignore entries");
+      if (manager !== null) info(`   3. install with ${manager}`);
+      info("   4. generate the snapshot");
+      info("");
+      info(init.configText);
+      return 0;
+    }
+
+    if (invocation.format !== "json") {
+      info(`🚀 Setup for: ${invocation.cwd}`);
+      if (init.reused) {
+        info(`♻  Keeping ${path.basename(init.configPath)} (preset: ${init.preset})`);
+      } else {
+        info(`✅ Created ${path.basename(init.configPath)} (preset: ${init.preset})`);
+      }
+      if (init.scripts.length > 0) info(`   Added npm scripts: ${init.scripts.join(", ")}`);
+      if (init.dependency.added && init.dependency.range !== null) {
+        info(`   Added devDependency: ${init.dependency.name} ${init.dependency.range}`);
+      }
+      if (init.gitignoreEntries.length > 0) {
+        info(`   Added to .gitignore: ${init.gitignoreEntries.join(", ")}`);
+      }
+    }
+
+    let install: InstallOutcome | null = null;
+    if (invocation.noInstall) {
+      if (invocation.format !== "json") info("   Skipped the install (--no-install)");
+    } else {
+      if (invocation.format !== "json") info("⏳ Installing dependencies…");
+      install = installDependencies(invocation.cwd);
+      if (invocation.format !== "json") {
+        if (install.ok) info(`✅ Installed dependencies (${install.command}, ${install.detail})`);
+        else info(`⚠ ${install.command} failed (${install.detail}); generating anyway`);
+      }
+    }
+
+    // Generate through the real command: every guard, warning and JSON field is the same one a
+    // plain `generate` produces, which is the point of a one-command setup.
+    const generateArgs = ["generate", "--cwd", invocation.cwd, "--format", invocation.format];
+    if (invocation.outDir !== undefined) generateArgs.push("--out-dir", invocation.outDir);
+    if (invocation.includeSensitiveFiles === true) generateArgs.push("--include-sensitive-files");
+    const budget = invocation.maxPartBytesRaw ?? invocation.maxPartBytes;
+    if (budget !== undefined) generateArgs.push("--max-part-bytes", String(budget));
+    if ((invocation.skipArtifacts ?? []).length > 0) {
+      generateArgs.push("--skip-artifacts", (invocation.skipArtifacts ?? []).join(","));
+    }
+
+    if (invocation.format === "json") {
+      const generated = await captureStdout(() => main(generateArgs));
+      let manifest: unknown = null;
+      try {
+        manifest = JSON.parse(generated.text);
+      } catch {
+        manifest = null;
+      }
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            setup: {
+              configPath: init.configPath,
+              configReused: init.reused,
+              preset: init.preset,
+              scripts: init.scripts,
+              dependency: init.dependency,
+              gitignoreEntries: init.gitignoreEntries,
+              install,
+              notes: init.notes,
+            },
+            manifest,
+          },
+          null,
+          2
+        )}\n`
+      );
+      return generated.code;
+    }
+
+    const code = await main(generateArgs);
+    info("");
+    info(`   Next:  ${nextStepHint(invocation.cwd, false)}`);
+    return code;
+  } catch (err) {
+    if (err instanceof PromptCancelled) return fail(invocation.format, "Cancelled.");
     return fail(invocation.format, (err as Error).message);
   }
 }
@@ -761,6 +991,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   if (invocation.command === "skill") {
     return runSkillCommand(invocation);
+  }
+
+  // `setup` runs before config discovery because it may be the run that *creates* the config: it
+  // writes the file, then generates through the normal command, which loads it.
+  if (invocation.command === "setup") {
+    return runSetupCommand(invocation);
   }
 
   // `diff` compares two manifests and never needs a repository config; importing one would

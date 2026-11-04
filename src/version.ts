@@ -10,4 +10,4 @@
  * `package.json` carries the same version; `npm run verify` compares the two.
  */
 export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.3.0";
+export const GENERATOR_VERSION = "4.4.0";

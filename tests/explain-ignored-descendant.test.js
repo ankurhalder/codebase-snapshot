@@ -275,6 +275,7 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
     "report",
     "explain",
     "init",
+    "setup",
     "diff",
     "describe",
     "skill",
@@ -302,7 +303,7 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
       assert.ok(token.length > 0, `${option.flag} appliesTo has an empty token: "${appliesTo}"`);
       assert.ok(
         COMMANDS.includes(token),
-        `${option.flag} appliesTo names "${token}", which is not one of the eight commands`
+        `${option.flag} appliesTo names "${token}", which is not one of the known commands`
       );
     }
   }
@@ -312,7 +313,7 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
   assert.ok(format, "the contract must list --format");
   assert.equal(
     format.appliesTo,
-    "generate/validate/report/explain/init/diff/describe/skill",
+    "generate/validate/report/explain/init/setup/diff/describe/skill",
     "--format applies everywhere, so its list must name every canonical command"
   );
 });

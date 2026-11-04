@@ -4,6 +4,36 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## 4.4.0
+
+### One command that does the whole first run
+
+`npx @ankurhalder/codebase-snapshot setup` — detect the project, write the commented config (only
+when the repository has none; an existing one is kept byte for byte and the output says so), add
+the npm scripts, the devDependency and the `.gitignore` entries, install dependencies with the
+package manager the repository's lockfile names (`bun`, `pnpm`, `yarn` or npm), then generate
+through the normal `generate` command so every guard, warning and JSON field is the same one a
+plain run produces.
+
+- `--no-install` skips the install: CI, an offline machine, or a lockfile the project's own tooling
+  owns.
+- A failed install is a warning, not a dead end — the snapshot is still generated, because the
+  scripts resolve the package through `npx` until it is installed.
+- `--dry-run` prints the plan and the config it would write, and writes nothing.
+- `--format json` emits one document: `{ "setup": { … }, "manifest": { … } }`.
+- The ownership guard is untouched: an `outDir` holding files this tool did not write is still
+  refused (exit 1), and the refusal names the entries.
+
+`init` keeps its old behaviour — it refuses when a config exists and needs `--force`, because
+someone who typed `init` should be told. `setup` is the merge-friendly path.
+
+### An outDir that holds only empty directories is replaced
+
+Reported from a real repository: `generate` refused with "it holds no .codebase-snapshot marker
+(found parts, reports) — remove the directory yourself" for a directory that held **no files**, just
+`parts/` and `reports/` from an interrupted run. Replacing a tree with no files destroys nothing, so
+the guard now treats it as empty. The walk is iterative, a symlink counts as content, and a
+directory holding even one file is still refused without a marker.
 ## 4.3.0
 
 ### Node 18 and 20 actually run the suite now — and one of them was broken

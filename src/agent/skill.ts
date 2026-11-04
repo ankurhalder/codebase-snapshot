@@ -70,6 +70,13 @@ is broken.
    layer, kind, language, target part, and the exact reason a path would be skipped.
    \`--format json\` if you want to parse it.
 
+3b. **One command, if the user just wants it working.** \`npx ${PACKAGE_NAME}@latest setup\`
+   does steps 4–6 in one go with defaults: it writes the config (an existing one is kept),
+   adds the npm scripts and the devDependency, installs with the project's package manager,
+   and generates. Use \`--no-install\` when the machine is offline or the user does not want
+   their lockfile touched. Prefer the explicit steps below when you need to control any of
+   those, or when something fails and you want to see which part.
+
 4. **Configure (recommended).** Run \`npx ${PACKAGE_NAME}@latest init --yes\`. It detects
    the project shape, then writes a commented config file listing **every** setting at its
    current value. The filename depends on the project: \`snapshot.config.ts\` only when

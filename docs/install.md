@@ -5,6 +5,16 @@
 
 Requires **Node.js 18 or newer**.
 
+## One command
+
+```bash
+npx @ankurhalder/codebase-snapshot setup
+```
+
+Detects the project, writes the config (an existing one is kept), adds the npm scripts and the
+devDependency, installs them with the package manager your lockfile names, and generates the first
+snapshot. `--no-install` skips the install; `--dry-run` writes nothing. The sections below are the
+same steps taken one at a time.
 ## One-off use
 
 ```bash

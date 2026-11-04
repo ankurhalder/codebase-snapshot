@@ -37,6 +37,15 @@ export interface InitOptions {
   yes?: boolean;
   /** Overwrite an existing config. */
   force?: boolean;
+  /**
+   * Keep an existing config instead of refusing.
+   *
+   * `setup` writes a config only when the repository has none; when it has one, the rest of the
+   * setup work (scripts, devDependency, `.gitignore`) still happens and the file is left exactly as
+   * it is. `init` on its own keeps refusing — a user who typed `init` expects to be told the file
+   * already exists.
+   */
+  reuseConfig?: boolean;
   /** Render the config without writing anything. */
   dryRun?: boolean;
   outDir?: string;
@@ -56,6 +65,8 @@ export interface InitResult {
   configPath: string;
   configText: string;
   written: boolean;
+  /** True when an existing config was kept instead of being written. */
+  reused: boolean;
   preset: string;
   scripts: string[];
   gitignoreEntries: string[];
@@ -527,11 +538,17 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   const configName = present !== null && options.force ? present : preferredName;
   const configPath = path.join(options.cwd, configName);
 
+  // `setup` keeps a config it finds: it is the repository's, and rewriting it would silently
+  // discard whatever the user changed. The rest of the setup still runs.
+  const reused = present !== null && options.force !== true && options.reuseConfig === true;
+  if (reused) notes.push(`Kept the existing ${present} instead of writing a new one.`);
+
   if (options.dryRun) {
     return {
       configPath,
       configText,
       written: false,
+      reused,
       preset: answers.preset,
       scripts: [],
       gitignoreEntries: [],
@@ -540,7 +557,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     };
   }
 
-  if (present !== null && present !== preferredName && !options.force) {
+  if (present !== null && present !== preferredName && !options.force && !reused) {
     throw new Error(
       `A configuration already exists (${present}). Re-run with --force to replace it.`
     );
@@ -552,17 +569,17 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
         `silently shadow it, so delete or rename ${present} yourself and re-run with --force.`
     );
   }
-  if (packageJsonHasConfig(options.cwd) && !options.force) {
+  if (packageJsonHasConfig(options.cwd) && !options.force && !reused) {
     throw new Error(
       'package.json already defines a "snapshot" config. Remove that key, or re-run with --force ' +
         "to write a config file that takes precedence over it."
     );
   }
-  if (fs.existsSync(configPath) && !options.force) {
+  if (fs.existsSync(configPath) && !options.force && !reused) {
     throw new Error(`${configName} already exists. Re-run with --force to replace it.`);
   }
 
-  writeFileOrExplain(configPath, configText);
+  if (!reused) writeFileOrExplain(configPath, configText);
   const { scripts, dependency } = updatePackageJson(options.cwd, notes);
   const ignore = appendGitignoreEntries(options.cwd, GITIGNORE_ENTRIES);
   if (ignore.note !== null) notes.push(ignore.note);
@@ -571,6 +588,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     configPath,
     configText,
     written: true,
+    reused,
     preset: answers.preset,
     scripts,
     gitignoreEntries: ignore.added,

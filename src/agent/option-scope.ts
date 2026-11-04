@@ -17,6 +17,7 @@ export type CommandName =
   | "validate"
   | "report"
   | "init"
+  | "setup"
   | "explain"
   | "diff"
   | "describe"
@@ -120,6 +121,25 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "version",
   ],
   skill: ["cwd", "format", "mode", "install", "target", "help", "version"],
+  setup: [
+    "cwd",
+    "out-dir",
+    "max-part-bytes",
+    "include-sensitive-files",
+    "skip-artifacts",
+    "only-artifacts",
+    "preset",
+    "include",
+    "exclude",
+    "yes",
+    "force",
+    "no-install",
+    "dry-run",
+    "format",
+    "mode",
+    "help",
+    "version",
+  ],
 };
 
 const COMMAND_ORDER: readonly CommandName[] = [
@@ -128,6 +148,7 @@ const COMMAND_ORDER: readonly CommandName[] = [
   "report",
   "explain",
   "init",
+  "setup",
   "diff",
   "describe",
   "skill",

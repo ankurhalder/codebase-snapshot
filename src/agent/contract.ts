@@ -269,6 +269,17 @@ export function buildAgentContract(): AgentContract {
         exits: [0, 1],
       },
       {
+        name: "setup",
+        aliases: [],
+        summary:
+          "Everything a repository needs in one command, with defaults: write the config when there " +
+          "is none (an existing one is kept), add the npm scripts, devDependency and .gitignore " +
+          "entries, install dependencies with the project's package manager, then generate the " +
+          "snapshot. --no-install skips the install; --dry-run writes nothing.",
+        positionals: [],
+        exits: [0, 1, 2],
+      },
+      {
         name: "init",
         aliases: [],
         summary:
@@ -398,8 +409,8 @@ export function buildAgentContract(): AgentContract {
         appliesTo: optionAppliesTo("mode"),
         summary:
           "Select the command when no command word is given. Values: generate, validate, check, " +
-          "report, init, explain, diff, describe, skill. A command word and --mode must name the same " +
-          "command; a contradiction is a usage error (exit 2).",
+          "report, init, setup, explain, diff, describe, skill. A command word and --mode must name " +
+          "the same command; a contradiction is a usage error (exit 2).",
       },
       {
         flag: "--cwd",
@@ -477,6 +488,15 @@ export function buildAgentContract(): AgentContract {
         default: "all",
         appliesTo: optionAppliesTo("target"),
         summary: 'Where to install: "claude", "cursor" or "all".',
+      },
+      {
+        flag: "--no-install",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("no-install"),
+        summary:
+          "setup only: skip installing the dependency before generating (CI, offline, or a lockfile " +
+          "you do not want a package manager to touch).",
       },
     ],
     presets: PRESETS.map((preset) => ({

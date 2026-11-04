@@ -88,6 +88,7 @@ test("describe exposes check and --mode", () => {
     "validate",
     "report",
     "init",
+    "setup",
     "explain",
     "diff",
     "describe",

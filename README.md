@@ -57,16 +57,23 @@ each verified against the packed tarball before release. Requires **Node.js 18+*
 
 ## Quick start
 
+One command does the whole first run — detects the project, writes a commented config, adds the
+npm scripts and the devDependency, installs it, and generates the snapshot:
+
 ```bash
-# 1. Optional but recommended: detect the project and write a commented config
-npx @ankurhalder/codebase-snapshot init --yes
-
-# 2. Generate
-npx @ankurhalder/codebase-snapshot generate
-
-# 3. Check it matches the files on disk (exit 0 = current)
-npx @ankurhalder/codebase-snapshot validate
+npx @ankurhalder/codebase-snapshot setup
 ```
+
+```bash
+# Or step by step, if you want to see each stage:
+npx @ankurhalder/codebase-snapshot init --yes   # config + scripts + devDependency + .gitignore
+npm install                                     # the package, into node_modules
+npm run snapshot                                # generate
+npm run snapshot:validate                       # exit 0 = current with disk
+```
+
+`setup` keeps a config the repository already has, and `setup --no-install` skips the install
+(CI, offline, or a lockfile you would rather not touch).
 
 ```
 📸 Generating snapshot for: /Users/you/project
