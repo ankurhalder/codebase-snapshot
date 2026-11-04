@@ -122,11 +122,19 @@ jobs:
       # every existing `npx @ankurhalder/codebase-snapshot` instruction resolving,
       # while the registry tells anyone who installs the old name where it went.
       # The old name stays at its last published version; it is not republished.
+      #
+      # Checked first rather than re-applied blindly: deprecating an
+      # already-deprecated package answers 422, and a red herring in a green run
+      # trains people to ignore the log.
       - name: Deprecate the previous scoped name
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          CURRENT="$(npm view "@ankurhalder/codebase-snapshot@4.4.1" deprecated 2>/dev/null || true)"
+          if [ -n "$CURRENT" ]; then
+            echo "already deprecated: $CURRENT"
+            exit 0
+          fi
           npm deprecate "@ankurhalder/codebase-snapshot@*" \
-            "Renamed to codebase-snapshot, which is the supported package. Run: npx codebase-snapshot@latest setup" \
-            || echo "deprecation is best-effort; publishing already succeeded"
+            "Renamed to codebase-snapshot, which is the supported package. Run: npx codebase-snapshot@latest setup"
