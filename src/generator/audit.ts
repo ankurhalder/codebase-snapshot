@@ -1,6 +1,6 @@
 import type { Manifest, SecretFinding, SecretRule } from "../types.js";
 import { findSecretInPath } from "../scanner/files.js";
-import { codeCell, escapeControls, tableCell } from "../terminal.js";
+import { codeCell, escapeControls, formatNumber, tableCell } from "../terminal.js";
 
 /**
  * Builds the security/health report.
@@ -31,14 +31,14 @@ export function generateAuditReport(
     "",
     `**Generated:** ${manifest.generatedAt}  `,
     `**Git Branch:** \`${manifest.git.branch}\` (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})  `,
-    `**Total Files:** ${manifest.counts.totalFiles}  `,
-    `**Total Lines:** ${manifest.counts.totalLines.toLocaleString()}  `,
+    `**Total Files:** ${formatNumber(manifest.counts.totalFiles)}  `,
+    `**Total Lines:** ${formatNumber(manifest.counts.totalLines)}  `,
     `**Total Size:** ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB  `,
     // This counts the bytes that were *emitted* after redaction, not the bytes
     // that were masked: calling it "redacted bytes" made a repository with zero
     // secrets report a non-zero redacted-byte figure directly above "no secrets
-    // detected". The number of masked spans is reported in section 1 instead.
-    `**Emitted Content Bytes:** ${manifest.totals.totalContentBytes.toLocaleString()}  `,
+    // detected". The number of masked lines is reported in section 1 instead.
+    `**Emitted Content Bytes:** ${formatNumber(manifest.totals.totalContentBytes)}  `,
     "",
     "## 1. Security Scan & Redaction",
     "",
@@ -52,19 +52,23 @@ export function generateAuditReport(
   } else {
     const byRule = new Map<string, number>();
     for (const finding of secretFindings) {
-      byRule.set(finding.rule, (byRule.get(finding.rule) ?? 0) + 1);
+      for (const rule of finding.rules) byRule.set(rule, (byRule.get(rule) ?? 0) + 1);
     }
 
+    // One row per line, listing every rule that matched it. A line that matched two rules used
+    // to produce two rows with the same file and line, which reads like two separate leaks.
     lines.push(
-      `⚠️ **${secretFindings.length} secret-like pattern(s) identified and redacted:**`,
+      `⚠️ **${formatNumber(secretFindings.length)} line(s) contain values that were redacted:**`,
       "",
-      "| File | Line | Rule |",
-      "| :--- | :--- | :--- |"
+      "| File | Line | Rules |",
+      "| :--- | ---: | :--- |"
     );
     for (const finding of secretFindings) {
-      lines.push(`| ${code(finding.path ?? "unknown")} | ${finding.line} | ${code(finding.rule)} |`);
+      lines.push(
+        `| ${code(finding.path ?? "unknown")} | ${finding.line} | ${finding.rules.map(code).join(", ")} |`
+      );
     }
-    lines.push("", "### Matches by rule", "", "| Rule | Matches |", "| :--- | :--- |");
+    lines.push("", "### Matches by rule", "", "| Rule | Lines |", "| :--- | ---: |");
     for (const [rule, count] of Array.from(byRule.entries()).sort((a, b) => b[1] - a[1])) {
       lines.push(`| ${code(rule)} | ${count} |`);
     }

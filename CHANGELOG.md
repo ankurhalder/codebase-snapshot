@@ -4,6 +4,39 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
+## Unreleased
+
+### A clean repository reported `Warnings: 156`
+
+Every masked line was appended to `manifest.warnings` as `<rule> at <path>:<line>`, so a
+repository with nothing wrong with it reported 156 "warnings" — the first thing a new user sees
+after `init` + `generate`, and the reason a 583-file project looked broken. Worse, the summary
+printed ten of them under that count with nothing to say the other 146 existed.
+
+Redaction is not a warning: a masked value is the tool doing its job, while a warning says the
+snapshot may surprise you. The two are now separate — the summary prints
+`Redacted: N line(s) — values masked; see reports/audit.md` and keeps `Warnings:` for the things
+worth acting on, and a warnings list longer than the ten-row preview ends with
+`… and N more in manifest.warnings[]`. When `reports/audit.md` is disabled the manifest says the
+per-line detail was not written instead of losing it silently. `manifest.totals.redactedLines`
+carries the count for machines.
+
+### One line of code was counted twice
+
+`scanAndRedactSecrets` pushed a finding per (line, rule) pair, so an unquoted
+`JWT_SECRET=<value>` — which matches both `credential-assignment-unquoted` and
+`env-secret-assignment` — appeared twice in `reports/audit.md` on the same file and line and
+inflated the total, making a 78-site repository report 156 findings. A finding is now one *line*
+with `rules[]` naming every rule that matched it; the audit table has one row per line and a
+`Rules` column that lists them.
+
+### Artifact counts followed the generating machine's locale
+
+`reports/audit.md` and the snapshot `README.md` called `toLocaleString()` with no locale, so the
+same repository reported `1,24,976` lines on an `en-IN` machine and `124,976` on an `en-US` one —
+different bytes from the same commit, which defeats diffing two snapshots or caching one. Both
+generators now share `formatNumber()` with the CLI, which already pinned `"en-US"`.
+
 ## 4.1.1
 
 ### `init` left the package undeclared, so nothing reached `node_modules`

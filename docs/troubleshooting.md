@@ -310,6 +310,37 @@ under a `- Warnings: N` line in the summary, and none of them stops a run:
   it were the source**. Convert the file to UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8 file > file.tmp`)
   and regenerate. The snapshot still validates as current, because the hash covers the raw bytes.
 
+## Redactions in the summary are not warnings
+
+If your run printed something like
+
+```
+   - Warnings:      0
+   - Redacted:      78 line(s) — values masked; see snapshot/reports/audit.md
+```
+
+then nothing is wrong. That line counts **lines whose values were masked**, once per line even
+when two rules matched the same line, and the per-line detail — file, line, every rule that
+fired — is the table in `reports/audit.md` (section 1). The same number is
+`manifest.totals.redactedLines`.
+
+Three things surprise people about it, and all three are the intended trade-off:
+
+- **`.env.example` and docs templates are masked too.** A placeholder such as
+  `JWT_SECRET=replace-with-base64url-48-bytes` is masked exactly like a live key, because the
+  rule cannot tell them apart — guessing which values are throwaway is how a real key escapes.
+  The template is therefore less readable in the snapshot than on disk. Narrow it with
+  `customPatterns` and `disableDefaultPatterns` (see
+  [Configuration](configuration.md#secrets-redaction)).
+- **Test fixtures count.** `process.env.DB_SECRET = "test-value"` is a credential assignment by
+  shape, so it is masked and counted.
+- **A long list is not a truncated list.** The `Warnings:` preview stops at ten rows and prints
+  `… and N more in manifest.warnings[]`; redactions are never previewed in the summary at all —
+  the count is stated and the table is the list.
+
+If `reports/audit.md` was disabled with `--skip-artifacts audit`, the manifest keeps the count and
+warns that the per-line detail was not written, rather than dropping it silently.
+
 `validate` produces its own warnings, printed with a `⚠ ` prefix and never written to the
 manifest, because they describe the state of the repository rather than the snapshot:
 

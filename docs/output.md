@@ -53,7 +53,7 @@ what makes `manifest.fingerprint` meaningful.
 | `budgets` | The effective byte limits for the run: `{ maxPartBytes, largeFileBytes }`. The per-layer overrides live at `config.budgets`, which is `{ default, byLayer }`. |
 | `config` | The resolved configuration actually used (preset, artifacts, sizing, scoping). |
 | `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount }`. |
-| `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, partCount, warningCount }`. |
+| `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, partCount, warningCount, redactedLines }`. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
 | `fingerprint` | Stable hash of the snapshot content. Two runs over unchanged input produce the same value. |
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
 | `artifacts` | The optional monolith files: `{ fullJson, fullMarkdown }`. Each value is `null` when that file was not written, otherwise `{ byteSize, sha256 }`. The object itself is always present. |
@@ -62,7 +62,7 @@ what makes `manifest.fingerprint` meaningful.
 | `parts` | One entry per part (below). |
 | `files` | One entry per included file (below). |
 | `skipped` | One entry per excluded file (below). |
-| `warnings` | Non-fatal observations, including a throwing `hooks.afterGenerate`. |
+| `warnings` | Non-fatal observations that may change how you read the snapshot — a disabled artifact, a file too large to parse, a transcoded file, a throwing `hooks.afterGenerate`. Masked values are **not** warnings: they are counted in `totals.redactedLines` and listed per line in `reports/audit.md`. |
 
 ### `parts[]`
 

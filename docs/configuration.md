@@ -252,7 +252,17 @@ makes an audit entry mean something.
 - `customPatterns` add rules; `disableDefaultPatterns` removes the built-in set — it does not
   disable redaction itself.
 
-Findings are summarised in `reports/audit.md` and in `report`.
+Redaction is **fail-closed**, so a placeholder is indistinguishable from a secret: a
+`.env.example` whose line reads `JWT_SECRET=replace-with-base64url-48-bytes` is masked like a
+live key would be, and a test fixture literal such as `process.env.X_SECRET = "test-value"` is
+masked too. That is the intended trade-off — the alternative is guessing which values are
+throwaway — and it is worth knowing before you hand the snapshot to a model and find the
+template less readable than the original. To narrow it, remove a rule by name with
+`disableDefaultPatterns: true` plus your own `customPatterns`.
+
+Findings are summarised in `reports/audit.md` (one row per line, naming every rule that matched
+it), counted in `manifest.totals.redactedLines`, and shown in the `generate` summary as a
+`Redacted:` line separate from `Warnings:`.
 
 ## Output directories
 

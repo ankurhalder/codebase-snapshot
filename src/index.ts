@@ -1630,6 +1630,7 @@ export function generateSnapshot(
       totalContentBytes,
       partCount: parts.length,
       warningCount: 0,
+      redactedLines: 0,
     },
     fingerprint,
     validation: {
@@ -1652,11 +1653,23 @@ export function generateSnapshot(
     warnings,
   };
 
-  manifest.warnings = [
-    ...warnings,
-    ...secretFindings.map((finding) => `${finding.rule} at ${maskPathText(finding.path ?? "unknown", config.secretRules)}:${finding.line}`),
-  ];
+  // Redaction is not a warning. Every masked line used to be appended to `warnings` as
+  // `<rule> at <path>:<line>`, so a repository with nothing wrong with it reported
+  // `Warnings: 156` — twice per line, because one line can match two rules — and the CLI's
+  // ten-row preview looked like a truncated list of problems. The count is its own total and
+  // the per-line detail lives in `reports/audit.md`, where an auditor looks for it.
+  manifest.totals.redactedLines = secretFindings.length;
   manifest.totals.warningCount = manifest.warnings.length;
+
+  // The per-line detail lives only in `reports/audit.md`. With that artifact disabled the count
+  // would be the only trace left, so the manifest says so instead of losing it silently.
+  if (secretFindings.length > 0 && !config.artifacts.audit) {
+    manifest.warnings.push(
+      `${secretFindings.length} line(s) contain redacted values; reports/audit.md is disabled, so the ` +
+        "per-line detail was not written."
+    );
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
 
   // Monolith artefacts are computed BEFORE the manifest is serialized, so the
   // manifest is written exactly once and already contains the artifact digests.

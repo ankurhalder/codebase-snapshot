@@ -776,7 +776,7 @@ test("S17c: a raw { secretRules } object is applied, never silently dropped", (t
     "a.ts"
   );
   assert.equal(redacted.includes("ACME_abc123"), false);
-  assert.ok(findings.some((finding) => finding.rule === "acme"));
+  assert.ok(findings.some((finding) => finding.rules.includes("acme")));
 
   assert.throws(
     () => resolveConfig({ secretRules: "nope" }, undefined, dir),

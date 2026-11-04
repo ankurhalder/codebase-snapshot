@@ -482,7 +482,7 @@ test("scanAndRedactSecrets redacts only the matched span", () => {
   assert.ok(!redacted.includes("AKIAIOSFODNN7EXAMPLE"));
   assert.ok(redacted.includes("us-east-1"), "unrelated code on the same line must survive");
   assert.ok(redacted.includes("retries"));
-  assert.equal(findings[0].rule, "aws-access-key-id");
+  assert.deepEqual(findings[0].rules, ["aws-access-key-id"]);
   assert.equal(findings[0].path, "test.ts");
 });
 
@@ -511,7 +511,7 @@ test("multi-line private keys are redacted as a block", () => {
   assert.ok(!redacted.includes("secretbodyline2"));
   assert.ok(!redacted.includes("-----END RSA PRIVATE KEY-----"));
   assert.ok(redacted.includes("after = 1;"));
-  assert.ok(findings.some((finding) => finding.rule === "private-key-block"));
+  assert.ok(findings.some((finding) => finding.rules.includes("private-key-block")));
 });
 
 test("an unterminated private key block (cut by truncation) is still redacted", () => {

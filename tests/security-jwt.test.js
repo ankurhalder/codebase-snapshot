@@ -67,7 +67,7 @@ test("every JWT shape is masked and the code around it survives", () => {
 test("the JWT is attributed to the jwt-token rule", () => {
   const { findings } = scan(JWT.shortSignature);
   assert.ok(
-    findings.some((finding) => finding.rule === "jwt-token"),
+    findings.some((finding) => finding.rules.includes("jwt-token")),
     `expected a jwt-token finding, got ${JSON.stringify(findings)}`
   );
 });
@@ -95,7 +95,7 @@ test("percent-encoded separators do not shake the rule off", () => {
   assert.equal(redacted.includes(encoded), false, "the percent-encoded JWT must not survive");
   assert.ok(redacted.includes("https://api.example.com/v1?access_token="));
   assert.ok(redacted.includes("&expires=3600"));
-  assert.ok(findings.some((finding) => finding.rule === "jwt-token"));
+  assert.ok(findings.some((finding) => finding.rules.includes("jwt-token")));
 });
 
 test("source that merely looks like a JWT is left alone", () => {
@@ -138,7 +138,7 @@ test("explain reports the JWT finding without printing the token", (t) => {
   const explained = explainPath(resolveConfig({ cwd: dir }), "src/creds.ts");
   assert.ok(explained.secretCount > 0, "explain must see a secret");
   assert.ok(
-    explained.secrets.some((secret) => secret.rule === "jwt-token"),
+    explained.secrets.some((secret) => secret.rules.includes("jwt-token")),
     `expected a jwt-token finding, got ${JSON.stringify(explained.secrets)}`
   );
   assert.equal(JSON.stringify(explained).includes(JWT.shortSignature), false);

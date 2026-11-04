@@ -195,7 +195,15 @@ export type SecretRuleInput =
  * written into `reports/audit.md`.
  */
 export interface SecretFinding {
-  rule: string;
+  /**
+   * Every rule that matched this line, in rule-table order.
+   *
+   * One finding is one *line*, not one (line, rule) pair. A single line can match two rules — an
+   * unquoted `AUTH_TOKEN=<value>` assignment matches both `credential-assignment-unquoted` and
+   * `env-secret-assignment` — and reporting it twice doubled the figure a user is asked to explain,
+   * in the CLI summary and in `reports/audit.md` alike.
+   */
+  rules: string[];
   line: number;
   path?: string;
 }
@@ -210,6 +218,15 @@ export interface ManifestTotals {
   totalContentBytes: number;
   partCount: number;
   warningCount: number;
+  /**
+   * Lines whose values were masked, counted once per line.
+   *
+   * Separate from `warningCount` because they are not the same event: a warning says the snapshot
+   * may surprise you, while a redaction says the tool did its job. Folding them together made a
+   * clean repository report `Warnings: 156` and left the summary's own slice of ten looking like
+   * a truncated warning list.
+   */
+  redactedLines: number;
 }
 
 export interface ManifestArtifact {

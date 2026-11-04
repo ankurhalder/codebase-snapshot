@@ -97,3 +97,18 @@ export function tableCell(value: string): string {
 export function codeCell(value: string): string {
   return inlineCode(tableCell(value));
 }
+
+/**
+ * Groups the digits of a count the same way on every machine.
+ *
+ * `toLocaleString()` with no locale follows the operating system. A 124,976-line repository was
+ * reported as `1,24,976` on an `en-IN` machine and `124,976` on an `en-US` one, so the bytes of
+ * `reports/audit.md` and the snapshot `README.md` depended on who generated them — and a snapshot
+ * whose artifacts differ per machine cannot be diffed, cached or trusted. The CLI already pinned
+ * `"en-US"`; the two generators did not, so the formatter lives here and all three call it.
+ *
+ * Only grouping is affected: the value is a JavaScript number and the digits are ASCII either way.
+ */
+export function formatNumber(value: number): string {
+  return value.toLocaleString("en-US");
+}

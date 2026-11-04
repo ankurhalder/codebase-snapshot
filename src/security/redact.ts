@@ -198,7 +198,7 @@ export function scanAndRedactSecrets(
       }
       const line = redacted.slice(0, match.index).split("\n").length;
       const newlines = (match[0].match(/\n/g) ?? []).length;
-      findings.push({ rule: "private-key-block", line, path: filePath });
+      findings.push({ rules: ["private-key-block"], line, path: filePath });
       redacted =
         redacted.slice(0, match.index) +
         PEM_REDACTION_MARKER +
@@ -247,9 +247,9 @@ export function scanAndRedactSecrets(
       }
 
       if (spans.length > 0) {
-        for (const rule of matchedRules) {
-          findings.push({ rule, line: lineNumber, path: filePath });
-        }
+        // One finding per line, however many rules matched it. Pushing one per rule made a single
+        // `AUTH_TOKEN=<value>` line count twice in the summary the user reads.
+        findings.push({ rules: [...matchedRules], line: lineNumber, path: filePath });
         segments[index] = applySpans(line, spans);
       }
     }

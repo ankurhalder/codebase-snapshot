@@ -54,7 +54,13 @@ has to parse an empty string or scrape stderr for prose.
 - Credential files (`.env`, `*.pem`, `.npmrc`, `.ssh/`, `.tfstate`) are excluded unless
   `--include-sensitive-files` is given, and they are recorded in `manifest.skipped[]`.
 - Secret-shaped strings inside ordinary files are redacted in the emitted parts; no excerpt of a
-  matched line reaches any artifact.
+  matched line reaches any artifact. The count of masked **lines** is `manifest.totals.redactedLines`
+  and the per-line table (file, line, every rule that matched) is `reports/audit.md` section 1.
+  Redactions are reported separately from `manifest.warnings` — a masked value is the tool working,
+  not a defect, so read `Redacted:` and `Warnings:` as different signals.
+- Redaction is fail-closed: a `.env.example` placeholder (`JWT_SECRET=replace-with-…`) and a test
+  literal (`process.env.X_SECRET = "test-value"`) are masked like live keys. Expect templates to be
+  less readable inside the snapshot; do not "fix" that by re-reading the raw file into context.
 - `manifest.files[]` carries `encoding` when a file was not plain UTF-8: `utf-16le`/`utf-16be` were
   transcoded to text, and `utf-8-lossy` means the body contains `U+FFFD` where undecodable bytes
   were. Its absence means clean UTF-8.

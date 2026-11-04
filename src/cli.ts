@@ -17,7 +17,7 @@ import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
-import { escapeControls } from "./terminal.js";
+import { escapeControls, formatNumber } from "./terminal.js";
 
 const VERSION = GENERATOR_VERSION;
 
@@ -856,13 +856,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       info(`   - Schema:         ${manifest.schemaVersion}`);
       info(`   - Fingerprint:    ${manifest.fingerprint}`);
       info(`   - Files included: ${manifest.counts.totalFiles}`);
-      info(`   - Total lines:    ${manifest.counts.totalLines.toLocaleString("en-US")}`);
+      info(`   - Total lines:    ${formatNumber(manifest.counts.totalLines)}`);
       info(
         `   - Total size:     ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
       );
       info(`   - Total parts:    ${manifest.counts.partsCount}`);
       info("   - Integrity:      not checked (run `codebase-snapshot validate`)");
       info(`   - Warnings:       ${manifest.warnings?.length ?? 0}`);
+      // A manifest written by 4.1.1 or earlier has no `redactedLines`, and those versions kept
+      // every masked line inside `warnings` — so read absence as "nothing to add", not as zero leaks.
+      if ((manifest.totals.redactedLines ?? 0) > 0) {
+        info(`   - Redacted:       ${manifest.totals.redactedLines} line(s)`);
+      }
       info("\n   Layers:");
       for (const [layer, count] of Object.entries(manifest.layers)) {
         info(`     - ${layer.padEnd(16)}: ${count} files`);
@@ -915,12 +920,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       );
       info(`   - Skipped:      ${manifest.counts.skippedCount} file(s)`);
       info(`   - Warnings:     ${manifest.warnings.length}`);
+      if ((manifest.totals.redactedLines ?? 0) > 0) {
+        info(
+          `   - Redacted:     ${manifest.totals.redactedLines} line(s) — a real run lists them in ` +
+            displayOutPath(resolved.cwd, resolved.outDir, "reports/audit.md")
+        );
+      }
       info(`   - Integrity:    ${manifest.validation.status}`);
       for (const error of manifest.validation.errors.slice(0, 10)) info(`     - ${error}`);
     } else {
       info(`\n✅ Snapshot generated in ${elapsed}s:`);
       info(`   - Tracked files: ${manifest.counts.totalFiles}`);
-      info(`   - Total lines:   ${manifest.counts.totalLines.toLocaleString("en-US")}`);
+      info(`   - Total lines:   ${formatNumber(manifest.counts.totalLines)}`);
       info(
         `   - Total size:    ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`
       );
@@ -968,9 +979,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
       info(`   - Fingerprint:   ${manifest.fingerprint}`);
       info(`   - Integrity:     ${manifest.validation.status}`);
+      // Redaction is the tool working, not something to fix, so it is not counted as a warning —
+      // and the count alone is useless without saying where the per-line detail went.
+      if ((manifest.totals.redactedLines ?? 0) > 0) {
+        const where = artifacts.audit
+          ? `see ${displayOutPath(resolved.cwd, resolved.outDir, "reports/audit.md")}`
+          : "reports/audit.md is disabled";
+        info(`   - Redacted:      ${manifest.totals.redactedLines} line(s) — values masked; ${where}`);
+      }
       if (manifest.warnings.length > 0) {
         info(`   - Warnings:      ${manifest.warnings.length}`);
         for (const warning of manifest.warnings.slice(0, 10)) info(`     - ${warning}`);
+        // The summary shows ten; the rest are in the manifest under the same key. Printing the
+        // count and ten rows without this line is what made 156 findings look unexplained.
+        if (manifest.warnings.length > 10) {
+          info(`     … and ${manifest.warnings.length - 10} more in manifest.warnings[]`);
+        }
       }
     }
 

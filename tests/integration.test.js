@@ -972,10 +972,16 @@ test("a spread copy of a resolved config keeps its custom secret rules", () => {
   assert.equal(isResolvedConfig(spread), true);
 
   const manifest = generateSnapshot(spread);
-  assert.ok(
-    manifest.warnings.some((warning) => warning.includes("acme")),
-    "custom rule must still match after a spread copy"
+  // The rule matched, so the line is counted as redacted. It used to be found by searching
+  // `warnings` for `acme`, which is exactly the conflation 4.1.2 removed: a masked value is not
+  // a warning, and the rule names live in reports/audit.md.
+  assert.equal(
+    manifest.totals.redactedLines,
+    1,
+    "the custom rule must still match after a spread copy"
   );
+  const audit = fs.readFileSync(path.join(dir, "snapshot", "reports", "audit.md"), "utf8");
+  assert.match(audit, /`acme`/, "the custom rule name is recorded in the audit");
   const text = readAllText(path.join(dir, "snapshot"));
   assert.ok(!text.includes("ACME_abcdefgh1234"));
   fs.rmSync(dir, { recursive: true, force: true });

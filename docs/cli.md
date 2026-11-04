@@ -59,6 +59,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
    - Manifest:      snapshot/manifest.json
    - Fingerprint:   e4607b570268c8def0911babbace97e4a0196d9eaf2cac22c8847500883d70aa
    - Integrity:     passed
+   - Redacted:      2 line(s) — values masked; see snapshot/reports/audit.md
 ```
 
 The fingerprint is printed in full — all 64 hex characters, never elided — and it matches
@@ -66,6 +67,15 @@ The fingerprint is printed in full — all 64 hex characters, never elided — a
 
 The summary only lists artifacts that were actually written, so a run with
 `--only-artifacts parts` does not claim a manifest exists.
+
+**`Redacted` and `Warnings` are different lines, and that is deliberate.** A redaction means the
+tool masked a secret-shaped value: it is the tool doing its job, and it is counted **once per
+line** even when two rules match that line. The per-line list — file, line, every rule that
+matched — is `reports/audit.md`, and `manifest.totals.redactedLines` carries the count.
+
+`Warnings` is for things you may want to act on: a disabled artifact, a file too large to parse
+for a summary, a non-UTF-8 file that was transcoded. The summary shows the first ten and then
+says `… and N more in manifest.warnings[]`; nothing is dropped silently.
 
 ### `validate` / `check`
 

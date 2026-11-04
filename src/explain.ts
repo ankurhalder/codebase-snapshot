@@ -37,7 +37,7 @@ export interface ExplainResult {
   /** Present when the file is not plain UTF-8, so an explanation cannot quietly lie about it. */
   encoding?: TextEncoding;
   secretCount?: number;
-  secrets?: Array<{ rule: string; line: number }>;
+  secrets?: Array<{ rules: string[]; line: number }>;
 }
 
 function describeMatcher(matcher: unknown): string {
@@ -209,7 +209,7 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     result.secretCount = findings.length;
     result.secrets = findings
       .slice(0, 20)
-      .map((finding) => ({ rule: finding.rule, line: finding.line }));
+      .map((finding) => ({ rules: finding.rules, line: finding.line }));
   }
 
   const manifest = readManifest(config);
@@ -259,7 +259,7 @@ export function renderExplainText(result: ExplainResult): string {
       "secrets",
       result.secretCount
         ? `${result.secretCount} finding(s): ${Array.from(
-            new Set((result.secrets ?? []).map((secret) => secret.rule))
+            new Set((result.secrets ?? []).flatMap((secret) => secret.rules))
           ).join(", ")}`
         : "none"
     )
