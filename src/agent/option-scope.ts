@@ -136,9 +136,14 @@ export function commandsForOption(option: string): CommandName[] {
   return COMMAND_ORDER.filter((command) => COMMAND_OPTION_SCOPE[command].includes(option));
 }
 
-/** `--format` is the one option every command honours. */
+/**
+ * The commands an option applies to, as the slash-separated list `describe` publishes.
+ *
+ * Always the explicit list, even for an option every command honours. It used to return the prose
+ * "all commands" in that case, which a machine consumer reads as a single command named "all
+ * commands" — that is, a flag that applies nowhere. `--format` was the only option that hit the
+ * branch, and spelling it out here means no future option can rediscover the trap.
+ */
 export function optionAppliesTo(option: string): string {
-  const commands = commandsForOption(option);
-  if (commands.length === COMMAND_ORDER.length) return "all commands";
-  return commands.join("/");
+  return commandsForOption(option).join("/");
 }
