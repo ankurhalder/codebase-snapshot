@@ -45,7 +45,11 @@ stays on stderr and the exit code is unchanged. A successful run never carries a
   test now fails if any option's scope regresses to prose or names a command that does not exist.
 - The hook documentation says what "not awaited" does not mean: Node keeps the process alive while
   the hook's own timers and sockets are outstanding, so `afterGenerate` should stay short.
-- The README and `llms.txt` describe what 4.1.0 actually guarantees — the eleven skip reasons, the
+- The generators agree with each other: `full-codebase.md` escapes control and bidi characters like
+  every other artifact, the snapshot `README.md` links only to reports that were actually written,
+  and a layer or kind name containing `|` or a backtick can no longer break the table or the inline
+  code span it is listed in.
+- The wizard no longer treats `package.json` `"snapshot": []` as an existing configuration.- The README and `llms.txt` describe what 4.1.0 actually guarantees — the eleven skip reasons, the
   `encoding` field, discovery modes, the emitted-byte accounting — instead of the feature list from
   before the release.
 
