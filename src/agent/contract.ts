@@ -192,7 +192,7 @@ export function buildAgentContract(): AgentContract {
         id: "verify",
         run: `npx ${PACKAGE_NAME}@latest --version`,
         // The requirement is the major version; the exact build is context. A
-        // floating tag may print 4.0.7 today and 4.0.9 next week, and an agent
+        // floating tag may print a different patch today than next week, and an agent
         // must not conclude that a working tool is broken because of a patch.
         expect:
           `prints v${MAJOR_VERSION} or newer on stdout and exits 0 ` +

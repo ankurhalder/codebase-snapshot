@@ -7,7 +7,7 @@ All notable changes to `codebase-snapshot`.
 ## A note on version numbers
 
 This package started its public life as `@ankurhalder/codebase-snapshot`, which reached 4.4.1. It
-moved to the unscoped name and **restarted at 0.9.0**, so the numbers below are not a continuation of
+moved to the unscoped name and **restarted at <!--@version-->0.9.0<!--/@version-->**, so the numbers below are not a continuation of
 the old line — `0.9.0` is newer than `4.4.1`, not older. 1.0.0 is reserved for when the CLI surface
 is settled.
 

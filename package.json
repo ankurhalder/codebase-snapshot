@@ -91,11 +91,12 @@
     "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
     "prepublishOnly": "npm run build",
     "publish:create": "npm publish packages/create --access public",
-    "prepack": "npm run build",
+    "prepack": "npm run sync-docs && npm run build",
     "pack-check": "node scripts/pack-check.mjs",
-    "site": "node scripts/build-site.mjs",
+    "sync-docs": "node scripts/sync-docs.mjs",
+    "site": "npm run sync-docs && node scripts/build-site.mjs",
     "seo-rank": "node scripts/seo-rank.mjs",
-    "verify": "npm run check && npm run pack-check"
+    "verify": "npm run check && npm run sync-docs -- --check && npm run pack-check"
   },
   "dependencies": {
     "typescript": "^5.0.0"

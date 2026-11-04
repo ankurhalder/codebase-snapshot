@@ -235,7 +235,10 @@ for (const source of sources) {
     "utf8"
   );
   // The Markdown twin: what llms.txt v2 asks for, and what an agent would rather read.
-  fs.writeFileSync(path.join(OUT, `${source.slug}.md`), source.markdown, "utf8");
+  // The Markdown twin is for an agent to read, so the sync markers are stripped:
+  // they are web-page plumbing, and the rendered value beside them already stands alone.
+  const twin = source.markdown.replace(/<!--\/?@[A-Za-z]+-->/g, "");
+  fs.writeFileSync(path.join(OUT, `${source.slug}.md`), twin, "utf8");
   urls.push(source.slug === "index" ? `${SITE}/` : `${SITE}/${source.slug}.html`);
 }
 
