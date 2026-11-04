@@ -21,8 +21,36 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
----
+## 0.9.1
 
+### The documentation now derives its version from `package.json`
+
+A documented version is a promise about the release, and every one of them was hand-written — so they
+rotted silently at each bump. The README still described a `0.x` line whose numbers appeared nowhere
+in it, `SECURITY.md` advertised **"4.x supported"** on a project whose latest release was 0.9.0, and
+both `setup` examples printed `4.4.0` and `4.1.1` as the dependency the command adds.
+
+Versions now live in exactly one place, and `scripts/sync-docs.mjs` writes them into the documentation:
+
+- Prose carries marked spans — `<!--@majorMinor-->0.9<!--/@majorMinor-->` — which GitHub renders as
+  the value and hides as a comment.
+- Code-block examples are matched by shape instead, because inside a fence an HTML comment is literal
+  text and the marker syntax would leak into the page.
+- `npm run verify` fails when anything is out of step, and `npm run site` and `prepack` both sync
+  first, so the docs site and the published README cannot contradict the package they describe.
+
+Changelog history is deliberately excluded. It records what happened at each version, and rewriting a
+past entry would falsify that record rather than maintain it.
+
+### Other corrections in this pass
+
+- `SECURITY.md` supported versions: 0.9.x, with a sentence explaining why 0.9.0 is newer than 4.4.1.
+- The README states the pre-1.0 contract once, in wording that does not go stale.
+- The changelog opens with a note on the version numbering, so the registry's three versions are not
+  a mystery to anyone reading them.
+- The `v4.5.0` release and git tag were deleted; that version no longer exists on npm.
+
+---
 ## 0.9.0
 
 ### The package is now `codebase-snapshot`, unscoped
