@@ -15,7 +15,7 @@ npx codebase-snapshot skill --install         # into .claude/skills + .cursor/ru
 
 Read [docs/agent.md](docs/agent.md) first. In short: `setup` — config, scripts, dependency, install
 and generate in one command — or step by step: `init --yes` → `generate` → `validate`.
-Pin `@latest` or `@4` when the same version must run everywhere.
+Pin an exact version — `npx codebase-snapshot --version` prints the current one — when the same version must run everywhere.
 
 `skill --install` deliberately does **not** write `AGENTS.md`. That file is a repository's own
 agent contract, and this tool has no business editing one — it installs into the two registries

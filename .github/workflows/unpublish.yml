@@ -1,0 +1,59 @@
+name: Unpublish a version
+
+# Unpublishing is a last resort, and this workflow exists so that when it is the
+# right call it is a reviewed, logged action rather than a command typed into a
+# terminal with a long-lived token.
+#
+# npm only allows unpublishing a version within 72 hours of publishing it, and
+# refuses entirely when another package depends on that version. Publish order
+# therefore matters on the way out too: unpublish the dependent first.
+#
+# Give the exact spec, and confirm.
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Exact spec to unpublish, e.g. codebase-snapshot@0.0.0-stage"
+        required: true
+        type: string
+      confirm:
+        description: 'Type "yes" to confirm. Anything else aborts.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  unpublish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse unless confirmed
+        run: |
+          if [ "${{ inputs.confirm }}" != "yes" ]; then
+            echo "::error::confirmation was not \"yes\" — nothing was changed"
+            exit 1
+          fi
+          case "${{ inputs.spec }}" in
+            *@*.*.*) echo "unpublishing ${{ inputs.spec }}" ;;
+            *) echo "::error::spec must be an exact version like name@1.2.3"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Unpublish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm unpublish "${{ inputs.spec }}" --force
+
+      - name: Confirm it is gone
+        run: |
+          set -euo pipefail
+          if npm view "${{ inputs.spec }}" version >/dev/null 2>&1; then
+            echo "::error::${{ inputs.spec }} is still resolvable"
+            exit 1
+          fi
+          echo "${{ inputs.spec }} is no longer resolvable"

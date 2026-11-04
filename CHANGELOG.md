@@ -4,7 +4,7 @@ All notable changes to `codebase-snapshot`.
 
 ---
 
-## 4.5.0
+## 0.9.0
 
 ### The package is now `codebase-snapshot`, unscoped
 
@@ -14,13 +14,13 @@ The old name is **deprecated, not unpublished**, so existing instructions keep w
 
 ```bash
 npx @ankurhalder/codebase-snapshot generate   # still resolves, now prints a deprecation notice
-npx codebase-snapshot generate                # the supported name from 4.5.0
+npx codebase-snapshot generate                # the supported name from 0.9.0
 ```
 
 Why: npm's search index ranks on text match rather than downloads — a package with a few thousand
 weekly downloads outranks one with a hundred million when the query matches its name better — so a
 name that *is* the phrase people search is the strongest free signal available. Doing this at
-version 4.5.0 with no dependents costs one migration; doing it after documentation, articles and
+version 0.9.0 with no dependents costs one migration; doing it after documentation, articles and
 tutorials all point at the scoped name costs far more.
 
 The rename is not cosmetic. The package name is written into every ownership marker and every

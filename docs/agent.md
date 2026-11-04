@@ -19,7 +19,7 @@ npx codebase-snapshot generate
 npx codebase-snapshot validate
 ```
 
-The bare package name works; pin `@latest` or `@4` when the same version must run on every
+The bare package name works; pin an exact version (`npx codebase-snapshot --version` prints the current one) when the same version must run on every
 machine.
 
 ## The contract

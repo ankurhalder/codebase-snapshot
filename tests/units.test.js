@@ -837,11 +837,13 @@ test("runInit writes a config from flags without a TTY", async () => {
   assert.equal(pkg.scripts.snapshot, "npx codebase-snapshot generate");
   assert.equal(pkg.scripts["snapshot:validate"], "npx codebase-snapshot validate");
   // Without this entry nothing reaches node_modules and `npm run snapshot` resolves
-  // @latest from the registry on every run.
+  // @latest from the registry on every run. The range must be a caret bound to an
+  // exact version: a major range would float, and before 1.0 a caret on 0.x pins the
+  // minor anyway, so the literal version is what the policy actually requires.
   assert.match(
     String(pkg.devDependencies["codebase-snapshot"]),
-    /^\^4\./,
-    "the package is declared as a devDependency"
+    /^\^\d+\.\d+\.\d+/,
+    "the package is declared as a devDependency, pinned to an exact version"
   );
   assert.equal(result.dependency.added, true);
   assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));

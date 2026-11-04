@@ -44,7 +44,7 @@ another model, and reading files one by one would not fit in context.
 This tool is a Node CLI. It needs **Node.js 18 or newer**. You do not need to install it
 globally, and you do not need to clone anything.
 
-**Pin a version** — \`npx ${PACKAGE_NAME}@${MAJOR_VERSION} <command>\` (or an exact release) — when you
+**Pin a version** — \`npx ${PACKAGE_NAME}@${GENERATOR_VERSION} <command>\` — when you
 need the same version on every machine. The bare package name works too: this package ships
 one executable file, published under two names (\`codebase-snapshot\` and \`snap\`), which is what
 lets npm pick it. If a command exits 0 printing nothing,
@@ -55,8 +55,8 @@ is broken.
 
 1. **Verify the tool.** Run \`npx ${PACKAGE_NAME}@latest --version\`. Expect \`v${MAJOR_VERSION}\` or
    newer on stdout — compare the major version, not the patch, because the
-   \`@latest\` tag can lag this release. If the printed major is older, pin the
-   major (\`@${MAJOR_VERSION}\`) instead of retrying. Empty output means you hit the
+   \`@latest\` tag can lag this release. If what it prints is older, pin the exact
+   release (\`@${GENERATOR_VERSION}\`) instead of retrying. Empty output means you hit the
    bare-spec problem above.
 
 2. **Read the contract, not the prose.** Run

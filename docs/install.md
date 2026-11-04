@@ -28,7 +28,7 @@ Pin the version when you need the same build on every machine:
 
 ```bash
 npx codebase-snapshot@latest generate
-npx codebase-snapshot@4 generate
+npx codebase-snapshot@0.9.0 generate
 ```
 
 **Why the bare name works.** npm resolves which binary to run from the package's `bin`

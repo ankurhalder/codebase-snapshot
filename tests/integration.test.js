@@ -1752,7 +1752,7 @@ test("init's whole footprint is the config, package.json and .gitignore", () => 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   assert.match(
     String(pkg.devDependencies["codebase-snapshot"]),
-    /^\^4\./,
+    /^\^\d+\.\d+\.\d+/,
     "the package is declared, so npm install puts it in node_modules"
   );
 

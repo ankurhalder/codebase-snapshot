@@ -43,7 +43,7 @@ has to parse an empty string or scrape stderr for prose.
 
 ## Notes for agents
 
-- Pin `@latest` or `@4` when the same version must run on every machine. The bare package name
+- Pin an exact version — `npx codebase-snapshot --version` prints the current one — when the same version must run on every machine. The bare package name
   also works — both bin entries point at the same file, which is what lets npm resolve it.
 - **If discovery refuses** ("This directory is a git repository, but git could not list its
   files"), the fix is `--discovery walk`: it scans the tree directly and reads `.gitignore` files

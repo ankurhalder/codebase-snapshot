@@ -50,7 +50,7 @@ npx codebase-snapshot generate      # no install, one-off
 npm install -D codebase-snapshot    # or add it to a project
 ```
 
-Any npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
+This is a **0.x** release. Version numbers follow semver's 0.x conventions, so the CLI surface may change in a minor release until 1.0.0 — pin an exact version if you need a fixed surface today.`n`nAny npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
 each verified against the packed tarball before release. Requires **Node.js 18+**.
 
 Published from GitHub Actions with [build provenance](https://docs.npmjs.com/generating-provenance-statements): npm shows the tarball was built from this repository at a tagged commit, and `npm audit signatures` verifies it.

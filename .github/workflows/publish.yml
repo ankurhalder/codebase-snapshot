@@ -117,7 +117,7 @@ jobs:
           cd packages/create
           npm publish --access public --provenance
 
-      # 4.5.0 moved the package from `@ankurhalder/codebase-snapshot` to the
+      # 0.9.0 moved the package from `@ankurhalder/codebase-snapshot` to the
       # unscoped `codebase-snapshot`. Deprecating rather than unpublishing keeps
       # every existing `npx @ankurhalder/codebase-snapshot` instruction resolving,
       # while the registry tells anyone who installs the old name where it went.

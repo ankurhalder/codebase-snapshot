@@ -180,7 +180,7 @@ export function buildAgentContract(): AgentContract {
       bins: ["codebase-snapshot", "snap"],
       notes: [
         `The bare package name also works: npx ${PACKAGE_NAME} <command>.`,
-        "Pin @latest (or @4) when you need the exact same version on every machine.",
+        "Pin an exact version — for example `codebase-snapshot@0.9.0` — when you need the same build on every machine. A major range is not enough before 1.0: npm's caret on a 0.x version pins the minor, and 0.x minors are breaking by convention.",
         "Both bin names point at the same file. npm resolves a package by its bin entries, so they must stay aliases of one executable.",
         "Human progress goes to stderr. With --format json the payload on stdout is pure JSON.",
         "A failing run also writes pure JSON to stdout: { error: { message, exitCode } }. The exit code and the stderr line are unchanged.",
@@ -199,7 +199,7 @@ export function buildAgentContract(): AgentContract {
           `(this build is v${GENERATOR_VERSION}: compare the major version, not the patch)`,
         notes:
           "If it prints an older major than this contract's, the @latest tag is behind the release: " +
-          `pin the major with \`npx ${PACKAGE_NAME}@${MAJOR_VERSION} --version\` instead of retrying @latest. ` +
+          `pin the exact version with \`npx ${PACKAGE_NAME}@${GENERATOR_VERSION} --version\` instead of retrying @latest. ` +
           "If it prints nothing, clear the npm cache and retry, or use `npx -p <pkg> codebase-snapshot`.",
       },
       {
