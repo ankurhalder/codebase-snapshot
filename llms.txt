@@ -73,5 +73,8 @@ has to parse an empty string or scrape stderr for prose.
 ## Optional
 
 - [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md): conventions for contributing to this repository.
-- [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki): longer guides, recipes and FAQ.
+- [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki): a pointer to the documentation site.
 - [Releases](https://github.com/ankurhalder/codebase-snapshot/releases): version history with notes.
+- [Feeding a codebase to ChatGPT, Claude or Cursor](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-feed-a-repo-to-claude.md): the end-to-end recipe, including what the model should be told about the snapshot it is reading.
+- [Budgeting LLM context](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-context-budget.md): how to choose `maxPartBytes`, `largeFileBytes` and per-layer ceilings from the consumer rather than from taste.
+- [vs repomix](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-repomix.md), [vs gitingest](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-gitingest.md), [vs code2prompt](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-code2prompt.md): honest comparisons that say where each alternative is the better choice.

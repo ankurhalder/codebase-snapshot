@@ -41,7 +41,20 @@ const TITLES = {
   "getting-started": "Getting started",
 };
 
-const ORDER = ["index", "install", "cli", "configuration", "output", "agent", "troubleshooting"];
+const ORDER = [
+  "index",
+  "install",
+  "cli",
+  "configuration",
+  "output",
+  "agent",
+  "troubleshooting",
+  "how-to-feed-a-repo-to-claude",
+  "how-to-context-budget",
+  "vs-repomix",
+  "vs-gitingest",
+  "vs-code2prompt",
+];
 
 function escapeHtml(text) {
   return text
@@ -93,6 +106,11 @@ function nav(slug) {
     output: "Output",
     agent: "AI agents",
     troubleshooting: "Troubleshooting",
+    "how-to-feed-a-repo-to-claude": "Feeding a repo to an LLM",
+    "how-to-context-budget": "Context budgeting",
+    "vs-repomix": "vs repomix",
+    "vs-gitingest": "vs gitingest",
+    "vs-code2prompt": "vs code2prompt",
   };
   return ORDER.filter((name) => name !== "index")
     .map((name) => `<a${name === slug ? ' class="here"' : ""} href="${name}.html">${labels[name]}</a>`)

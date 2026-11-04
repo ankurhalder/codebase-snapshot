@@ -244,7 +244,16 @@ both. The CLI and the API share one implementation, so anything the CLI does is 
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
 | [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md) | Every message and what to do about it |
 | [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md) | Release history and breaking changes |
-| [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki) | Guides, recipes, FAQ |
+
+## Guides
+
+| | |
+| :--- | :--- |
+| [Feeding a codebase to ChatGPT, Claude or Cursor](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-feed-a-repo-to-claude.md) | The full recipe, including the parts most guides skip |
+| [Budgeting LLM context](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-context-budget.md) | Choosing the numbers from the destination, not from taste |
+| [vs repomix](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-repomix.md) | Including where repomix is the better choice |
+| [vs gitingest](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-gitingest.md) | Including where gitingest is the better choice |
+| [vs code2prompt](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-code2prompt.md) | Including where code2prompt is the better choice |
 
 ## Safety
 
