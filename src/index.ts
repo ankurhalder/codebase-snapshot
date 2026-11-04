@@ -772,6 +772,36 @@ function describeEntries(entries: string[], limit = 5): string {
 }
 
 /**
+ * True when `dir` holds no regular file at any depth — only directories, possibly nested.
+ *
+ * Replacing such a tree cannot destroy anything, so it is treated like an empty one. The walk is
+ * iterative for the same reason the project-tree walker is: a deep directory chain must not
+ * overflow the stack of an ownership check. A symlink is counted as content (it is neither
+ * `isDirectory()` nor ignorable), so a link is never quietly deleted.
+ */
+function containsNoFiles(dir: string): boolean {
+  const pending: string[] = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop() as string;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      // Unreadable: assume it may hold something and let the caller refuse.
+      return false;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        pending.push(path.join(current, entry.name));
+      } else if (!IGNORABLE_ENTRIES.has(entry.name)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
  * Refuses to replace a directory that this generator did not write.
  *
  * Path checks alone cannot make the swap safe: `outDir: "src"` is a plausible
@@ -797,6 +827,11 @@ export function assertReplaceable(
   if (entries.length === 0) return;
   // Tolerated: replacing a directory that holds nothing but Finder noise loses nothing.
   if (entries.every((name) => IGNORABLE_ENTRIES.has(name))) return;
+  // Also tolerated: directories with no file at any depth. Replacing them destroys nothing, and a
+  // skeleton left behind by a killed run, an emptied snapshot or a hand-made `parts/`+`reports/`
+  // used to leave the tool refusing with "remove the directory yourself" when there was nothing to
+  // remove — a dead end reached by following our own cleanup instructions.
+  if (containsNoFiles(target)) return;
 
   const { problem } = readOwnershipMarker(target);
   const verdict = assessSnapshotDirectory(target);

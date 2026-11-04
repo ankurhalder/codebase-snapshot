@@ -100,3 +100,26 @@ test("a complete snapshot this build wrote is still replaced without complaint",
   assert.notEqual(first.fingerprint, second.fingerprint, "the second run really regenerated");
   assert.equal(second.counts?.files ?? second.files.length, 1);
 });
+
+test("an outDir holding only empty directories is replaced, not refused", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  // The state a killed run, an emptied snapshot or a hand-made skeleton leaves behind: `parts/` and
+  // `reports/` with nothing in them. Refusing protected no data and blocked every later run.
+  fs.mkdirSync(path.join(dir, "snapshot", "parts"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "snapshot", "reports", "deeper"), { recursive: true });
+
+  const manifest = generate(dir);
+
+  assert.ok(fs.existsSync(path.join(dir, "snapshot", "manifest.json")), "the run replaced it");
+  assert.ok(manifest.counts.totalFiles > 0, "the snapshot was written");
+});
+
+test("an outDir holding any file is still refused without a marker", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  write(dir, "snapshot/parts/keep.md", "user notes\n");
+
+  assert.throws(() => generate(dir), /Refusing to replace outDir/);
+  assert.equal(fs.readFileSync(path.join(dir, "snapshot", "parts", "keep.md"), "utf8"), "user notes\n");
+});
