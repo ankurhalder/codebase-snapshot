@@ -4,6 +4,25 @@ All notable changes to `codebase-snapshot`.
 
 ---
 
+## A note on version numbers
+
+This package started its public life as `@ankurhalder/codebase-snapshot`, which reached 4.4.1. It
+moved to the unscoped name and **restarted at 0.9.0**, so the numbers below are not a continuation of
+the old line — `0.9.0` is newer than `4.4.1`, not older. 1.0.0 is reserved for when the CLI surface
+is settled.
+
+Two versions exist on the registry that are not releases, and both are deprecated:
+
+| Version | What it is |
+| :-- | :-- |
+| `codebase-snapshot@4.5.0` | Published for about an hour under the new name before the scheme was reset to 0.9.0. Withdrawn, never the supported version. |
+| `codebase-snapshot@0.0.0-stage` | npm's own staging placeholder, created automatically during the first publish of the name. Not a release. |
+
+Deleting them requires account-level rights that the release pipeline does not have, so they are
+deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
+
+---
+
 ## 0.9.0
 
 ### The package is now `codebase-snapshot`, unscoped
