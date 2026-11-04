@@ -93,7 +93,7 @@ if (createJson.version !== packageJson.version) {
     `packages/create is at ${createJson.version} but the package is at ${packageJson.version}`
   );
 }
-const createDependency = createJson.dependencies?.["@ankurhalder/codebase-snapshot"];
+const createDependency = createJson.dependencies?.["codebase-snapshot"];
 if (createDependency !== `^${packageJson.version}`) {
   problems.push(
     `packages/create depends on ${createDependency ?? "nothing"}; expected ^${packageJson.version}`

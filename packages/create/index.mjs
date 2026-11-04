@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PromptCancelled, runInit } from "@ankurhalder/codebase-snapshot";
+import { PromptCancelled, runInit } from "codebase-snapshot";
 
 /**
  * `npm create codebase-snapshot`
  *
  * A thin shim over the same wizard the main package exposes, so there is exactly
  * one prompt implementation to keep working. Everything it does is available as
- * `npx @ankurhalder/codebase-snapshot init`; this entry point only exists because
+ * `npx codebase-snapshot init`; this entry point only exists because
  * `npm create <x>` is the convention developers reach for first.
  *
  * The shim used to carry its own `devDependencies` writer, because `init` wrote the
@@ -17,7 +17,7 @@ import { PromptCancelled, runInit } from "@ankurhalder/codebase-snapshot";
  * second source of truth, and the two drift.
  */
 
-const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
+const PACKAGE_NAME = "codebase-snapshot";
 
 /** True when the package's own binary is already installed in the project. */
 function hasLocalBinary() {
@@ -64,7 +64,7 @@ if (argv.includes("--help") || argv.includes("-h")) {
     [
       "create-codebase-snapshot",
       "",
-      "  Sets up @ankurhalder/codebase-snapshot in the current directory.",
+      "  Sets up codebase-snapshot in the current directory.",
       "",
       "  Usage:",
       "    npm create codebase-snapshot",

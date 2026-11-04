@@ -400,7 +400,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   const interactive = isInteractive(io) && options.yes !== true;
 
   if (interactive) {
-    io.output.write("\n  @ankurhalder/codebase-snapshot\n");
+    io.output.write("\n  codebase-snapshot\n");
     io.output.write("  Turn this repository into an LLM-ready, redacted, byte-bounded snapshot.\n\n");
     io.output.write(`  Detected   ${detected.presetName}\n`);
     io.output.write(`  Directory  ${options.cwd}\n\n`);

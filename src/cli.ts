@@ -1533,7 +1533,7 @@ async function runWatchLoop(
 }
 
 /**
- * This module has no side effects: importing `@ankurhalder/codebase-snapshot/cli`
+ * This module has no side effects: importing `codebase-snapshot/cli`
  * exposes `main` and the argument parser without running anything. The
  * executable entry point is `src/bin.ts`.
  */

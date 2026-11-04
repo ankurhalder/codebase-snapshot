@@ -1,0 +1,63 @@
+name: Docs site
+
+# The site is rendered from README.md and docs/*.md by scripts/build-site.mjs, so
+# it can only change when one of those does. Building on every push to main would
+# burn a deploy for every source change that cannot affect it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "llms.txt"
+      - "scripts/build-site.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; queue at most one behind it. Cancelling a deploy
+# mid-flight can leave the site on a half-published artifact.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Render the site
+        run: npm run site
+
+      # A misspelt internal link is invisible until someone clicks it, and by
+      # then the page is already published. Fail the deploy instead.
+      - name: Every internal link resolves
+        run: node scripts/check-site-links.mjs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

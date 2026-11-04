@@ -5,7 +5,7 @@ the fix.
 
 ## The command does nothing
 
-**Symptom** — `npx @ankurhalder/codebase-snapshot generate` exits `0` and prints nothing. No
+**Symptom** — `npx codebase-snapshot generate` exits `0` and prints nothing. No
 `snapshot/` directory appears.
 
 **Cause** — a **stale global install** is shadowing `npx`. When a global copy exists, npm
@@ -16,8 +16,8 @@ development checkout) resolves to a binary that is not there.
 
 ```bash
 npm ls -g --depth=0 | grep codebase-snapshot
-npm rm -g @ankurhalder/codebase-snapshot
-npx @ankurhalder/codebase-snapshot generate
+npm rm -g codebase-snapshot
+npx codebase-snapshot generate
 ```
 
 If nothing is installed globally, clear the npx cache (`npm cache clean --force`) and retry.
@@ -375,8 +375,8 @@ evidence that the snapshot was taken from committed state.
 ## Still stuck
 
 ```bash
-npx @ankurhalder/codebase-snapshot describe --format json > contract.json
-npx @ankurhalder/codebase-snapshot generate --dry-run --format json > dry-run.json
+npx codebase-snapshot describe --format json > contract.json
+npx codebase-snapshot generate --dry-run --format json > dry-run.json
 ```
 
 The first is the machine-readable contract, including a troubleshooting table. The second

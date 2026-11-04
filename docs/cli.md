@@ -1,11 +1,11 @@
 # CLI reference
 
 ```bash
-npx @ankurhalder/codebase-snapshot <command> [options]
+npx codebase-snapshot <command> [options]
 ```
 
 The package installs one executable, **`codebase-snapshot`**, with a short alias **`snap`**.
-Both are the same file. After `npx @ankurhalder/codebase-snapshot generate` the command
+Both are the same file. After `npx codebase-snapshot generate` the command
 becomes available as `npx codebase-snapshot` for the rest of that session; after
 `npm install -D` use `npx codebase-snapshot` or `npx snap` from the project.
 
@@ -124,7 +124,7 @@ The whole first run in one command, with defaults and no prompts:
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: @ankurhalder/codebase-snapshot ^4.4.0
+   Added devDependency: codebase-snapshot ^4.4.0
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -161,14 +161,14 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: @ankurhalder/codebase-snapshot ^4.1.1
+   Added devDependency: codebase-snapshot ^4.1.1
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
 - `scripts.snapshot` and `scripts.snapshot:validate` are added to `package.json` if those keys
   are absent. Existing values are left alone, and the rewrite keeps the file's own indentation
   and line endings. Without a `package.json` it notes that scripts were not added.
-- `@ankurhalder/codebase-snapshot` is added to `devDependencies` when no dependency field
+- `codebase-snapshot` is added to `devDependencies` when no dependency field
   declares it yet. That is what puts a real copy in `node_modules` and stops `npm run
   snapshot` from resolving `@latest` out of the registry on every run. A range you already
   declared — including a pin to an older version — is never overwritten.
@@ -408,30 +408,30 @@ So `codebase-snapshot describe --format json > contract.json`,
 
 ```bash
 # The common path
-npx @ankurhalder/codebase-snapshot generate
+npx codebase-snapshot generate
 
 # A tighter budget for a small model context, in a separate directory
-npx @ankurhalder/codebase-snapshot generate --out-dir .context --max-part-bytes 120k
+npx codebase-snapshot generate --out-dir .context --max-part-bytes 120k
 
 # Just the code parts, no reports
-npx @ankurhalder/codebase-snapshot generate --only-artifacts parts,manifest
+npx codebase-snapshot generate --only-artifacts parts,manifest
 
 # One file per part, with everything else left alone
-npx @ankurhalder/codebase-snapshot generate --only-artifacts parts
+npx codebase-snapshot generate --only-artifacts parts
 
 # Why is this file missing?
-npx @ankurhalder/codebase-snapshot explain src/generated/schema.ts
+npx codebase-snapshot explain src/generated/schema.ts
 
 # What changed between two snapshots?
-npx @ankurhalder/codebase-snapshot diff old-snapshot snapshot
+npx codebase-snapshot diff old-snapshot snapshot
 
 # Non-interactive setup, then a JSON dry run to inspect the result
-npx @ankurhalder/codebase-snapshot init --yes
-npx @ankurhalder/codebase-snapshot generate --dry-run --format json | jq .config
+npx codebase-snapshot init --yes
+npx codebase-snapshot generate --dry-run --format json | jq .config
 
 # Keep the snapshot fresh while editing
-npx @ankurhalder/codebase-snapshot generate --watch
+npx codebase-snapshot generate --watch
 
 # Give an agent everything it needs
-npx @ankurhalder/codebase-snapshot skill --install
+npx codebase-snapshot skill --install
 ```

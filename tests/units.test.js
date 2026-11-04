@@ -834,12 +834,12 @@ test("runInit writes a config from flags without a TTY", async () => {
   assert.ok(result.configText.includes("previewHeadLines:"), "the complete config is the only shape");
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-  assert.equal(pkg.scripts.snapshot, "npx @ankurhalder/codebase-snapshot generate");
-  assert.equal(pkg.scripts["snapshot:validate"], "npx @ankurhalder/codebase-snapshot validate");
+  assert.equal(pkg.scripts.snapshot, "npx codebase-snapshot generate");
+  assert.equal(pkg.scripts["snapshot:validate"], "npx codebase-snapshot validate");
   // Without this entry nothing reaches node_modules and `npm run snapshot` resolves
   // @latest from the registry on every run.
   assert.match(
-    String(pkg.devDependencies["@ankurhalder/codebase-snapshot"]),
+    String(pkg.devDependencies["codebase-snapshot"]),
     /^\^4\./,
     "the package is declared as a devDependency"
   );
@@ -862,14 +862,14 @@ test("runInit keeps a version the project already pinned", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-pin-"));
   fs.writeFileSync(
     path.join(dir, "package.json"),
-    JSON.stringify({ name: "x", version: "1.0.0", devDependencies: { "@ankurhalder/codebase-snapshot": "4.0.0" } })
+    JSON.stringify({ name: "x", version: "1.0.0", devDependencies: { "codebase-snapshot": "4.0.0" } })
   );
   fs.writeFileSync(path.join(dir, "go.mod"), "module x\n");
 
   const result = await runInit({ cwd: dir, yes: true, io: quietIO });
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-  assert.equal(pkg.devDependencies["@ankurhalder/codebase-snapshot"], "4.0.0", "a pin is a decision");
+  assert.equal(pkg.devDependencies["codebase-snapshot"], "4.0.0", "a pin is a decision");
   assert.equal(result.dependency.added, false);
   fs.rmSync(dir, { recursive: true, force: true });
 });

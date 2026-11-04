@@ -38,7 +38,7 @@ import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./sca
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
-import { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
+import { GENERATOR_NAME, GENERATOR_VERSION, isOurGeneratorName } from "./version.js";
 import type {
   FileEntry,
   JsonSummary,
@@ -604,7 +604,7 @@ function readOwnershipMarker(dir: string): MarkerEvidence {
   }
 
   const candidate = parsed as Record<string, unknown>;
-  if (candidate.generator !== GENERATOR_NAME) {
+  if (!isOurGeneratorName(candidate.generator)) {
     return { marker: null, problem: "its .codebase-snapshot marker names a different generator" };
   }
   if (
@@ -649,7 +649,7 @@ function describeManifestProblem(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "is not a JSON object";
   const candidate = value as Record<string, unknown>;
   const generator = candidate.generator as { name?: unknown } | null | undefined;
-  if (typeof generator !== "object" || generator === null || generator.name !== GENERATOR_NAME) {
+  if (typeof generator !== "object" || generator === null || !isOurGeneratorName(generator.name)) {
     return "was not written by this generator";
   }
   if (!Array.isArray(candidate.files)) return "has no files array";

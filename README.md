@@ -3,13 +3,13 @@
 **Turn any repository into an LLM-ready snapshot: code packed into size-budgeted markdown
 parts, indexed by a JSON manifest, with a secret audit — in one command.**
 
-[![npm version](https://img.shields.io/npm/v/@ankurhalder/codebase-snapshot.svg)](https://www.npmjs.com/package/@ankurhalder/codebase-snapshot)
-[![npm downloads](https://img.shields.io/npm/dw/@ankurhalder/codebase-snapshot.svg)](https://www.npmjs.com/package/@ankurhalder/codebase-snapshot)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/codebase-snapshot.svg)](https://www.npmjs.com/package/codebase-snapshot)
+[![npm downloads](https://img.shields.io/npm/dw/codebase-snapshot.svg)](https://www.npmjs.com/package/codebase-snapshot)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ankurhalder/codebase-snapshot/blob/main/LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 
 ```bash
-npx @ankurhalder/codebase-snapshot generate
+npx codebase-snapshot generate
 ```
 
 That writes `./snapshot/` — a directory you can drop into a chat, a prompt, a RAG pipeline or
@@ -46,14 +46,16 @@ deterministically:
 ## Install
 
 ```bash
-npx @ankurhalder/codebase-snapshot generate      # no install, one-off
-npm install -D @ankurhalder/codebase-snapshot    # or add it to a project
+npx codebase-snapshot generate      # no install, one-off
+npm install -D codebase-snapshot    # or add it to a project
 ```
 
 Any npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
 each verified against the packed tarball before release. Requires **Node.js 18+**.
 
-→ [Installation guide](docs/install.md)
+Published from GitHub Actions with [build provenance](https://docs.npmjs.com/generating-provenance-statements): npm shows the tarball was built from this repository at a tagged commit, and `npm audit signatures` verifies it.
+
+→ [Installation guide](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/install.md)
 
 ## Quick start
 
@@ -61,12 +63,12 @@ One command does the whole first run — detects the project, writes a commented
 npm scripts and the devDependency, installs it, and generates the snapshot:
 
 ```bash
-npx @ankurhalder/codebase-snapshot setup
+npx codebase-snapshot setup
 ```
 
 ```bash
 # Or step by step, if you want to see each stage:
-npx @ankurhalder/codebase-snapshot init --yes   # config + scripts + devDependency + .gitignore
+npx codebase-snapshot init --yes   # config + scripts + devDependency + .gitignore
 npm install                                     # the package, into node_modules
 npm run snapshot                                # generate
 npm run snapshot:validate                       # exit 0 = current with disk
@@ -108,7 +110,7 @@ snapshot/
 
 Every artifact can be turned off (`--skip-artifacts`, `--only-artifacts`, or the config).
 
-→ [Snapshot output and manifest schema](docs/output.md)
+→ [Snapshot output and manifest schema](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md)
 
 ## Built to be trusted with a whole repository
 
@@ -157,7 +159,7 @@ Every summary is labelled `ast`, `structural` or `heuristic` so you know how muc
 Python, for example, is a line-scan `heuristic`, while JSON and Markdown get `structural`
 shapes.
 
-→ [Preset table and detection rules](docs/configuration.md#project-presets)
+→ [Preset table and detection rules](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md#project-presets)
 
 ## Commands
 
@@ -174,7 +176,7 @@ shapes.
 
 Exit codes: `0` success · `1` drift or refused generation · `2` usage error.
 
-→ [Full CLI reference](docs/cli.md)
+→ [Full CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md)
 
 ## For AI agents
 
@@ -182,17 +184,17 @@ Everything an agent needs is available as data, and the tool can install its own
 
 ```bash
 # The contract: workflow, every option and default, exit codes, presets, safety rules
-npx @ankurhalder/codebase-snapshot describe --format json
+npx codebase-snapshot describe --format json
 
 # Install the skill into the registries agent tools read: .claude/skills/, .cursor/rules/
 # (it adds those files to .gitignore, and never touches your own AGENTS.md)
-npx @ankurhalder/codebase-snapshot skill --install
+npx codebase-snapshot skill --install
 ```
 
-An agent told only "use `npx @ankurhalder/codebase-snapshot`" can read the contract, follow its
+An agent told only "use `npx codebase-snapshot`" can read the contract, follow its
 ordered workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-→ [Using this with an AI agent](docs/agent.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
+→ [Using this with an AI agent](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
 
 ## Configuration
 
@@ -213,12 +215,12 @@ const config = {
 export default config;
 ```
 
-→ [Configuration reference](docs/configuration.md)
+→ [Configuration reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md)
 
 ## Programmatic API
 
 ```js
-import { generateSnapshot, resolveConfig, validateSnapshot, loadConfigFile } from "@ankurhalder/codebase-snapshot";
+import { generateSnapshot, resolveConfig, validateSnapshot, loadConfigFile } from "codebase-snapshot";
 
 // Pass the repository explicitly: loadConfigFile returns only the config it found, so a
 // directory with no config file would leave resolveConfig scanning process.cwd() instead.
@@ -228,20 +230,20 @@ const manifest = generateSnapshot(config);
 const validation = validateSnapshot(config);
 ```
 
-CommonJS works too (`require("@ankurhalder/codebase-snapshot")`), with type definitions for
+CommonJS works too (`require("codebase-snapshot")`), with type definitions for
 both. The CLI and the API share one implementation, so anything the CLI does is available here.
 
 ## Documentation
 
 | | |
 | :--- | :--- |
-| [Installation](docs/install.md) | Every client, version pinning, agent skill install |
-| [CLI reference](docs/cli.md) | Commands, options, exit codes, examples |
-| [Configuration](docs/configuration.md) | Every setting, all 25 presets, budgets, hooks, secrets |
-| [Snapshot output](docs/output.md) | Directory layout and the full manifest schema |
-| [AI agents](docs/agent.md) | The contract, the skill, what an agent should avoid |
-| [Troubleshooting](docs/troubleshooting.md) | Every message and what to do about it |
-| [Changelog](CHANGELOG.md) | Release history and breaking changes |
+| [Installation](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/install.md) | Every client, version pinning, agent skill install |
+| [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md) | Commands, options, exit codes, examples |
+| [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md) | Every setting, all 25 presets, budgets, hooks, secrets |
+| [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md) | Directory layout and the full manifest schema |
+| [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
+| [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md) | Every message and what to do about it |
+| [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md) | Release history and breaking changes |
 | [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki) | Guides, recipes, FAQ |
 
 ## Safety
@@ -259,8 +261,8 @@ both. The CLI and the API share one implementation, so anything the CLI does is 
 ## Contributing
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/CONTRIBUTING.md) and the
-[code of conduct](https://github.com/ankurhalder/codebase-snapshot/blob/main/CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](SECURITY.md).
+[code of conduct](https://github.com/ankurhalder/codebase-snapshot/blob/main/CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/SECURITY.md).
 
 ## License
 
-[MIT](LICENSE) © Ankur Halder
+[MIT](https://github.com/ankurhalder/codebase-snapshot/blob/main/LICENSE) © Ankur Halder

@@ -9,5 +9,23 @@
  *
  * `package.json` carries the same version; `npm run verify` compares the two.
  */
-export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.4.1";
+export const GENERATOR_NAME = "codebase-snapshot";
+export const GENERATOR_VERSION = "4.5.0";
+
+/**
+ * Names this generator was published under before it moved to `codebase-snapshot`.
+ *
+ * The name is not cosmetic: it is written into every ownership marker and every
+ * manifest, and the output-directory guard refuses to replace a directory whose
+ * evidence names a different generator. Renaming the constant without accepting
+ * the old spelling would therefore strand every snapshot written by 1.0–4.4.x —
+ * the tool would stop recognising its own output. Ownership accepts the legacy
+ * name and rewrites it to the current one on the next run.
+ */
+export const LEGACY_GENERATOR_NAMES: readonly string[] = ["@ankurhalder/codebase-snapshot"];
+
+/** Whether a name found in an ownership marker or manifest belongs to this generator. */
+export function isOurGeneratorName(name: unknown): boolean {
+  if (typeof name !== "string") return false;
+  return name === GENERATOR_NAME || LEGACY_GENERATOR_NAMES.includes(name);
+}

@@ -6,6 +6,12 @@ snapshot
 snapshot.tmp
 coverage/
 
+# Rendered documentation site. Built from README.md and docs/*.md by
+# scripts/build-site.mjs, so it is output, not source — the workflow rebuilds it
+# on every deploy. `seo-log.jsonl` is deliberately NOT ignored: it is the record
+# of measured search positions, and its whole value is being comparable over time.
+site/
+
 # Audit PoC scratch space. The verification scripts (audit/poc/*.mjs,
 # audit/verify/*.mjs) and the reports are tracked; the fixture trees they
 # generate, the copies of this project they clone, and captured command output

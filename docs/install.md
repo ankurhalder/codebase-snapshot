@@ -1,6 +1,6 @@
 # Installation
 
-`@ankurhalder/codebase-snapshot` is published to the public npm registry, so it installs with
+`codebase-snapshot` is published to the public npm registry, so it installs with
 **any** npm-compatible client. There is no second registry to add and nothing to configure.
 
 Requires **Node.js 18 or newer**.
@@ -8,7 +8,7 @@ Requires **Node.js 18 or newer**.
 ## One command
 
 ```bash
-npx @ankurhalder/codebase-snapshot setup
+npx codebase-snapshot setup
 ```
 
 Detects the project, writes the config (an existing one is kept), adds the npm scripts and the
@@ -18,7 +18,7 @@ same steps taken one at a time.
 ## One-off use
 
 ```bash
-npx @ankurhalder/codebase-snapshot generate
+npx codebase-snapshot generate
 ```
 
 This is the shortest path and needs no install. The command is also available as
@@ -27,8 +27,8 @@ This is the shortest path and needs no install. The command is also available as
 Pin the version when you need the same build on every machine:
 
 ```bash
-npx @ankurhalder/codebase-snapshot@latest generate
-npx @ankurhalder/codebase-snapshot@4 generate
+npx codebase-snapshot@latest generate
+npx codebase-snapshot@4 generate
 ```
 
 **Why the bare name works.** npm resolves which binary to run from the package's `bin`
@@ -42,10 +42,10 @@ If a command exits with no output at all, a stale global install is the usual ca
 ## Add to a project
 
 ```bash
-npm install -D @ankurhalder/codebase-snapshot
-yarn add -D @ankurhalder/codebase-snapshot        # yarn classic and Berry
-pnpm add -D @ankurhalder/codebase-snapshot
-bun add -d @ankurhalder/codebase-snapshot
+npm install -D codebase-snapshot
+yarn add -D codebase-snapshot        # yarn classic and Berry
+pnpm add -D codebase-snapshot
+bun add -d codebase-snapshot
 ```
 
 Then run it through your client so the binary resolves from the project:
@@ -63,8 +63,8 @@ most reproducible option:
 ```json
 {
   "scripts": {
-    "snapshot": "npx @ankurhalder/codebase-snapshot generate",
-    "snapshot:validate": "npx @ankurhalder/codebase-snapshot validate"
+    "snapshot": "npx codebase-snapshot generate",
+    "snapshot:validate": "npx codebase-snapshot validate"
   }
 }
 ```
@@ -76,9 +76,9 @@ already resolved the package, and `init` does not assume the install has happene
 ## One-off runners for other clients
 
 ```bash
-yarn dlx -p @ankurhalder/codebase-snapshot codebase-snapshot generate   # yarn Berry
-pnpm dlx @ankurhalder/codebase-snapshot generate
-bunx @ankurhalder/codebase-snapshot generate
+yarn dlx -p codebase-snapshot codebase-snapshot generate   # yarn Berry
+pnpm dlx codebase-snapshot generate
+bunx codebase-snapshot generate
 ```
 
 ## Agent skill
@@ -87,14 +87,14 @@ To make a repository discoverable by an AI agent — so it finds this tool witho
 it exists — run:
 
 ```bash
-npx @ankurhalder/codebase-snapshot skill --install
+npx codebase-snapshot skill --install
 ```
 
 That writes `.claude/skills/codebase-snapshot/SKILL.md` and
 `.cursor/rules/codebase-snapshot.mdc`, and adds both to `.gitignore` so the install leaves
 nothing untracked. It does not touch `AGENTS.md`: that file is your project's own agent
 contract. To put the skill there, print it and paste it —
-`npx @ankurhalder/codebase-snapshot skill >> AGENTS.md`. See
+`npx codebase-snapshot skill >> AGENTS.md`. See
 [Using this with an AI agent](agent.md).
 
 ## Verified clients
@@ -126,7 +126,7 @@ preset, and JSON configs are parsed rather than executed. See
 ## Global install
 
 ```bash
-npm install -g @ankurhalder/codebase-snapshot
+npm install -g codebase-snapshot
 ```
 
 Convenient, but prefer pinning per project: snapshots are only reproducible if the generator
@@ -143,7 +143,7 @@ package that runs the snapshot (usually the root), or use a one-off runner
 ## Upgrading
 
 ```bash
-npm install -D @ankurhalder/codebase-snapshot@latest
+npm install -D codebase-snapshot@latest
 npx codebase-snapshot generate     # rewrite the snapshot with the new version
 ```
 
@@ -162,7 +162,7 @@ did in error; 4.0.0 restored the `snap` alias.
 
 Standard for your client (`npm uninstall`, `yarn remove`, `pnpm remove`, `bun remove`).
 Snapshots already written to the output directory are ordinary files and are left alone.
-If you installed globally, `npm rm -g @ankurhalder/codebase-snapshot` also removes the
+If you installed globally, `npm rm -g codebase-snapshot` also removes the
 shim that shadows `npx`.
 
 ## Troubleshooting
@@ -177,7 +177,7 @@ shadowing `npx`. Check and remove it:
 
 ```bash
 npm ls -g --depth=0 | grep codebase-snapshot
-npm rm -g @ankurhalder/codebase-snapshot
+npm rm -g codebase-snapshot
 ```
 
 Then re-run. If the package is not installed globally, clear the npx cache

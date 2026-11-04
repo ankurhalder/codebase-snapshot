@@ -1,0 +1,47 @@
+name: SEO rank
+
+# Records where this package actually ranks, once a week.
+#
+# The point is the trend, not the number. npm's search index reflects the
+# published manifest within about 45 minutes, so a metadata change shows up here
+# on the next run; GitHub's index is rebuilt on push. Run this after a release to
+# see what the change bought, and let the weekly run catch a slow slide that no
+# one would otherwise notice.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Measure
+        env:
+          # Without a token the search API allows ten requests a minute, which
+          # this query set can exceed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run seo-rank -- --record
+
+      # The log is the artifact. Commit it so the next run is comparable, and so
+      # the history is reviewable in git rather than in a dashboard nobody opens.
+      - name: Record the run
+        run: |
+          if git diff --quiet -- seo-log.jsonl; then
+            echo "no new measurement"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seo-log.jsonl
+          git commit -m "chore: record weekly search positions"
+          git push

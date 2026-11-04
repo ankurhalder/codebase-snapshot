@@ -90,8 +90,8 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(npm pkg get version | tr -d '"')"
-          if npm view "@ankurhalder/codebase-snapshot@$VERSION" version >/dev/null 2>&1; then
-            echo "@ankurhalder/codebase-snapshot@$VERSION is already on the registry; skipping"
+          if npm view "codebase-snapshot@$VERSION" version >/dev/null 2>&1; then
+            echo "codebase-snapshot@$VERSION is already on the registry; skipping"
             exit 0
           fi
           npm publish --access public --provenance
@@ -116,3 +116,17 @@ jobs:
           fi
           cd packages/create
           npm publish --access public --provenance
+
+      # 4.5.0 moved the package from `@ankurhalder/codebase-snapshot` to the
+      # unscoped `codebase-snapshot`. Deprecating rather than unpublishing keeps
+      # every existing `npx @ankurhalder/codebase-snapshot` instruction resolving,
+      # while the registry tells anyone who installs the old name where it went.
+      # The old name stays at its last published version; it is not republished.
+      - name: Deprecate the previous scoped name
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm deprecate "@ankurhalder/codebase-snapshot@*" \
+            "Renamed to codebase-snapshot, which is the supported package. Run: npx codebase-snapshot@latest setup" \
+            || echo "deprecation is best-effort; publishing already succeeded"

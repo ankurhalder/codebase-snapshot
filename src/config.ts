@@ -39,7 +39,7 @@ const CONFIG_FILENAMES = [
 ];
 
 const RESOLVED_CONFIG_BRAND = Symbol.for(
-  "@ankurhalder/codebase-snapshot/resolved-config"
+  "codebase-snapshot/resolved-config"
 );
 
 /**

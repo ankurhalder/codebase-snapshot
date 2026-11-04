@@ -1,6 +1,6 @@
 import { GENERATOR_VERSION } from "../version.js";
 
-const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
+const PACKAGE_NAME = "codebase-snapshot";
 
 /**
  * Major version of the build that ships this skill.

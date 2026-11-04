@@ -9,14 +9,14 @@ Nothing needs to be installed globally and no prior knowledge of the tool is req
 
 ```bash
 # 1. Read the contract. This is the machine-readable replacement for --help.
-npx @ankurhalder/codebase-snapshot describe --format json
+npx codebase-snapshot describe --format json
 
 # 2. Write a commented config that lists every setting (non-interactive).
-npx @ankurhalder/codebase-snapshot init --yes
+npx codebase-snapshot init --yes
 
 # 3. Generate and verify.
-npx @ankurhalder/codebase-snapshot generate
-npx @ankurhalder/codebase-snapshot validate
+npx codebase-snapshot generate
+npx codebase-snapshot validate
 ```
 
 The bare package name works; pin `@latest` or `@4` when the same version must run on every
@@ -50,14 +50,14 @@ silently misleading an agent.
 ## The skill
 
 ```bash
-npx @ankurhalder/codebase-snapshot skill            # print it (stdout)
-npx @ankurhalder/codebase-snapshot skill --install  # write it into the repository
+npx codebase-snapshot skill            # print it (stdout)
+npx codebase-snapshot skill --install  # write it into the repository
 ```
 
 Printing goes to stdout deliberately, so it can be redirected:
 
 ```bash
-npx @ankurhalder/codebase-snapshot skill > SKILL.md
+npx codebase-snapshot skill > SKILL.md
 ```
 
 `--install` writes the same skill into the registries agent tools read by name:
@@ -68,8 +68,8 @@ npx @ankurhalder/codebase-snapshot skill > SKILL.md
 | `cursor` | `.cursor/rules/codebase-snapshot.mdc` | Cursor rules |
 
 ```bash
-npx @ankurhalder/codebase-snapshot skill --install --target claude   # one registry
-npx @ankurhalder/codebase-snapshot skill --install                   # both (default)
+npx codebase-snapshot skill --install --target claude   # one registry
+npx codebase-snapshot skill --install                   # both (default)
 ```
 
 Both are **registries keyed by skill name**: the path carries `codebase-snapshot`, so the file
@@ -81,7 +81,7 @@ marketing where the project's rules belong. If you want the skill in there, prin
 it, so the diff and the commit are yours:
 
 ```bash
-npx @ankurhalder/codebase-snapshot skill >> AGENTS.md
+npx codebase-snapshot skill >> AGENTS.md
 ```
 
 The install is **idempotent**, and whatever it *creates* is appended to `.gitignore` in the

@@ -51,7 +51,7 @@ test("S8: a marker left in state staging is reported as an unfinished run", (t) 
     dir,
     "snapshot/.codebase-snapshot",
     JSON.stringify({
-      generator: "@ankurhalder/codebase-snapshot",
+      generator: "codebase-snapshot",
       version: "4.0.9",
       schemaVersion: "3.0.0",
       createdAt: "2026-01-01T00:00:00.000Z",

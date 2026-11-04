@@ -8,9 +8,9 @@ published package.
 The package ships its own agent skill and a machine-readable contract. Do not guess commands:
 
 ```bash
-npx @ankurhalder/codebase-snapshot describe --format json   # the full contract
-npx @ankurhalder/codebase-snapshot skill                   # the skill, on stdout
-npx @ankurhalder/codebase-snapshot skill --install         # into .claude/skills + .cursor/rules
+npx codebase-snapshot describe --format json   # the full contract
+npx codebase-snapshot skill                   # the skill, on stdout
+npx codebase-snapshot skill --install         # into .claude/skills + .cursor/rules
 ```
 
 Read [docs/agent.md](docs/agent.md) first. In short: `setup` — config, scripts, dependency, install

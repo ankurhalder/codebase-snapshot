@@ -97,7 +97,7 @@ test("S3: a forged manifest in a user directory is refused and nothing is delete
     "user-docs/budget.csv": budget,
     "user-docs/manifest.json": JSON.stringify({
       schemaVersion: "3.0.0",
-      generator: { name: "@ankurhalder/codebase-snapshot" },
+      generator: { name: "codebase-snapshot" },
       files: [],
     }),
   });
@@ -113,7 +113,7 @@ test("S3: a forged manifest in a user directory is refused and nothing is delete
 });
 
 test("S3: a zero-byte or id-less ownership marker is not evidence", () => {
-  for (const marker of ["", '{"generator":"@ankurhalder/codebase-snapshot","schemaVersion":"3.0.0"}']) {
+  for (const marker of ["", '{"generator":"codebase-snapshot","schemaVersion":"3.0.0"}']) {
     const dir = repo();
     const victims = path.join(dir, "assets");
     writeFiles(dir, {
@@ -138,7 +138,7 @@ test("S3: the marker records proof and a genuine second run still replaces", () 
   generate(dir);
 
   const marker = JSON.parse(read(dir, "snapshot/.codebase-snapshot"));
-  assert.equal(marker.generator, "@ankurhalder/codebase-snapshot");
+  assert.equal(marker.generator, "codebase-snapshot");
   assert.equal(marker.schemaVersion, "3.0.0");
   assert.equal(marker.state, "complete");
   assert.match(marker.id, /^[0-9a-f-]{36}$/i, "the marker carries a per-run id");
@@ -203,7 +203,7 @@ test("S10: our own leftover staging run is cleared", () => {
   const staleRun = "snapshot.tmp/run-999999-deadbeef";
   writeFiles(dir, {
     [`${staleRun}/.codebase-snapshot`]: JSON.stringify({
-      generator: "@ankurhalder/codebase-snapshot",
+      generator: "codebase-snapshot",
       version: "4.0.1",
       schemaVersion: "3.0.0",
       // Old enough to be a crash leftover regardless of the pid.
@@ -225,7 +225,7 @@ test("S10: a staging run owned by a live process is never deleted", () => {
   const liveRun = `snapshot.tmp/run-${process.pid}-maintained`;
   writeFiles(dir, {
     [`${liveRun}/.codebase-snapshot`]: JSON.stringify({
-      generator: "@ankurhalder/codebase-snapshot",
+      generator: "codebase-snapshot",
       version: "4.0.1",
       schemaVersion: "3.0.0",
       createdAt: new Date().toISOString(),

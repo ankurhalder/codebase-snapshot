@@ -1642,7 +1642,7 @@ test("describe emits a machine contract an agent can act on", () => {
   assert.equal(result.code, 0, result.stderr);
   const contract = JSON.parse(result.stdout);
 
-  assert.equal(contract.package, "@ankurhalder/codebase-snapshot");
+  assert.equal(contract.package, "codebase-snapshot");
   assert.equal(contract.generator, contract.package);
   assert.match(contract.invocation.oneShot, /@latest/, "the one-shot invocation must be pinned");
   assert.ok(contract.workflow.length >= 5, "the workflow must be step by step");
@@ -1751,7 +1751,7 @@ test("init's whole footprint is the config, package.json and .gitignore", () => 
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   assert.match(
-    String(pkg.devDependencies["@ankurhalder/codebase-snapshot"]),
+    String(pkg.devDependencies["codebase-snapshot"]),
     /^\^4\./,
     "the package is declared, so npm install puts it in node_modules"
   );
@@ -1787,7 +1787,15 @@ test("init writes a config that generate can actually load (CommonJS project)", 
   assert.equal(written[0], "snapshot.config.mjs", "a CommonJS project cannot load a .ts ESM config");
 
   const text = fs.readFileSync(path.join(dir, written[0]), "utf8");
-  assert.doesNotMatch(text, /@ankurhalder\/codebase-snapshot/, "the config must not import the package");
+  // Name-independent on purpose: the header comment legitimately names the generator, so
+  // matching the package string would forbid the tool from saying who wrote the file. What
+  // must never happen is the config importing the package, which would make it unloadable
+  // in the very project it is meant for.
+  assert.doesNotMatch(
+    text,
+    /^\s*(?:import\b|const\s+\w+\s*=\s*require\()/m,
+    "the config must not import the package"
+  );
 
   // The whole point: the next command works.
   const generated = runCli(["generate", "--cwd", dir]);

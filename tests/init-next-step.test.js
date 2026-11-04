@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 /**
  * `init` ends by telling the user what to run next. That line has to be executable exactly
  * as printed: it used to say `npm run snapshot` in a directory with no package.json, and
- * then, after a re-run, a bare `@ankurhalder/codebase-snapshot generate` — a package
+ * then, after a re-run, a bare `codebase-snapshot generate` — a package
  * specifier, not a command.
  */
 
@@ -39,7 +39,7 @@ function runInit(dir, extraArgs = []) {
 test("no package.json: the hint is a command that exists", (t) => {
   const dir = makeDir(t, { "main.go": "package main\nfunc main() {}\n" });
   const stderr = runInit(dir);
-  assert.match(stderr, /Next:\s+npx @ankurhalder\/codebase-snapshot generate/);
+  assert.match(stderr, /Next:\s+npx codebase-snapshot generate/);
   assert.doesNotMatch(stderr, /Next:\s+npm run snapshot/, "npm run needs a package.json");
 });
 
@@ -57,12 +57,12 @@ test("a re-run over a configured project does not print a bare package name", (t
 
   assert.doesNotMatch(
     stderr,
-    /Next:\s+@ankurhalder\/codebase-snapshot generate/,
+    /Next:\s+codebase-snapshot generate/,
     "a bare package name is not a runnable command"
   );
   assert.match(
     stderr,
-    /Next:\s+(npx @ankurhalder\/codebase-snapshot generate|npm install && npm run snapshot)/
+    /Next:\s+(npx codebase-snapshot generate|npm install && npm run snapshot)/
   );
 });
 

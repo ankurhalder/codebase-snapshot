@@ -6,7 +6,7 @@ import { optionAppliesTo } from "./option-scope.js";
 /** Version of the shape of this document, independent of the package version. */
 export const CONTRACT_VERSION = "1.0.0";
 
-const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
+const PACKAGE_NAME = "codebase-snapshot";
 
 /**
  * Major version of the build that generates this contract.
@@ -575,8 +575,8 @@ export function buildAgentContract(): AgentContract {
           "A stale global install of this package (often a leftover `npm link`) is shadowing npx: " +
           "npm runs the global binary instead of installing the published one.",
         fix:
-          "Check `npm ls -g --depth=0` for @ankurhalder/codebase-snapshot and remove it with " +
-          "`npm rm -g @ankurhalder/codebase-snapshot`. If it is not installed globally, clear the npx " +
+          "Check `npm ls -g --depth=0` for codebase-snapshot and remove it with " +
+          "`npm rm -g codebase-snapshot`. If it is not installed globally, clear the npx " +
           "cache with `npm cache clean --force` and retry.",
       },
       {

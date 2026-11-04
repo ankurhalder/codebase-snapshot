@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
  *
  * The shim imports the main package by name, which only resolves in a published
  * install. Each test therefore rebuilds that layout in a temp directory: a
- * `node_modules/@ankurhalder/codebase-snapshot` link to this checkout (whose
+ * `node_modules/codebase-snapshot` link to this checkout (whose
  * `dist/` the pretest step builds) plus a byte-identical copy of the shim's own
  * `index.mjs`/`package.json`, so the code under test is the shipped file.
  */
@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, "..");
 const SHIM_SOURCE = path.join(REPO_ROOT, "packages", "create");
-const DEPENDENCY = "@ankurhalder/codebase-snapshot";
+const DEPENDENCY = "codebase-snapshot";
 
 function temporaryDirectory(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cs-create-"));
@@ -35,12 +35,12 @@ function createHarness(t) {
   }
 
   const dir = temporaryDirectory(t);
-  const scope = path.join(dir, "node_modules", "@ankurhalder");
-  fs.mkdirSync(scope, { recursive: true });
+  const nodeModules = path.join(dir, "node_modules");
+  fs.mkdirSync(nodeModules, { recursive: true });
   try {
     fs.symlinkSync(
       REPO_ROOT,
-      path.join(scope, "codebase-snapshot"),
+      path.join(nodeModules, DEPENDENCY),
       process.platform === "win32" ? "junction" : "dir"
     );
   } catch {
@@ -92,7 +92,7 @@ test("C-3: a directory without package.json prints a runnable next step", (t) =>
   assert.equal(run.code, 0, run.stderr);
   // The regression: the old text promised `npm run snapshot` although no scripts
   // could be added, so the documented next step failed with ENOENT.
-  assert.match(run.stderr, /Next:\s+npx @ankurhalder\/codebase-snapshot generate/);
+  assert.match(run.stderr, /Next:\s+npx codebase-snapshot generate/);
   assert.equal(
     run.stderr.includes("npm run snapshot"),
     false,
@@ -114,12 +114,12 @@ test("C-2: the dependency is recorded at the shim's own version", (t) => {
   assert.equal(run.code, 0, run.stderr);
   const pkg = JSON.parse(fs.readFileSync(path.join(target, "package.json"), "utf8"));
   assert.equal(pkg.devDependencies?.[DEPENDENCY], declaredRange());
-  assert.match(run.stderr, /Added devDependency: @ankurhalder\/codebase-snapshot/);
+  assert.match(run.stderr, /Added devDependency: codebase-snapshot/);
   // Without a local install, `npx` would download @latest: say so instead of
   // pretending the script is ready.
   assert.match(run.stderr, /Next:\s+npm install && npm run snapshot/);
   // The wizard's scripts still go through npx, which prefers the local copy.
-  assert.match(pkg.scripts.snapshot, /npx @ankurhalder\/codebase-snapshot generate/);
+  assert.match(pkg.scripts.snapshot, /npx codebase-snapshot generate/);
 });
 
 test("C-2: an existing dependency declaration is left untouched", (t) => {
@@ -154,8 +154,8 @@ test("C-2: the rewrite keeps the file's indentation", (t) => {
         name: "four",
         version: "1.0.0",
         scripts: {
-          snapshot: "npx @ankurhalder/codebase-snapshot generate",
-          "snapshot:validate": "npx @ankurhalder/codebase-snapshot validate",
+          snapshot: "npx codebase-snapshot generate",
+          "snapshot:validate": "npx codebase-snapshot validate",
         },
       },
       null,

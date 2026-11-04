@@ -21,19 +21,19 @@ file (with the reason) in `manifest.json`, and reports secrets, large files and 
 
 ## Machine-readable entry points
 
-- `npx @ankurhalder/codebase-snapshot setup` — the whole first run in one command with defaults: write the config (kept if one exists), add the npm scripts + devDependency + .gitignore entries, install dependencies with the project's package manager, then generate. `--no-install` skips the install; `--dry-run` writes nothing.
-- `npx @ankurhalder/codebase-snapshot describe --format json` — the full contract as JSON on stdout: invocation, ordered workflow, commands, options with defaults, exit codes, presets, artifacts, config settings, output layout, safety rules, troubleshooting.
-- `npx @ankurhalder/codebase-snapshot skill` — the bundled agent skill, printed on stdout.
-- `npx @ankurhalder/codebase-snapshot skill --install` — writes the skill to the two registries agent tools read by name: `.claude/skills/codebase-snapshot/SKILL.md` and `.cursor/rules/codebase-snapshot.mdc`, and adds them to `.gitignore`. It never writes `AGENTS.md`; that file is the repository's own agent contract, so print the skill and paste it if you want it there.
+- `npx codebase-snapshot setup` — the whole first run in one command with defaults: write the config (kept if one exists), add the npm scripts + devDependency + .gitignore entries, install dependencies with the project's package manager, then generate. `--no-install` skips the install; `--dry-run` writes nothing.
+- `npx codebase-snapshot describe --format json` — the full contract as JSON on stdout: invocation, ordered workflow, commands, options with defaults, exit codes, presets, artifacts, config settings, output layout, safety rules, troubleshooting.
+- `npx codebase-snapshot skill` — the bundled agent skill, printed on stdout.
+- `npx codebase-snapshot skill --install` — writes the skill to the two registries agent tools read by name: `.claude/skills/codebase-snapshot/SKILL.md` and `.cursor/rules/codebase-snapshot.mdc`, and adds them to `.gitignore`. It never writes `AGENTS.md`; that file is the repository's own agent contract, so print the skill and paste it if you want it there.
 - [package.json](https://github.com/ankurhalder/codebase-snapshot/blob/main/package.json) — npm metadata, keywords and entry points.
-- npm registry: https://registry.npmjs.org/@ankurhalder/codebase-snapshot
+- npm registry: https://registry.npmjs.org/codebase-snapshot
 
 ## Typical use
 
 ```bash
-npx @ankurhalder/codebase-snapshot init --yes   # detect the project, write a config
-npx @ankurhalder/codebase-snapshot generate     # write ./snapshot/
-npx @ankurhalder/codebase-snapshot validate     # exit 0 = snapshot matches the files on disk
+npx codebase-snapshot init --yes   # detect the project, write a config
+npx codebase-snapshot generate     # write ./snapshot/
+npx codebase-snapshot validate     # exit 0 = snapshot matches the files on disk
 ```
 
 Exit codes: `0` success, `1` drift or refused generation, `2` usage error. Human progress goes

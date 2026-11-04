@@ -53,8 +53,8 @@ test("setup writes the config, scripts, dependency and ignore entries, then gene
   assert.match(result.stderr, /Created snapshot\.config/);
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-  assert.equal(pkg.scripts.snapshot, "npx @ankurhalder/codebase-snapshot generate");
-  assert.match(String(pkg.devDependencies["@ankurhalder/codebase-snapshot"]), /^\^/);
+  assert.equal(pkg.scripts.snapshot, "npx codebase-snapshot generate");
+  assert.match(String(pkg.devDependencies["codebase-snapshot"]), /^\^/);
 
   const ignore = fs.readFileSync(path.join(dir, ".gitignore"), "utf8");
   assert.match(ignore, /snapshot\//);
