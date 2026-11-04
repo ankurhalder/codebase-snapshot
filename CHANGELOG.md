@@ -4,7 +4,7 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
-## Unreleased
+## 4.1.1
 
 ### `init` left the package undeclared, so nothing reached `node_modules`
 
