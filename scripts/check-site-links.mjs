@@ -42,10 +42,28 @@ for (const name of files) {
 
 // Every sitemap URL must be a page this build actually produced, or the sitemap
 // advertises a 404 to the one crawler we are trying to satisfy.
+//
+// The base path is taken from the canonical on index.html rather than hardcoded,
+// so this also asserts that the sitemap and the canonical agree about where the
+// site lives — a subpath and an origin root are both valid, a mismatch is not.
+const indexHtml = fs.readFileSync(path.join(SITE, "index.html"), "utf8");
+const canonical = indexHtml.match(/rel="canonical" href="([^"]+)"/)?.[1] ?? "";
+const base = canonical.replace(/\/$/, "");
+if (!base) {
+  write("check-site-links: index.html has no canonical, so the sitemap base is unknown");
+  process.exit(1);
+}
+
 const sitemap = fs.readFileSync(path.join(SITE, "sitemap.xml"), "utf8");
 for (const match of sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)) {
-  const pathname = new URL(match[1]).pathname;
-  const target = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
+  const loc = new URL(match[1]);
+  const pathname = loc.pathname.replace(/\/$/, "");
+  if (!`${loc.origin}${pathname}`.startsWith(base)) {
+    problems.push(`sitemap -> ${match[1]} (outside the canonical base ${base})`);
+    continue;
+  }
+  const relativePath = pathname.slice(new URL(base).pathname.replace(/\/$/, "").length).replace(/^\//, "");
+  const target = relativePath === "" ? "index.html" : relativePath;
   if (!files.has(target)) problems.push(`sitemap -> ${match[1]} (no ${target})`);
 }
 

@@ -28,9 +28,13 @@ import { marked } from "marked";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCS = path.join(ROOT, "docs");
 const OUT = path.join(ROOT, "site");
-const SITE = "https://codebase-snapshot.ankurhalder.com";
+// The canonical base. This must be a host that resolves TODAY: a canonical, a
+// sitemap and an llms.txt that all point at a domain with no DNS record tell
+// every crawler to index nothing. When the custom domain is wired up, GitHub
+// Pages 301s the github.io URL to it, so this constant can move then without
+// stranding anything.
+const SITE = "https://ankurhalder.github.io/codebase-snapshot";
 const REPO = "https://github.com/ankurhalder/codebase-snapshot";
-const DOMAIN = "codebase-snapshot.ankurhalder.com";
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const write = (...parts) => process.stdout.write(`${parts.join("")}\n`);
@@ -282,8 +286,10 @@ const llms = fs
   .replace(new RegExp(`${REPO}/blob/main/llms\\.txt`, "g"), `${SITE}/llms.txt`);
 fs.writeFileSync(path.join(OUT, "llms.txt"), llms, "utf8");
 
-fs.writeFileSync(path.join(OUT, "CNAME"), `${DOMAIN}\n`, "utf8");
+// No CNAME file until the DNS record exists. Under an Actions deploy the custom
+// domain is set on the Pages configuration, not by a file in the artifact, and
+// shipping a CNAME for a host that does not resolve only invites confusion.
 fs.writeFileSync(path.join(OUT, ".nojekyll"), "", "utf8");
 
 write(`site: ${sources.length} pages, ${urls.length} urls`);
-write(`site: sitemap.xml, robots.txt, llms.txt, CNAME (${DOMAIN})`);
+write(`site: sitemap.xml, robots.txt, llms.txt for ${SITE}`);
