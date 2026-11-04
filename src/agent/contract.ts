@@ -271,7 +271,9 @@ export function buildAgentContract(): AgentContract {
         aliases: [],
         summary:
           "Write a commented config file (snapshot.config.ts only when Node can strip types and the " +
-          "project is an ES module; snapshot.config.mjs otherwise). Interactive, or --yes for CI.",
+          "project is an ES module; snapshot.config.mjs otherwise), add the snapshot scripts and the " +
+          "devDependency, and ignore the snapshot directories. Nothing else is written. Interactive, " +
+          "or --yes for CI.",
         positionals: [],
         exits: [0, 1, 2],
       },
@@ -302,7 +304,9 @@ export function buildAgentContract(): AgentContract {
         name: "skill",
         aliases: [],
         summary:
-          "Print the agent skill, or --install it into the repository (AGENTS.md, .claude/skills, .cursor/rules).",
+          "Print the agent skill, or --install it into the tool registries this repository's " +
+          "agent reads (.claude/skills, .cursor/rules). Files it creates are added to " +
+          ".gitignore. It never writes AGENTS.md: that file belongs to the repository.",
         positionals: [],
         exits: [0, 1, 2],
       },
@@ -442,13 +446,6 @@ export function buildAgentContract(): AgentContract {
         summary: "Accept every default without prompting. Required in a non-TTY.",
       },
       {
-        flag: "--minimal",
-        type: "boolean",
-        default: false,
-        appliesTo: optionAppliesTo("minimal"),
-        summary: "Write only the settings that differ from the defaults.",
-      },
-      {
         flag: "--force",
         type: "boolean",
         default: false,
@@ -467,7 +464,7 @@ export function buildAgentContract(): AgentContract {
         type: "string",
         default: "all",
         appliesTo: optionAppliesTo("target"),
-        summary: 'Where to install: "claude", "agents", "cursor" or "all".',
+        summary: 'Where to install: "claude", "cursor" or "all".',
       },
     ],
     presets: PRESETS.map((preset) => ({

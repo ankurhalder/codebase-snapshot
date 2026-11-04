@@ -75,7 +75,6 @@ const CLI_OPTIONS = {
   include: { type: "string" },
   exclude: { type: "string" },
   yes: { type: "boolean" },
-  minimal: { type: "boolean" },
   force: { type: "boolean" },
   install: { type: "boolean" },
   target: { type: "string" },
@@ -128,13 +127,12 @@ Options:
   --preset <name>               Force a project preset instead of detecting one
   --include <globs>             Comma-separated allow-list
   --exclude <globs>             Comma-separated exclude patterns
-  --minimal                     Write only the settings that differ from defaults
   --yes                         Accept every default without prompting
   --force                       Overwrite an existing config
 
   skill only:
   --install                     Write the skill into the repository instead of printing
-  --target <name>               claude | agents | cursor | all (default: all)
+  --target <name>               claude | cursor | all (default: all)
 
   -h, --help                    Display this help message
   -v, --version                 Display version
@@ -159,7 +157,6 @@ interface ParsedInvocation {
   include?: string;
   exclude?: string;
   yes: boolean;
-  minimal: boolean;
   force: boolean;
   /** `skill` only: write the skill into the repository instead of printing it. */
   install: boolean;
@@ -452,7 +449,6 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     include: values.include === undefined ? undefined : String(values.include),
     exclude: values.exclude === undefined ? undefined : String(values.exclude),
     yes: values.yes === true,
-    minimal: values.minimal === true,
     force: values.force === true,
     install: values.install === true,
     target: values.target === undefined ? undefined : String(values.target),
@@ -623,7 +619,6 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
       skipArtifacts: invocation.skipArtifacts,
       includeSensitiveFiles: invocation.includeSensitiveFiles,
       yes: invocation.yes,
-      minimal: invocation.minimal,
       force: invocation.force,
       dryRun: invocation.dryRun,
     });
@@ -640,15 +635,15 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
 
     info(`✅ Created ${path.basename(result.configPath)} (preset: ${result.preset})`);
     if (result.scripts.length > 0) info(`   Added npm scripts: ${result.scripts.join(", ")}`);
+    if (result.dependency.added && result.dependency.range !== null) {
+      info(`   Added devDependency: ${result.dependency.name} ${result.dependency.range}`);
+    }
     if (result.gitignoreEntries.length > 0) {
       info(`   Added to .gitignore: ${result.gitignoreEntries.join(", ")}`);
     }
     for (const note of result.notes) info(`   ⚠ ${note}`);
     info("");
     info(`   Next:  ${nextStepHint(invocation.cwd, result.scripts.length > 0)}`);
-    info(
-      `   Tip:   \`${GENERATOR_NAME} skill --install\` makes this repo discoverable by AI agents.`
-    );
     return 0;
   } catch (err) {
     if (err instanceof PromptCancelled) {
@@ -689,8 +684,14 @@ function runSkillCommand(invocation: ParsedInvocation): number {
       const shown = path.relative(invocation.cwd, item.path) || item.path;
       info(`   - ${item.action.padEnd(9)} ${shown}`);
     }
+    if (result.gitignored.length > 0) {
+      info("");
+      info(`   Added to .gitignore: ${result.gitignored.join(", ")}`);
+      info("   These files are this tool's own documentation, so they stay out of git.");
+    }
+    for (const note of result.notes) info(`   ⚠ ${note}`);
     info("");
-    info("   Agents that read AGENTS.md, .claude/skills or .cursor/rules will pick this up automatically.");
+    info("   Agents that read .claude/skills or .cursor/rules will pick this up automatically.");
     return 0;
   } catch (err) {
     return fail(invocation.format, `Could not install the skill: ${(err as Error).message}`);

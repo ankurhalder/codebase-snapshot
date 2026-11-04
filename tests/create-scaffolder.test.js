@@ -137,12 +137,13 @@ test("C-2: an existing dependency declaration is left untouched", (t) => {
   assert.equal(run.stderr.includes("Added devDependency"), false);
 });
 
-test("C-2: the shim's rewrite keeps the file's indentation", (t) => {
+test("C-2: the rewrite keeps the file's indentation", (t) => {
   const harness = createHarness(t);
   if (!harness) return;
 
-  // Both scripts already exist, so the wizard leaves package.json alone and the
-  // shim's own write is the only one — the case where formatting can be checked.
+  // Both scripts already exist, so the only change this run makes to package.json is the
+  // devDependency — the case where formatting can be checked. The write moved from the shim
+  // to the wizard when `init` started declaring the dependency; the rule moved with it.
   const target = path.join(harness.dir, "four-space");
   fs.mkdirSync(path.join(target, "src"), { recursive: true });
   fs.writeFileSync(path.join(target, "src", "a.ts"), "export const a = 1;\n");

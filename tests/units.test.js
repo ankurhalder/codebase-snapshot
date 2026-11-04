@@ -27,7 +27,6 @@ import {
   parseByteSize,
   profileForPath,
   renderConfig,
-  renderMinimalConfig,
   resolveConfig,
   runInit,
   scanAndRedactSecrets,
@@ -818,16 +817,6 @@ test("the generated config exposes every setting at its default", () => {
   assert.ok(text.includes("// ── Size"), "sections are grouped for scanning");
 });
 
-test("the minimal config writes only what differs from the defaults", () => {
-  const terse = renderMinimalConfig({ ...DEFAULT_ANSWERS, maxPartBytes: "120k" });
-  assert.ok(terse.includes("maxPartBytes"));
-  assert.ok(!terse.includes("previewHeadLines"), "defaults must not appear in the minimal form");
-  assert.ok(!terse.includes("layersMode"));
-
-  const blank = renderMinimalConfig(DEFAULT_ANSWERS);
-  assert.ok(blank.includes("export default {};"), "no changes means an empty config");
-});
-
 test("runInit writes a config from flags without a TTY", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-"));
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x", version: "1.0.0" }));
@@ -837,16 +826,48 @@ test("runInit writes a config from flags without a TTY", async () => {
   assert.equal(result.written, true);
   assert.equal(result.preset, "go", "the detected preset is used");
   assert.ok(result.configText.includes('maxPartBytes: "120k"'));
+  // One canonical config: the settings the run did not touch are still listed, because
+  // this file is where the user goes to change them.
+  assert.ok(result.configText.includes("previewHeadLines:"), "the complete config is the only shape");
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   assert.equal(pkg.scripts.snapshot, "npx @ankurhalder/codebase-snapshot generate");
   assert.equal(pkg.scripts["snapshot:validate"], "npx @ankurhalder/codebase-snapshot validate");
+  // Without this entry nothing reaches node_modules and `npm run snapshot` resolves
+  // @latest from the registry on every run.
+  assert.match(
+    String(pkg.devDependencies["@ankurhalder/codebase-snapshot"]),
+    /^\^4\./,
+    "the package is declared as a devDependency"
+  );
+  assert.equal(result.dependency.added, true);
   assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));
+  assert.deepEqual(
+    fs.readdirSync(dir).sort(),
+    [".gitignore", "go.mod", "package.json", "snapshot.config.mjs"],
+    "no markdown or agent file is part of an install"
+  );
 
   await assert.rejects(() => runInit({ cwd: dir, yes: true, io: quietIO }), /already exists/);
   const forced = await runInit({ cwd: dir, yes: true, io: quietIO, force: true });
   assert.equal(forced.written, true, "--force overwrites");
 
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("runInit keeps a version the project already pinned", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-pin-"));
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "x", version: "1.0.0", devDependencies: { "@ankurhalder/codebase-snapshot": "4.0.0" } })
+  );
+  fs.writeFileSync(path.join(dir, "go.mod"), "module x\n");
+
+  const result = await runInit({ cwd: dir, yes: true, io: quietIO });
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(pkg.devDependencies["@ankurhalder/codebase-snapshot"], "4.0.0", "a pin is a decision");
+  assert.equal(result.dependency.added, false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

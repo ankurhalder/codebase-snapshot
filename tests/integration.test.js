@@ -500,7 +500,6 @@ test("CLI rejects init-only flags on non-init commands", () => {
     ["--include", "src/**"],
     ["--exclude", "**/*.test.ts"],
     ["--yes"],
-    ["--minimal"],
     ["--force"],
   ]) {
     const result = runCli(["generate", ...flag]);
@@ -1692,19 +1691,29 @@ test("skill prints a SKILL.md with the frontmatter agents look for", () => {
   assert.match(result.stdout, /@latest/);
 });
 
-test("skill --install writes every place agents look, and is idempotent", () => {
+test("skill --install writes the two registries, ignores them, and is idempotent", () => {
   const dir = makeRepo("agent-install-", { "package.json": '{"name":"fixture"}' });
 
   const first = runCli(["skill", "--install", "--cwd", dir, "--format", "json"]);
   assert.equal(first.code, 0, first.stderr);
-  const written = JSON.parse(first.stdout).written;
+  const payload = JSON.parse(first.stdout);
   assert.deepEqual(
-    written.map((item) => item.target).sort(),
-    ["agents", "claude", "cursor"]
+    payload.written.map((item) => item.target).sort(),
+    ["claude", "cursor"],
+    "only the two skill registries are targets"
   );
-  assert.ok(fs.existsSync(path.join(dir, "AGENTS.md")));
+  assert.deepEqual(
+    [...payload.gitignored].sort(),
+    [".claude/skills/codebase-snapshot/SKILL.md", ".cursor/rules/codebase-snapshot.mdc"],
+    "what it creates is ignored, with forward slashes"
+  );
   assert.ok(fs.existsSync(path.join(dir, ".claude", "skills", "codebase-snapshot", "SKILL.md")));
   assert.ok(fs.existsSync(path.join(dir, ".cursor", "rules", "codebase-snapshot.mdc")));
+  assert.equal(
+    fs.existsSync(path.join(dir, "AGENTS.md")),
+    false,
+    "AGENTS.md belongs to the project, so it is not a target"
+  );
 
   const second = runCli(["skill", "--install", "--cwd", dir, "--format", "json"]);
   assert.equal(second.code, 0);
@@ -1715,38 +1724,42 @@ test("skill --install writes every place agents look, and is idempotent", () => 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("skill --install leaves an existing AGENTS.md intact", () => {
-  const dir = makeRepo("agent-agents-md-", {
-    "package.json": '{"name":"fixture"}',
-    "AGENTS.md": "# House rules\n\nUse tabs.\n",
-  });
-  assert.equal(runCli(["skill", "--install", "--cwd", dir]).code, 0);
+// The footprint is the product. `init` used to leave the package undeclared, so nothing
+// reached node_modules and `npm run snapshot` fetched @latest on every run; a `--minimal`
+// flag could also write a config listing five settings out of twenty-six. Both are gone,
+// and an agent file is never part of an install.
+test("init's whole footprint is the config, package.json and .gitignore", () => {
+  const dir = makeRepo(
+    "init-footprint-",
+    { "package.json": '{"name":"fixture","version":"1.0.0"}\n' },
+    { git: false }
+  );
 
-  const text = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
-  assert.match(text, /# House rules/, "existing content is preserved");
-  assert.match(text, /Use tabs\./);
-  assert.match(text, /codebase-snapshot:skill:start/);
-  assert.match(text, /codebase-snapshot:skill:end/);
+  const result = runCli(["init", "--yes", "--cwd", dir]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(
+    fs.readdirSync(dir).sort(),
+    [".gitignore", "package.json", "snapshot.config.mjs"],
+    "exactly three paths, and no markdown or agent file"
+  );
 
-  // Re-installing must replace only its own block, never duplicate it.
-  assert.equal(runCli(["skill", "--install", "--cwd", dir]).code, 0);
-  const again = fs.readFileSync(path.join(dir, "AGENTS.md"), "utf8");
-  assert.equal(again, text, "the file must be byte-identical after a re-install");
-  assert.equal(again.match(/codebase-snapshot:skill:start/g).length, 1);
-  fs.rmSync(dir, { recursive: true, force: true });
-});
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.match(
+    String(pkg.devDependencies["@ankurhalder/codebase-snapshot"]),
+    /^\^4\./,
+    "the package is declared, so npm install puts it in node_modules"
+  );
 
-test("skill --target writes only the requested location", () => {
-  const dir = makeRepo("agent-target-", { "package.json": '{"name":"fixture"}' });
-  assert.equal(runCli(["skill", "--install", "--target", "claude", "--cwd", dir]).code, 0);
-  assert.ok(fs.existsSync(path.join(dir, ".claude", "skills", "codebase-snapshot", "SKILL.md")));
-  assert.equal(fs.existsSync(path.join(dir, "AGENTS.md")), false);
-  assert.equal(fs.existsSync(path.join(dir, ".cursor")), false);
+  const config = fs.readFileSync(path.join(dir, "snapshot.config.mjs"), "utf8");
+  for (const key of ["preset:", "outDir:", "maxPartBytes:", "previewHeadLines:", "layersMode:", "artifacts:", "hooks:"]) {
+    assert.ok(config.includes(key), `the one config file must list every setting: ${key}`);
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("skill-only flags are rejected elsewhere, and --target is validated", () => {
   assert.equal(runCli(["skill", "--install", "--target", "nope"]).code, 2);
+  assert.equal(runCli(["skill", "--install", "--target", "agents"]).code, 2, "AGENTS.md was removed as a target");
   assert.equal(runCli(["generate", "--install"]).code, 2);
   assert.equal(runCli(["generate", "--target", "claude"]).code, 2);
 });

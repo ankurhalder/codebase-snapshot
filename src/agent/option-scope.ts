@@ -109,7 +109,6 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "include",
     "exclude",
     "yes",
-    "minimal",
     "force",
     "dry-run",
     "format",

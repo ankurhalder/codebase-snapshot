@@ -99,23 +99,31 @@ codebase-snapshot init [options]
 
 Detects the project and writes `snapshot.config.ts` (or `.mjs`, see below) containing
 **every** setting at its current value, commented and grouped. It is a reference you can
-keep, not just a diff.
+keep, not just a diff — there is no shorter variant, because the file that documents the
+settings is the file you edit.
 
-It also has two side effects on files you own, and it says so when it does them:
+It also has three side effects on files you own, and it says so when it does them:
 
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
+   Added devDependency: @ankurhalder/codebase-snapshot ^4.1.1
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
 - `scripts.snapshot` and `scripts.snapshot:validate` are added to `package.json` if those keys
-  are absent. Existing values are left alone, and the file is rewritten as 2-space JSON.
-  Without a `package.json` it notes that scripts were not added.
+  are absent. Existing values are left alone, and the rewrite keeps the file's own indentation
+  and line endings. Without a `package.json` it notes that scripts were not added.
+- `@ankurhalder/codebase-snapshot` is added to `devDependencies` when no dependency field
+  declares it yet. That is what puts a real copy in `node_modules` and stops `npm run
+  snapshot` from resolving `@latest` out of the registry on every run. A range you already
+  declared — including a pin to an older version — is never overwritten.
 - `snapshot/` and `snapshot.tmp/` are appended to `.gitignore` if they are not already listed;
   the file is created if missing, and entries already present are not duplicated.
 
-Nothing else in the repository is touched.
+Nothing else in the repository is touched: no `AGENTS.md`, no `.claude/`, no `.cursor/`. In a
+repository with a `package.json` and no config, `git status` shows the config as the only new
+file.
 
 Interactive by default; with `--yes` it accepts every default and never prompts, which is
 what agents and release checks should use.
@@ -125,7 +133,7 @@ The filename adapts to the project: `.ts` only when the running Node can strip t
 generated file is a plain object with no imports, so it works even when the package is only
 run through `npx` and never installed.
 
-Related options: `--preset`, `--include`, `--exclude`, `--yes`, `--minimal` and `--force`
+Related options: `--preset`, `--include`, `--exclude`, `--yes` and `--force`
 apply to `init` only. `init` also accepts `--dry-run`, `--max-part-bytes`, `--out-dir`,
 `--include-sensitive-files`, `--skip-artifacts` and `--only-artifacts`, which it shares with
 the commands that re-read a snapshot, and records their effect in the generated file. The
@@ -225,15 +233,27 @@ agent](agent.md).
 
 ```bash
 codebase-snapshot skill                     # print on stdout
-codebase-snapshot skill --install           # write every location
+codebase-snapshot skill --install           # write both registries
 codebase-snapshot skill --install --target claude
 ```
 
-Prints or installs the bundled agent skill. Installation writes an `AGENTS.md` section,
+Prints or installs the bundled agent skill. Installation writes
 `.claude/skills/codebase-snapshot/SKILL.md` and `.cursor/rules/codebase-snapshot.mdc`;
-`--target` limits it to one. Re-running replaces only its own marked block, so an existing
-`AGENTS.md` keeps its content. `--format json` reports what was created, updated or
-unchanged.
+`--target claude` or `--target cursor` limits it to one. Both are **registries keyed by
+skill name**, so the file cannot be mistaken for your own documentation.
+
+It does not write `AGENTS.md`. That file is your project's agent contract — build commands,
+conventions, house rules — and a tool has no business editing it. If you want the skill
+there, print it and paste it:
+
+```bash
+codebase-snapshot skill >> AGENTS.md
+```
+
+Whatever the install *creates* is appended to `.gitignore` in the same run, so a one-line
+command does not leave three untracked files behind. Re-running is idempotent, and a file that
+already existed is never ignored. `--format json` reports what was created, updated or
+unchanged, plus the ignore entries it added.
 
 Printing goes to **stdout** so it can be redirected: `codebase-snapshot skill > SKILL.md`.
 
@@ -263,10 +283,9 @@ narrowest cases of the same rule.
 | `--include <globs>` | list | unset | *init only* | Allow-list recorded in the generated config. |
 | `--exclude <globs>` | list | unset | *init only* | Exclude globs recorded in the generated config. |
 | `--yes` | flag | off | *init only* | Never prompt; accept every default. |
-| `--minimal` | flag | off | *init only* | Write only settings that differ from the defaults. |
 | `--force` | flag | off | *init only* | Replace an existing `.ts`/`.js`/`.mjs` config in place. A JSON-family config is refused, naming the file to remove. |
 | `--install` | flag | off | *skill only* | Write the skill into the repository instead of printing it. |
-| `--target <name>` | enum | `all` | *skill only* | `claude`, `agents`, `cursor` or `all`. |
+| `--target <name>` | enum | `all` | *skill only* | `claude`, `cursor` or `all`. |
 | `-h`, `--help` | flag | — | every command | Print usage. |
 | `-v`, `--version` | flag | — | every command | Print the version on stdout: a bare `v`-prefixed semver such as `v4.0.0`, with no package name. |
 

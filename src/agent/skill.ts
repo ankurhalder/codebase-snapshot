@@ -1,4 +1,4 @@
-import { GENERATOR_VERSION } from "../index.js";
+import { GENERATOR_VERSION } from "../version.js";
 
 const PACKAGE_NAME = "@ankurhalder/codebase-snapshot";
 
@@ -13,10 +13,6 @@ const MAJOR_VERSION = GENERATOR_VERSION.split(".")[0];
 
 /** Name of the skill as agents see it (directory name, frontmatter `name`). */
 export const SKILL_NAME = "codebase-snapshot";
-
-/** Marker that lets `--install` replace its own section without touching the rest. */
-export const AGENTS_MARKER_START = "<!-- codebase-snapshot:skill:start -->";
-export const AGENTS_MARKER_END = "<!-- codebase-snapshot:skill:end -->";
 
 /**
  * The agent skill shipped with the package.
@@ -133,12 +129,15 @@ any of this to get a good first snapshot.
 
 ## Making this available to other agents
 
-Run \`npx ${PACKAGE_NAME}@latest skill --install\`. It writes this skill into the
-repository in the places agents look for it by default: an \`AGENTS.md\` section,
-\`.claude/skills/${SKILL_NAME}/SKILL.md\`, and \`.cursor/rules/${SKILL_NAME}.mdc\`. The command
-is idempotent: it replaces its own marked section, and repairs a malformed one (missing,
-duplicated or nested markers) into a single block while leaving the rest of the file alone.
-It refuses a target that resolves outside the repository, so a linked \`.claude/\` cannot
-be used to write elsewhere.
+Run \`npx ${PACKAGE_NAME}@latest skill --install\`. It writes this skill into the two
+registries agent tools read by name — \`.claude/skills/${SKILL_NAME}/SKILL.md\` and
+\`.cursor/rules/${SKILL_NAME}.mdc\` — and appends exactly those files to \`.gitignore\`, so the
+install leaves nothing untracked. It is idempotent, and it refuses a target that resolves
+outside the repository, so a linked \`.claude/\` cannot be used to write elsewhere.
+
+It never writes \`AGENTS.md\`. That file is the repository's own agent contract — build
+commands, conventions, house rules — and this tool has no business editing it. If you want
+this skill in there, run \`npx ${PACKAGE_NAME}@latest skill\` and paste the text yourself: the
+diff, and the commit, are then yours.
 `;
 }

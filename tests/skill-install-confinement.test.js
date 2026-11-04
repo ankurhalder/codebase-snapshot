@@ -1,21 +1,23 @@
 /**
- * `skill --install` confinement and marked-block repair.
+ * `skill --install`: confinement, ownership, and what it refuses to touch.
  *
- * This is the one command that writes into a repository it did not create, so it
- * is the one command where a path has to be proved to be inside the repository
- * before anything is written. The audit that produced these tests found three
- * escape routes and three malformed-block outcomes:
+ * This is the one command that writes into a repository it did not create, so it is the
+ * one command where a path has to be proved to be inside the repository before anything is
+ * written. The audit that produced these tests found two escape routes:
  *
- *   - `.claude` (or `.claude/skills/<name>`) as a junction/symlink to a directory
- *     outside the repository: the whole `SKILL.md` was created outside;
- *   - `AGENTS.md` as a hard link to a file outside: that file was rewritten;
- *   - a nested, duplicated or inverted marker pair: the file was left with
- *     unbalanced markers (3 START / 2 END) and never repaired.
+ *   - `.claude` (or `.claude/skills/<name>`) as a junction/symlink to a directory outside
+ *     the repository: the whole `SKILL.md` was created outside;
+ *   - a hard link at a target file: writing it rewrote the file outside the repository.
  *
- * The installer now refuses all three before the first write, and normalises any
- * malformed marked section to exactly one balanced block while keeping the bytes
- * the user wrote. The tests drive the real CLI (`node dist/bin.js`), so they see
- * the same resolution and the same error text a user sees.
+ * The installer refuses both before the first write.
+ *
+ * 4.1.1 removed the third target. It used to merge a marked section into `AGENTS.md`, which
+ * is the *project's* agent contract, not a skill registry — so these tests now assert that
+ * `AGENTS.md` is never created, never edited, and never ignored, and that a section left
+ * behind by 4.1.0 is reported rather than rewritten.
+ *
+ * The tests drive the real CLI (`node dist/bin.js`), so they see the same resolution and the
+ * same error text a user sees.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -27,8 +29,9 @@ import { fileURLToPath } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = path.join(REPO, "dist", "bin.js");
-const START = "<!-- codebase-snapshot:skill:start -->";
-const END = "<!-- codebase-snapshot:skill:end -->";
+const LEGACY_MARKER = "<!-- codebase-snapshot:skill:start -->";
+const CLAUDE_SKILL = path.join(".claude", "skills", "codebase-snapshot", "SKILL.md");
+const CURSOR_RULE = path.join(".cursor", "rules", "codebase-snapshot.mdc");
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skill-install-"));
@@ -46,7 +49,6 @@ function runInstall(cwd, target = "all") {
 }
 
 const read = (file) => fs.readFileSync(file, "utf8");
-const count = (text, needle) => text.split(needle).length - 1;
 
 function makeRepo(t, name) {
   const root = tempDir(t);
@@ -92,20 +94,21 @@ test("a junction at the skill directory itself is refused", (t) => {
   assert.deepEqual(fs.readdirSync(outside), []);
 });
 
-test("a hard-linked AGENTS.md is refused and the outside file is untouched", (t) => {
+test("a hard-linked target file is refused and the outside file is untouched", (t) => {
   const { repo, outside } = makeRepo(t, "repo");
   fs.mkdirSync(outside);
-  const outsideFile = path.join(outside, "AGENTS.md");
+  const outsideFile = path.join(outside, "SKILL.md");
   fs.writeFileSync(outsideFile, "# outside file\n\nNothing to do with the repository.\n");
+  fs.mkdirSync(path.join(repo, ".claude", "skills", "codebase-snapshot"), { recursive: true });
   try {
-    fs.linkSync(outsideFile, path.join(repo, "AGENTS.md"));
+    fs.linkSync(outsideFile, path.join(repo, CLAUDE_SKILL));
   } catch {
     t.skip("this host cannot create hard links");
     return;
   }
   const before = fs.readFileSync(outsideFile);
 
-  const result = runInstall(repo, "agents");
+  const result = runInstall(repo, "claude");
 
   assert.equal(result.status, 1, `expected a refusal, got: ${result.output}`);
   assert.match(result.output, /hard links/);
@@ -121,134 +124,117 @@ test("a refusal happens before any write, even with --target all", (t) => {
 
   assert.equal(result.status, 1);
   assert.equal(
-    fs.existsSync(path.join(repo, "AGENTS.md")),
+    fs.existsSync(path.join(repo, CLAUDE_SKILL)),
     false,
-    "AGENTS.md must not be created when another target is refused"
+    "the other target must not be written when one is refused"
   );
   assert.deepEqual(fs.readdirSync(outside), []);
 });
 
-test("a well-formed section is replaced in place and re-running is byte-identical", (t) => {
-  const { repo } = makeRepo(t, "repo");
-  const file = path.join(repo, "AGENTS.md");
-  const block = [START, "", "## codebase-snapshot (@ankurhalder/codebase-snapshot)", "", "old body", "", END].join("\n");
-  const before = ["# My Project", "", "Intro one.", "Intro two.", "", block, "", "After prose.", ""].join("\n");
-  fs.writeFileSync(file, before);
-
-  const first = runInstall(repo, "agents");
-  assert.equal(first.status, 0, first.output);
-  const afterFirst = read(file);
-
-  const startIndex = before.indexOf(START);
-  const endIndex = before.indexOf(END) + END.length;
-  assert.equal(afterFirst.startsWith(before.slice(0, startIndex)), true, "prose before the block must survive");
-  assert.equal(afterFirst.endsWith(before.slice(endIndex)), true, "prose after the block must survive");
-  assert.equal(afterFirst.includes("old body"), false, "the old block body must be replaced");
-  assert.equal(count(afterFirst, START), 1);
-  assert.equal(count(afterFirst, END), 1);
-
-  const second = runInstall(repo, "agents");
-  assert.equal(second.status, 0);
-  assert.equal(read(file), afterFirst, "a second install must not change a byte");
-  assert.match(second.output, /unchanged/);
-});
-
-test("a nested START START END normalises to one balanced block", (t) => {
-  const { repo } = makeRepo(t, "repo");
-  const file = path.join(repo, "AGENTS.md");
-  fs.writeFileSync(file, ["Top prose.", "", START, START, "body", END, "", "Bottom prose.", ""].join("\n"));
-
-  const result = runInstall(repo, "agents");
-  assert.equal(result.status, 0, result.output);
-  const after = read(file);
-  assert.equal(count(after, START), 1, "exactly one START marker");
-  assert.equal(count(after, END), 1, "exactly one END marker");
-  assert.equal(after.includes("Top prose."), true);
-  assert.equal(after.includes("Bottom prose."), true);
-});
-
-test("two stale blocks normalise to one balanced block", (t) => {
-  const { repo } = makeRepo(t, "repo");
-  const file = path.join(repo, "AGENTS.md");
-  fs.writeFileSync(
-    file,
-    ["Top.", "", START, "old A", END, "", "Middle.", "", START, "old B", END, "", "Bottom.", ""].join("\n")
-  );
-
-  const result = runInstall(repo, "agents");
-  assert.equal(result.status, 0, result.output);
-  const after = read(file);
-  assert.equal(count(after, START), 1);
-  assert.equal(count(after, END), 1);
-  assert.equal(after.includes("old A"), false, "the stale body must be gone");
-  assert.equal(after.includes("old B"), false, "the stale body must be gone");
-  assert.equal(after.includes("Top."), true);
-  assert.equal(after.includes("Middle."), true);
-  assert.equal(after.includes("Bottom."), true);
-});
-
-test("an inverted END … START pair normalises to one balanced block", (t) => {
-  const { repo } = makeRepo(t, "repo");
-  const file = path.join(repo, "AGENTS.md");
-  fs.writeFileSync(file, ["Top.", "", END, "hand-written prose", START, "", "Bottom.", ""].join("\n"));
-
-  const result = runInstall(repo, "agents");
-  assert.equal(result.status, 0, result.output);
-  const after = read(file);
-  assert.equal(count(after, START), 1);
-  assert.equal(count(after, END), 1);
-  assert.equal(after.includes("hand-written prose"), true);
-  assert.equal(after.includes("Bottom."), true);
-});
-
-test("a missing END marker is repaired and the trailing prose is kept", (t) => {
-  const { repo } = makeRepo(t, "repo");
-  const file = path.join(repo, "AGENTS.md");
-  fs.writeFileSync(file, ["Top prose.", "", START, "", "stale body", "", "Trailing prose.", ""].join("\n"));
-
-  const result = runInstall(repo, "agents");
-  assert.equal(result.status, 0, result.output);
-  const after = read(file);
-  assert.equal(count(after, START), 1);
-  assert.equal(count(after, END), 1);
-  assert.equal(after.includes("Top prose."), true);
-  assert.equal(after.includes("Trailing prose."), true);
-});
-
-test("--target isolation holds with the confinement check in place", (t) => {
-  const root = tempDir(t);
-  const expectations = {
-    claude: [".claude/skills/codebase-snapshot/SKILL.md", "AGENTS.md", ".cursor/rules/codebase-snapshot.mdc"],
-    cursor: [".cursor/rules/codebase-snapshot.mdc", "AGENTS.md", ".claude/skills/codebase-snapshot/SKILL.md"],
-    agents: ["AGENTS.md", ".claude/skills/codebase-snapshot/SKILL.md", ".cursor/rules/codebase-snapshot.mdc"],
-  };
-  for (const [target, [own, ...absent]] of Object.entries(expectations)) {
-    const repo = path.join(root, target);
-    fs.mkdirSync(repo, { recursive: true });
-    const result = runInstall(repo, target);
-    assert.equal(result.status, 0, `${target}: ${result.output}`);
-    assert.equal(fs.existsSync(path.join(repo, own)), true, `${target} must write ${own}`);
-    for (const other of absent) {
-      assert.equal(fs.existsSync(path.join(repo, other)), false, `${target} must not write ${other}`);
-    }
-  }
-});
-
-test("a symlink at AGENTS.md itself is refused", (t) => {
+test("a symlink at a target file itself is refused", (t) => {
   const { repo, outside } = makeRepo(t, "repo");
   fs.mkdirSync(outside);
-  const outsideFile = path.join(outside, "AGENTS.md");
+  const outsideFile = path.join(outside, "rule.mdc");
   fs.writeFileSync(outsideFile, "# outside\n");
+  fs.mkdirSync(path.join(repo, ".cursor", "rules"), { recursive: true });
   try {
-    fs.symlinkSync(outsideFile, path.join(repo, "AGENTS.md"), "file");
+    fs.symlinkSync(outsideFile, path.join(repo, CURSOR_RULE), "file");
   } catch {
     t.skip("creating a file symlink needs elevation on this host; the junction test covers the same path");
     return;
   }
 
-  const result = runInstall(repo, "agents");
+  const result = runInstall(repo, "cursor");
 
   assert.equal(result.status, 1);
   assert.match(result.output, /symbolic link|junction/);
   assert.equal(read(outsideFile), "# outside\n");
+});
+
+test("--target all writes both registries and nothing else", (t) => {
+  const { repo } = makeRepo(t, "repo");
+
+  const result = runInstall(repo, "all");
+
+  assert.equal(result.status, 0, result.output);
+  assert.equal(fs.existsSync(path.join(repo, CLAUDE_SKILL)), true);
+  assert.equal(fs.existsSync(path.join(repo, CURSOR_RULE)), true);
+  assert.deepEqual(
+    fs.readdirSync(repo).sort(),
+    [".claude", ".cursor", ".gitignore"],
+    "a fresh install must create the two registries and the ignore file, nothing else"
+  );
+});
+
+test("a second install changes nothing", (t) => {
+  const { repo } = makeRepo(t, "repo");
+  assert.equal(runInstall(repo, "claude").status, 0);
+  const first = read(path.join(repo, CLAUDE_SKILL));
+  const ignore = read(path.join(repo, ".gitignore"));
+
+  const second = runInstall(repo, "claude");
+
+  assert.equal(second.status, 0, second.output);
+  assert.equal(read(path.join(repo, CLAUDE_SKILL)), first);
+  assert.equal(read(path.join(repo, ".gitignore")), ignore, "no duplicate ignore entries");
+  assert.match(second.output, /unchanged/);
+});
+
+test("what it creates is added to .gitignore, and existing entries survive", (t) => {
+  const { repo } = makeRepo(t, "repo");
+  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\n");
+
+  assert.equal(runInstall(repo, "all").status, 0);
+
+  const ignore = read(path.join(repo, ".gitignore"));
+  assert.match(ignore, /node_modules\//, "the existing entry survives");
+  assert.ok(ignore.includes(".claude/skills/codebase-snapshot/SKILL.md"), "skill file is ignored");
+  assert.ok(ignore.includes(".cursor/rules/codebase-snapshot.mdc"), "rule file is ignored");
+  assert.doesNotMatch(ignore, /AGENTS\.md/, "AGENTS.md is never ignored");
+});
+
+test("AGENTS.md is never created and never edited", (t) => {
+  const { repo } = makeRepo(t, "repo");
+  const house = "# House rules\n\nUse tabs.\n";
+  fs.writeFileSync(path.join(repo, "AGENTS.md"), house);
+
+  const result = runInstall(repo, "all");
+
+  assert.equal(result.status, 0, result.output);
+  assert.equal(read(path.join(repo, "AGENTS.md")), house, "the project's agent file is untouched");
+  assert.doesNotMatch(read(path.join(repo, ".gitignore")), /AGENTS\.md/);
+});
+
+test("a section left by 4.1.0 is reported, never rewritten", (t) => {
+  const { repo } = makeRepo(t, "repo");
+  const legacy = ["# AGENTS.md", "", LEGACY_MARKER, "", "old body", "", "<!-- codebase-snapshot:skill:end -->", ""].join("\n");
+  fs.writeFileSync(path.join(repo, "AGENTS.md"), legacy);
+
+  const result = runInstall(repo, "claude");
+
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /AGENTS\.md still contains the section/);
+  assert.equal(read(path.join(repo, "AGENTS.md")), legacy, "the block must not be touched");
+});
+
+test("--target isolation holds, and the removed `agents` target is a usage error", (t) => {
+  const root = tempDir(t);
+  const expectations = {
+    claude: [CLAUDE_SKILL, CURSOR_RULE],
+    cursor: [CURSOR_RULE, CLAUDE_SKILL],
+  };
+  for (const [target, [own, absent]] of Object.entries(expectations)) {
+    const repo = path.join(root, target);
+    fs.mkdirSync(repo, { recursive: true });
+    const result = runInstall(repo, target);
+    assert.equal(result.status, 0, `${target}: ${result.output}`);
+    assert.equal(fs.existsSync(path.join(repo, own)), true, `${target} must write ${own}`);
+    assert.equal(fs.existsSync(path.join(repo, absent)), false, `${target} must not write ${absent}`);
+  }
+
+  const repo = path.join(root, "removed");
+  fs.mkdirSync(repo, { recursive: true });
+  const removed = runInstall(repo, "agents");
+  assert.equal(removed.status, 2, "`agents` was removed, so it must be rejected as a usage error");
+  assert.match(removed.output, /target|claude|cursor/i);
 });

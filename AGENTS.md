@@ -10,11 +10,16 @@ The package ships its own agent skill and a machine-readable contract. Do not gu
 ```bash
 npx @ankurhalder/codebase-snapshot describe --format json   # the full contract
 npx @ankurhalder/codebase-snapshot skill                   # the skill, on stdout
-npx @ankurhalder/codebase-snapshot skill --install         # write it into a repository
+npx @ankurhalder/codebase-snapshot skill --install         # into .claude/skills + .cursor/rules
 ```
 
 Read [docs/agent.md](docs/agent.md) first. In short: `init --yes` → `generate` → `validate`.
 Pin `@latest` or `@4` when the same version must run everywhere.
+
+`skill --install` deliberately does **not** write `AGENTS.md`. That file is a repository's own
+agent contract, and this tool has no business editing one — it installs into the two registries
+keyed by skill name, and gitignores what it creates. An agent file that wants the skill in it
+should paste the output of `skill`, so the commit belongs to that repository.
 
 The installable skill's canonical text lives in `src/agent/skill.ts` and is rendered by
 `codebase-snapshot skill` — do not hand-edit a generated copy.

@@ -80,8 +80,11 @@ it exists — run:
 npx @ankurhalder/codebase-snapshot skill --install
 ```
 
-That writes an `AGENTS.md` section, `.claude/skills/codebase-snapshot/SKILL.md` and
-`.cursor/rules/codebase-snapshot.mdc`. Re-running only replaces its own marked block. See
+That writes `.claude/skills/codebase-snapshot/SKILL.md` and
+`.cursor/rules/codebase-snapshot.mdc`, and adds both to `.gitignore` so the install leaves
+nothing untracked. It does not touch `AGENTS.md`: that file is your project's own agent
+contract. To put the skill there, print it and paste it —
+`npx @ankurhalder/codebase-snapshot skill >> AGENTS.md`. See
 [Using this with an AI agent](agent.md).
 
 ## Verified clients

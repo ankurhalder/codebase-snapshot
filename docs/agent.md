@@ -60,25 +60,38 @@ Printing goes to stdout deliberately, so it can be redirected:
 npx @ankurhalder/codebase-snapshot skill > SKILL.md
 ```
 
-`--install` writes the same skill to every location agents look at by default:
+`--install` writes the same skill into the registries agent tools read by name:
 
 | Target | Path | Read by |
 | :--- | :--- | :--- |
-| `agents` | `AGENTS.md` (a marked section) | most tools, by convention |
 | `claude` | `.claude/skills/codebase-snapshot/SKILL.md` | Claude Code auto-discovery |
 | `cursor` | `.cursor/rules/codebase-snapshot.mdc` | Cursor rules |
 
 ```bash
-npx @ankurhalder/codebase-snapshot skill --install --target claude   # one location
-npx @ankurhalder/codebase-snapshot skill --install                   # all three (default)
+npx @ankurhalder/codebase-snapshot skill --install --target claude   # one registry
+npx @ankurhalder/codebase-snapshot skill --install                   # both (default)
 ```
 
-The install is **idempotent and non-destructive**: re-running replaces only the block between
-`<!-- codebase-snapshot:skill:start -->` and `<!-- codebase-snapshot:skill:end -->`, so an
-`AGENTS.md` that already documents your conventions keeps them. `--format json` reports what
-was created, updated or unchanged.
+Both are **registries keyed by skill name**: the path carries `codebase-snapshot`, so the file
+cannot be mistaken for your project's own documentation, and two skills cannot collide.
 
-`codebase-snapshot init` prints a reminder about this; it never installs the skill on its own.
+**It never writes `AGENTS.md`.** That file is the repository's own agent contract — build
+commands, conventions, house rules — and an install that creates or edits it puts a tool's
+marketing where the project's rules belong. If you want the skill in there, print it and paste
+it, so the diff and the commit are yours:
+
+```bash
+npx @ankurhalder/codebase-snapshot skill >> AGENTS.md
+```
+
+The install is **idempotent**, and whatever it *creates* is appended to `.gitignore` in the
+same run — these are a tool's files written into your repository, and `git status` should not
+turn that into a decision about what to commit. A file that already existed is never ignored.
+`--format json` reports what was created, updated or unchanged, and which ignore entries were
+added.
+
+`codebase-snapshot init` does none of this: it writes the config, the npm scripts, the
+devDependency and the `.gitignore` entries for the snapshot directory, and nothing else.
 
 ## Why both a contract and a skill
 

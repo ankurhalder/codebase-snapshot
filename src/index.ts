@@ -37,6 +37,7 @@ import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./sca
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
+import { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
 import type {
   FileEntry,
   JsonSummary,
@@ -54,8 +55,7 @@ import type {
   TextEncoding,
 } from "./types.js";
 
-export const GENERATOR_NAME = "@ankurhalder/codebase-snapshot";
-export const GENERATOR_VERSION = "4.1.0";
+export { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
 export const SCHEMA_VERSION = "3.0.0";
 
 /**
@@ -1901,8 +1901,8 @@ export { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 export type { ManifestDiff } from "./diff.js";
 export { stripJsonComments } from "./ast/structured.js";
 export { runInit } from "./wizard/init.js";
-export type { InitOptions, InitResult } from "./wizard/init.js";
-export { DEFAULT_ANSWERS, renderConfig, renderMinimalConfig } from "./wizard/config-template.js";
+export type { InitDependency, InitOptions, InitResult } from "./wizard/init.js";
+export { DEFAULT_ANSWERS, renderConfig } from "./wizard/config-template.js";
 export type { WizardAnswers } from "./wizard/config-template.js";
 export { PromptCancelled, isInteractive } from "./wizard/prompts.js";
 export { PRESETS } from "./presets/index.js";

@@ -1,13 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { AGENTS_MARKER_END, AGENTS_MARKER_START, SKILL_NAME, renderSkill } from "./skill.js";
+import { appendGitignoreEntries, gitignorePath } from "../gitignore.js";
+import { SKILL_NAME, renderSkill } from "./skill.js";
 
-export type SkillTarget = "claude" | "agents" | "cursor" | "all";
-export const SKILL_TARGETS: SkillTarget[] = ["claude", "agents", "cursor", "all"];
+export type SkillTarget = "claude" | "cursor" | "all";
+export const SKILL_TARGETS: SkillTarget[] = ["claude", "cursor", "all"];
 
 export interface SkillWrite {
-  target: SkillTarget;
+  target: Exclude<SkillTarget, "all">;
   path: string;
   action: "created" | "updated" | "unchanged";
 }
@@ -15,9 +16,22 @@ export interface SkillWrite {
 export interface SkillInstallResult {
   cwd: string;
   written: SkillWrite[];
+  /** Paths added to `.gitignore`, so an install does not leave untracked files behind. */
+  gitignored: string[];
+  /** Anything the user has to know but that did not stop the install. */
+  notes: string[];
 }
 
 const REFUSED = "Refusing to install the agent skill";
+
+/**
+ * The marker 4.1.0 and earlier wrapped its `AGENTS.md` section in.
+ *
+ * Nothing writes it any more (see `installSkill`); it is matched only to tell a
+ * repository that still carries one that the block is still there and no longer
+ * maintained.
+ */
+const LEGACY_AGENTS_MARKER = "<!-- codebase-snapshot:skill:start -->";
 
 /** Where each target puts the skill, relative to the repository root. */
 function targetPath(cwd: string, target: Exclude<SkillTarget, "all">): string {
@@ -26,8 +40,6 @@ function targetPath(cwd: string, target: Exclude<SkillTarget, "all">): string {
       return path.join(cwd, ".claude", "skills", SKILL_NAME, "SKILL.md");
     case "cursor":
       return path.join(cwd, ".cursor", "rules", `${SKILL_NAME}.mdc`);
-    case "agents":
-      return path.join(cwd, "AGENTS.md");
   }
 }
 
@@ -94,7 +106,7 @@ function assertWritableInsideRepository(cwd: string, filePath: string): void {
 }
 
 function writeIfChanged(
-  target: SkillTarget,
+  target: Exclude<SkillTarget, "all">,
   filePath: string,
   content: string
 ): SkillWrite {
@@ -105,144 +117,75 @@ function writeIfChanged(
   return { target, path: filePath, action: existing === null ? "created" : "updated" };
 }
 
-/** The marked block as it appears inside `AGENTS.md`. */
-function agentsBlock(skill: string): string {
-  return [
-    AGENTS_MARKER_START,
-    "",
-    `## ${SKILL_NAME} (${"@ankurhalder/codebase-snapshot"})`,
-    "",
-    // Drop the YAML frontmatter: inside AGENTS.md it is noise, and the heading
-    // above already names the skill.
-    skill.replace(/^---[\s\S]*?---\r?\n/, "").trim(),
-    "",
-    AGENTS_MARKER_END,
-    "",
-  ].join("\n");
-}
-
-interface MarkerSpan {
-  start: number;
-  end: number;
+/** Reports a section an older release merged into the project's own `AGENTS.md`. */
+function legacyAgentsNote(cwd: string): string | null {
+  const filePath = path.join(cwd, "AGENTS.md");
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    if (!fs.readFileSync(filePath, "utf8").includes(LEGACY_AGENTS_MARKER)) return null;
+  } catch {
+    return null;
+  }
+  return (
+    "AGENTS.md still contains the section an earlier version installed (between the " +
+    `"${LEGACY_AGENTS_MARKER}" markers). This command no longer edits that file: it is ` +
+    "your project's own agent instructions. Delete the block if you do not want it."
+  );
 }
 
 /**
- * Every span of the file that this generator owns: a complete `START … END`
- * section, a stray marker, or an unterminated `START` (the marker alone — the
- * text after it is left alone because it may be the user's own prose).
- */
-function ownSpans(existing: string): MarkerSpan[] {
-  const marks: Array<{ kind: "start" | "end"; start: number; end: number }> = [];
-  let cursor = 0;
-  while (cursor < existing.length) {
-    const start = existing.indexOf(AGENTS_MARKER_START, cursor);
-    const end = existing.indexOf(AGENTS_MARKER_END, cursor);
-    if (start === -1 && end === -1) break;
-    if (start !== -1 && (end === -1 || start < end)) {
-      marks.push({ kind: "start", start, end: start + AGENTS_MARKER_START.length });
-      cursor = start + AGENTS_MARKER_START.length;
-    } else {
-      marks.push({ kind: "end", start: end, end: end + AGENTS_MARKER_END.length });
-      cursor = end + AGENTS_MARKER_END.length;
-    }
-  }
-
-  const spans: MarkerSpan[] = [];
-  let open = -1;
-  for (const mark of marks) {
-    if (mark.kind === "start") {
-      if (open === -1) open = mark.start;
-    } else if (open !== -1) {
-      spans.push({ start: open, end: mark.end });
-      open = -1;
-    } else {
-      // A closer with no opener is our own text too.
-      spans.push({ start: mark.start, end: mark.end });
-    }
-  }
-  if (open !== -1) spans.push({ start: open, end: open + AGENTS_MARKER_START.length });
-  return spans;
-}
-
-/**
- * Merges the skill into `AGENTS.md`, normalising the marked section to exactly
- * one balanced block.
+ * Installs the bundled skill into the registries this repository's agent tool reads.
  *
- * Every marker this generator wrote is its own text, so all of them are removed
- * and one block is inserted where the first one was. That makes a hand-edited
- * file self-healing: a missing closer, a duplicated block, a nested
- * `START START END` (which used to leave the file permanently unbalanced) and an
- * inverted pair all end up as a single block, with every byte the user wrote
- * kept. A well-formed file has exactly one span, so it is replaced in place —
- * re-running is byte-identical.
- */
-function mergeMarkedSection(existing: string, block: string): string {
-  const spans = ownSpans(existing);
-  if (spans.length === 0) return `${existing.trimEnd()}\n\n${block}`;
-
-  let stripped = "";
-  let from = 0;
-  let insertAt = -1;
-  for (const span of spans) {
-    if (span.start < from) continue;
-    stripped += existing.slice(from, span.start);
-    if (insertAt === -1) insertAt = stripped.length;
-    from = span.end;
-  }
-  stripped += existing.slice(from);
-  return `${stripped.slice(0, insertAt)}${block.trimEnd()}${stripped.slice(insertAt)}`;
-}
-
-/**
- * Merges the skill into an existing `AGENTS.md` without disturbing the rest.
+ * Two locations, and both are *registries keyed by skill name*: Claude Code
+ * auto-discovers `.claude/skills/<name>/SKILL.md`, and Cursor reads
+ * `.cursor/rules/<name>.mdc`. Because the path carries the skill's name, the file
+ * cannot be mistaken for the project's own documentation and two skills cannot
+ * collide.
  *
- * Re-running replaces only the marked section, and a malformed one is repaired
- * rather than duplicated, so a repository that already documents its own
- * conventions keeps them.
- */
-function mergeAgentsFile(cwd: string, skill: string): SkillWrite {
-  const filePath = targetPath(cwd, "agents");
-  const block = agentsBlock(skill);
-  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
-
-  const next =
-    existing === null ? `# AGENTS.md\n\n${block}` : mergeMarkedSection(existing, block);
-  const action =
-    existing === null ? "created" : existing === next ? "unchanged" : "updated";
-  if (action !== "unchanged") {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, next, "utf8");
-  }
-  return { target: "agents", path: filePath, action };
-}
-
-/**
- * Installs the bundled skill so an agent working in this repository finds it
- * without being told the tool exists.
+ * It deliberately does **not** write `AGENTS.md`. That file is the project's own
+ * agent contract — conventions, build commands, house rules — and this tool has no
+ * business writing into it on the user's behalf: creating one that holds only our
+ * text misrepresents the repository to every agent that reads it, and merging a
+ * section into an existing one edits a tracked file the user then has to review.
+ * An agent that wants the skill in `AGENTS.md` can run `codebase-snapshot skill`
+ * and paste it; the decision, and the commit, are the repository owner's.
  *
- * Three locations, because agents differ: `AGENTS.md` is read by most tools,
- * `.claude/skills/` is auto-discovered by Claude Code, and `.cursor/rules/` by
- * Cursor. All three are idempotent, and every target is proved to be inside the
- * repository before the first byte is written — a partial install is worse than
- * a refusal.
+ * Whatever this command *creates* — and only what it creates — is added to
+ * `.gitignore` in the same run. These files are a tool's documentation written into
+ * someone else's repository; leaving them untracked turns a one-line command into a
+ * decision about what to commit.
  */
 export function installSkill(cwd: string, target: SkillTarget = "all"): SkillInstallResult {
   const skill = renderSkill();
   const written: SkillWrite[] = [];
+  const notes: string[] = [];
   const wanted: Array<Exclude<SkillTarget, "all">> =
-    target === "all" ? ["agents", "claude", "cursor"] : [target];
+    target === "all" ? ["claude", "cursor"] : [target];
 
   for (const item of wanted) assertWritableInsideRepository(cwd, targetPath(cwd, item));
 
+  // The ignore file is written in this run too, so it needs the same proof. Doing it
+  // in the same pre-flight loop keeps the "all or nothing" property: a linked
+  // `.gitignore` that points outside the repository refuses before anything is created.
+  const createsSomething = wanted.some((item) => !fs.existsSync(targetPath(cwd, item)));
+  if (createsSomething) {
+    assertWritableInsideRepository(cwd, path.join(cwd, ".gitignore"));
+  }
+
   for (const item of wanted) {
-    if (item === "agents") {
-      written.push(mergeAgentsFile(cwd, skill));
-      continue;
-    }
     written.push(writeIfChanged(item, targetPath(cwd, item), skill));
   }
 
-  return { cwd, written };
+  const created = written
+    .filter((item) => item.action === "created")
+    .map((item) => gitignorePath(cwd, item.path));
+  const ignore = appendGitignoreEntries(cwd, created);
+  if (ignore.note !== null) notes.push(ignore.note);
+
+  const legacy = legacyAgentsNote(cwd);
+  if (legacy !== null) notes.push(legacy);
+
+  return { cwd, written, gitignored: ignore.added, notes };
 }
 
 /** True when the target name is one this command understands. */

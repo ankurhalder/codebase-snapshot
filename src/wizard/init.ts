@@ -1,12 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ARTIFACT_NAMES, parseByteSize, supportsTypeScriptImports } from "../config.js";
+import { appendGitignoreEntries } from "../gitignore.js";
 import { detectPreset, listPresetNames } from "../presets/index.js";
 import type { ArtifactSelection, ByteSize } from "../types.js";
+import { GENERATOR_NAME, GENERATOR_VERSION } from "../version.js";
 import {
   DEFAULT_ANSWERS,
   renderConfig,
-  renderMinimalConfig,
   type WizardAnswers,
 } from "./config-template.js";
 import {
@@ -33,14 +34,21 @@ export interface InitOptions {
   includeSensitiveFiles?: boolean;
   /** Accept every default without prompting. */
   yes?: boolean;
-  /** Write only the settings that differ from the defaults. */
-  minimal?: boolean;
   /** Overwrite an existing config. */
   force?: boolean;
   /** Render the config without writing anything. */
   dryRun?: boolean;
   outDir?: string;
   io?: PromptIO;
+}
+
+/** What happened to the `devDependencies` entry that makes the npm scripts self-contained. */
+export interface InitDependency {
+  name: string;
+  /** The range now present in package.json, or a pre-existing declaration. */
+  range: string | null;
+  /** True when this run wrote the entry. */
+  added: boolean;
 }
 
 export interface InitResult {
@@ -50,6 +58,7 @@ export interface InitResult {
   preset: string;
   scripts: string[];
   gitignoreEntries: string[];
+  dependency: InitDependency;
   /** Human-readable notes about anything that was skipped or could not be done. */
   notes: string[];
 }
@@ -191,101 +200,150 @@ function configFormatLabel(name: string): string {
   return "JSON";
 }
 
-function addScripts(cwd: string, notes: string[]): string[] {
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+] as const;
+
+/** The range already declared for this package, in whichever dependency field it appears. */
+function declaredRange(parsed: Record<string, unknown>): string | null {
+  for (const field of DEPENDENCY_FIELDS) {
+    const block = parsed[field];
+    if (typeof block !== "object" || block === null || Array.isArray(block)) continue;
+    const value = (block as Record<string, unknown>)[GENERATOR_NAME];
+    if (typeof value === "string") return value;
+  }
+  return null;
+}
+
+interface PackageJsonUpdate {
+  scripts: string[];
+  dependency: InitDependency;
+}
+
+/**
+ * Keeps the file's own indentation and line endings when rewriting `package.json`.
+ *
+ * A 4-space file rewritten as 2-space JSON is a whole-file diff whose only real change is two
+ * scripts and one dependency: it buries the change in review and buries `git blame`. The
+ * scaffolder used to do this itself, because `init` wrote no dependency; that write moved here,
+ * so the rule has to live here too.
+ */
+function serializePackageJson(raw: string, value: unknown): string {
+  const indent = /^[{[]\r?\n([ \t]+)/.exec(raw)?.[1];
+  const spacing = raw.includes("\n") ? (indent ?? "  ") : undefined;
+  const crlf = raw.includes("\r\n");
+  const body = JSON.stringify(value, null, spacing);
+  const text = crlf ? body.replace(/\n/g, "\r\n") : body;
+  return `${text}${raw.endsWith("\n") ? (crlf ? "\r\n" : "\n") : ""}`;
+}
+
+/**
+ * Adds the npm scripts and the devDependency in a single write of `package.json`.
+ *
+ * The scripts alone were not enough. `init` used to leave the package undeclared, so
+ * `npm install` never put a copy in `node_modules`: every `npm run snapshot` resolved
+ * `@latest` from the registry instead, the version could drift under the user, and the
+ * "npm install && npm run snapshot" this printed as the next step could not have fixed it.
+ * A range already declared in any dependency field is left exactly as it is — a pin to
+ * `4.0.0` is a decision, not a mistake.
+ */
+function updatePackageJson(cwd: string, notes: string[]): PackageJsonUpdate {
   const packagePath = path.join(cwd, "package.json");
+  const unchanged: PackageJsonUpdate = {
+    scripts: [],
+    dependency: { name: GENERATOR_NAME, range: null, added: false },
+  };
   if (!fs.existsSync(packagePath)) {
-    notes.push("No package.json found, so npm scripts were not added.");
-    return [];
+    notes.push("No package.json found, so npm scripts and the devDependency were not added.");
+    return unchanged;
   }
 
+  let raw: string;
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(fs.readFileSync(packagePath, "utf8")) as Record<string, unknown>;
+    raw = fs.readFileSync(packagePath, "utf8");
+    parsed = JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    notes.push("Could not parse package.json; npm scripts were not added.");
-    return [];
+    notes.push("Could not parse package.json; npm scripts and the devDependency were not added.");
+    return unchanged;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    notes.push("package.json is not a JSON object, so npm scripts and the devDependency were not added.");
+    return unchanged;
   }
 
   // `scripts` must be an object. A string, array or number used to be replaced
   // with `{}` while the run still reported plain success — a silent data
   // replacement. Say what happened instead.
-  const declared = parsed.scripts;
+  const declaredScripts = parsed.scripts;
   let scripts: Record<string, unknown>;
-  if (declared === undefined) {
+  let scriptsWereBroken = false;
+  if (declaredScripts === undefined) {
     scripts = {};
-  } else if (typeof declared === "object" && declared !== null && !Array.isArray(declared)) {
-    scripts = declared as Record<string, unknown>;
+  } else if (typeof declaredScripts === "object" && declaredScripts !== null && !Array.isArray(declaredScripts)) {
+    scripts = declaredScripts as Record<string, unknown>;
   } else {
     notes.push(
-      `package.json "scripts" was ${describeJsonValue(declared)}, not an object; it was replaced with an ` +
+      `package.json "scripts" was ${describeJsonValue(declaredScripts)}, not an object; it was replaced with an ` +
         "object holding the snapshot scripts."
     );
     scripts = {};
+    scriptsWereBroken = true;
   }
 
   const added: string[] = [];
   if (!scripts.snapshot) {
-    scripts.snapshot = "npx @ankurhalder/codebase-snapshot generate";
+    scripts.snapshot = `npx ${GENERATOR_NAME} generate`;
     added.push("snapshot");
   }
   if (!scripts["snapshot:validate"]) {
-    scripts["snapshot:validate"] = "npx @ankurhalder/codebase-snapshot validate";
+    scripts["snapshot:validate"] = `npx ${GENERATOR_NAME} validate`;
     added.push("snapshot:validate");
   }
-  if (added.length === 0) return [];
+
+  const declared = declaredRange(parsed);
+  let dependency: InitDependency;
+  if (declared !== null) {
+    dependency = { name: GENERATOR_NAME, range: declared, added: false };
+  } else {
+    const range = `^${GENERATOR_VERSION}`;
+    const declaration = parsed.devDependencies;
+    let devDependencies: Record<string, unknown>;
+    if (declaration === undefined) {
+      devDependencies = {};
+    } else if (typeof declaration === "object" && declaration !== null && !Array.isArray(declaration)) {
+      devDependencies = declaration as Record<string, unknown>;
+    } else {
+      notes.push(
+        `package.json "devDependencies" was ${describeJsonValue(declaration)}, not an object; it was replaced ` +
+          `with an object that declares ${GENERATOR_NAME}.`
+      );
+      devDependencies = {};
+    }
+    devDependencies[GENERATOR_NAME] = range;
+    parsed.devDependencies = devDependencies;
+    dependency = { name: GENERATOR_NAME, range, added: true };
+  }
+
+  if (added.length === 0 && !dependency.added && !scriptsWereBroken) {
+    return { scripts: [], dependency };
+  }
 
   parsed.scripts = scripts;
-  writeFileOrExplain(packagePath, `${JSON.stringify(parsed, null, 2)}\n`);
-  return added;
+  writeFileOrExplain(packagePath, serializePackageJson(raw, parsed));
+  return { scripts: added, dependency };
 }
 
 /**
- * Adds the snapshot directories to `.gitignore`, and never fails the run over it.
+ * The directories `init` keeps out of git.
  *
- * `init` exists to produce a config; the `.gitignore` line is a convenience. When the entry is a
- * directory (or cannot be read or written) the previous behaviour was to exit 1 with a raw
- * `EISDIR` from the *read* — after the config had already been written, so the run both failed and
- * left state behind. It reports a warning instead, and `init` finishes what it promised.
+ * The snapshot itself and the scratch copy it is swapped from. Both are build output, and leaving
+ * them untracked is what makes `init` produce two file changes rather than a dirty tree.
  */
-function addGitignore(cwd: string, notes: string[]): string[] {
-  const ignorePath = path.join(cwd, ".gitignore");
-  let existing = "";
-
-  try {
-    if (fs.existsSync(ignorePath)) {
-      if (fs.statSync(ignorePath).isDirectory()) {
-        notes.push(
-          `${ignorePath} is a directory, so it was not updated. Add "snapshot/" and ` +
-            `"snapshot.tmp/" to your .gitignore yourself.`
-        );
-        return [];
-      }
-      existing = fs.readFileSync(ignorePath, "utf8");
-    }
-  } catch (err) {
-    notes.push(
-      `${ignorePath} could not be read (${(err as Error).message}). Add "snapshot/" and ` +
-        `"snapshot.tmp/" to your .gitignore yourself.`
-    );
-    return [];
-  }
-
-  const wanted = ["snapshot/", "snapshot.tmp/"];
-  const added = wanted.filter((entry) => !existing.split(/\r?\n/).includes(entry));
-  if (added.length === 0) return [];
-
-  const prefix = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  try {
-    writeFileOrExplain(ignorePath, `${existing}${prefix}${added.join("\n")}\n`);
-  } catch (err) {
-    notes.push(
-      `${(err as Error).message}. Add ${added.map((entry) => `"${entry}"`).join(" and ")} to your ` +
-        ".gitignore yourself."
-    );
-    return [];
-  }
-  return added;
-}
+const GITIGNORE_ENTRIES = ["snapshot/", "snapshot.tmp/"];
 
 function resolvePresetChoice(answers: WizardAnswers, presetName: string): Choice<string> {
   return {
@@ -439,7 +497,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     if (!proceed) throw new PromptCancelled();
   }
 
-  const configText = options.minimal ? renderMinimalConfig(answers) : renderConfig(answers);
+  const configText = renderConfig(answers);
   const preferredName = chooseConfigFileName(options.cwd);
   const presentConfigs = CONFIG_CANDIDATES.filter((name) =>
     fs.existsSync(path.join(options.cwd, name))
@@ -470,6 +528,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       preset: answers.preset,
       scripts: [],
       gitignoreEntries: [],
+      dependency: { name: GENERATOR_NAME, range: `^${GENERATOR_VERSION}`, added: false },
       notes,
     };
   }
@@ -497,8 +556,9 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
 
   writeFileOrExplain(configPath, configText);
-  const scripts = addScripts(options.cwd, notes);
-  const gitignoreEntries = addGitignore(options.cwd, notes);
+  const { scripts, dependency } = updatePackageJson(options.cwd, notes);
+  const ignore = appendGitignoreEntries(options.cwd, GITIGNORE_ENTRIES);
+  if (ignore.note !== null) notes.push(ignore.note);
 
   return {
     configPath,
@@ -506,7 +566,8 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     written: true,
     preset: answers.preset,
     scripts,
-    gitignoreEntries,
+    gitignoreEntries: ignore.added,
+    dependency,
     notes,
   };
 }

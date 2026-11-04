@@ -171,7 +171,8 @@ Everything an agent needs is available as data, and the tool can install its own
 # The contract: workflow, every option and default, exit codes, presets, safety rules
 npx @ankurhalder/codebase-snapshot describe --format json
 
-# Write the skill where agents look: AGENTS.md, .claude/skills/, .cursor/rules/
+# Install the skill into the registries agent tools read: .claude/skills/, .cursor/rules/
+# (it adds those files to .gitignore, and never touches your own AGENTS.md)
 npx @ankurhalder/codebase-snapshot skill --install
 ```
 

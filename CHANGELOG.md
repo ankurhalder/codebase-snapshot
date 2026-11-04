@@ -6,6 +6,43 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ## Unreleased
 
+### `init` left the package undeclared, so nothing reached `node_modules`
+
+`init` wrote `npx @ankurhalder/codebase-snapshot generate` into `package.json` and no dependency
+at all. `npm install` therefore installed nothing, every `npm run snapshot` resolved `@latest`
+from the registry instead of a pinned copy, and the `npm install && npm run snapshot` it printed
+as the next step could not have installed it. `init` now records
+`devDependencies["@ankurhalder/codebase-snapshot"]` in the same single write as the scripts, and
+leaves a range that is already declared — including a deliberate pin — untouched.
+
+### `--minimal` wrote a config that documented nothing
+
+The flag wrote only the settings that differed from the defaults, so a Next.js project received
+
+```js
+export default { preset: "nextjs" };
+```
+
+— 179 bytes listing none of the twenty-six settings, in the one file a user opens to change
+them. The flag is gone: `init` always writes the complete commented config, and `describe` no
+longer advertises an option the parser rejects.
+
+### `skill --install` wrote a tool's documentation into the project's `AGENTS.md`
+
+`AGENTS.md` is a repository's own agent contract — build commands, conventions, house rules —
+not a registry for third-party skills. The install created it when missing, which meant a file
+whose name claims the repository documents itself to agents, holding only this tool's text; and
+it merged a marked section into it when present, editing a tracked file on the user's behalf.
+It now writes only the two registries keyed by skill name —
+`.claude/skills/codebase-snapshot/SKILL.md` and `.cursor/rules/codebase-snapshot.mdc` — and
+appends exactly what it *creates* to `.gitignore`, so an install no longer turns a one-line
+command into a decision about which untracked files to commit. A file that already existed is
+never ignored, and a section left behind by 4.1.0 is reported rather than rewritten. To put the
+skill in `AGENTS.md`, print it and paste it: `codebase-snapshot skill >> AGENTS.md`.
+
+`init` also stops printing the tip that led there: an install's whole footprint is now the
+config, `package.json` and `.gitignore`.
+
 ### A file's recorded bytes and lines described the file, not the block
 
 `includedBytes` counted the final newline that the closing fence swallows — 6 290 of 6 344 files in
