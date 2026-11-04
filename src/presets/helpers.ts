@@ -66,6 +66,10 @@ export function commonKinds(): KindRule[] {
         );
       },
     },
+    // A dependency manifest is machine input, not prose. It has to be matched before the `.txt`
+    // rule below, and it belongs with `package.json` (kind `data`) rather than with the
+    // documentation it happens to share an extension with.
+    { kind: "data", match: (filePath) => /(^|\/)requirements[\w.-]*\.txt$/i.test(filePath) },
     suffixKind("doc", ".md", ".mdx", ".rst", ".txt"),
     suffixKind("data", ".json", ".yaml", ".yml", ".csv", ".toml"),
     {

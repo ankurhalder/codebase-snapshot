@@ -388,14 +388,32 @@ export function validateSnapshot(
       });
       continue;
     }
-    if (!fs.existsSync(confined)) {
-      drift.missingOnDisk.push(snapshotFile);
+    // `existsSync` answers false for a path this process is not allowed to *stat*, and that is a
+    // runtime difference: on Node 18 a Windows Deny-Read ACE makes `statSync` throw EPERM, while
+    // Node 20+ stats it fine. Trusting the boolean reported an unreadable file as "no longer
+    // exists on disk" — the precise wrong answer this class exists to prevent. Ask *why* the path
+    // is not statable instead.
+    let statFailure: NodeJS.ErrnoException | null = null;
+    try {
+      fs.statSync(confined);
+    } catch (err) {
+      statFailure = err as NodeJS.ErrnoException;
+    }
+    if (statFailure !== null) {
+      if (statFailure.code === "ENOENT" || statFailure.code === "ENOTDIR") {
+        drift.missingOnDisk.push(snapshotFile);
+      } else {
+        drift.unreadable.push(snapshotFile);
+      }
     }
   }
 
   // A tracked-but-deleted file is seen by both loops above — the read fails, then
-  // it is absent from disk — so it was reported (and counted) twice.
+  // it is absent from disk — so it was reported (and counted) twice. The same is true of an
+  // unreadable one now that the second loop asks *why* a path cannot be stat'd instead of
+  // trusting `existsSync` (which answers false for a denied read on Node 18).
   drift.missingOnDisk = [...new Set(drift.missingOnDisk)];
+  drift.unreadable = [...new Set(drift.unreadable)];
 
   // With per-layer budgets the largest legitimate part ceiling is the biggest
   // of them, not `maxPartBytes` alone.

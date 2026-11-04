@@ -1,13 +1,16 @@
 name: Publish to NPM
 
-# This is the only workflow in the repository, on purpose.
+# The only workflow in the repository, on purpose.
 #
-# The owner pays for GitHub Actions minutes out of a shared allowance across
-# several projects, so Actions is spent on the one thing that cannot be done
-# locally: publishing with a registry token that never touches a laptop. Every
-# check a CI matrix would run lives in `npm run verify`, which this workflow runs
-# before it uploads. Push a green `verify` locally and the release is the same
-# code path.
+# The owner pays for GitHub Actions minutes out of a shared allowance across several projects, so
+# Actions runs on release events (and manual dispatch) and nothing else. `npm run verify` is the
+# whole gate — lint, typecheck, the full suite, the tarball check — so a green local verify is the
+# same code path the release takes.
+#
+# Since 4.3.0 that gate runs on **every supported Node version**, not just the developer's: the
+# package says `engines: >=18` and until this release no run had ever executed on 18 or 20. Three
+# jobs of about two minutes per release is the price of that claim being true; the publish job
+# cannot start until all three pass.
 on:
   release:
     types: [published]
@@ -20,12 +23,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  verify:
     runs-on: ubuntu-latest
     # workflow_dispatch can be started from any branch, so gate it to main.
     # `release` events publish the tagged commit (refs/tags/<tag>), so they are
     # allowed through explicitly and keep working.
     if: github.event_name == 'release' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    strategy:
+      # One failing version must not cancel the others: the point is to learn which versions work.
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js ${{ matrix.node }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The same gate a developer runs locally: lint, typecheck, the full test
+      # suite, and a check of the exact tarball that would be uploaded. It fails
+      # the publish rather than shipping a package this repository never tested.
+      - name: Verify on Node ${{ matrix.node }}
+        run: npm run verify
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -46,11 +78,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The same gate a developer runs locally: lint, typecheck, the full test
-      # suite, and a check of the exact tarball that would be uploaded. It fails
-      # the publish rather than shipping a package this repository never tested.
-      - name: Verify
-        run: npm run verify
+      # The verify matrix above already ran the full gate on 18, 20 and 22 for this exact commit
+      # — that is what `needs: verify` guarantees — so uploading is all that is left.
 
       # Guarded so a partial failure later in the job can be recovered by simply
       # re-running: without this, npm refuses with "cannot publish over" and the

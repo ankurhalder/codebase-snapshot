@@ -31,6 +31,11 @@ fields in `manifest.json` for the same file. `manifest.json` reports what the pa
 (CRLF normalised, the trailing newline not counted); the monolith reports the content it
 embedded. Compare a file's fields within one artifact, not across the two.
 
+The manifest embedded in `full-codebase.json` is otherwise identical to `manifest.json` with one
+impossible field: a file cannot record its own sha256, so `artifacts.fullJson` is `null` in the
+embedded copy and a `selfReference` sentence points at `manifest.json`, which carries the real
+`byteSize` and `sha256` for that file.
+
 Every artifact can be turned off. `--skip-artifacts parts` omits the parts,
 `--only-artifacts manifest` writes nothing but the manifest, and `config.artifacts` does the
 same persistently. The ownership marker is always written.
@@ -132,6 +137,10 @@ values — the hash is the whole 64-character digest, never elided.
   A large file is emitted as a head/tail excerpt rather than inlined whole.
 - `isPreviewTruncated` is a fact about what was written: the body in this snapshot is **not**
   the whole file, because lines were dropped.
+- `includedLines` counts content lines after CRLF normalisation and without a trailing empty
+  element, which is what the fenced block holds. An empty file therefore records `0` while the
+  fence shows one empty line, and a file ending in a blank line records one fewer than a reader
+  counts — the number describes content, not rendering.
 - `inclusionMode` is `preview` exactly when `isPreviewTruncated` is `true`, and there are two
   routes to it:
   - **Over `largeFileBytes`** — the head/tail excerpt drops the middle, so

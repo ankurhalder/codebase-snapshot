@@ -271,6 +271,14 @@ export interface ManifestConfigSnapshot {
 export interface Manifest {
   schemaVersion: string;
   generatedAt: string;
+  /**
+   * Present only in the manifest embedded in `full-codebase.json`.
+   *
+   * That file cannot record its own sha256, so its embedded copy leaves `artifacts.fullJson` null
+   * and points at `manifest.json` for the real digest instead of writing a number that describes
+   * different bytes. The shipped manifest never carries this field.
+   */
+  selfReference?: string;
   generator: {
     name: string;
     version: string;

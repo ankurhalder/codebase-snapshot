@@ -93,6 +93,14 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
       /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|-----BEGIN (?:RSA |OPENSSH |EC |PGP |DSA |ENCRYPTED )?PRIVATE KEY-----/,
   },
   {
+    // A base64-encoded PEM header. `-----BEGIN ` base64-encodes to `LS0tLS1CRUdJTi`, so a blob
+    // that starts with that prefix and continues as base64 is a wrapped key. No decoder is
+    // needed, and the prefix cannot occur in ordinary text — ripgrep's fixture passed through
+    // untouched before this rule existed.
+    rule: "base64-private-key",
+    pattern: /LS0tLS1CRUdJTi[A-Za-z0-9+/]{40,}={0,2}/,
+  },
+  {
     // JWT: `header.payload[.signature]`, base64url, optionally `=`-padded.
     //
     // Both the header and the payload of a real JWT start with `eyJ` — the

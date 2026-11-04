@@ -6,7 +6,16 @@ export function generateMonolithJson(
   manifest: Manifest,
   filesWithContent: FileEntry[]
 ): string {
-  return JSON.stringify({ manifest, files: filesWithContent }, null, 2);
+  // A file cannot contain its own sha256 — there is no fixed point — so this copy of the manifest
+  // keeps `artifacts.fullJson` null instead of writing a digest that describes different bytes,
+  // and says where the real one lives. Everything else in it matches `manifest.json`.
+  const embedded: Manifest = {
+    ...manifest,
+    selfReference:
+      "This manifest is embedded in full-codebase.json, which cannot record its own digest. " +
+      "manifest.json holds the byteSize and sha256 of this file.",
+  };
+  return JSON.stringify({ manifest: embedded, files: filesWithContent }, null, 2);
 }
 
 export function generateMonolithMarkdown(

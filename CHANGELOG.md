@@ -4,9 +4,50 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ---
 
-## 4.2.0
+## 4.3.0
 
-Every change here came out of a full audit of the tool against eight real repositories and an
+### Node 18 and 20 actually run the suite now — and one of them was broken
+
+`engines` has said `>=18`, and until this release no run had ever executed on 18 or 20: the publish
+workflow ran `npm run verify` on one Node version only. The gate now runs on 18, 20 and 22 for every
+release, and the first honest run found a real defect — see the next section. Verified locally on
+18.20.4 and 20.19.4: 498 tests, 493 pass, 0 fail, 5 version-dependent skips.
+
+### `validate` called an unreadable file "missing from disk" on Node 18
+
+A Windows `Deny-Read` ACE makes Node 18's `statSync` throw `EPERM` and `existsSync` answer `false`,
+so a file the user could not read looked *deleted*: `validate` reported "no longer exists on disk"
+for a file sitting right there. The validator now asks why a path cannot be stat'd (`ENOENT` means
+gone, `EPERM`/`EACCES` means unreadable) instead of trusting a boolean, and both drift classes are
+deduplicated — an unreadable file is seen by the scan loop and the manifest loop.
+
+### A base64-wrapped private key is detected
+
+`LS0tLS1CRUdJTi…` is the base64 of `-----BEGIN `, so a wrapped key is found by its prefix without
+decoding anything. The new `base64-private-key` rule takes the built-in set to 30; archives and
+other encodings remain out of scope, and `SECURITY.md` now says which is which.
+
+### A dependency manifest is data, not documentation
+
+`requirements.txt` and its variants were classified kind `doc` because they end in `.txt`. They are
+machine input, like `package.json`, so they are `data` now.
+
+### The monolith explains the one field it cannot carry
+
+`full-codebase.json` embeds a copy of the manifest, and a file cannot record its own sha256. The
+embedded copy keeps `artifacts.fullJson: null` and carries a `selfReference` sentence pointing at
+`manifest.json`, which holds the real byteSize and digest, instead of leaving the reader to wonder
+why the two manifests disagree.
+
+### Empty and trailing-blank line accounting is documented
+
+`includedLines` counts content lines after CRLF normalisation and without a trailing empty element:
+an empty file records `0` while the fence shows one empty line. That is the intended meaning of the
+field, and `docs/output.md` now states it rather than leaving it to be rediscovered.
+
+### The audit release
+
+Every other change here came out of a full audit of the tool against eight real repositories and an
 adversarial review of every module. The three defects that mattered most were all in the two
 promises this package leads with — "never leak secrets" and "machine-readable output".
 

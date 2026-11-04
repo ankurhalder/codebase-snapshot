@@ -34,6 +34,8 @@ export const DEFAULT_KINDS: KindRule[] = [
     },
   },
   { kind: "type", match: (p) => p.endsWith(".d.ts") || p.includes("type") },
+  // Matched before the `.txt` documentation rule: a dependency manifest is machine input.
+  { kind: "data", match: (p) => /(^|\/)requirements[\w.-]*\.txt$/i.test(p) },
   { kind: "data", match: (p) => p.endsWith(".json") || p.endsWith(".csv") || p.endsWith(".yaml") || p.endsWith(".yml") },
   { kind: "doc", match: (p) => p.endsWith(".md") || p.endsWith(".mdx") || p.endsWith(".txt") },
   { kind: "script", match: (p) => p.startsWith("scripts/") || p.endsWith(".sh") || p.endsWith(".ps1") },
