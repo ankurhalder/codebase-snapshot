@@ -812,7 +812,10 @@ test("the generated config exposes every setting at its default", () => {
 
   // Deliberately no package import: `snap init` usually runs through npx, where
   // the package is not installed, and an import made the file unloadable.
-  assert.ok(text.includes("export default {"));
+  assert.ok(text.includes("export default config;"), "exported by name");
+  // An inline `export default { … }` is `import/no-anonymous-default-export`, which
+  // eslint-config-next enables by default: the generated file was a lint error on save.
+  assert.ok(!text.includes("export default {"), "no anonymous default export");
   assert.ok(!text.includes("defineConfig"));
   assert.ok(text.includes("// ── Size"), "sections are grouped for scanning");
 });

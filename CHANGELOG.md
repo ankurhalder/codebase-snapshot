@@ -6,6 +6,22 @@ All notable changes to `@ankurhalder/codebase-snapshot`.
 
 ## Unreleased
 
+### The generated config was a lint warning in every Next.js project
+
+`init` wrote `export default { … }`. `import/no-anonymous-default-export`, which
+`eslint-config-next` enables by default, reports that inline form — so in the framework this tool
+detects most often, the one file we tell people to keep and edit arrived flagged the moment it was
+created. The object is now assigned to `config` and exported by name:
+
+```js
+const config = { /* every setting */ };
+
+export default config;
+```
+
+Both forms load identically; only one is quiet. The reason is in the file itself, so deleting the
+comment does not invite the warning back.
+
 ### A clean repository reported `Warnings: 156`
 
 Every masked line was appended to `manifest.warnings` as `<rule> at <path>:<line>`, so a

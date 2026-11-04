@@ -1822,7 +1822,8 @@ test("a generated config is a plain object, not a defineConfig call", () => {
   assert.equal(runCli(["init", "--yes", "--cwd", dir]).code, 0);
   const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
   const text = fs.readFileSync(path.join(dir, configName), "utf8");
-  assert.match(text, /export default \{/);
+  assert.match(text, /export default config;/, "the object is exported by name");
+  assert.doesNotMatch(text, /export default \{/, "an anonymous default export is a lint error in Next.js");
   assert.doesNotMatch(text, /defineConfig/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

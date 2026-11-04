@@ -52,6 +52,11 @@ package's `type` field to a `.ts` file. `codebase-snapshot init` picks the right
 the project — `.ts` when both conditions hold, `.mjs` otherwise — and writes a plain object
 with no imports so it loads even when the package is only used through `npx`.
 
+The snippets below show an `export default { … }` object for brevity. `init` writes it as
+`const config = { … }; export default config;` because the anonymous form is reported by
+`import/no-anonymous-default-export`, which `eslint-config-next` enables by default — both load
+identically, so use whichever keeps your linter quiet.
+
 CLI flags override the config for a single run (`--max-part-bytes`, `--out-dir`, …).
 `--no-config` goes further and ignores every config file, so the run uses the built-in
 defaults and the project's detected preset. A code config is executed when it is loaded, so
@@ -325,7 +330,7 @@ Every setting at its built-in default. Nothing here has to be written — the to
 values with no config at all.
 
 ```js
-export default {
+const config = {
   // ── Project ──────────────────────────────────────────────
   preset: "detected",            // "detected" auto-detects; or name one of the 25
   branch: "main",                // recorded when git cannot report one
@@ -371,9 +376,16 @@ export default {
   maxMonolithBytes: null,
   hooks: {},
 };
+
+export default config;
 ```
 
 Deleting any line is safe — the defaults are real, and each one is what the comment says.
+
+The object is exported through a name because `export default { … }` is reported by
+`import/no-anonymous-default-export`, which `eslint-config-next` enables by default: the inline
+form made the generated file a lint error on first save in a Next.js project. A named export is
+also what lets you reference the object (from a test, or from `--dry-run`) without a wrapper.
 
 This is **not** byte-identical to a generated file. `codebase-snapshot init` starts from these
 values and substitutes two things: `preset` becomes the detected name (`node-lib` for a plain

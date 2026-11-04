@@ -185,16 +185,19 @@ ordered workflow, and produce a validated snapshot unaided — that path is cove
 
 `snapshot.config.ts` (or `.mjs`) is written by `init` with **every** setting at its current
 value, commented and grouped, so it doubles as the reference. Deleting any line is safe: the
-defaults are real.
+defaults are real. The object is exported through a name — `export default { … }` is
+`import/no-anonymous-default-export`, on by default in `eslint-config-next`.
 
 ```js
-export default {
+const config = {
   maxPartBytes: "120k",                                   // hard budget per part
   excludePatterns: ["vendor/**", "**/*.min.js"],
   artifacts: { monolith: false },                         // single-file output stays off
   budgets: { default: "120k", byLayer: { docs: 40_000 } },
   includeSensitiveFiles: false,                           // .env, *.pem … stay out
 };
+
+export default config;
 ```
 
 → [Configuration reference](docs/configuration.md)
