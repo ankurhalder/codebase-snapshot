@@ -1,4 +1,5 @@
 import { fenceForContent } from "../partitioner/chunker.js";
+import { escapeControls, inlineCode } from "../terminal.js";
 import type { FileEntry, Manifest } from "../types.js";
 
 export function generateMonolithJson(
@@ -19,10 +20,10 @@ export function generateMonolithMarkdown(
     const fence = fenceForContent(content);
 
     return [
-      `## File: ${file.relativePath}`,
+      `## File: ${escapeControls(file.relativePath)}`,
       "",
-      `- **Layer:** \`${file.layer}\``,
-      `- **Kind:** \`${file.kind}\``,
+      `- **Layer:** ${inlineCode(file.layer)}`,
+      `- **Kind:** ${inlineCode(file.kind)}`,
       `- **Lines:** \`${file.originalLines}\``,
       `- **Size:** \`${file.sizeBytes} B\``,
       `- **Inclusion:** \`${file.inclusionMode}\``,

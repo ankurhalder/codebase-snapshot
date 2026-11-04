@@ -1,5 +1,5 @@
 import { anchorForPath } from "../partitioner/chunker.js";
-import { escapeControls } from "../terminal.js";
+import { codeCell, tableCell } from "../terminal.js";
 import type { Manifest } from "../types.js";
 
 export function generateNavigation(manifest: Manifest): string {
@@ -17,7 +17,7 @@ export function generateNavigation(manifest: Manifest): string {
   for (const part of manifest.parts) {
     const sizeKb = (part.byteSize / 1024).toFixed(1);
     lines.push(
-      `| [${part.filename}](../parts/${part.filename}) | ${part.fileCount} | ${sizeKb} KB | ${escapeControls(part.layersCovered.join(", "))} |`
+      `| [${part.filename}](../parts/${part.filename}) | ${part.fileCount} | ${sizeKb} KB | ${tableCell(part.layersCovered.join(", "))} |`
     );
   }
 
@@ -43,10 +43,10 @@ export function generateNavigation(manifest: Manifest): string {
     // escaped: the anchor is a hex digest and the part name is generated, so the
     // link target stays byte-identical to what the chunker wrote.
     const anchor = anchorForPath(file.relativePath);
-    const link = `[${escapeControls(file.relativePath)}](../parts/${partFilename}#${anchor})`;
+    const link = `[${tableCell(file.relativePath)}](../parts/${partFilename}#${anchor})`;
     const sizeStr = `${(file.sizeBytes / 1024).toFixed(1)} KB`;
     lines.push(
-      `| ${link} | \`${partFilename}\` | \`${escapeControls(file.layer)}\` | \`${escapeControls(file.kind)}\` | ${file.lines} | ${sizeStr} |`
+      `| ${link} | ${codeCell(partFilename)} | ${codeCell(file.layer)} | ${codeCell(file.kind)} | ${file.lines} | ${sizeStr} |`
     );
   }
 

@@ -1,6 +1,6 @@
 import type { Manifest, SecretFinding, SecretRule } from "../types.js";
 import { findSecretInPath } from "../scanner/files.js";
-import { escapeControls } from "../terminal.js";
+import { codeCell, escapeControls, tableCell } from "../terminal.js";
 
 /**
  * Builds the security/health report.
@@ -23,6 +23,9 @@ export function generateAuditReport(
 ): string {
   const mask = (value: string): string =>
     escapeControls(findSecretInPath(value, secretRules)?.masked ?? value);
+  // Every table row below puts a repository-supplied name inside inline code and a `|` cell, so a
+  // layer called `core|x` or a path containing a backtick used to break the table it was listed in.
+  const code = (value: string): string => codeCell(mask(value));
   const lines: string[] = [
     "# Codebase Health & Security Audit",
     "",
@@ -59,11 +62,11 @@ export function generateAuditReport(
       "| :--- | :--- | :--- |"
     );
     for (const finding of secretFindings) {
-      lines.push(`| \`${mask(finding.path ?? "unknown")}\` | ${finding.line} | \`${finding.rule}\` |`);
+      lines.push(`| ${code(finding.path ?? "unknown")} | ${finding.line} | ${code(finding.rule)} |`);
     }
     lines.push("", "### Matches by rule", "", "| Rule | Matches |", "| :--- | :--- |");
     for (const [rule, count] of Array.from(byRule.entries()).sort((a, b) => b[1] - a[1])) {
-      lines.push(`| \`${rule}\` | ${count} |`);
+      lines.push(`| ${code(rule)} | ${count} |`);
     }
     lines.push("");
   }
@@ -90,7 +93,7 @@ export function generateAuditReport(
     );
     for (const file of parseIssues) {
       const errors = (file.summary as { parseErrors: number }).parseErrors;
-      lines.push(`| \`${mask(file.relativePath)}\` | ${errors} |`);
+      lines.push(`| ${code(file.relativePath)} | ${errors} |`);
     }
     lines.push(
       "",
@@ -114,7 +117,7 @@ export function generateAuditReport(
     for (const file of largeFiles) {
       const sizeKb = (file.sizeBytes / 1024).toFixed(1);
       const status = file.isPreviewTruncated ? "Truncated Head/Tail" : "Full";
-      lines.push(`| \`${mask(file.relativePath)}\` | ${sizeKb} KB | ${file.lines} | ${status} |`);
+      lines.push(`| ${code(file.relativePath)} | ${sizeKb} KB | ${file.lines} | ${status} |`);
     }
     lines.push("");
   }
@@ -130,7 +133,7 @@ export function generateAuditReport(
     (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
   )) {
     const pct = ((count / totalFiles) * 100).toFixed(1);
-    lines.push(`| \`${mask(layer)}\` | ${count} | ${pct}% |`);
+    lines.push(`| ${code(layer)} | ${count} | ${pct}% |`);
   }
   lines.push("");
 
@@ -144,7 +147,7 @@ export function generateAuditReport(
     (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
   )) {
     const pct = ((count / totalFiles) * 100).toFixed(1);
-    lines.push(`| \`${mask(kind)}\` | ${count} | ${pct}% |`);
+    lines.push(`| ${code(kind)} | ${count} | ${pct}% |`);
   }
   lines.push("");
 
@@ -159,7 +162,7 @@ export function generateAuditReport(
       "| :--- | :--- | :--- |"
     );
     for (const skip of manifest.skipped) {
-      lines.push(`| \`${mask(skip.path)}\` | \`${skip.reason}\` | ${skip.detail ?? "-"} |`);
+      lines.push(`| ${code(skip.path)} | ${code(skip.reason)} | ${tableCell(skip.detail ?? "-")} |`);
     }
     lines.push("");
   }

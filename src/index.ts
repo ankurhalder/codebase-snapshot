@@ -1787,7 +1787,7 @@ export function generateSnapshot(
       );
     }
     if (artifacts.readme) {
-      fs.writeFileSync(path.join(stagingDir, "README.md"), generateReadme(manifest), "utf8");
+      fs.writeFileSync(path.join(stagingDir, "README.md"), generateReadme(manifest, artifacts), "utf8");
     }
     if (artifacts.manifest) {
       fs.writeFileSync(path.join(stagingDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");

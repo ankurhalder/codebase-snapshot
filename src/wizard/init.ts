@@ -104,7 +104,8 @@ function packageJsonHasConfig(cwd: string): boolean {
     const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
       snapshot?: unknown;
     };
-    return typeof parsed.snapshot === "object" && parsed.snapshot !== null;
+    // `typeof [] === "object"`: an array is a wrong type like a string or a number, not a config.
+    return typeof parsed.snapshot === "object" && parsed.snapshot !== null && !Array.isArray(parsed.snapshot);
   } catch {
     return false;
   }
