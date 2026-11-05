@@ -31,6 +31,7 @@ import { buildAgentContract, renderContractText } from "./agent/contract.js";
 import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
+import { runStdioServer } from "./mcp/index.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
@@ -50,7 +51,8 @@ type Command =
   | "explain"
   | "diff"
   | "describe"
-  | "skill";
+  | "skill"
+  | "mcp";
 
 const COMMAND_ALIASES = new Map<string, Command>([
   ["generate", "generate"],
@@ -63,6 +65,7 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["diff", "diff"],
   ["describe", "describe"],
   ["skill", "skill"],
+  ["mcp", "mcp"],
 ]);
 
 /** How many positional arguments each command accepts after its name. */
@@ -76,6 +79,7 @@ const COMMAND_ARITY: Record<Command, number> = {
   diff: 2,
   describe: 0,
   skill: 0,
+  mcp: 0,
 };
 
 const CLI_OPTIONS = {
@@ -135,6 +139,7 @@ Commands:
   diff <a> <b>         Compare two snapshots (directories or manifest.json files)
   describe             Print the machine-readable contract (--format json for agents)
   skill                Print the bundled agent skill; --install writes it into the repo
+  mcp                  Serve this repository to an MCP client over stdio
 
 Options:
   --cwd <path>                  Target repository directory (default: current directory)
@@ -1126,6 +1131,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   if (invocation.command === "skill") {
     return runSkillCommand(invocation);
+  }
+
+  // `mcp` speaks JSON-RPC on stdout and resolves the repository configuration per tool call, so it
+  // starts before config discovery. A config that cannot be read must reach the client as a tool
+  // error it can act on, not as a process that dies before it answers its first message.
+  if (invocation.command === "mcp") {
+    return await runStdioServer({ cwd: path.resolve(invocation.cwd) });
   }
 
   // `setup` runs before config discovery because it may be the run that *creates* the config: it

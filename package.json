@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Pack a codebase for an LLM into budgeted Markdown parts, with a manifest of every file and skip, and validate to prove the snapshot is current.",
   "keywords": [
     "codebase",
@@ -16,6 +16,9 @@
     "token-efficiency",
     "context-engineering",
     "ai-agents",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
     "prompt-engineering",
     "partitioner",
     "ast",
@@ -65,6 +68,16 @@
       "require": {
         "types": "./dist/cli.d.cts",
         "default": "./dist/cli.cjs"
+      }
+    },
+    "./mcp": {
+      "import": {
+        "types": "./dist/mcp.d.ts",
+        "default": "./dist/mcp.js"
+      },
+      "require": {
+        "types": "./dist/mcp.d.cts",
+        "default": "./dist/mcp.cjs"
       }
     },
     "./package.json": "./package.json"

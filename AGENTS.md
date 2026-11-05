@@ -31,6 +31,10 @@ should paste the output of `skill`, so the commit belongs to that repository.
 The installable skill's canonical text lives in `src/agent/skill.ts` and is rendered by
 `codebase-snapshot skill` — do not hand-edit a generated copy.
 
+If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as seven
+tools over stdio instead of shelling out. Reads come from the snapshot rather than the working
+tree, so excluded and redacted content stays out of context. See [docs/mcp.md](docs/mcp.md).
+
 ## Working in this repository
 
 **Stack.** TypeScript (strict, `noUnusedLocals`, `noUnusedParameters`, ES2022, NodeNext),
@@ -50,6 +54,7 @@ dependency is `typescript`; keep it that way — the zero-dependency property is
 | `src/partitioner/` | budgeting and part rendering |
 | `src/wizard/` | interactive setup and the config template |
 | `src/agent/` | the machine contract and the bundled skill |
+| `src/mcp/` | the MCP server: protocol, transport, tools, resources, prompts |
 | `src/validator/` | drift detection |
 | `tests/` | unit and integration suites |
 

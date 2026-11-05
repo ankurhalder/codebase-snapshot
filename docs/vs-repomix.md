@@ -29,7 +29,7 @@ If you want the most popular, most integrated tool: **use repomix.**
 | Reproducible output | Parts are byte-identical across runs; a fingerprint covers them | Content is stable; no published determinism guarantee |
 | Staleness check | `validate` re-hashes the repository and exits non-zero on drift | Not a feature |
 | Remote repositories | No — operates on a local checkout | **Yes** — packs a GitHub URL directly |
-| MCP server | No (planned) | **Yes** |
+| MCP server | **Yes** — seven tools over stdio, and it serves the validated snapshot rather than the working tree | **Yes** — packs a repository, including by URL |
 | Secret handling | 30 default rules, value-span masking, per-line audit table | Secretlint integration |
 | Language awareness | 25 presets, AST or structural summaries labelled by confidence | Tree-sitter parsing with a compression mode |
 | Adoption | New | **Mature** — large user base, many integrations |
@@ -41,7 +41,9 @@ If you want the most popular, most integrated tool: **use repomix.**
   repomix is built around that workflow.
 - **You need a remote URL.** `repomix --remote https://github.com/owner/repo` works without a clone.
   This project has no equivalent.
-- **You want MCP.** repomix ships an MCP server today; this project does not, yet.
+- **You want MCP against a remote URL.** repomix's server can pack a repository by URL. This one
+  serves a local checkout, and refuses to read outside it. Both ship a server; ours is narrower on
+  purpose, and it can tell the agent whether the snapshot it is reading is still current.
 - **You want the ecosystem.** More stars, more tutorials, more people who have already hit your
   problem.
 - **You are packing something enormous and prefer compression to budgets.** repomix's tree-sitter

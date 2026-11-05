@@ -157,5 +157,13 @@ It never writes \`AGENTS.md\`. That file is the repository's own agent contract 
 commands, conventions, house rules — and this tool has no business editing it. If you want
 this skill in there, run \`npx ${PACKAGE_NAME}@latest skill\` and paste the text yourself: the
 diff, and the commit, are then yours.
+
+## When the client speaks MCP
+
+If the agent runs inside an MCP client, \`npx ${PACKAGE_NAME}@latest mcp\` serves this repository
+as seven tools over stdio instead of shelling out. Its reads come from the snapshot rather than
+the working tree, so excluded files and redacted values never reach the context. Use
+\`snapshot_locate\` before \`snapshot_read\`, and \`snapshot_validate\` before trusting a snapshot
+from an earlier session.
 `;
 }

@@ -5,6 +5,10 @@ export default defineConfig([
     entry: {
       index: "src/index.ts",
       cli: "src/cli.ts",
+      // The MCP server is its own entry, not part of the root export: it imports the generator,
+      // so re-exporting it from `index` would create an import cycle, and nobody who only wants
+      // `generateSnapshot` should ship a protocol implementation.
+      mcp: "src/mcp/index.ts",
     },
     format: ["esm", "cjs"],
     dts: true,

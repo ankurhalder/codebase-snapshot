@@ -1,5 +1,13 @@
 import { ARTIFACT_NAMES } from "../config.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, SCHEMA_VERSION } from "../index.js";
+import { buildTools } from "../mcp/tools.js";
+import { buildPrompts } from "../mcp/prompts.js";
+import {
+  DEFAULT_LEGACY_PROTOCOL_VERSION,
+  LEGACY_PROTOCOL_VERSIONS,
+  MODERN_PROTOCOL_VERSIONS,
+} from "../mcp/protocol.js";
+import { RESOURCE_TEMPLATE_URIS, STATIC_RESOURCE_URIS } from "../mcp/uris.js";
 import { PRESETS } from "../presets/registry.js";
 import { optionAppliesTo } from "./option-scope.js";
 
@@ -79,6 +87,29 @@ export interface AgentContract {
   output: { layout: string[]; notes: string[] };
   safety: string[];
   troubleshooting: Array<{ symptom: string; cause: string; fix: string }>;
+  /**
+   * The MCP server, described from the same objects the server serves.
+   *
+   * This block exists so an agent that has only ever run `describe` learns the server exists, and
+   * a test compares it against a live `tools/list` so the two cannot describe different tools.
+   */
+  mcp: {
+    command: string;
+    transport: "stdio";
+    protocolVersions: { modern: string[]; legacy: string[]; default: string };
+    tools: Array<{
+      name: string;
+      title: string;
+      summary: string;
+      readOnly: boolean;
+      parameters: string[];
+      required: string[];
+    }>;
+    prompts: Array<{ name: string; summary: string; arguments: string[] }>;
+    resources: string[];
+    resourceTemplates: string[];
+    notes: string[];
+  };
 }
 
 const ARTIFACT_SUMMARY: Record<string, string> = {
@@ -146,6 +177,22 @@ export function renderContractText(contract: AgentContract): string {
     lines.push(`  ${option.flag.padEnd(24)} ${option.appliesTo.padEnd(32)}${fallback}`);
     lines.push(`  ${"".padEnd(24)} ${option.summary}`);
   }
+  lines.push("");
+  lines.push("MCP:");
+  lines.push(`  command    ${contract.mcp.command}`);
+  lines.push(`  transport  ${contract.mcp.transport}`);
+  lines.push(
+    `  versions   modern ${contract.mcp.protocolVersions.modern.join(", ")}` +
+      ` / legacy ${contract.mcp.protocolVersions.legacy.join(", ")}`
+  );
+  lines.push(
+    `  tools      ${contract.mcp.tools
+      .map((tool) => (tool.readOnly ? tool.name : `${tool.name} (writes)`))
+      .join(", ")}`
+  );
+  lines.push(`  prompts    ${contract.mcp.prompts.map((prompt) => prompt.name).join(", ")}`);
+  lines.push(`  resources  ${contract.mcp.resources.join(", ")}`);
+  lines.push(`  templates  ${contract.mcp.resourceTemplates.join(", ")}`);
   lines.push("");
   lines.push("Safety:");
   for (const note of contract.safety) lines.push(`  - ${note}`);
@@ -327,6 +374,15 @@ export function buildAgentContract(): AgentContract {
           ".gitignore. It never writes AGENTS.md: that file belongs to the repository.",
         positionals: [],
         exits: [0, 1, 2],
+      },
+      {
+        name: "mcp",
+        aliases: [],
+        summary:
+          "Serve this repository to an MCP client over stdio. The tools, resources and protocol " +
+          "versions it offers are listed in this contract's `mcp` block.",
+        positionals: [],
+        exits: [0, 2],
       },
     ],
     exitCodes: {
@@ -584,6 +640,36 @@ export function buildAgentContract(): AgentContract {
       "The tool refuses to replace an outDir that it did not create, so a mistyped outDir cannot delete source code.",
       "Nothing is ever written above the repository root; --out-dir may not be the root or an ancestor.",
     ],
+    mcp: {
+      command: `npx ${PACKAGE_NAME} mcp`,
+      transport: "stdio",
+      protocolVersions: {
+        modern: [...MODERN_PROTOCOL_VERSIONS],
+        legacy: [...LEGACY_PROTOCOL_VERSIONS],
+        default: DEFAULT_LEGACY_PROTOCOL_VERSION,
+      },
+      tools: buildTools().map((tool) => ({
+        name: tool.name,
+        title: tool.title,
+        summary: tool.description,
+        readOnly: tool.annotations.readOnlyHint,
+        parameters: Object.keys(tool.inputSchema.properties),
+        required: tool.inputSchema.required ?? [],
+      })),
+      prompts: buildPrompts().map((prompt) => ({
+        name: prompt.name,
+        summary: prompt.description,
+        arguments: prompt.arguments.map((argument) => argument.name),
+      })),
+      resources: [...STATIC_RESOURCE_URIS],
+      resourceTemplates: [...RESOURCE_TEMPLATE_URIS],
+      notes: [
+        "stdout carries JSON-RPC messages only; every note and log line goes to stderr.",
+        "The server speaks both protocol eras: the legacy `initialize` handshake and the stateless revision, which is detected from `server/discover` or from per-request `_meta`.",
+        "Everything it can do is a subset of the CLI. It never installs packages and never writes a config file.",
+        "A `root` argument may name a sub-directory of the server's --cwd, and nothing outside it is readable.",
+      ],
+    },
     troubleshooting: [
       {
         symptom: "Command prints nothing and exits 0",

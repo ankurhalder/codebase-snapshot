@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.3
+   Added devDependency: codebase-snapshot ^0.9.4
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.3
+   Added devDependency: codebase-snapshot ^0.9.4
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -360,6 +360,25 @@ already existed is never ignored. `--format json` reports what was created, upda
 unchanged, plus the ignore entries it added.
 
 Printing goes to **stdout** so it can be redirected: `codebase-snapshot skill > SKILL.md`.
+
+### `mcp`
+
+```bash
+codebase-snapshot mcp                 # serve the current directory over stdio
+codebase-snapshot mcp --cwd <path>    # serve another repository
+```
+
+Serves the repository to a Model Context Protocol client over stdio: seven tools, `snapshot://`
+resources and two prompts. Stdout carries JSON-RPC messages and nothing else; every note goes to
+stderr. It speaks both protocol eras — the legacy `initialize` handshake and the stateless
+`2026-07-28` revision — and answers whichever the client starts with.
+
+`--cwd` is the only directory it will read. A tool's `root` argument can name a sub-directory of it
+and nothing outside, symlinks included. It never installs packages and never writes a config file.
+
+There is no `--format` here, because stdout *is* the protocol stream. The full tool list, resource
+URIs and protocol versions appear in [the MCP server guide](mcp.md) and in
+`describe --format json` under `mcp`.
 
 ## Options
 

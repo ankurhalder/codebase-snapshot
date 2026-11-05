@@ -21,6 +21,77 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.4
+
+### The snapshot is now something an agent can ask for
+
+`codebase-snapshot mcp` serves the repository over the Model Context Protocol on stdio. Seven
+tools, each answering one question an agent actually asks, and nothing that only looks useful:
+
+| Tool | Question |
+| :-- | :-- |
+| `snapshot_status` | Is there a snapshot here, and what does it cover? |
+| `snapshot_plan` | What *would* a generate at this budget include, and what would it drop? |
+| `snapshot_generate` | Build it. The only tool that writes. |
+| `snapshot_validate` | Is the context I was given still current? |
+| `snapshot_locate` | Which part holds this symbol, route or file? |
+| `snapshot_read` | Give me this window of this file. |
+| `snapshot_explain` | Why is this path missing? |
+
+Six are marked `readOnlyHint`, so clients can run them without a prompt; `snapshot_generate` is the
+only one that asks.
+
+### Both protocol eras, because they are not the same protocol
+
+Revision `2026-07-28` removed the `initialize` handshake: requests carry their protocol version and
+client capabilities in `_meta`, `server/discover` is mandatory, every result carries `resultType`,
+and `ping` no longer exists. Every client shipping today speaks the older handshake. The server
+answers whichever arrives first and never mixes them.
+
+The eras also disagree about an unsupported version, and getting it backwards breaks one while
+looking correct in the other: **legacy negotiates down** (the server answers with a revision it does
+speak), **modern rejects with `-32022`** and lists what it supports so the client can retry. Both
+paths have their own tests.
+
+### Zero dependencies, including the protocol
+
+`@modelcontextprotocol/sdk` is 4.5 MB unpacked with Express, Hono, Ajv, JOSE and Zod behind it. The
+transport here is newline-delimited JSON-RPC in about 400 readable lines, which keeps the package's
+single-dependency property intact and means the whole server can be audited in one sitting.
+
+### Reads come from the snapshot, never from the working tree
+
+`snapshot_read` extracts a file's section from the emitted part. That is why an excluded `.env`
+cannot be read back, a redacted credential stays redacted, and a large file returns the bounded
+preview the snapshot actually contains. The test asserts the strongest available property: the
+secret value appears in no artifact the server serves.
+
+### The contract does not lie about the server either
+
+`describe --format json` gained an `mcp` block — tools, arguments, prompts, resources, protocol
+versions — generated from the same objects the server serves. A test opens a live session, calls
+`tools/list`, and compares it against the CLI's output, so a tool that exists on one side and not the
+other fails the build.
+
+### Known limitation, measured rather than assumed
+
+Generation is synchronous. On this repository a `generate` takes **1.1 s**; on a synthetic
+3,000-file tree it takes **7.5 s**, during which the server answers nothing else. That is under every
+client's request timeout and well under a real monorepo's worth of files, so 0.9.4 runs it inline.
+The number is in the docs, and a worker thread is the next change if reports come back that clients
+time out.
+
+### Ships alongside
+
+- A `codebase-snapshot/mcp` subpath so another tool can mount the server in-process.
+- `snapshot://` resources: the manifest, each part, the three reports, the contract and the skill,
+  plus `snapshot://parts/{index}` as a template.
+- Two prompts, `orient` and `keep-current`, both about order of operations rather than features.
+- `--cwd` is the only directory the server may read; a `root` argument can name a sub-directory of
+  it and nothing outside. `includeSensitiveFiles` is deliberately not a tool argument.
+
+It does not install packages, write a config file, speak HTTP, or fetch a remote repository.
+
 ## 0.9.3
 
 ### The project now says what it is

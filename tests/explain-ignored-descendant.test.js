@@ -268,18 +268,10 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
   assert.equal(result.code, 0, "describe --format json must succeed");
 
   const contract = JSON.parse(result.stdout);
-  // `check` is an alias of `validate`; a scope entry uses the canonical name.
-  const COMMANDS = [
-    "generate",
-    "validate",
-    "report",
-    "explain",
-    "init",
-    "setup",
-    "diff",
-    "describe",
-    "skill",
-  ];
+  // Derived from the contract, not hard-coded: a third copy of the command list is one more place
+  // a new command can be forgotten, and what this asserts is that `appliesTo` names commands the
+  // contract actually documents.
+  const COMMANDS = contract.commands.map((command) => command.name);
 
   assert.ok(
     Array.isArray(contract.options) && contract.options.length >= 20,
@@ -314,6 +306,6 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
   assert.equal(
     format.appliesTo,
     "generate/validate/report/explain/init/setup/diff/describe/skill",
-    "--format applies everywhere, so its list must name every canonical command"
+    "--format applies to every command that renders a payload; mcp is excluded because its stdout carries JSON-RPC"
   );
 });

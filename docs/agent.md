@@ -113,6 +113,22 @@ added.
 `codebase-snapshot init` does none of this: it writes the config, the npm scripts, the
 devDependency and the `.gitignore` entries for the snapshot directory, and nothing else.
 
+## When the client speaks MCP
+
+`codebase-snapshot mcp` serves the repository to a Model Context Protocol client over stdio: seven
+tools, `snapshot://` resources and two prompts. Prefer it over shelling out when the agent already
+has an MCP connection, for two reasons that are properties of the design rather than of the wiring:
+
+- **Reads come from the snapshot, not the working tree.** `snapshot_read` extracts a file's section
+  from the emitted part, so a file the snapshot excluded cannot be read back and a redacted value
+  stays redacted.
+- **Staleness is a first-class question.** `snapshot_validate` answers "has the code moved since
+  this was built", which an agent with only a filesystem tool has no way to ask.
+
+The tools are listed in [the MCP guide](mcp.md) and in the `mcp` block of
+`describe --format json`. A `root` argument may name a sub-directory of the directory the server was
+started for, and nothing outside it.
+
 ## Why both a contract and a skill
 
 The contract is for **doing** — the data an agent needs to pick correct commands and options.

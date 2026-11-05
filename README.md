@@ -241,7 +241,17 @@ npx codebase-snapshot skill --install
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its
 ordered workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-→ [Using this with an AI agent](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
+Or skip the shell and let the client talk to a server:
+
+```bash
+npx -y codebase-snapshot@0.9.4 mcp
+```
+
+Seven tools over MCP — status, plan, generate, validate, locate, read, explain — with `snapshot://`
+resources and two prompts. Reads are served from the snapshot rather than the working tree, so an
+excluded file stays excluded and a redacted value stays redacted.
+
+→ [Using this with an AI agent](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) · [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
 
 ## Configuration
 

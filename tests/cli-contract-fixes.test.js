@@ -83,17 +83,9 @@ test("describe exposes check and --mode", () => {
   assert.ok(validate, "validate command must exist");
   assert.ok(validate.aliases.includes("check"), "validate.aliases must include check");
   assert.match(validate.summary, /check.*alias|alias.*check/i);
-  const canonical = new Set([
-    "generate",
-    "validate",
-    "report",
-    "init",
-    "setup",
-    "explain",
-    "diff",
-    "describe",
-    "skill",
-  ]);
+  // Canonical names come from the contract itself; an alias (`check`) is not one, and a hard-coded
+  // second list here is one more place a new command can be forgotten.
+  const canonical = new Set(contract.commands.map((command) => command.name));
   for (const option of contract.options) {
     const tokens = option.appliesTo.split("/");
     assert.ok(tokens.every((token) => canonical.has(token)), `${option.flag}: prose or aliased token`);

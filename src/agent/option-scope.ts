@@ -21,7 +21,8 @@ export type CommandName =
   | "explain"
   | "diff"
   | "describe"
-  | "skill";
+  | "skill"
+  | "mcp";
 
 /** `check` is an alias of `validate`; appliesTo names the canonical command only. */
 const VALIDATE_OPTIONS = [
@@ -123,6 +124,9 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "version",
   ],
   skill: ["cwd", "format", "mode", "install", "target", "help", "version"],
+  // `mcp` reads the repository, so it takes --cwd. It has no --format: stdout carries JSON-RPC
+  // messages, and there is no second shape to choose, so offering the flag would be a lie.
+  mcp: ["cwd", "mode", "help", "version"],
   setup: [
     "cwd",
     "out-dir",
@@ -154,6 +158,7 @@ const COMMAND_ORDER: readonly CommandName[] = [
   "diff",
   "describe",
   "skill",
+  "mcp",
 ];
 
 /** The commands an option applies to, in the order `describe` lists them. */

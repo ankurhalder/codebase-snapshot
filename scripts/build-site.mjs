@@ -67,6 +67,7 @@ const TITLES = {
   configuration: "Configuration, byte budgets and the 25 project presets",
   output: "Snapshot output: parts, manifest and reports",
   agent: "Using codebase-snapshot with an AI agent",
+  mcp: "MCP server: serve a codebase to any AI client",
   troubleshooting: "Troubleshooting: every message and its one-line fix",
   "how-to-feed-a-repo-to-claude": "How to feed a whole codebase to ChatGPT, Claude or Cursor",
   "how-to-context-budget": "How to size an LLM context budget for a codebase",
@@ -107,6 +108,9 @@ const DESCRIPTIONS = {
   troubleshooting:
     "Every message the tool prints and the one-line fix: refusals, config errors, drift, " +
     "sensitive-file skips and non-interactive first runs.",
+  mcp:
+    "Serve a repository to Claude, Cursor or any MCP client: seven tools and snapshot:// " +
+    "resources, so an agent reads the one part it needs instead of all of them.",
   "how-to-feed-a-repo-to-claude":
     "Hand a whole codebase to ChatGPT, Claude or Cursor: generate a snapshot locally, pick a " +
     "budget that fits the window, and tell the model what it is reading.",
@@ -137,6 +141,7 @@ const ORDER = [
   "configuration",
   "output",
   "agent",
+  "mcp",
   "troubleshooting",
   "how-to-feed-a-repo-to-claude",
   "how-to-context-budget",
@@ -154,6 +159,7 @@ const LABELS = {
   configuration: "Configuration",
   output: "Output",
   agent: "AI agents",
+  mcp: "MCP server",
   troubleshooting: "Troubleshooting",
   "how-to-feed-a-repo-to-claude": "Feeding a repo to an LLM",
   "how-to-context-budget": "Context budgeting",
