@@ -873,7 +873,9 @@ async function runSetupCommand(
     }
 
     if (invocation.format !== "json") {
-      info(`🚀 Setup for: ${invocation.cwd}`);
+      // The interactive path already introduced itself and printed the directory, so the
+      // banner would be a second header for the same run.
+      if (!interactive) info(`🚀 Setup for: ${invocation.cwd}`);
       if (init.reused) {
         info(`♻  Keeping ${path.basename(init.configPath)} (${presetSummary(init)})`);
       } else {

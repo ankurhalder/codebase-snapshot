@@ -139,6 +139,12 @@ not mistaken for a Node library.
 | `docs` | 22 | ≥ 3 markdown files and no `package.json` | 100k | `.docusaurus`, `.vitepress/dist`, `site` |
 | `generic` | 0 | anything else | 120k | — |
 
+Each detector reports **the signal that fired**, not just a verdict: `next.config.ts`, `depends on
+express`, `django in pyproject.toml`. The first run prints it — `Detected nextjs` / `Because
+next.config.ts` — so a detection can be checked rather than taken on faith. `generic` is the
+fallback, reached only when no detector matched, and the first run says so instead of pretending it
+recognised the project.
+
 A preset contributes layers, kinds, ignores and a recommended budget — what `init` writes as
 `maxPartBytes`. Force one when detection is wrong:
 
@@ -403,8 +409,12 @@ preset's figure only takes effect once `init` has written it into a config.
 npx codebase-snapshot init
 ```
 
-Walks every tunable parameter, showing the detected value as the default. Every prompt has a
-flag, so the same setup works non-interactively:
+Walks every tunable parameter, showing the detected value as the default — press `enter` through
+the lot and you get the recommended configuration.
+
+The bare `snapshot` command starts the same wizard when the project has no config, but asks one
+question first: take the recommended setup in a single keystroke, walk through each setting, or pick
+a different preset. Every prompt has a flag, so the same setup works non-interactively:
 
 ```bash
 npx codebase-snapshot init --yes
