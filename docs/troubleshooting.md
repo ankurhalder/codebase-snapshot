@@ -49,6 +49,9 @@ column is in the [CLI reference](cli.md#options).
 | Message | Fix |
 | :--- | :--- |
 | `Unknown command "frobnicate". Expected one of: …` | Use one of the commands in the [CLI reference](cli.md). |
+| `No configuration found in … and this session is not interactive, so nothing was generated.` | A first run and no terminal to ask its question. Nothing is wrong with the repository: say which setup you want — `--autopilot` for the full setup, `init --yes` then `generate` for the steps, or `generate` for the documented defaults. See [the first run](cli.md#the-first-run). |
+| `--autopilot sets a project up and writes a config; --no-config ignores config files. Pass one or the other.` | The two flags contradict each other. Drop one. |
+| `--no-install only applies to \`setup\`, or to \`generate --autopilot\`.` | The install only happens during a setup. Drop the flag, or add `--autopilot`. |
 | `--preset does not apply to \`generate\` and was not applied. It is accepted by: \`init\`. To scope a run, set include/excludePatterns/preset in snapshot.config.ts (or run \`codebase-snapshot init\` to generate one).` | `--preset`, `--include`, `--exclude`, `--yes` and `--force` configure `init`, which writes them into the config. Set them at generation time in `snapshot.config.ts` instead. |
 | `--install does not apply to \`generate\` and was not applied. It is accepted by: \`skill\`.` | `--install` and `--target` configure `skill` only. |
 | `--cwd directory does not exist: …` / `--cwd is not a directory: …` | Point `--cwd` at an existing repository directory. |
@@ -170,6 +173,16 @@ stale: delete it, and the next run proceeds.
 The output paths are unsafe: `outDir` or `tmpDir` is the working directory, an ancestor, the
 filesystem root, or they contain one another. The message prints the resolved paths so you
 can see why. Use a subdirectory.
+
+### `Nothing to snapshot: … has no files.`
+
+```
+❌ Nothing to snapshot: this directory has no files. Run this inside the repository you want to snapshot, or pass --cwd.
+```
+
+The directory is empty apart from `.git` (or `.hg`, `.svn`, `.DS_Store`, `Thumbs.db`). Setting the
+project up would install a devDependency and add scripts for a repository with nothing in it, so
+`--autopilot` refuses too. Run the command from the repository, or point `--cwd` at it.
 
 ### Budget errors
 
