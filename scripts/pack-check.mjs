@@ -100,9 +100,46 @@ if (createDependency !== `^${packageJson.version}`) {
   );
 }
 
+/**
+ * The lockfile is committed, and its root entry repeats the package's own version and bin map.
+ *
+ * Neither is part of the published tarball, which is exactly why they rot unnoticed: a lockfile
+ * that advertises version 0.9.1 and a `snap` binary while the package says 0.9.2 and `snapshot`
+ * is stale metadata nobody bumps, and `npm ci` keeps using it happily. `npm install
+ * --package-lock-only` is the one-line fix.
+ */
+const lockPath = path.join(ROOT, "package-lock.json");
+if (fs.existsSync(lockPath)) {
+  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  const lockRoot = lock.packages?.[""] ?? {};
+  const fix = "run `npm install --package-lock-only`";
+
+  if (lock.version !== packageJson.version) {
+    problems.push(
+      `package-lock.json is at ${lock.version} but the package is at ${packageJson.version} — ${fix}`
+    );
+  }
+  if (lockRoot.version !== packageJson.version) {
+    problems.push(
+      `package-lock.json packages[""] is at ${lockRoot.version} but the package is at ` +
+        `${packageJson.version} — ${fix}`
+    );
+  }
+  const lockBins = Object.keys(lockRoot.bin ?? {}).sort().join(", ");
+  const packageBins = Object.keys(packageJson.bin ?? {}).sort().join(", ");
+  if (lockBins !== packageBins) {
+    problems.push(
+      `package-lock.json lists bins [${lockBins}] but package.json declares [${packageBins}] — ${fix}`
+    );
+  }
+}
+
 if (problems.length > 0) {
   for (const problem of problems) console.error(`FAIL: ${problem}`);
   process.exit(1);
 }
 
-console.log(`OK: tarball has ${files.length} files, every required entry, and no sourcemaps`);
+console.log(
+  `OK: tarball has ${files.length} files, every required entry, no sourcemaps, and the lockfile ` +
+    `agrees with package.json ${packageJson.version}`
+);
