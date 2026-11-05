@@ -104,9 +104,9 @@ if (createDependency !== `^${packageJson.version}`) {
  * The lockfile is committed, and its root entry repeats the package's own version and bin map.
  *
  * Neither is part of the published tarball, which is exactly why they rot unnoticed: a lockfile
- * that advertises version 0.9.1 and a `snap` binary while the package says 0.9.2 and `snapshot`
- * is stale metadata nobody bumps, and `npm ci` keeps using it happily. `npm install
- * --package-lock-only` is the one-line fix.
+ * that keeps advertising the previous version — or a binary this release removed — is stale
+ * metadata nobody bumps, and `npm ci` keeps using it happily. `npm install --package-lock-only`
+ * is the one-line fix.
  */
 const lockPath = path.join(ROOT, "package-lock.json");
 if (fs.existsSync(lockPath)) {

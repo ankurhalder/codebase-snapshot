@@ -27,12 +27,14 @@ Everything below runs locally.
 
 ```bash
 cd /path/to/your/project
-npx codebase-snapshot setup
+snapshot                 # installed globally: one word, and it asks once
+npx codebase-snapshot setup   # or from a checkout with no global install
 ```
 
 `setup` detects the project type from the repository, writes a commented `snapshot.config.mjs`, adds
 the npm scripts and the devDependency, installs it, and generates. It does not overwrite a config you
-already have. Use `--no-install` if you would rather not touch the lockfile.
+already have. Use `--no-install` if you would rather not touch the lockfile. `npx codebase-snapshot
+--autopilot` does the same thing with no questions at all, which is what you want in CI.
 
 If you prefer to see each stage:
 
