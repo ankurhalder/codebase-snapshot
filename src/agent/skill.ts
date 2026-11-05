@@ -46,10 +46,11 @@ globally, and you do not need to clone anything.
 
 **Pin a version** — \`npx ${PACKAGE_NAME}@${GENERATOR_VERSION} <command>\` — when you
 need the same version on every machine. The bare package name works too: this package ships
-one executable file, published under two names (\`codebase-snapshot\` and \`snap\`), which is what
-lets npm pick it. If a command exits 0 printing nothing,
-the executable was not resolved — clear the npm cache and retry; do not assume the repository
-is broken.
+one executable file, published under two names (\`codebase-snapshot\` and \`snapshot\`), which is
+what lets npm pick it. A global install gives the short command \`snapshot\`; inside a project
+that has this package installed, \`npx snapshot\` resolves the local copy first. If a command
+exits 0 printing nothing, the executable was not resolved — clear the npm cache and retry;
+do not assume the repository is broken.
 
 ## Step by step
 
@@ -74,8 +75,11 @@ is broken.
    does steps 4–6 in one go with defaults: it writes the config (an existing one is kept),
    adds the npm scripts and the devDependency, installs with the project's package manager,
    and generates. Use \`--no-install\` when the machine is offline or the user does not want
-   their lockfile touched. Prefer the explicit steps below when you need to control any of
-   those, or when something fails and you want to see which part.
+   their lockfile touched. \`--autopilot\` does exactly the same thing from the default
+   command (\`npx ${PACKAGE_NAME}@latest --autopilot\`) and is the form to reach for when a
+   single invocation must both set the project up and produce the snapshot. Prefer the
+   explicit steps below when you need to control any of those, or when something fails and
+   you want to see which part.
 
 4. **Configure (recommended).** Run \`npx ${PACKAGE_NAME}@latest init --yes\`. It detects
    the project shape, then writes a commented config file listing **every** setting at its
@@ -83,7 +87,10 @@ is broken.
    the running Node can strip types (Node >= 22.6) **and** the project is an ES module
    (\`"type": "module"\` in package.json); otherwise \`snapshot.config.mjs\`. Pass
    \`--preset <name>\` only if detection is wrong; the preset names are in the contract.
-   This step is optional: without a config the tool runs on the same defaults.
+   Skipping this step is safe **at a terminal**: the first \`generate\` asks once, can write
+   the config for you and then generates. Unattended, a \`generate\` with no config exits 2 —
+   run this step, or \`--autopilot\`, or pass \`--no-config\` to run deliberately on the
+   built-in defaults.
 
 5. **Generate.** Run \`npx ${PACKAGE_NAME}@latest generate\`. Expect exit 0 and a
    \`./snapshot/\` directory. If you need a different location use \`--out-dir <path>\`; if
@@ -131,6 +138,10 @@ any of this to get a good first snapshot.
   deleting anything.
 - **Exit 2 is a usage error**, not a failure of the repository. Re-read the contract
   before retrying.
+- **A first run refuses rather than guessing.** In a project with no config and no previous
+  snapshot, \`generate\` without a terminal exits 2 instead of silently using defaults. That
+  is deliberate: say which set-up you want (\`--autopilot\`, \`init --yes\`, or \`--no-config\`)
+  rather than retrying the same command.
 - **\`--format json\` keeps stdout pure.** Progress goes to stderr, so \`stdout\` is safe to
   pipe into a JSON parser.
 

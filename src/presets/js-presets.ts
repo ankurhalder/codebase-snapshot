@@ -1,5 +1,5 @@
 import type { PresetDefinition } from "./registry.js";
-import { hasDependency, hasFile, hasFileStartingWith } from "./context.js";
+import { dependencyEvidence, fileEvidence, fileStartingWithEvidence } from "./evidence.js";
 import { commonKinds, commonLayers, kindOf, layer, suffixKind } from "./helpers.js";
 import { NEXTJS_LAYERS, NEXTJS_KINDS } from "./nextjs.js";
 import { NODE_LAYERS, NODE_KINDS } from "./node.js";
@@ -13,12 +13,16 @@ const NEXT_LIKE_EXCLUDES = [".svelte-kit", ".astro", ".vite", ".output"];
  * Detection reads the shared {@link PresetContext}, so a repository is inspected
  * once no matter how many detectors run, and peer dependencies count — a library
  * that only peer-depends on `next` is still a Next.js project.
+ *
+ * Each detector returns the signal that fired, not a boolean: the first-run wizard
+ * prints it back, so a detection can be checked rather than taken on faith.
  */
 export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "nextjs",
     priority: 100,
-    detect: (context) => hasFileStartingWith(context, "next.config") || hasDependency(context, "next"),
+    detect: (context) =>
+      fileStartingWithEvidence(context, "next.config") ?? dependencyEvidence(context, "next"),
     layers: NEXTJS_LAYERS,
     kinds: NEXTJS_KINDS,
     exclude: NEXT_LIKE_EXCLUDES,
@@ -27,7 +31,9 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "nuxt",
     priority: 98,
-    detect: (context) => hasFileStartingWith(context, "nuxt.config") || hasDependency(context, "nuxt", "nuxt3"),
+    detect: (context) =>
+      fileStartingWithEvidence(context, "nuxt.config") ??
+      dependencyEvidence(context, "nuxt", "nuxt3"),
     layers: [
       layer("pages", "pages/", "src/pages/"),
       layer("components", "components/", "src/components/"),
@@ -52,7 +58,8 @@ export const JS_PRESETS: PresetDefinition[] = [
     name: "sveltekit",
     priority: 96,
     detect: (context) =>
-      hasFileStartingWith(context, "svelte.config") || hasDependency(context, "@sveltejs/kit", "svelte"),
+      fileStartingWithEvidence(context, "svelte.config") ??
+      dependencyEvidence(context, "@sveltejs/kit", "svelte"),
     layers: [
       layer("routes", "src/routes/", "routes/"),
       layer("lib", "src/lib/", "lib/"),
@@ -73,7 +80,8 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "remix",
     priority: 94,
-    detect: (context) => hasDependency(context, "@remix-run/react", "@remix-run/node", "@remix-run/dev"),
+    detect: (context) =>
+      dependencyEvidence(context, "@remix-run/react", "@remix-run/node", "@remix-run/dev"),
     layers: [
       layer("routes", "app/routes/", "routes/"),
       layer("components", "app/components/"),
@@ -87,7 +95,8 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "astro",
     priority: 92,
-    detect: (context) => hasFileStartingWith(context, "astro.config") || hasDependency(context, "astro"),
+    detect: (context) =>
+      fileStartingWithEvidence(context, "astro.config") ?? dependencyEvidence(context, "astro"),
     layers: [
       layer("pages", "src/pages/"),
       layer("layouts", "src/layouts/"),
@@ -102,7 +111,8 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "angular",
     priority: 90,
-    detect: (context) => hasFile(context, "angular.json") || hasDependency(context, "@angular/core"),
+    detect: (context) =>
+      fileEvidence(context, "angular.json") ?? dependencyEvidence(context, "@angular/core"),
     layers: [
       layer("app", "src/app/"),
       layer("features", "src/app/features/"),
@@ -126,7 +136,7 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "solid",
     priority: 88,
-    detect: (context) => hasDependency(context, "solid-js", "solid-start"),
+    detect: (context) => dependencyEvidence(context, "solid-js", "solid-start"),
     layers: [
       layer("pages", "src/routes/", "src/pages/"),
       layer("components", "src/components/"),
@@ -139,9 +149,16 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "vue-vite",
     priority: 86,
-    detect: (context) =>
-      hasDependency(context, "vue") &&
-      (hasDependency(context, "vite") || hasFileStartingWith(context, "vite.config")),
+    // `vue` is the decisive signal; `vite` (or its config file) only says the app is
+    // built with Vite rather than shipped pre-compiled, so it is required but not what
+    // gets reported.
+    detect: (context) => {
+      const framework = dependencyEvidence(context, "vue");
+      if (framework === null) return null;
+      const build =
+        dependencyEvidence(context, "vite") ?? fileStartingWithEvidence(context, "vite.config");
+      return build === null ? null : framework;
+    },
     layers: [
       layer("pages", "src/pages/", "src/views/"),
       layer("components", "src/components/"),
@@ -166,9 +183,13 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "react-vite",
     priority: 84,
-    detect: (context) =>
-      hasDependency(context, "react") &&
-      (hasDependency(context, "vite") || hasFileStartingWith(context, "vite.config")),
+    detect: (context) => {
+      const framework = dependencyEvidence(context, "react");
+      if (framework === null) return null;
+      const build =
+        dependencyEvidence(context, "vite") ?? fileStartingWithEvidence(context, "vite.config");
+      return build === null ? null : framework;
+    },
     layers: VITE_LAYERS,
     kinds: VITE_KINDS,
     exclude: [".vite", "dist"],
@@ -177,7 +198,7 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "nest",
     priority: 80,
-    detect: (context) => hasDependency(context, "@nestjs/core"),
+    detect: (context) => dependencyEvidence(context, "@nestjs/core"),
     layers: [
       layer("modules", "src/modules/", "modules/"),
       layer("controllers", "src/controllers/", "controllers/"),
@@ -203,7 +224,7 @@ export const JS_PRESETS: PresetDefinition[] = [
   {
     name: "node-express",
     priority: 78,
-    detect: (context) => hasDependency(context, "express", "fastify", "koa", "@hapi/hapi"),
+    detect: (context) => dependencyEvidence(context, "express", "fastify", "koa", "@hapi/hapi"),
     layers: NODE_LAYERS,
     kinds: NODE_KINDS,
     exclude: ["dist"],
@@ -214,7 +235,7 @@ export const JS_PRESETS: PresetDefinition[] = [
     // A bare package.json is often just tooling around a non-JS project, so it
     // ranks below every definitive language manifest.
     priority: 45,
-    detect: (context) => hasFile(context, "package.json"),
+    detect: (context) => fileEvidence(context, "package.json"),
     layers: [
       layer("src", "src/"),
       layer("lib", "lib/"),

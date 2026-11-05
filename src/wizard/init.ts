@@ -68,6 +68,10 @@ export interface InitResult {
   /** True when an existing config was kept instead of being written. */
   reused: boolean;
   preset: string;
+  /** The signal the detector matched, e.g. `next.config.ts`; null when nothing detected it. */
+  reason: string | null;
+  /** True when no preset matched and the fallback was used. */
+  fallback: boolean;
   scripts: string[];
   gitignoreEntries: string[];
   dependency: InitDependency;
@@ -357,11 +361,17 @@ function updatePackageJson(cwd: string, notes: string[]): PackageJsonUpdate {
  */
 const GITIGNORE_ENTRIES = ["snapshot/", "snapshot.tmp/"];
 
-function resolvePresetChoice(answers: WizardAnswers, presetName: string): Choice<string> {
+/**
+ * One entry in the preset list.
+ *
+ * `detectedName` is null when nothing was detected — the fallback preset was reached, not
+ * chosen — so no entry may claim to be `detected` in that case.
+ */
+function resolvePresetChoice(detectedName: string | null, presetName: string): Choice<string> {
   return {
     value: presetName,
     label: presetName,
-    hint: presetName === answers.preset ? "detected" : undefined,
+    hint: presetName === detectedName ? "detected" : undefined,
   };
 }
 
@@ -371,10 +381,19 @@ function resolvePresetChoice(answers: WizardAnswers, presetName: string): Choice
  * Interactive only when both ends are a TTY and `--yes` was not passed; every
  * other path uses the flag values and the detected preset, and prints what it
  * decided rather than prompting.
+ *
+ * Every question starts on its answer, so pressing enter through the whole wizard
+ * produces the recommended configuration — and the first question is a single
+ * "use the recommended setup" for a project that was recognised, which is what makes
+ * `snapshot` alone a complete command.
  */
 export async function runInit(options: InitOptions): Promise<InitResult> {
   const io = options.io ?? defaultIO();
   const detected = detectPreset(options.cwd, options.preset);
+  // Reported back so the CLI can say *why* it chose a preset. A preset the developer picked,
+  // or one forced with --preset, has nothing to report and is not a fallback.
+  let reason = detected.reason;
+  let fallback = detected.fallback;
   const notes: string[] = [];
 
   const answers: WizardAnswers = {
@@ -402,117 +421,158 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   if (interactive) {
     io.output.write("\n  codebase-snapshot\n");
     io.output.write("  Turn this repository into an LLM-ready, redacted, byte-bounded snapshot.\n\n");
-    io.output.write(`  Detected   ${detected.presetName}\n`);
+    if (fallback) {
+      // Naming what was looked for is the difference between "it failed" and "it needs an
+      // answer": the developer can see immediately that this is not a project type the tool
+      // knows, rather than suspecting a bug.
+      io.output.write("  ⚠ Could not tell what kind of project this is.\n");
+      io.output.write("    No package.json, go.mod, Cargo.toml, pyproject.toml, Gemfile,\n");
+      io.output.write("    composer.json, pom.xml, *.csproj, next.config.*, vite.config.*, *.tf\n");
+      io.output.write("    or workspace marker was found here.\n\n");
+    } else {
+      io.output.write(`  Detected   ${detected.presetName}\n`);
+      io.output.write(`  Because    ${reason}\n\n`);
+    }
     io.output.write(`  Directory  ${options.cwd}\n\n`);
 
-    const useDetected = await confirm(io, `Set up for ${detected.presetName}?`, {
-      defaultValue: true,
+    const paceChoices: Array<Choice<string>> = fallback
+      ? [
+          { value: "choose", label: "Pick the closest preset", hint: "then generate with the defaults" },
+          { value: "recommended", label: "Use the defaults", hint: "generic · everything the scanner finds" },
+          { value: "walk", label: "Go through each setting", hint: "every question starts on its default" },
+        ]
+      : [
+          {
+            value: "recommended",
+            label: "Use the recommended setup",
+            hint: `${detected.presetName} · config · npm scripts · install · generate`,
+          },
+          { value: "walk", label: "Go through each setting", hint: "every question starts on its default" },
+          { value: "choose", label: "Pick a different preset", hint: "everything else stays at the defaults" },
+        ];
+
+    const pace = await select(io, "How should I set this up?", paceChoices, {
+      defaultValue: fallback ? "choose" : "recommended",
     });
 
-    if (!useDetected) {
+    if (pace === "choose") {
       answers.preset = await select(
         io,
         "What kind of project is this?",
-        listPresetNames().map((name) => resolvePresetChoice(answers, name))
+        listPresetNames().map((name) =>
+          resolvePresetChoice(fallback ? null : detected.presetName, name)
+        ),
+        { defaultValue: answers.preset }
       );
       const chosen = detectPreset(options.cwd, answers.preset);
       answers.preset = chosen.presetName;
+      // The developer made the decision, so there is no detection to report and this is not
+      // a fallback any more.
+      reason = null;
+      fallback = false;
     }
 
-    const scope = await select(
-      io,
-      "What should go into the snapshot?",
-      [
-        { value: "all", label: "Everything the scanner finds", hint: "recommended · respects .gitignore" },
-        { value: "folders", label: "Only specific folders…" },
-        { value: "no-tests", label: "Everything, but skip tests" },
-        { value: "custom", label: "Let me write glob patterns" },
-      ],
-      { defaultValue: "all" }
-    );
+    if (pace === "walk") {
+      const scope = await select(
+        io,
+        "What should go into the snapshot?",
+        [
+          { value: "all", label: "Everything the scanner finds", hint: "recommended · respects .gitignore" },
+          { value: "folders", label: "Only specific folders…" },
+          { value: "no-tests", label: "Everything, but skip tests" },
+          { value: "custom", label: "Let me write glob patterns" },
+        ],
+        { defaultValue: "all" }
+      );
 
-    if (scope === "folders") {
-      const dirs = topLevelDirs(options.cwd).slice(0, 40);
-      if (dirs.length === 0) {
-        notes.push("No top-level directories found; the snapshot will include everything.");
-      } else {
-        const chosen = await multiSelect(
-          io,
-          "Select folders",
-          dirs.map((name) => ({ value: name, label: `${name}/` })),
-          { defaults: dirs }
-        );
-        answers.include = chosen.map((name) => `${name}/**`);
+      if (scope === "folders") {
+        const dirs = topLevelDirs(options.cwd).slice(0, 40);
+        if (dirs.length === 0) {
+          notes.push("No top-level directories found; the snapshot will include everything.");
+        } else {
+          const chosen = await multiSelect(
+            io,
+            "Select folders",
+            dirs.map((name) => ({ value: name, label: `${name}/` })),
+            { defaults: dirs }
+          );
+          answers.include = chosen.map((name) => `${name}/**`);
+        }
+      } else if (scope === "no-tests") {
+        answers.excludePatterns = [
+          ...answers.excludePatterns,
+          "**/*.test.*",
+          "**/*.spec.*",
+          "tests",
+          "test",
+        ];
+      } else if (scope === "custom") {
+        const raw = await text(io, "Glob patterns to include (comma separated)", {
+          defaultValue: "",
+        });
+        answers.include = raw
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
       }
-    } else if (scope === "no-tests") {
-      answers.excludePatterns = [
-        ...answers.excludePatterns,
-        "**/*.test.*",
-        "**/*.spec.*",
-        "tests",
-        "test",
+
+      // The recommended budget belongs to the preset, so the selector starts on it rather than
+      // on a fixed "120k" that silently overrode a 300k Next.js recommendation.
+      const currentBudget = String(answers.maxPartBytes);
+      const sizeChoice = await select(io, "How large should each part be?", SIZE_CHOICES, {
+        defaultValue: SIZE_CHOICES.some((choice) => choice.value === currentBudget)
+          ? currentBudget
+          : "120k",
+      });
+
+      if (sizeChoice === "custom") {
+        const raw = await text(io, "Part size (e.g. 150k, 1.5mb, 900000)", {
+          defaultValue: String(answers.maxPartBytes),
+          validate: (value) => (parseByteSize(value) === undefined ? "Not a valid size." : null),
+        });
+        answers.maxPartBytes = parseByteSize(raw) ?? answers.maxPartBytes;
+      } else {
+        answers.maxPartBytes = sizeChoice;
+      }
+
+      const artifactChoices: Array<Choice<keyof ArtifactSelection>> = [
+        { value: "readme", label: "README.md", hint: "orientation page" },
+        { value: "manifest", label: "manifest.json", hint: "required by validate and report" },
+        { value: "parts", label: "parts/", hint: "the code payload" },
+        { value: "navigation", label: "reports/navigation.md", hint: "file → part index" },
+        { value: "projectTree", label: "reports/project-tree.md", hint: "ASCII tree" },
+        { value: "audit", label: "reports/audit.md", hint: "security and health findings" },
+        { value: "monolith", label: "full-codebase.json + .md", hint: "roughly doubles output" },
       ];
-    } else if (scope === "custom") {
-      const raw = await text(io, "Glob patterns to include (comma separated)", {
-        defaultValue: "",
-      });
-      answers.include = raw
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
+
+      const presetEnabled = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]);
+      const selectedArtifacts = await multiSelect(
+        io,
+        "Which artifacts should be generated?",
+        artifactChoices,
+        { defaults: presetEnabled }
+      );
+      for (const name of ARTIFACT_NAMES) answers.artifacts[name] = selectedArtifacts.includes(name);
+      const enabledCount = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]).length;
+
+      answers.includeSensitiveFiles = await confirm(
+        io,
+        "Include credential files (.env, *.pem, .npmrc, .ssh/)?",
+        { defaultValue: false }
+      );
+
+      io.output.write("\n  Review\n\n");
+      io.output.write(`  project          ${answers.preset}\n`);
+      io.output.write(`  include          ${answers.include.length ? answers.include.join(", ") : "everything"}\n`);
+      io.output.write(`  part size        ${String(answers.maxPartBytes)}\n`);
+      io.output.write(`  artifacts        ${enabledCount} of ${ARTIFACT_NAMES.length}\n`);
+      io.output.write(`  credentials      ${answers.includeSensitiveFiles ? "included" : "skipped"}\n\n`);
+      io.output.write("  Will write snapshot.config with your answers, plus every other setting\n");
+      io.output.write("  at its default — so nothing is hidden behind the docs.\n\n");
+
+      const proceed = await confirm(io, "Write this and continue?", { defaultValue: true });
+      if (!proceed) throw new PromptCancelled();
     }
-
-    const sizeChoice = await select(io, "How large should each part be?", SIZE_CHOICES, {
-      defaultValue: "120k",
-    });
-
-    if (sizeChoice === "custom") {
-      const raw = await text(io, "Part size (e.g. 150k, 1.5mb, 900000)", {
-        defaultValue: String(answers.maxPartBytes),
-        validate: (value) => (parseByteSize(value) === undefined ? "Not a valid size." : null),
-      });
-      answers.maxPartBytes = parseByteSize(raw) ?? answers.maxPartBytes;
-    } else {
-      answers.maxPartBytes = sizeChoice;
-    }
-
-    const artifactChoices: Array<Choice<keyof ArtifactSelection>> = [
-      { value: "readme", label: "README.md", hint: "orientation page" },
-      { value: "manifest", label: "manifest.json", hint: "required by validate and report" },
-      { value: "parts", label: "parts/", hint: "the code payload" },
-      { value: "navigation", label: "reports/navigation.md", hint: "file → part index" },
-      { value: "projectTree", label: "reports/project-tree.md", hint: "ASCII tree" },
-      { value: "audit", label: "reports/audit.md", hint: "security and health findings" },
-      { value: "monolith", label: "full-codebase.json + .md", hint: "roughly doubles output" },
-    ];
-
-    const presetEnabled = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]);
-    const selectedArtifacts = await multiSelect(
-      io,
-      "Which artifacts should be generated?",
-      artifactChoices,
-      { defaults: presetEnabled }
-    );
-    for (const name of ARTIFACT_NAMES) answers.artifacts[name] = selectedArtifacts.includes(name);
-    const enabledCount = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]).length;
-
-    answers.includeSensitiveFiles = await confirm(
-      io,
-      "Include credential files (.env, *.pem, .npmrc, .ssh/)?",
-      { defaultValue: false }
-    );
-
-    io.output.write("\n  Review\n\n");
-    io.output.write(`  project          ${answers.preset}\n`);
-    io.output.write(`  include          ${answers.include.length ? answers.include.join(", ") : "everything"}\n`);
-    io.output.write(`  part size        ${String(answers.maxPartBytes)}\n`);
-    io.output.write(`  artifacts        ${enabledCount} of ${ARTIFACT_NAMES.length}\n`);
-    io.output.write(`  credentials      ${answers.includeSensitiveFiles ? "included" : "skipped"}\n\n`);
-    io.output.write("  Will write snapshot.config with your answers, plus every other setting\n");
-    io.output.write("  at its default — so nothing is hidden behind the docs.\n\n");
-
-    const proceed = await confirm(io, "Write this and continue?", { defaultValue: true });
-    if (!proceed) throw new PromptCancelled();
   }
 
   const configText = renderConfig(answers);
@@ -550,6 +610,8 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       written: false,
       reused,
       preset: answers.preset,
+      reason,
+      fallback,
       scripts: [],
       gitignoreEntries: [],
       dependency: { name: GENERATOR_NAME, range: `^${GENERATOR_VERSION}`, added: false },
@@ -590,6 +652,8 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     written: true,
     reused,
     preset: answers.preset,
+    reason,
+    fallback,
     scripts,
     gitignoreEntries: ignore.added,
     dependency,

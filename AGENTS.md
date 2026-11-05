@@ -15,7 +15,13 @@ npx codebase-snapshot skill --install         # into .claude/skills + .cursor/ru
 
 Read [docs/agent.md](docs/agent.md) first. In short: `setup` — config, scripts, dependency, install
 and generate in one command — or step by step: `init --yes` → `generate` → `validate`.
+`generate --autopilot` is the same one-command path from the default command.
 Pin an exact version — `npx codebase-snapshot --version` prints the current one — when the same version must run everywhere.
+
+**The bare command is not the safe default for a machine.** In a project with no configuration,
+`npx codebase-snapshot` with no command word asks one question, and with no terminal it exits `2`
+instead of generating with defaults nobody chose. That is deliberate (see rule 1 below): name what
+you want — `generate`, `--autopilot`, or `init --yes` — rather than retrying the same command.
 
 `skill --install` deliberately does **not** write `AGENTS.md`. That file is a repository's own
 agent contract, and this tool has no business editing one — it installs into the two registries

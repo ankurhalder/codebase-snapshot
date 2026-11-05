@@ -4,9 +4,22 @@ import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 import { explainPath, renderExplainText } from "./explain.js";
-import { ARTIFACT_NAMES, loadConfigFileDetailed, parseByteSize, resolveConfig } from "./config.js";
+import {
+  ARTIFACT_NAMES,
+  findConfigFile,
+  loadConfigFileDetailed,
+  parseByteSize,
+  resolveConfig,
+} from "./config.js";
 import { runInit } from "./wizard/init.js";
-import { PromptCancelled } from "./wizard/prompts.js";
+import {
+  firstRunMessage,
+  hasPriorSnapshot,
+  isEffectivelyEmpty,
+  planFirstRun,
+} from "./wizard/autopilot.js";
+import { DEFAULT_ANSWERS } from "./wizard/config-template.js";
+import { defaultIO, isInteractive, PromptCancelled } from "./wizard/prompts.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
 import {
   describeManifestShapeProblem,
@@ -86,6 +99,7 @@ const CLI_OPTIONS = {
   exclude: { type: "string" },
   yes: { type: "boolean" },
   force: { type: "boolean" },
+  autopilot: { type: "boolean" },
   install: { type: "boolean" },
   "no-install": { type: "boolean" },
   target: { type: "string" },
@@ -102,6 +116,14 @@ Production-grade LLM codebase snapshot generator, auditor, and AST partitioner
 
 Usage:
   codebase-snapshot [command] [options]
+
+First run:
+  codebase-snapshot                No config yet: asks once, sets the project up, generates.
+                                   A configured project just generates. It never falls back
+                                   to defaults it was not given.
+  codebase-snapshot --autopilot    The same without questions: detect the preset, write the
+                                   config, add the npm scripts and devDependency, install,
+                                   then generate.
 
 Commands:
   setup                Everything at once: config, scripts, dependency, install, generate
@@ -135,6 +157,12 @@ Options:
                                 auto: git when usable. git: require git. walk: read
                                 .gitignore directly (escape hatch for a broken .git)
 
+  generate only:
+  --autopilot                   Set the project up without asking, then generate: write the
+                                config and .gitignore, add the npm scripts and devDependency,
+                                and install with the project's own package manager.
+  --no-install                  With --autopilot: skip the dependency install.
+
   init only:
   --preset <name>               Force a project preset instead of detecting one
   --include <globs>             Comma-separated allow-list
@@ -160,6 +188,14 @@ Agents with no prior knowledge of this tool should start with: describe --format
 
 interface ParsedInvocation {
   command: Command;
+  /**
+   * True when the command was named on the command line rather than defaulted to.
+   *
+   * `snapshot` alone is the guided entry point: in an unconfigured project it sets the
+   * project up. `snapshot generate` names the command, which means "do exactly this" — and
+   * that path keeps behaving as it always has, on the built-in defaults.
+   */
+  explicitCommand: boolean;
   /** Positional arguments that follow the command name. */
   args: string[];
   format: OutputFormat;
@@ -174,6 +210,8 @@ interface ParsedInvocation {
   exclude?: string;
   yes: boolean;
   force: boolean;
+  /** `generate` only: set the project up without prompting, then generate. */
+  autopilot: boolean;
   /** `setup` only: skip the dependency install. */
   noInstall: boolean;
   /** `skill` only: write the skill into the repository instead of printing it. */
@@ -456,8 +494,29 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     );
   }
 
+  // `--no-install` is the one part of the setup a run can opt out of, and it only means
+  // something while `--autopilot` is setting that setup up. Accepting it on a plain
+  // `generate` would be a flag that parses and changes nothing.
+  if (
+    values["no-install"] === true &&
+    command === "generate" &&
+    values.autopilot !== true
+  ) {
+    throw new UsageError("--no-install only applies to `setup`, or to `generate --autopilot`.");
+  }
+
+  // `--autopilot` writes a config; `--no-config` promises to ignore configs. Honouring one
+  // means silently dropping the other, so the pair is a contradiction rather than a tie.
+  if (values.autopilot === true && values["no-config"] === true) {
+    throw new UsageError(
+      "--autopilot sets a project up and writes a config; --no-config ignores config files. " +
+        "Pass one or the other."
+    );
+  }
+
   return {
     command,
+    explicitCommand: firstPositional !== undefined || explicitMode !== undefined,
     args,
     format: rawFormat as OutputFormat,
     dryRun: values["dry-run"] === true,
@@ -470,6 +529,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     exclude: values.exclude === undefined ? undefined : String(values.exclude),
     yes: values.yes === true,
     force: values.force === true,
+    autopilot: values.autopilot === true,
     install: values.install === true,
     noInstall: values["no-install"] === true,
     target: values.target === undefined ? undefined : String(values.target),
@@ -592,6 +652,17 @@ function nextStepHint(cwd: string, scriptsAddedNow: boolean): string {
   return installed ? "npm run snapshot" : "npm install && npm run snapshot";
 }
 
+/**
+ * How the chosen preset is announced.
+ *
+ * The reason travels with the choice: `preset: nextjs, because next.config.ts` is checkable,
+ * `preset: nextjs` is not. When the developer picked the preset themselves there is nothing to
+ * explain, and when nothing matched the setup said so before asking.
+ */
+function presetSummary(init: { preset: string; reason: string | null }): string {
+  return init.reason === null ? `preset: ${init.preset}` : `preset: ${init.preset}, because ${init.reason}`;
+}
+
 async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  try {
     const result = await runInit({
       cwd: invocation.cwd,
@@ -617,7 +688,7 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  
       return 0;
     }
 
-    info(`✅ Created ${path.basename(result.configPath)} (preset: ${result.preset})`);
+    info(`✅ Created ${path.basename(result.configPath)} (${presetSummary(result)})`);
     if (result.scripts.length > 0) info(`   Added npm scripts: ${result.scripts.join(", ")}`);
     if (result.dependency.added && result.dependency.range !== null) {
       info(`   Added devDependency: ${result.dependency.name} ${result.dependency.range}`);
@@ -746,8 +817,15 @@ async function captureStdout(fn: () => Promise<number>): Promise<{ code: number;
  * than a dead end, because the snapshot can still be generated through `npx`, and `--no-install`
  * exists for CI and offline machines.
  */
-async function runSetupCommand(invocation: ParsedInvocation): Promise<number> {
+async function runSetupCommand(
+  invocation: ParsedInvocation,
+  options: { interactive?: boolean } = {}
+): Promise<number> {
   try {
+    // `setup` is a one-command command: it never asks. A bare `snapshot` in an unconfigured
+    // project shares this implementation and does ask, which is the only difference between
+    // the two paths — everything after the questions is the same work.
+    const interactive = options.interactive === true;
     const init = await runInit({
       cwd: invocation.cwd,
       preset: invocation.preset,
@@ -757,7 +835,7 @@ async function runSetupCommand(invocation: ParsedInvocation): Promise<number> {
       exclude: splitList(invocation.exclude),
       skipArtifacts: invocation.skipArtifacts,
       includeSensitiveFiles: invocation.includeSensitiveFiles,
-      yes: true,
+      yes: !interactive,
       force: invocation.force,
       reuseConfig: true,
       dryRun: invocation.dryRun,
@@ -797,9 +875,9 @@ async function runSetupCommand(invocation: ParsedInvocation): Promise<number> {
     if (invocation.format !== "json") {
       info(`🚀 Setup for: ${invocation.cwd}`);
       if (init.reused) {
-        info(`♻  Keeping ${path.basename(init.configPath)} (preset: ${init.preset})`);
+        info(`♻  Keeping ${path.basename(init.configPath)} (${presetSummary(init)})`);
       } else {
-        info(`✅ Created ${path.basename(init.configPath)} (preset: ${init.preset})`);
+        info(`✅ Created ${path.basename(init.configPath)} (${presetSummary(init)})`);
       }
       if (init.scripts.length > 0) info(`   Added npm scripts: ${init.scripts.join(", ")}`);
       if (init.dependency.added && init.dependency.range !== null) {
@@ -832,6 +910,9 @@ async function runSetupCommand(invocation: ParsedInvocation): Promise<number> {
     if ((invocation.skipArtifacts ?? []).length > 0) {
       generateArgs.push("--skip-artifacts", (invocation.skipArtifacts ?? []).join(","));
     }
+    // `--watch` reaches setup only from a first-run `snapshot --watch`, where dropping it would
+    // silently downgrade the run to a single generation.
+    if (invocation.watch) generateArgs.push("--watch");
 
     if (invocation.format === "json") {
       const generated = await captureStdout(() => main(generateArgs));
@@ -871,6 +952,37 @@ async function runSetupCommand(invocation: ParsedInvocation): Promise<number> {
     if (err instanceof PromptCancelled) return fail(invocation.format, "Cancelled.");
     return fail(invocation.format, (err as Error).message);
   }
+}
+
+/**
+ * Decides what a `generate` with no configuration should do.
+ *
+ * Returns null when the run should proceed: an existing config, an existing snapshot, or a
+ * project that has been generated before all mean there is nothing to set up. Otherwise it
+ * asks (or, with `--autopilot`, decides), runs the setup, and generates — or refuses with the
+ * command that would have worked, because a first run that silently used settings nobody
+ * chose produces a snapshot nobody can trust.
+ */
+async function firstRun(invocation: ParsedInvocation): Promise<number | null> {
+  const plan = planFirstRun({
+    hasConfig: findConfigFile(invocation.cwd) !== null,
+    hasPriorSnapshot: hasPriorSnapshot(invocation.cwd, invocation.outDir ?? DEFAULT_ANSWERS.outDir),
+    // A machine must never be asked a question, and `--format json` is how a machine says so.
+    interactive: invocation.format === "text" && isInteractive(defaultIO()),
+    autopilot: invocation.autopilot,
+    emptyTarget: isEffectivelyEmpty(invocation.cwd),
+  });
+
+  if (plan.action === "generate") return null;
+  if (plan.action === "refuse") {
+    return fail(invocation.format, firstRunMessage(plan.reason, invocation.cwd), plan.exitCode);
+  }
+  info(
+    plan.interactive
+      ? "⚙  This project has no snapshot configuration yet."
+      : "⚙  --autopilot: setting this project up before generating."
+  );
+  return await runSetupCommand(invocation, { interactive: plan.interactive });
 }
 
 /**
@@ -1018,6 +1130,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   // writes the file, then generates through the normal command, which loads it.
   if (invocation.command === "setup") {
     return runSetupCommand(invocation);
+  }
+
+  // The first run of a bare `snapshot` is decided before the config is loaded: there is no config
+  // yet, and the decision is whether to write one. Naming the command (`snapshot generate`) is an
+  // instruction to do exactly that, so it keeps running on the defaults; `--autopilot` is the way
+  // to ask for the setup from an explicit command. `--no-config` is an explicit "run on the
+  // built-in defaults", so it never sets anything up.
+  if (
+    invocation.command === "generate" &&
+    !invocation.noConfig &&
+    (!invocation.explicitCommand || invocation.autopilot)
+  ) {
+    const decided = await firstRun(invocation);
+    if (decided !== null) return decided;
   }
 
   // `diff` compares two manifests and never needs a repository config; importing one would

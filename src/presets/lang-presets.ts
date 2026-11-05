@@ -1,10 +1,6 @@
-import type { PresetContext } from "./context.js";
-import { hasFile, manifestContains } from "./context.js";
+import { fileEvidence, manifestEvidence, suffixEvidence } from "./evidence.js";
 import type { PresetDefinition } from "./registry.js";
 import { commonKinds, commonLayers, kindOf, layer, suffixKind } from "./helpers.js";
-
-const anyFileEndingWith = (context: PresetContext, suffix: string): boolean =>
-  Array.from(context.files).some((file) => file.endsWith(suffix));
 
 const DIR = (name: string): string => `${name}/`;
 
@@ -14,15 +10,18 @@ const DIR = (name: string): string => `${name}/`;
  * Each one also contributes the ignore rules that only make sense for that
  * language — `__pycache__`, `target`, `vendor` — because the generic list cannot
  * know them.
+ *
+ * Every detector reports the manifest or source file it matched, so the wizard can
+ * say `Because go.mod` instead of asking the developer to trust the verdict.
  */
 export const LANGUAGE_PRESETS: PresetDefinition[] = [
   {
     name: "python-django",
     priority: 56,
     detect: (context) =>
-      hasFile(context, "manage.py") ||
-      manifestContains(context, "pyproject.toml", "django") ||
-      manifestContains(context, "requirements.txt", "django"),
+      fileEvidence(context, "manage.py") ??
+      manifestEvidence(context, "pyproject.toml", "django") ??
+      manifestEvidence(context, "requirements.txt", "django"),
     layers: [
       layer("views", DIR("views"), DIR("app/views"), DIR("apps/views")),
       layer("models", DIR("models"), DIR("app/models"), DIR("apps/models")),
@@ -49,10 +48,10 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     name: "python-fastapi",
     priority: 54,
     detect: (context) =>
-      manifestContains(context, "requirements.txt", "fastapi") ||
-      manifestContains(context, "requirements.txt", "flask") ||
-      manifestContains(context, "pyproject.toml", "fastapi") ||
-      manifestContains(context, "pyproject.toml", "flask"),
+      manifestEvidence(context, "requirements.txt", "fastapi") ??
+      manifestEvidence(context, "requirements.txt", "flask") ??
+      manifestEvidence(context, "pyproject.toml", "fastapi") ??
+      manifestEvidence(context, "pyproject.toml", "flask"),
     layers: [
       layer("routers", DIR("routers"), DIR("routes"), DIR("api")),
       layer("models", DIR("models"), DIR("db")),
@@ -77,10 +76,10 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     // Below node-lib: a Node repo with a stray .py file is still a Node repo.
     priority: 30,
     detect: (context) =>
-      hasFile(context, "pyproject.toml") ||
-      hasFile(context, "setup.py") ||
-      hasFile(context, "requirements.txt") ||
-      anyFileEndingWith(context, ".py"),
+      fileEvidence(context, "pyproject.toml") ??
+      fileEvidence(context, "setup.py") ??
+      fileEvidence(context, "requirements.txt") ??
+      suffixEvidence(context, ".py"),
     layers: [
       layer("package", DIR("src"), DIR("lib")),
       layer("tests", DIR("tests"), DIR("test")),
@@ -93,7 +92,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
   {
     name: "go",
     priority: 50,
-    detect: (context) => hasFile(context, "go.mod"),
+    detect: (context) => fileEvidence(context, "go.mod"),
     layers: [
       layer("cmd", "cmd/"),
       layer("internal", "internal/"),
@@ -117,7 +116,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
   {
     name: "rust",
     priority: 48,
-    detect: (context) => hasFile(context, "Cargo.toml"),
+    detect: (context) => fileEvidence(context, "Cargo.toml"),
     layers: [
       layer("src", "src/"),
       layer("crates", "crates/"),
@@ -134,9 +133,9 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     name: "java-spring",
     priority: 46,
     detect: (context) =>
-      hasFile(context, "pom.xml") ||
-      hasFile(context, "build.gradle") ||
-      hasFile(context, "build.gradle.kts"),
+      fileEvidence(context, "pom.xml") ??
+      fileEvidence(context, "build.gradle") ??
+      fileEvidence(context, "build.gradle.kts"),
     layers: [
       layer("api", "src/main/java/"),
       layer("test", "src/test/java/"),
@@ -160,9 +159,9 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     name: "dotnet",
     priority: 44,
     detect: (context) =>
-      anyFileEndingWith(context, ".csproj") ||
-      anyFileEndingWith(context, ".sln") ||
-      hasFile(context, "global.json"),
+      suffixEvidence(context, ".csproj") ??
+      suffixEvidence(context, ".sln") ??
+      fileEvidence(context, "global.json"),
     layers: [
       layer("web", "src/", "Web/"),
       layer("domain", "Domain/", "Core/"),
@@ -186,9 +185,9 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     name: "php-laravel",
     priority: 42,
     detect: (context) =>
-      hasFile(context, "artisan") ||
-      manifestContains(context, "composer.json", "laravel") ||
-      hasFile(context, "composer.json"),
+      fileEvidence(context, "artisan") ??
+      manifestEvidence(context, "composer.json", "laravel") ??
+      fileEvidence(context, "composer.json"),
     layers: [
       layer("app", "app/"),
       layer("routes", "routes/"),
@@ -215,9 +214,9 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     name: "ruby-rails",
     priority: 40,
     detect: (context) =>
-      hasFile(context, "Gemfile") ||
-      hasFile(context, "config.ru") ||
-      hasFile(context, "Rakefile"),
+      fileEvidence(context, "Gemfile") ??
+      fileEvidence(context, "config.ru") ??
+      fileEvidence(context, "Rakefile"),
     layers: [
       layer("app", "app/"),
       layer("controllers", "app/controllers/"),

@@ -13,7 +13,7 @@ file (with the reason) in `manifest.json`, and reports secrets, large files and 
 
 - [Agent guide](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md): the machine-readable contract and the installable agent skill; the recommended entry point for an AI agent.
 - [Installation](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/install.md): every npm-compatible client, version pinning, troubleshooting a shadowed `npx`.
-- [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md): all 8 commands, all 21 options with defaults, exit codes, examples.
+- [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md): every command, every option with its default, exit codes, examples, and what the guided first run asks.
 - [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md): every setting and default, the 25 project presets, byte budgets, artifacts, hooks, secret handling.
 - [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md): directory layout and the complete `manifest.json` schema.
 - [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md): every message the tool prints and what to do about it.
@@ -21,7 +21,9 @@ file (with the reason) in `manifest.json`, and reports secrets, large files and 
 
 ## Machine-readable entry points
 
-- `npx codebase-snapshot setup` — the whole first run in one command with defaults: write the config (kept if one exists), add the npm scripts + devDependency + .gitignore entries, install dependencies with the project's package manager, then generate. `--no-install` skips the install; `--dry-run` writes nothing.
+- `snapshot` (after a global install) or `npx codebase-snapshot` — the guided first run. It reports the preset it detected and the file that decided it, asks one question, then writes the config, adds the npm scripts + devDependency + .gitignore entries, installs, and generates. A project that already has a config, or that generated before, just generates. **Unattended it exits 2 rather than guessing** and names the alternatives.
+- `npx codebase-snapshot --autopilot` — the same first run with no questions, for CI, containers and agents. Keeps an existing config; `--no-install` skips the install.
+- `npx codebase-snapshot setup` — the same one-command setup spelled as a command word: write the config (kept if one exists), add the npm scripts + devDependency + .gitignore entries, install dependencies with the project's package manager, then generate. `--no-install` skips the install; `--dry-run` writes nothing.
 - `npx codebase-snapshot describe --format json` — the full contract as JSON on stdout: invocation, ordered workflow, commands, options with defaults, exit codes, presets, artifacts, config settings, output layout, safety rules, troubleshooting.
 - `npx codebase-snapshot skill` — the bundled agent skill, printed on stdout.
 - `npx codebase-snapshot skill --install` — writes the skill to the two registries agent tools read by name: `.claude/skills/codebase-snapshot/SKILL.md` and `.cursor/rules/codebase-snapshot.mdc`, and adds them to `.gitignore`. It never writes `AGENTS.md`; that file is the repository's own agent contract, so print the skill and paste it if you want it there.
@@ -36,7 +38,8 @@ npx codebase-snapshot generate     # write ./snapshot/
 npx codebase-snapshot validate     # exit 0 = snapshot matches the files on disk
 ```
 
-Exit codes: `0` success, `1` drift or refused generation, `2` usage error. Human progress goes
+Exit codes: `0` success, `1` drift, refused generation, or nothing to snapshot, `2` usage error —
+including a first run that needs an answer and has no terminal. Human progress goes
 to stderr; `--format json` payloads go to stdout and are safe to parse. A failing JSON-mode run
 still writes one parseable document — `{"error":{"message":…,"exitCode":…}}` — so an agent never
 has to parse an empty string or scrape stderr for prose.
@@ -44,7 +47,8 @@ has to parse an empty string or scrape stderr for prose.
 ## Notes for agents
 
 - Pin an exact version — `npx codebase-snapshot --version` prints the current one — when the same version must run on every machine. The bare package name
-  also works — both bin entries point at the same file, which is what lets npm resolve it.
+  also works — both bin entries (`codebase-snapshot`, `snapshot`) point at the same file, which is what lets npm resolve it.
+- **Do not run the bare command expecting it to just generate.** In a project with no configuration it exits 2 without a terminal. Say what you want: `generate` for the documented defaults, `--autopilot` for the full setup, or `init --yes` then `generate` when you want to see each step.
 - **If discovery refuses** ("This directory is a git repository, but git could not list its
   files"), the fix is `--discovery walk`: it scans the tree directly and reads `.gitignore` files
   itself. `--discovery git` is the opposite — require git and refuse without it. The default,

@@ -350,39 +350,7 @@ export function buildPresetContext(cwd: string): PresetContext {
   };
 }
 
-export function hasFile(context: PresetContext, name: string): boolean {
-  return context.files.has(name);
-}
-
-export function hasDir(context: PresetContext, name: string): boolean {
-  return context.dirs.has(name);
-}
-
-/**
- * True when the root or a workspace package has a file starting with `prefix`,
- * e.g. `next.config` or `vite.config`.
- *
- * Only marker prefixes are asked for here, so the workspace view cannot confuse
- * a detector that is looking at the repository root itself.
- */
-export function hasFileStartingWith(context: PresetContext, prefix: string): boolean {
-  for (const file of context.files) {
-    if (file.startsWith(prefix)) return true;
-  }
-  for (const file of context.workspaceFiles) {
-    if (file.startsWith(prefix)) return true;
-  }
-  return false;
-}
-
-/** True when a manifest exists and contains `needle`, case-insensitively. */
-export function manifestContains(context: PresetContext, manifest: string, needle: string): boolean {
-  const content = context.manifests[manifest];
-  if (!content) return false;
-  return content.toLowerCase().includes(needle.toLowerCase());
-}
-
-/** `hasDependency(context, "next", "nuxt")` — true when any name is present. */
-export function hasDependency(context: PresetContext, ...names: string[]): boolean {
-  return names.some((name) => context.dependencies.has(name));
-}
+// Detection predicates live in `evidence.ts`. They used to sit here as boolean helpers
+// (`hasFile`, `hasDependency`, `manifestContains`, …), which forced every detector to throw
+// away the thing that made it fire — the wizard could report which preset it picked but never
+// why. One family of helpers, returning the reason, is the whole point.

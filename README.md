@@ -46,11 +46,19 @@ deterministically:
 ## Install
 
 ```bash
-npx codebase-snapshot generate      # no install, one-off
-npm install -D codebase-snapshot    # or add it to a project
+npm install -g codebase-snapshot      # puts `snapshot` on your PATH
+npx codebase-snapshot generate        # or no install at all, one-off
+npm install -D codebase-snapshot      # or add it to a project
 ```
 
-This is a **<!--@major-->0<!--/@major-->.x** release. Version numbers follow semver's 0.x conventions, so the CLI surface may change in a minor release until 1.0.0 — pin an exact version if you need a fixed surface today.`n`nAny npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
+`codebase-snapshot` is the canonical name to script against; `snapshot` is the short command a
+global install provides. From a project dependency the same binary is `npx snapshot`,
+`pnpm exec snapshot`, `yarn snapshot` or the `npm run snapshot` script `init` writes — the bare
+word only exists on `PATH` when the package is installed globally.
+
+This is a **<!--@major-->0<!--/@major-->.x** release. Version numbers follow semver's 0.x conventions, so the CLI surface may change in a minor release until 1.0.0 — pin an exact version if you need a fixed surface today.
+
+Any npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
 each verified against the packed tarball before release. Requires **Node.js 18+**.
 
 Published from GitHub Actions with [build provenance](https://docs.npmjs.com/generating-provenance-statements): npm shows the tarball was built from this repository at a tagged commit, and `npm audit signatures` verifies it.
@@ -59,12 +67,28 @@ Published from GitHub Actions with [build provenance](https://docs.npmjs.com/gen
 
 ## Quick start
 
-One command does the whole first run — detects the project, writes a commented config, adds the
-npm scripts and the devDependency, installs it, and generates the snapshot:
+Type it. That is the whole first run.
 
 ```bash
-npx codebase-snapshot setup
+snapshot
 ```
+
+In a project with no configuration the tool recognises the project and says what it keyed on —
+`Detected nextjs` / `Because next.config.ts` — then offers one keystroke for the recommended
+setup, or a walk through every setting with each question starting on its default. Either way it
+writes the config, adds the npm scripts and the devDependency, installs with your package
+manager, and generates. In a project that already has a config, or that it has generated before,
+the same command just generates.
+
+Nothing to press — CI, a container, an agent:
+
+```bash
+npx codebase-snapshot --autopilot
+```
+
+Same work, no questions. This is the part that matters: **a first run never guesses.** With no
+terminal and no `--autopilot` it exits `2` and tells you the three ways forward, because a
+snapshot built from settings nobody chose is a snapshot nobody can check.
 
 ```bash
 # Or step by step, if you want to see each stage:
@@ -74,8 +98,9 @@ npm run snapshot                                # generate
 npm run snapshot:validate                       # exit 0 = current with disk
 ```
 
-`setup` keeps a config the repository already has, and `setup --no-install` skips the install
-(CI, offline, or a lockfile you would rather not touch).
+`setup` is the same one-command path as `--autopilot`, spelled as a command; both keep a config
+the repository already has, and `--no-install` skips the install (CI, offline, or a lockfile you
+would rather not touch).
 
 ```
 📸 Generating snapshot for: /Users/you/project
@@ -165,7 +190,9 @@ shapes.
 
 | Command | Does |
 | :--- | :--- |
-| `generate` *(default)* | Write the snapshot. |
+| *(none)* | The guided first run. Asks once when the project has no config; generates otherwise. |
+| `generate` *(default)* | Write the snapshot. `--autopilot` sets the project up first, unasked. |
+| `setup` | Config, npm scripts, devDependency, install and generate, in one command. |
 | `validate` / `check` | Compare the snapshot with the repository; exit `1` on drift. |
 | `report` | Snapshot health, layer metrics, secret audit. |
 | `init` | Interactive (or `--yes`) setup that writes a self-documenting config. |
@@ -174,7 +201,8 @@ shapes.
 | `describe` | The machine-readable contract (`--format json`). |
 | `skill` | Print or install the agent skill. |
 
-Exit codes: `0` success · `1` drift or refused generation · `2` usage error.
+Exit codes: `0` success · `1` drift, refused generation, or nothing to snapshot · `2` usage
+error, or a first run with no terminal and no `--autopilot`.
 
 → [Full CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md)
 

@@ -21,6 +21,62 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.2
+
+### `snapshot` is the command now, and a first run sets the project up
+
+Installing globally used to give you `codebase-snapshot` and a `snap` alias — a word that
+collides with Ubuntu's `snapd` and with an npm package of the same name. `snap` is gone and
+**`snapshot`** replaces it, pointing at the same file. The long name stays the canonical one, and
+the bare word is what a global install puts on `PATH`.
+
+The bare command is no longer a synonym for `generate`. In a project with no configuration it now
+recognises the project, says **what it keyed on** — `Detected nextjs` / `Because next.config.ts` —
+and offers the recommended setup in one keystroke: config, `.gitignore`, npm scripts,
+devDependency, install, generate. Or it walks through every setting, with each question starting
+on its answer, so pressing enter through the lot is the recommended setup spelled out. When
+nothing matches, it lists the manifests it looked for and asks which preset is closest.
+
+A project that already has a config, or that this tool generated before, skips all of it and just
+generates — nobody is walked through setup twice.
+
+**A first run never guesses.** With no terminal and no `--autopilot`, it exits `2` and names the
+three ways forward instead of generating with defaults nobody chose.
+
+```bash
+snapshot                    # guided first run, then generate
+snapshot --autopilot        # same, no questions
+npx codebase-snapshot       # same, from a project dependency
+```
+
+### New: `--autopilot`
+
+The whole setup with no prompts, from the default command: detect the preset, write the config and
+`.gitignore`, add the npm scripts and devDependency, install with the project's own package
+manager, then generate. It keeps an existing config, `--no-install` skips the install, and it
+refuses an empty directory (there is nothing to snapshot and nothing to install into).
+
+`--autopilot` and `setup` are one implementation with two entry points, so they cannot drift.
+`--autopilot --no-config` is a usage error: one writes a config, the other promises to ignore one.
+
+### Detection reports its evidence
+
+`detect()` returns the signal that fired instead of a boolean, so every preset can say why it
+matched — a filename, a dependency, a manifest line — and the setup prints it. A detection you
+cannot check is a detection you have to take on faith. The fallback preset is now explicit
+(`fallback: true`) rather than a detector that always returns true, which is what makes "I could
+not tell what this is" a state the tool can be in and report.
+
+### Other
+
+- `naming the command still means exactly that`: `snapshot generate` runs on the documented
+  defaults and writes nothing but the snapshot, as it always has.
+- The wizard's part-size question now starts on the preset's recommended budget instead of a fixed
+  120 KB, so a Next.js project no longer silently gets a third of the budget it was detected for.
+- `describe` and the bundled skill state the non-interactive rule, the two bin names, and that
+  `--autopilot` is the unattended path.
+
+---
 ## 0.9.1
 
 ### The documentation now derives its version from `package.json`

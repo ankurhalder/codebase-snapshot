@@ -1,5 +1,10 @@
-import { hasFile, manifestContains } from "./context.js";
 import type { PresetDefinition } from "./registry.js";
+import {
+  fileEvidence,
+  manifestEvidence,
+  markdownEvidence,
+  suffixEvidence,
+} from "./evidence.js";
 import { commonKinds, commonLayers, layer } from "./helpers.js";
 import { DEFAULT_LAYERS, DEFAULT_KINDS } from "./default.js";
 
@@ -15,11 +20,11 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
     name: "monorepo",
     priority: 70,
     detect: (context) =>
-      hasFile(context, "pnpm-workspace.yaml") ||
-      hasFile(context, "nx.json") ||
-      hasFile(context, "turbo.json") ||
-      hasFile(context, "lerna.json") ||
-      manifestContains(context, "package.json", "\"workspaces\""),
+      fileEvidence(context, "pnpm-workspace.yaml") ??
+      fileEvidence(context, "nx.json") ??
+      fileEvidence(context, "turbo.json") ??
+      fileEvidence(context, "lerna.json") ??
+      manifestEvidence(context, "package.json", '"workspaces"'),
     layers: [
       layer("apps", "apps/"),
       layer("packages", "packages/"),
@@ -34,11 +39,11 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
     name: "infra",
     priority: 24,
     detect: (context) =>
-      Array.from(context.files).some((file) => file.endsWith(".tf")) ||
-      hasFile(context, "Chart.yaml") ||
-      hasFile(context, "kustomization.yaml") ||
-      hasFile(context, "docker-compose.yml") ||
-      hasFile(context, "docker-compose.yaml"),
+      suffixEvidence(context, ".tf") ??
+      fileEvidence(context, "Chart.yaml") ??
+      fileEvidence(context, "kustomization.yaml") ??
+      fileEvidence(context, "docker-compose.yml") ??
+      fileEvidence(context, "docker-compose.yaml"),
     layers: [
       layer("modules", "modules/"),
       layer("environments", "env/", "environments/"),
@@ -60,7 +65,7 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
     // up to two directories down (bounded in the context builder). Counting
     // only the root turned every real documentation repository — README.md plus
     // the pages under `docs/` — into `generic`.
-    detect: (context) => context.markdownCount >= 3 && !hasFile(context, "package.json"),
+    detect: (context) => markdownEvidence(context),
     layers: [
       layer("content", "content/", "docs/"),
       layer("assets", "assets/", "static/", "public/"),
@@ -73,7 +78,10 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
   {
     name: "generic",
     priority: 0,
-    detect: () => true,
+    // No detector: this is the fallback, and `detectPresetFromContext` reaches it only
+    // when every other preset reported no evidence. `fallback: true` is what lets the
+    // wizard tell "I recognised this" apart from "I gave up".
+    fallback: true,
     layers: DEFAULT_LAYERS,
     kinds: DEFAULT_KINDS,
     exclude: [],

@@ -38,6 +38,33 @@ const CONFIG_FILENAMES = [
   ".snapshotrc",
 ];
 
+/**
+ * Where a configuration would be read from, without loading it.
+ *
+ * The first-run decision only needs to know whether this repository has been configured
+ * already. Loading the file there would run repository code before the command the
+ * developer actually asked for — and a config that exists but cannot be read has to
+ * reach the normal path, so it can be reported as broken instead of quietly treated as
+ * absent.
+ */
+export function findConfigFile(cwd: string): string | null {
+  for (const filename of CONFIG_FILENAMES) {
+    const fullPath = path.join(cwd, filename);
+    if (fs.existsSync(fullPath)) return fullPath;
+  }
+  const pkgJsonPath = path.join(cwd, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) as { snapshot?: unknown };
+    return parsed.snapshot === undefined ? null : pkgJsonPath;
+  } catch {
+    // An unparseable package.json is not a configuration. Say "no config" here and let
+    // the setup path explain the real problem when it tries to edit the file.
+    return null;
+  }
+}
+
+
 const RESOLVED_CONFIG_BRAND = Symbol.for(
   "codebase-snapshot/resolved-config"
 );

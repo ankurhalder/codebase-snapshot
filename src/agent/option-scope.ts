@@ -63,6 +63,8 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "mode",
     "dry-run",
     "watch",
+    "autopilot",
+    "no-install",
     "help",
     "version",
   ],

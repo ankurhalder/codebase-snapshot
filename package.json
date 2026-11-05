@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Turn a codebase into token-efficient, size-budgeted Markdown parts for an LLM: an AST partitioner, snapshot generator, secret auditor and drift validator for ChatGPT, Claude and Cursor.",
   "keywords": [
     "codebase",
@@ -44,7 +44,7 @@
   "sideEffects": false,
   "bin": {
     "codebase-snapshot": "./dist/bin.js",
-    "snap": "./dist/bin.js"
+    "snapshot": "./dist/bin.js"
   },
   "exports": {
     ".": {

@@ -177,11 +177,13 @@ export function buildAgentContract(): AgentContract {
     invocation: {
       oneShot: `npx ${PACKAGE_NAME}@latest`,
       installed: "npx codebase-snapshot",
-      bins: ["codebase-snapshot", "snap"],
+      bins: ["codebase-snapshot", "snapshot"],
       notes: [
         `The bare package name also works: npx ${PACKAGE_NAME} <command>.`,
-        "Pin an exact version — for example `codebase-snapshot@0.9.0` — when you need the same build on every machine. A major range is not enough before 1.0: npm's caret on a 0.x version pins the minor, and 0.x minors are breaking by convention.",
+        "`codebase-snapshot` is the canonical name and the one to script against. `snapshot` is the short alias a global install provides; in a project that has the package installed, `npx snapshot` resolves the local bin first.",
+        `Pin an exact version — for example \`npx ${PACKAGE_NAME}@${GENERATOR_VERSION} --version\` — when you need the same build on every machine. A major range is not enough before 1.0: npm's caret on a 0.x version pins the minor, and 0.x minors are breaking by convention.`,
         "Both bin names point at the same file. npm resolves a package by its bin entries, so they must stay aliases of one executable.",
+        "A bare run in a project with no configuration asks once, sets the project up and generates — but only at a terminal. With no TTY it exits 2 and names the alternatives, so an unattended caller must say what it wants: `generate` after `init --yes`, or `--autopilot`.",
         "Human progress goes to stderr. With --format json the payload on stdout is pure JSON.",
         "A failing run also writes pure JSON to stdout: { error: { message, exitCode } }. The exit code and the stderr line are unchanged.",
       ],
@@ -248,9 +250,12 @@ export function buildAgentContract(): AgentContract {
       {
         name: "generate",
         aliases: ["default"],
-        summary: "Write the snapshot. This is the command you normally want.",
+        summary:
+          "Write the snapshot. This is the command you normally want. In a project with no " +
+          "configuration, a terminal asks once and sets the project up first; without a terminal " +
+          "it exits 2 and names `--autopilot` and `init --yes`.",
         positionals: [],
-        exits: [0, 1],
+        exits: [0, 1, 2],
       },
       {
         name: "validate",
@@ -476,6 +481,17 @@ export function buildAgentContract(): AgentContract {
         summary: "Overwrite an existing config file.",
       },
       {
+        flag: "--autopilot",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("autopilot"),
+        summary:
+          "Set the project up without asking, then generate: detect the preset, write the config " +
+          "and .gitignore, add the npm scripts and devDependency, install with the project's own " +
+          "package manager, generate. Never overwrites an existing config, and never prompts. Refuses " +
+          "an empty directory (exit 1); contradicts --no-config (exit 2).",
+      },
+      {
         flag: "--install",
         type: "boolean",
         default: false,
@@ -495,8 +511,8 @@ export function buildAgentContract(): AgentContract {
         default: false,
         appliesTo: optionAppliesTo("no-install"),
         summary:
-          "setup only: skip installing the dependency before generating (CI, offline, or a lockfile " +
-          "you do not want a package manager to touch).",
+          "Skip installing the dependency before generating: `setup`, or `generate --autopilot` " +
+          "(CI, offline, or a lockfile you do not want a package manager to touch).",
       },
     ],
     presets: PRESETS.map((preset) => ({

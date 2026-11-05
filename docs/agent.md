@@ -22,6 +22,26 @@ npx codebase-snapshot validate
 The bare package name works; pin an exact version (`npx codebase-snapshot --version` prints the current one) when the same version must run on every
 machine.
 
+### One command instead of three
+
+```bash
+npx codebase-snapshot --autopilot
+```
+
+Sets the project up — config, npm scripts, devDependency, `.gitignore`, install — and generates,
+with no prompts. It keeps an existing config, and `--no-install` avoids touching the lockfile.
+`setup` is the same operation as a command word.
+
+### Do not rely on the bare command
+
+```bash
+npx codebase-snapshot          # ❌ in an unconfigured project this exits 2
+```
+
+An agent has no terminal, so the guided first run cannot ask its question and refuses instead of
+generating with settings nobody chose. That exit `2` is the tool being honest, not broken: say
+which setup you want — `--autopilot`, `init --yes`, or `generate` on the documented defaults.
+
 ## The contract
 
 `describe --format json` returns the whole tool as data on stdout:

@@ -2044,6 +2044,13 @@ export type { ManifestDiff } from "./diff.js";
 export { stripJsonComments } from "./ast/structured.js";
 export { runInit } from "./wizard/init.js";
 export type { InitDependency, InitOptions, InitResult } from "./wizard/init.js";
+export {
+  firstRunMessage,
+  hasPriorSnapshot,
+  isEffectivelyEmpty,
+  planFirstRun,
+} from "./wizard/autopilot.js";
+export type { FirstRunFacts, FirstRunPlan, FirstRunRefusal } from "./wizard/autopilot.js";
 export { DEFAULT_ANSWERS, renderConfig } from "./wizard/config-template.js";
 export type { WizardAnswers } from "./wizard/config-template.js";
 export { PromptCancelled, isInteractive } from "./wizard/prompts.js";

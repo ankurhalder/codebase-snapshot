@@ -4,12 +4,53 @@
 npx codebase-snapshot <command> [options]
 ```
 
-The package installs one executable, **`codebase-snapshot`**, with a short alias **`snap`**.
-Both are the same file. After `npx codebase-snapshot generate` the command
-becomes available as `npx codebase-snapshot` for the rest of that session; after
-`npm install -D` use `npx codebase-snapshot` or `npx snap` from the project.
+The package installs one executable under two names: **`codebase-snapshot`** (canonical, and the
+one to script against) and **`snapshot`** (the short command a global install puts on your
+`PATH`). Both are the same file. From a project dependency use `npx codebase-snapshot` or
+`npx snapshot` — both resolve the local copy first.
 
-Running with no command is the same as `generate`.
+Running with no command is the guided first run: in a project with no configuration it asks
+once, sets the project up and generates; in a configured project it is the same as `generate`.
+Naming the command (`codebase-snapshot generate`) always means "do exactly this", on the
+documented defaults. `--autopilot` sets the project up first without asking.
+
+```bash
+snapshot                     # global install: guided first run, then generate
+npx codebase-snapshot        # the same, from a project dependency
+npx codebase-snapshot --autopilot   # the same with no questions
+```
+
+## The first run
+
+```bash
+snapshot                # global install
+npx codebase-snapshot   # from a project dependency
+```
+
+In a project with no configuration the tool reports what it recognised **and what it keyed on**,
+then asks one question:
+
+```
+  codebase-snapshot
+
+  Detected   nextjs
+  Because    next.config.ts
+  Directory  /Users/you/app
+
+  ◆ How should I set this up?
+    ❯ Use the recommended setup      nextjs · config · npm scripts · install · generate
+      Go through each setting        every question starts on its default
+      Pick a different preset        everything else stays at the defaults
+```
+
+The first entry is the whole setup in one keystroke. The second walks through the settings, and
+every prompt starts on its answer, so pressing `enter` through the lot is the recommended setup
+spelled out. When nothing matched, the tool says so, names the manifests it looked for, and asks
+which preset is closest — the one case where it needs an answer it cannot find itself.
+
+A project that already has a config, or one this tool generated before, skips all of it and just
+generates. `--autopilot` does the same work with no questions at all, and reports each decision
+as it makes it.
 
 ## Contents
 
@@ -17,6 +58,7 @@ Running with no command is the same as `generate`.
   - [`generate`](#generate)
   - [`validate` / `check`](#validate--check)
   - [`report`](#report)
+  - [`setup`](#setup)
   - [`init`](#init)
   - [`explain <path>`](#explain-path)
   - [`diff <before> <after>`](#diff-before-after)
@@ -35,8 +77,15 @@ Running with no command is the same as `generate`.
 codebase-snapshot generate [options]
 ```
 
-Scans the repository and writes the snapshot to `outDir` (default `./snapshot`). This is the
-default command, so `codebase-snapshot` alone does the same thing.
+Scans the repository and writes the snapshot to `outDir` (default `./snapshot`).
+
+Naming the command is the deterministic form: it runs on the documented defaults and writes nothing
+but the snapshot. Without a command word an unconfigured project gets the
+[guided first run](#the-first-run) first; `--autopilot` asks for that setup from an explicit
+`generate` too, and never prompts.
+
+A first run neither form can resolve — no config, no previous snapshot, no `--autopilot`, no
+terminal — exits `2` and names the alternatives. It does not quietly generate on defaults.
 
 Detection is automatic: a preset is chosen from the 25 in the
 [preset table](configuration.md#project-presets), which supplies layers, kinds and ecosystem
@@ -107,7 +156,8 @@ is `validate`, which re-reads the repository and exits `1` on drift.
 codebase-snapshot setup
 ```
 
-The whole first run in one command, with defaults and no prompts:
+The whole first run in one command, with defaults and no prompts. This is the same implementation
+`--autopilot` uses, spelled as a command word:
 
 1. Detects the project preset.
 2. Writes `snapshot.config.ts` (or `.mjs`) — **only when the repository has none**. An existing
@@ -124,7 +174,7 @@ The whole first run in one command, with defaults and no prompts:
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.1
+   Added devDependency: codebase-snapshot ^0.9.2
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -161,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.1
+   Added devDependency: codebase-snapshot ^0.9.2
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -328,9 +378,11 @@ narrowest cases of the same rule.
 | `--include-sensitive-files` | flag | off | generate, validate, report, explain, init | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
 | `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
-| `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same eight-command list. |
-| `--dry-run` | flag | off | generate, init | Compute everything, print it, write nothing. |
+| `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
+| `--dry-run` | flag | off | generate, init, setup | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
+| `--autopilot` | flag | off | generate | Set the project up without asking — config, `.gitignore`, npm scripts, devDependency, install — then generate. Never overwrites an existing config; refuses an empty directory (exit `1`); contradicts `--no-config` (exit `2`). |
+| `--no-install` | flag | off | setup, generate `--autopilot` | Skip the dependency install. Anywhere else it is a usage error, because it would change nothing. |
 | `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |
 | `--discovery <mode>` | enum | `auto` | generate, validate, explain | How files are found: `auto` lists through git when git works and refuses when a `.git` directory cannot be listed; `git` requires git; `walk` scans the tree and reads `.gitignore` files directly. The escape hatch for a broken `.git`. |
 | `--preset <name>` | name | detected | *init only* | Force a preset instead of detecting one. |
@@ -341,7 +393,7 @@ narrowest cases of the same rule.
 | `--install` | flag | off | *skill only* | Write the skill into the repository instead of printing it. |
 | `--target <name>` | enum | `all` | *skill only* | `claude`, `cursor` or `all`. |
 | `-h`, `--help` | flag | — | every command | Print usage. |
-| `-v`, `--version` | flag | — | every command | Print the version on stdout: a bare `v`-prefixed semver such as `v4.0.0`, with no package name. |
+| `-v`, `--version` | flag | — | every command | Print the version on stdout: a bare `v`-prefixed semver (for example `v1.2.3`), with no package name. |
 
 The artifact and size options apply to `validate`, `report` and `explain` as well as
 `generate` because those commands re-read the snapshot: pass the selection you generated
@@ -373,7 +425,7 @@ reason to use it, and the positional form is the documented one.
 | :--- | :--- |
 | `0` | Success. For `validate`/`check`, no drift. |
 | `1` | Drift detected, generation refused or failed (nothing was written), or the state the command needed was not there. |
-| `2` | Usage error: unknown flag or command, an option the command does not accept, bad value, wrong argument count. |
+| `2` | Usage error: unknown flag or command, an option the command does not accept, bad value, wrong argument count. Also a first run that needs an answer and has no terminal — run `--autopilot`, `init --yes`, or name the command. |
 
 `1` covers the cases where the tool did the right thing but the state is not what you wanted
 — drift, a refused output directory, an unparseable config. `2` means the command itself was

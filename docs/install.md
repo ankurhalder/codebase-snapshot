@@ -8,31 +8,55 @@ Requires **Node.js 18 or newer**.
 ## One command
 
 ```bash
-npx codebase-snapshot setup
+npx codebase-snapshot --autopilot
 ```
 
 Detects the project, writes the config (an existing one is kept), adds the npm scripts and the
 devDependency, installs them with the package manager your lockfile names, and generates the first
-snapshot. `--no-install` skips the install; `--dry-run` writes nothing. The sections below are the
-same steps taken one at a time.
+snapshot. `--no-install` skips the install; `--dry-run` writes nothing. `setup` does the same as a
+command word, and the bare `snapshot` (or `npx codebase-snapshot` with no arguments) does the
+same after one question — see [the first run](#the-first-run). The sections below are the same
+steps taken one at a time.
+
+## The first run
+
+With the package installed globally, the whole thing is one word:
+
+```bash
+snapshot
+```
+
+In a project with no configuration it names what it recognised and what it keyed on
+(`Detected nextjs` / `Because next.config.ts`), then offers the recommended setup in one
+keystroke or a walk through each setting with the defaults pre-filled. It writes the config,
+adds the npm scripts and devDependency, installs, and generates.
+
+In a project that already has a config — or one it has generated before — the same command just
+generates, so nobody is walked through setup twice.
+
+**It never guesses.** With no terminal (CI, a container, an agent) a first run exits `2` and
+names the three ways forward instead of generating with settings nobody chose. `--autopilot` is
+the answer for unattended use; naming the command (`npx codebase-snapshot generate`) is the
+other, and it runs on the documented defaults exactly as before.
+
 ## One-off use
 
 ```bash
 npx codebase-snapshot generate
 ```
 
-This is the shortest path and needs no install. The command is also available as
-`codebase-snapshot` and, once installed, as the short alias `snap`.
+This is the shortest path and needs no install.
 
-Pin the version when you need the same build on every machine:
+Pin the version when you need the same build on every machine. `--version` prints the exact
+string to pin:
 
 ```bash
 npx codebase-snapshot@latest generate
-npx codebase-snapshot@0.9.0 generate
+npx codebase-snapshot --version
 ```
 
 **Why the bare name works.** npm resolves which binary to run from the package's `bin`
-entries. This package declares `codebase-snapshot` and `snap` pointing at the *same file*, so
+entries. This package declares `codebase-snapshot` and `snapshot` pointing at the *same file*, so
 npm treats them as aliases and can always resolve one. Keep them aliases: two *different*
 executables under a scoped package name would make the bare form unresolvable.
 
@@ -57,8 +81,9 @@ Then run it through your client so the binary resolves from the project:
 | pnpm | `pnpm exec codebase-snapshot generate` |
 | bun | `bun run codebase-snapshot generate` |
 
-`snap` works everywhere `codebase-snapshot` does. Adding it to `package.json` scripts is the
-most reproducible option:
+`snapshot` works everywhere `codebase-snapshot` does — `npx snapshot` from a project dependency,
+`pnpm exec snapshot`, `yarn snapshot`, and the bare word after a global install. Adding the script
+to `package.json` is the most reproducible option:
 
 ```json
 {
@@ -129,6 +154,8 @@ preset, and JSON configs are parsed rather than executed. See
 npm install -g codebase-snapshot
 ```
 
+This is what puts the short `snapshot` command on your `PATH`.
+
 Convenient, but prefer pinning per project: snapshots are only reproducible if the generator
 version is. A global install also shadows `npx` for this package — npm will run your global
 copy instead of the published one, which is confusing when the two differ. That is exactly
@@ -156,7 +183,8 @@ A snapshot written by **3.0.0 or earlier** is refused rather than replaced: its
 the directory. Delete the old snapshot directory and generate again.
 
 See [CHANGELOG](../CHANGELOG.md) for breaking changes — 3.0.0 removed nothing, but it briefly
-did in error; 4.0.0 restored the `snap` alias.
+did in error; 4.0.0 restored the `snap` alias, and 0.9.2 replaced that alias with `snapshot`
+when the version line was restarted.
 
 ## Uninstalling
 
