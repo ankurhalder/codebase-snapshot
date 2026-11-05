@@ -36,7 +36,15 @@ for (const name of files) {
     // deployed, so they resolve against the same directory as relative ones.
     const target = href.split("#")[0].replace(/^\//, "");
     if (!target) continue;
-    if (!files.has(target)) problems.push(`${name} -> ${href}`);
+    // Resolve against the site root rather than the top-level listing: `assets/favicon.svg`
+    // is a real file one directory down, and a flat `files.has()` reported every icon on every
+    // page as broken the moment the site gained an assets directory.
+    const resolved = path.resolve(SITE, target);
+    if (!resolved.startsWith(SITE)) {
+      problems.push(`${name} -> ${href} (escapes the site root)`);
+      continue;
+    }
+    if (!fs.existsSync(resolved)) problems.push(`${name} -> ${href}`);
   }
 }
 

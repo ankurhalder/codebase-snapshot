@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img"
+     aria-label="codebase-snapshot. A snapshot you can prove is current. Budgeted parts, a manifest index, validate on drift.">
+  <!-- Source for docs/assets/social-card.png. Social platforms do not accept SVG, so the
+       committed PNG is the artefact they see; this file is how it is edited. See
+       docs/assets/README.md for the one-line regeneration. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117" />
+      <stop offset="1" stop-color="#12181f" />
+    </linearGradient>
+    <style>
+      .title { font: 700 62px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .sub   { font: 400 28px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .chip  { font: 600 20px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono  { font: 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .small { font: 20px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)" />
+
+  <!-- the closing frame, scaled up: the same mark as the logo -->
+  <g fill="none" stroke="#2da44e" stroke-width="7" stroke-linecap="square" opacity="0.95">
+    <path d="M56 132V56h76" />
+    <path d="M1068 56h76v76" />
+    <path d="M1144 498v76h-76" />
+    <path d="M132 574H56v-76" />
+  </g>
+
+  <text class="mono" x="96" y="150" fill="#7d8590">$ snapshot</text>
+
+  <text class="title" x="96" y="306" fill="#e6edf3">A snapshot you can</text>
+  <text class="title" x="96" y="382" fill="#e6edf3">prove is current.</text>
+
+  <text class="sub" x="96" y="446" fill="#9da7b3">Plain-text parts under a hard byte budget, a manifest that indexes
+every file and every skip, and a validate command that fails when the code moved.</text>
+
+  <g>
+    <rect x="96" y="492" width="216" height="48" rx="24" fill="#161b22" stroke="#30363d" />
+    <text class="chip" x="120" y="523" fill="#c9d1d9">budgeted parts</text>
+
+    <rect x="328" y="492" width="216" height="48" rx="24" fill="#161b22" stroke="#30363d" />
+    <text class="chip" x="352" y="523" fill="#c9d1d9">manifest index</text>
+
+    <rect x="560" y="492" width="236" height="48" rx="24" fill="#161b22" stroke="#30363d" />
+    <text class="chip" x="584" y="523" fill="#2da44e">validate on drift</text>
+  </g>
+
+  <text class="small" x="96" y="586" fill="#7d8590">ankurhalder.github.io/codebase-snapshot</text>
+  <text class="mono" x="1068" y="586" fill="#484f58" text-anchor="end">fingerprint 9f2c…a71e</text>
+</svg>

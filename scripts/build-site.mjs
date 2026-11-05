@@ -12,13 +12,22 @@
  * sitemap, and lets the origin serve its own `robots.txt` and `llms.txt` — none
  * of which a repository tree can do. That is the entire reason this exists.
  *
+ * Head metadata is not decoration either. A page with `twitter:card` set to
+ * `summary_large_image` and no `og:image` renders as a blank card every time
+ * someone shares it, which is how this site shipped until 0.9.3: eleven pages,
+ * zero social cards. Titles are written query-first here rather than derived
+ * from the first heading, and every page declares an author, a breadcrumb and a
+ * typed JSON-LD node so an answer engine can attribute the page to a person.
+ *
  * Output:
  *   index.html + docs/*.html       rendered pages, with canonical, JSON-LD and
  *                                 a `text/markdown` twin link per llms.txt v2
  *   *.md                           the raw Markdown twin for each page
+ *   assets/*                       the images the pages and social cards use
  *   sitemap.xml, robots.txt        crawl instructions
- *   llms.txt                       the agent-facing index at the site root
- *   CNAME, .nojekyll               custom domain, and stop Jekyll reprocessing
+ *   llms.txt, llms-full.txt        the agent-facing index, and everything at once
+ *   favicon.svg, apple-touch-icon  tab and home-screen icons
+ *   .nojekyll                      stop Jekyll reprocessing the artifact
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -35,14 +44,90 @@ const OUT = path.join(ROOT, "site");
 // stranding anything.
 const SITE = "https://ankurhalder.github.io/codebase-snapshot";
 const REPO = "https://github.com/ankurhalder/codebase-snapshot";
+/** The author's own site: the entity this project hangs off. */
+const AUTHOR_URL = "https://ankurhalder.com";
+const AUTHOR_NAME = "Ankur Halder";
+const OG_IMAGE = `${SITE}/assets/social-card.png`;
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-const write = (...parts) => process.stdout.write(`${parts.join("")}\n`);
+const write = (...parts) => process.stdout.write(`${parts.join("\n")}\n`);
 
-/** Page titles. A docs page gets its first heading, which is already good. */
+/**
+ * Page titles, written query-first.
+ *
+ * The previous form was `<heading> — codebase-snapshot`, which spends the part
+ * of a search result a reader actually scans on a brand nobody is searching for
+ * yet. These lead with the words someone would type; the brand is carried by
+ * `og:site_name` and the JSON-LD publisher instead.
+ */
 const TITLES = {
-  index: "codebase-snapshot — turn any codebase into LLM-ready Markdown",
-  "getting-started": "Getting started",
+  index: "codebase-snapshot — LLM-ready snapshots you can verify",
+  install: "Install codebase-snapshot with npm, yarn, pnpm or bun",
+  cli: "CLI reference: every command and option",
+  configuration: "Configuration, byte budgets and the 25 project presets",
+  output: "Snapshot output: parts, manifest and reports",
+  agent: "Using codebase-snapshot with an AI agent",
+  troubleshooting: "Troubleshooting: every message and its one-line fix",
+  "how-to-feed-a-repo-to-claude": "How to feed a whole codebase to ChatGPT, Claude or Cursor",
+  "how-to-context-budget": "How to size an LLM context budget for a codebase",
+  "stale-context-is-your-bug": "Stale LLM context is a bug: detect drift in a snapshot",
+  "codebase-token-budget": "How many tokens is a codebase? The arithmetic",
+  "vs-repomix": "codebase-snapshot vs repomix: two ways to pack a repo",
+  "vs-gitingest": "codebase-snapshot vs gitingest: CLI artifact or URL trick",
+  "vs-code2prompt": "codebase-snapshot vs code2prompt: what actually differs",
+};
+
+/**
+ * Meta descriptions, 100–160 characters.
+ *
+ * Derived from the first paragraph, these used to be whatever sentence happened
+ * to come first, cut mid-word at 158. Written by hand, each one now states the
+ * problem, the artefact and the differentiator — which is what the snippet has
+ * to do in the two lines a result gets.
+ */
+const DESCRIPTIONS = {
+  index:
+    "Turn a repository into LLM-ready parts under a hard byte budget, with a manifest that " +
+    "indexes every file and every skip, and a validate command that fails on drift.",
+  install:
+    "Install with npm, yarn, pnpm or bun, or run it with npx. Node 18+. A global install gives " +
+    "you the short `snapshot` command.",
+  cli:
+    "Every command and option: generate, validate, report, setup, init, explain, diff, describe " +
+    "and skill, with their defaults and exit codes.",
+  configuration:
+    "Every setting and its default: byte budgets, the 25 auto-detected presets, artifacts, " +
+    "hooks, ignore rules and secret handling.",
+  output:
+    "What a run writes: budgeted parts, the manifest that indexes every file and skip, the " +
+    "project tree, navigation and the audit report.",
+  agent:
+    "A machine-readable contract and an installable skill, so an agent with no prior knowledge " +
+    "can drive the tool and never guess a flag.",
+  troubleshooting:
+    "Every message the tool prints and the one-line fix: refusals, config errors, drift, " +
+    "sensitive-file skips and non-interactive first runs.",
+  "how-to-feed-a-repo-to-claude":
+    "Hand a whole codebase to ChatGPT, Claude or Cursor: generate a snapshot locally, pick a " +
+    "budget that fits the window, and tell the model what it is reading.",
+  "how-to-context-budget":
+    "Choose maxPartBytes and largeFileBytes from the model's context window instead of from " +
+    "taste, with the arithmetic spelled out.",
+  "stale-context-is-your-bug":
+    "A snapshot goes stale the moment the code moves, and a model cannot tell. Detect drift " +
+    "with validate, gate it in CI, and know when to regenerate.",
+  "codebase-token-budget":
+    "How many tokens is a repository? The arithmetic of source lines, tokens and context " +
+    "windows, with a table for choosing a part budget.",
+  "vs-repomix":
+    "Both pack a repository for a model. Repomix optimises for formats and reach; this one " +
+    "optimises for a bounded, indexed, checkable artefact.",
+  "vs-gitingest":
+    "gitingest turns a GitHub URL into text in a browser. This is a CLI that writes an artefact " +
+    "you can validate, diff and gate a pipeline on.",
+  "vs-code2prompt":
+    "code2prompt renders a prompt from a repository. This writes parts plus an index, and can " +
+    "tell you when the index no longer matches the code.",
 };
 
 const ORDER = [
@@ -55,10 +140,29 @@ const ORDER = [
   "troubleshooting",
   "how-to-feed-a-repo-to-claude",
   "how-to-context-budget",
+  "stale-context-is-your-bug",
+  "codebase-token-budget",
   "vs-repomix",
   "vs-gitingest",
   "vs-code2prompt",
 ];
+
+const LABELS = {
+  index: "Overview",
+  install: "Installation",
+  cli: "CLI",
+  configuration: "Configuration",
+  output: "Output",
+  agent: "AI agents",
+  troubleshooting: "Troubleshooting",
+  "how-to-feed-a-repo-to-claude": "Feeding a repo to an LLM",
+  "how-to-context-budget": "Context budgeting",
+  "stale-context-is-your-bug": "Stale context",
+  "codebase-token-budget": "Token arithmetic",
+  "vs-repomix": "vs repomix",
+  "vs-gitingest": "vs gitingest",
+  "vs-code2prompt": "vs code2prompt",
+};
 
 function escapeHtml(text) {
   return text
@@ -83,7 +187,7 @@ function rewriteLinks(html) {
     .replace(/href="([a-z0-9-]+)\.md(#[\w-]*)?"/g, 'href="$1.html$2"');
 }
 
-/** First real paragraph, for the meta description. */
+/** First real paragraph, for a fallback description when none is written. */
 function summarise(markdown) {
   const blocks = markdown.split(/\n\s*\n/);
   for (const block of blocks) {
@@ -102,64 +206,101 @@ function summarise(markdown) {
 }
 
 function nav(slug) {
-  const labels = {
-    index: "Overview",
-    install: "Installation",
-    cli: "CLI",
-    configuration: "Configuration",
-    output: "Output",
-    agent: "AI agents",
-    troubleshooting: "Troubleshooting",
-    "how-to-feed-a-repo-to-claude": "Feeding a repo to an LLM",
-    "how-to-context-budget": "Context budgeting",
-    "vs-repomix": "vs repomix",
-    "vs-gitingest": "vs gitingest",
-    "vs-code2prompt": "vs code2prompt",
-  };
   return ORDER.filter((name) => name !== "index")
-    .map((name) => `<a${name === slug ? ' class="here"' : ""} href="${name}.html">${labels[name]}</a>`)
+    .map(
+      (name) =>
+        `<a${name === slug ? ' class="here"' : ""} href="${name}.html">${LABELS[name]}</a>`
+    )
     .join("\n        ");
 }
 
-function page({ slug, title, description, body }) {
+/** The author's entity, referenced from every page rather than repeated. */
+const PERSON = {
+  "@type": "Person",
+  name: AUTHOR_NAME,
+  url: AUTHOR_URL,
+};
+
+/**
+ * Structured data per page.
+ *
+ * The index describes the software; every other page describes an article that
+ * belongs to it, and every page carries a breadcrumb so a result can show the
+ * path instead of a bare URL. `author` is set on both because attribution is
+ * the one signal a project page can offer that a generated docs dump cannot.
+ */
+function structuredData(slug, title, description, canonical) {
+  const breadcrumb = {
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: pkg.name, item: `${SITE}/` },
+      ...(slug === "index"
+        ? []
+        : [{ "@type": "ListItem", position: 2, name: LABELS[slug] ?? title, item: canonical }]),
+    ],
+  };
+
+  if (slug === "index") {
+    return {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "SoftwareApplication",
+          name: pkg.name,
+          applicationCategory: "DeveloperApplication",
+          operatingSystem: "Windows, macOS, Linux",
+          description,
+          url: `${SITE}/`,
+          image: OG_IMAGE,
+          license: "https://opensource.org/licenses/MIT",
+          codeRepository: REPO,
+          programmingLanguage: "TypeScript",
+          author: PERSON,
+          offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+          keywords: pkg.keywords.join(", "),
+          sameAs: [
+            REPO,
+            "https://www.npmjs.com/package/codebase-snapshot",
+            AUTHOR_URL,
+          ],
+        },
+        {
+          "@type": "SoftwareSourceCode",
+          name: pkg.name,
+          codeRepository: REPO,
+          programmingLanguage: "TypeScript",
+          runtimePlatform: `Node.js >= ${pkg.engines.node.replace(">=", "")}`,
+          version: pkg.version,
+          author: PERSON,
+        },
+        breadcrumb,
+      ],
+    };
+  }
+
+  return {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "TechArticle",
+        headline: title,
+        description,
+        url: canonical,
+        image: OG_IMAGE,
+        author: PERSON,
+        inLanguage: "en",
+        isPartOf: { "@type": "WebSite", name: pkg.name, url: `${SITE}/` },
+      },
+      breadcrumb,
+    ],
+  };
+}
+
+function page({ slug, title, description, body, markdown }) {
   const canonical = slug === "index" ? `${SITE}/` : `${SITE}/${slug}.html`;
   const twin = `${slug}.md`;
-  const structured =
-    slug === "index"
-      ? {
-          "@context": "https://schema.org",
-          "@graph": [
-            {
-              "@type": "SoftwareApplication",
-              name: pkg.name,
-              applicationCategory: "DeveloperApplication",
-              operatingSystem: "Windows, macOS, Linux",
-              description: pkg.description,
-              url: `${SITE}/`,
-              license: "https://opensource.org/licenses/MIT",
-              codeRepository: REPO,
-              programmingLanguage: "TypeScript",
-              offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-              keywords: pkg.keywords.join(", "),
-            },
-            {
-              "@type": "SoftwareSourceCode",
-              name: pkg.name,
-              codeRepository: REPO,
-              programmingLanguage: "TypeScript",
-              runtimePlatform: `Node.js >= ${pkg.engines.node.replace(">=", "")}`,
-              version: pkg.version,
-            },
-          ],
-        }
-      : {
-          "@context": "https://schema.org",
-          "@type": "TechArticle",
-          headline: title,
-          description,
-          url: canonical,
-          isPartOf: { "@type": "WebSite", name: pkg.name, url: `${SITE}/` },
-        };
+  const structured = structuredData(slug, title, description, canonical);
+  const readingTime = Math.max(1, Math.round(markdown.split(/\s+/).length / 220));
 
   return `<!doctype html>
 <html lang="en">
@@ -168,46 +309,75 @@ function page({ slug, title, description, body }) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(title)}</title>
     <meta name="description" content="${escapeHtml(description)}">
+    <meta name="author" content="${AUTHOR_NAME}">
+    <meta name="theme-color" content="#0d1117">
     <link rel="canonical" href="${canonical}">
+    <link rel="author" href="${AUTHOR_URL}">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
     <link rel="alternate" type="text/markdown" href="${twin}" title="Markdown version">
     <link rel="describedby" href="/llms.txt">
-    <meta property="og:type" content="website">
+    <meta property="og:type" content="${slug === "index" ? "website" : "article"}">
+    <meta property="og:site_name" content="${pkg.name}">
+    <meta property="og:locale" content="en">
     <meta property="og:title" content="${escapeHtml(title)}">
     <meta property="og:description" content="${escapeHtml(description)}">
     <meta property="og:url" content="${canonical}">
+    <meta property="og:image" content="${OG_IMAGE}">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="codebase-snapshot — a snapshot you can prove is current">
     <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="${escapeHtml(title)}">
+    <meta name="twitter:description" content="${escapeHtml(description)}">
+    <meta name="twitter:image" content="${OG_IMAGE}">
+    <meta name="twitter:image:alt" content="codebase-snapshot — a snapshot you can prove is current">
     <script type="application/ld+json">${JSON.stringify(structured)}</script>
     <style>
-      :root { color-scheme: light dark; }
+      :root { color-scheme: light dark; --ink: #1f2328; --muted: #59636e; --rule: #d1d9e0; --accent: #1a7f37; }
+      @media (prefers-color-scheme: dark) { :root { --ink: #e6edf3; --muted: #9198a1; --rule: #30363d; --accent: #3fb950; } }
       * { box-sizing: border-box; }
-      body { margin: 0; font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-      header { border-bottom: 1px solid #8883; padding: 14px 20px; display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline; }
+      body { margin: 0; color: var(--ink); font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      a { color: inherit; }
+      header { border-bottom: 1px solid var(--rule); padding: 14px 20px; display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline; }
       header a { text-decoration: none; }
-      header .brand { font-weight: 650; margin-right: auto; }
+      header .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; margin-right: auto; }
+      header .brand img { width: 20px; height: 20px; }
       nav { display: flex; flex-wrap: wrap; gap: 14px; font-size: 14px; }
-      nav a.here { font-weight: 650; text-decoration: underline; }
-      main { max-width: 60rem; margin: 0 auto; padding: 28px 20px 80px; }
+      nav a { color: var(--muted); }
+      nav a.here { color: var(--ink); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+      main { max-width: 50rem; margin: 0 auto; padding: 32px 20px 96px; }
+      h1 { font-size: 2rem; line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 0.3em; }
+      h2 { margin-top: 2.2em; padding-top: 0.6em; border-top: 1px solid var(--rule); font-size: 1.3rem; }
+      .meta { color: var(--muted); font-size: 0.85rem; margin: 0 0 2em; }
+      img { max-width: 100%; height: auto; }
       pre { background: #8881; padding: 12px 14px; overflow-x: auto; border-radius: 6px; }
       code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
-      table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
-      th, td { border: 1px solid #8884; padding: 6px 10px; text-align: left; vertical-align: top; }
-      blockquote { margin: 0; padding-left: 16px; border-left: 3px solid #8886; opacity: 0.9; }
-      footer { border-top: 1px solid #8883; padding: 18px 20px; font-size: 13px; opacity: 0.8; }
+      table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; font-size: 0.94rem; }
+      th, td { border: 1px solid var(--rule); padding: 6px 10px; text-align: left; vertical-align: top; }
+      th { background: #8881; }
+      blockquote { margin: 1.2em 0; padding-left: 16px; border-left: 3px solid var(--accent); color: var(--muted); }
+      footer { border-top: 1px solid var(--rule); padding: 22px 20px; font-size: 13px; color: var(--muted); }
+      footer a { color: var(--ink); }
     </style>
   </head>
   <body>
     <header>
-      <a class="brand" href="index.html">${escapeHtml(pkg.name)}</a>
+      <a class="brand" href="index.html"><img src="assets/favicon.svg" alt="" width="20" height="20">${escapeHtml(pkg.name)}</a>
       <nav>
         ${nav(slug)}
         <a href="${REPO}">GitHub</a>
       </nav>
     </header>
     <main>
+      <p class="meta">${readingTime} min read · by <a href="${AUTHOR_URL}" rel="author">${AUTHOR_NAME}</a></p>
 ${body}
     </main>
     <footer>
-      MIT © Ankur Halder · <a href="${REPO}">source</a> · <a href="${REPO}/issues">issues</a> · <a href="llms.txt">llms.txt</a>
+      MIT © <a href="${AUTHOR_URL}" rel="author">${AUTHOR_NAME}</a> · <a href="${REPO}">source</a> ·
+      <a href="${REPO}/issues">issues</a> · <a href="llms.txt">llms.txt</a> ·
+      <a href="llms-full.txt">llms-full.txt</a>
     </footer>
   </body>
 </html>
@@ -217,30 +387,69 @@ ${body}
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 
-const sources = [{ slug: "index", file: path.join(ROOT, "README.md"), markdown: fs.readFileSync(path.join(ROOT, "README.md"), "utf8") }];
+// The images a page or a social card references have to exist under the site
+// root; a README that points at raw.githubusercontent is fine on GitHub and
+// useless as an `og:image`, which must be fetched from this origin.
+const ASSETS = path.join(DOCS, "assets");
+fs.mkdirSync(path.join(OUT, "assets"), { recursive: true });
+for (const entry of fs.readdirSync(ASSETS).filter((name) => /\.(svg|png|ico)$/.test(name))) {
+  fs.copyFileSync(path.join(ASSETS, entry), path.join(OUT, "assets", entry));
+}
+
+const sources = [
+  {
+    slug: "index",
+    file: path.join(ROOT, "README.md"),
+    markdown: fs.readFileSync(path.join(ROOT, "README.md"), "utf8"),
+  },
+];
 for (const entry of fs.readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort()) {
   const slug = path.basename(entry, ".md");
   sources.push({ slug, file: path.join(DOCS, entry), markdown: fs.readFileSync(path.join(DOCS, entry), "utf8") });
 }
 
+// README images point at raw.githubusercontent so they render on GitHub and on
+// npm; on this site they have a local copy, so rewrite them instead of making
+// every visitor fetch from a second origin.
+const RAW = "https://raw.githubusercontent.com/ankurhalder/codebase-snapshot/main/";
+
 const urls = [];
+const fullText = [];
 for (const source of sources) {
-  const html = rewriteLinks(marked.parse(source.markdown));
+  const localised = source.markdown.split(RAW).join("");
+  const html = rewriteLinks(marked.parse(localised));
   const heading = source.markdown.match(/^#\s+(.+)$/m)?.[1] ?? pkg.name;
   const title = TITLES[source.slug] ?? (source.slug === "index" ? heading : `${heading} — ${pkg.name}`);
-  const description = summarise(source.markdown);
+  const description = DESCRIPTIONS[source.slug] ?? summarise(source.markdown);
   fs.writeFileSync(
     path.join(OUT, `${source.slug}.html`),
-    page({ slug: source.slug, title, description, body: html }),
+    page({ slug: source.slug, title, description, body: html, markdown: source.markdown }),
     "utf8"
   );
   // The Markdown twin: what llms.txt v2 asks for, and what an agent would rather read.
-  // The Markdown twin is for an agent to read, so the sync markers are stripped:
-  // they are web-page plumbing, and the rendered value beside them already stands alone.
+  // The sync markers are stripped: they are web-page plumbing, and the rendered
+  // value beside them already stands alone.
   const twin = source.markdown.replace(/<!--\/?@[A-Za-z]+-->/g, "");
   fs.writeFileSync(path.join(OUT, `${source.slug}.md`), twin, "utf8");
   urls.push(source.slug === "index" ? `${SITE}/` : `${SITE}/${source.slug}.html`);
+  fullText.push(`<!-- ${source.slug} -->\n\n${twin}`);
 }
+
+/**
+ * `llms-full.txt`: every page in one file.
+ *
+ * `llms.txt` is an index of links, which a crawler has to follow one at a time.
+ * The full corpus in a single response costs one fetch and is what several
+ * answer engines now prefer when they can get it.
+ */
+fs.writeFileSync(
+  path.join(OUT, "llms-full.txt"),
+  `# ${pkg.name} ${pkg.version} — complete documentation\n\n` +
+    `> ${pkg.description}\n\n` +
+    `Source: ${REPO}\nCanonical site: ${SITE}/\n\n---\n\n` +
+    `${fullText.join("\n\n---\n\n")}\n`,
+  "utf8"
+);
 
 const today = new Date().toISOString().slice(0, 10);
 fs.writeFileSync(
@@ -295,4 +504,4 @@ fs.writeFileSync(path.join(OUT, "llms.txt"), llms, "utf8");
 fs.writeFileSync(path.join(OUT, ".nojekyll"), "", "utf8");
 
 write(`site: ${sources.length} pages, ${urls.length} urls`);
-write(`site: sitemap.xml, robots.txt, llms.txt for ${SITE}`);
+write(`site: sitemap.xml, robots.txt, llms.txt, llms-full.txt for ${SITE}`);

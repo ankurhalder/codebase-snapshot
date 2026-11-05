@@ -21,12 +21,63 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
-## 0.9.2
+## 0.9.3
+
+### The project now says what it is
+
+Everything here already worked; none of it was visible. The pitch was "turn a repository into
+an LLM-ready snapshot", which is the pitch every packer uses, so the one thing that is actually
+ours — you can check the result — was buried in the fourth bullet of the second section.
+
+The line is now **a snapshot you can prove is current**, and the mark is a frame closing on a
+fingerprint. Both are consequences of the same idea rather than decoration: the artefact is
+bounded, it is identifiable, and it can be compared later.
+
+- **README**: a centred hero with the mark and the line, five badges, one command, and a
+  diagram that draws the argument — a dump that was silently truncated beside a snapshot with a
+  manifest and a validator. Nav links under the fold; the CLI reference moved to the site.
+- **Brand assets** in `docs/assets/`: mark in light and dark ink, a favicon that carries its own
+  plate so it survives both colour schemes, an iOS touch icon, and a 1200×630 social card. The
+  design tokens and the reason each variant exists are written down beside them.
+- **Two new pages**, both about problems we can name precisely: [stale LLM context is a
+  bug](docs/stale-context-is-your-bug.md) and [how many tokens a codebase
+  is](docs/codebase-token-budget.md).
+
+### The site stopped being invisible when shared
+
+Measured before the fix: twelve pages, every one declaring `twitter:card=summary_large_image`
+with **no `og:image` at all** — so every share on X, LinkedIn, Reddit, Slack or Discord rendered
+as a blank card — and no favicon anywhere.
+
+- `og:image`, `og:image:alt`, dimensions, `og:site_name`, `twitter:image`, an author, a theme
+  colour and a favicon set on every page.
+- Titles rewritten query-first instead of `<heading> — codebase-snapshot`, which spent the part
+  of a result a reader actually scans on a brand nobody is searching for yet.
+- Descriptions written by hand at 90–165 characters; they used to be the page's first sentence
+  cut mid-word at 158.
+- JSON-LD gains `BreadcrumbList` everywhere, `author` on every node, `sameAs` to npm and the
+  author's site, and an `image`.
+- `llms-full.txt`: every page in one file, one fetch for a crawler that wants the corpus.
+- The author's own site is now linked from every page (`rel="author"`), so the project hangs off
+  a person rather than a repository.
+
+### Two gates, because these defects survive builds
+
+`npm run verify` now fails if either is violated:
+
+- **`scripts/audit-site.mjs`** — title and description lengths, canonical identity, `og:image`
+  present *and* the file it names exists at 1200×630, twitter card, exactly one `<h1>`, alt text
+  on every image, parseable JSON-LD with a breadcrumb, favicon, sitemap coverage, and no page
+  that renders `undefined`.
+- **`scripts/readme-lint.mjs`** — a hero in the first lines, at least five badges, in-page
+  navigation, alt text, and every relative link resolving to a real file.
 
 ### `snapshot` is the command now, and a first run sets the project up
 
-Installing globally used to give you `codebase-snapshot` and a `snap` alias — a word that
-collides with Ubuntu's `snapd` and with an npm package of the same name. `snap` is gone and
+*(Prepared as 0.9.2, which was never published — everything in it ships here.)*
+
+Installing globally used to give `codebase-snapshot` plus a `snap` alias — a word that
+collides with Ubuntu's snapd and with an npm package of the same name. `snap` is gone and
 **`snapshot`** replaces it, pointing at the same file. The long name stays the canonical one, and
 the bare word is what a global install puts on `PATH`.
 

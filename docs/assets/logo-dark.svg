@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="codebase-snapshot">
+  <!-- Same mark, light ink, for dark backgrounds. Paired with logo.svg through a
+       <picture> element so the README follows the reader's colour scheme. -->
+  <g fill="none" stroke="#e6edf3" stroke-width="2.1" stroke-linecap="square">
+    <path d="M3.5 11V3.5H11" />
+    <path d="M21 3.5h7.5V11" />
+    <path d="M28.5 21v7.5H21" />
+    <path d="M11 28.5H3.5V21" />
+  </g>
+  <g fill="none" stroke="#e6edf3" stroke-width="1.7" stroke-linecap="round">
+    <path d="M16 11.2a4.8 4.8 0 0 1 4.8 4.8" />
+    <path d="M11.2 16A4.8 4.8 0 0 1 16 11.2" />
+    <path d="M13.1 20.4A6 6 0 0 1 11.2 16" />
+  </g>
+  <circle cx="16" cy="19.6" r="1.7" fill="#e6edf3" />
+</svg>

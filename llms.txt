@@ -80,5 +80,7 @@ has to parse an empty string or scrape stderr for prose.
 - [Wiki](https://github.com/ankurhalder/codebase-snapshot/wiki): a pointer to the documentation site.
 - [Releases](https://github.com/ankurhalder/codebase-snapshot/releases): version history with notes.
 - [Feeding a codebase to ChatGPT, Claude or Cursor](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-feed-a-repo-to-claude.md): the end-to-end recipe, including what the model should be told about the snapshot it is reading.
+- [Stale LLM context is a bug](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/stale-context-is-your-bug.md): why a snapshot goes out of date silently, and the fingerprint/validate/gate controls that make drift visible.
+- [How many tokens is a codebase?](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/codebase-token-budget.md): the arithmetic of bytes, tokens and context windows, with a measured example and a budget table.
 - [Budgeting LLM context](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-context-budget.md): how to choose `maxPartBytes`, `largeFileBytes` and per-layer ceilings from the consumer rather than from taste.
 - [vs repomix](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-repomix.md), [vs gitingest](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-gitingest.md), [vs code2prompt](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-code2prompt.md): honest comparisons that say where each alternative is the better choice.

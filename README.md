@@ -1,22 +1,41 @@
-# codebase-snapshot
+<div align="center">
+  <img src="https://raw.githubusercontent.com/ankurhalder/codebase-snapshot/main/docs/assets/favicon.svg" width="64" height="64" alt="codebase-snapshot">
 
-**Turn any repository into an LLM-ready snapshot: code packed into size-budgeted markdown
-parts, indexed by a JSON manifest, with a secret audit — in one command.**
+  <h1>codebase-snapshot</h1>
 
-[![npm version](https://img.shields.io/npm/v/codebase-snapshot.svg)](https://www.npmjs.com/package/codebase-snapshot)
-[![npm downloads](https://img.shields.io/npm/dw/codebase-snapshot.svg)](https://www.npmjs.com/package/codebase-snapshot)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ankurhalder/codebase-snapshot/blob/main/LICENSE)
-[![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+  <p><b>A snapshot you can prove is current.</b><br>
+  Plain-text parts under a hard byte budget, an index of every file and every skipped<br>
+  file with the reason, and a <code>validate</code> command that fails when the code moves.</p>
+
+  <p>
+    <a href="https://www.npmjs.com/package/codebase-snapshot"><img alt="npm version" src="https://img.shields.io/npm/v/codebase-snapshot.svg"></a>
+    <a href="https://www.npmjs.com/package/codebase-snapshot"><img alt="weekly downloads" src="https://img.shields.io/npm/dw/codebase-snapshot.svg"></a>
+    <a href="#license"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+    <a href="https://nodejs.org"><img alt="node: 18 or newer" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg"></a>
+    <a href="https://ankurhalder.github.io/codebase-snapshot/"><img alt="documentation" src="https://img.shields.io/badge/docs-read-1a7f37"></a>
+  </p>
+</div>
 
 ```bash
-npx codebase-snapshot generate
+snapshot                        # detects the project, sets it up, generates
+npx codebase-snapshot generate  # or no install at all, straight to the snapshot
 ```
 
 That writes `./snapshot/` — a directory you can drop into a chat, a prompt, a RAG pipeline or
-a repository review. It works on TypeScript and JavaScript projects, and on Python, Go, Rust,
-Java/Kotlin, C#/.NET, PHP, Ruby, C/C++, Vue, Svelte and Astro, without configuration.
+a repository review. TypeScript and JavaScript first, but also Python, Go, Rust, Java/Kotlin,
+C#/.NET, PHP, Ruby, C/C++, Vue, Svelte and Astro, without configuration.
 
-![How it works](https://raw.githubusercontent.com/ankurhalder/codebase-snapshot/main/docs/how-it-works.svg)
+![Two ways to give a repository to a model: a dump that was silently truncated, and a snapshot
+with a manifest and a validator](https://raw.githubusercontent.com/ankurhalder/codebase-snapshot/main/docs/assets/how-it-works.svg)
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#built-to-be-trusted">Trust</a> ·
+  <a href="#for-ai-agents">AI agents</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="https://ankurhalder.github.io/codebase-snapshot/">Site</a>
+</p>
 
 ---
 
@@ -278,6 +297,8 @@ both. The CLI and the API share one implementation, so anything the CLI does is 
 | | |
 | :--- | :--- |
 | [Feeding a codebase to ChatGPT, Claude or Cursor](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-feed-a-repo-to-claude.md) | The full recipe, including the parts most guides skip |
+| [Stale LLM context is a bug](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/stale-context-is-your-bug.md) | Drift, fingerprints and the CI gate that catches a snapshot going out of date |
+| [How many tokens is a codebase?](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/codebase-token-budget.md) | The arithmetic of bytes, tokens and context windows, measured |
 | [Budgeting LLM context](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-context-budget.md) | Choosing the numbers from the destination, not from taste |
 | [vs repomix](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-repomix.md) | Including where repomix is the better choice |
 | [vs gitingest](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-gitingest.md) | Including where gitingest is the better choice |
@@ -303,3 +324,9 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](https://github.co
 ## License
 
 [MIT](https://github.com/ankurhalder/codebase-snapshot/blob/main/LICENSE) © Ankur Halder
+
+<p align="center">
+  <sub>Built by <a href="https://ankurhalder.com" rel="author">Ankur Halder</a> ·
+  <a href="https://ankurhalder.github.io/codebase-snapshot/">documentation</a> ·
+  <a href="https://www.npmjs.com/package/codebase-snapshot">npm</a></sub>
+</p>

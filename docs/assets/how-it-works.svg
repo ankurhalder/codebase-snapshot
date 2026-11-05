@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="380" viewBox="0 0 880 380" role="img" aria-label="Two ways to give a codebase to a model. On the left, one file that was truncated where the budget ran out, with no index and no way to know it is stale. On the right, a snapshot: parts each under maxPartBytes, a manifest that indexes every file and every skip with its reason, secrets masked rather than emitted, and a validate command that exits 1 when the code has moved.">
+  <defs>
+    <style>
+      .h    { font: 600 14px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .t    { font: 600 12.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .b    { font: 12.5px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .cap  { font: 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #57606a; }
+      .mono { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .dump { fill: #fff8f0; stroke: #f0c9a0; stroke-width: 1.5; }
+      .snap { fill: #f2fbf4; stroke: #b6e2c0; stroke-width: 1.5; }
+      .dt   { fill: #8a4b12; }
+      .st   { fill: #1a7f37; }
+      .d    { fill: #4d3b2f; }
+      .s    { fill: #2c3a30; }
+    </style>
+  </defs>
+
+  <text class="h" x="16" y="24" fill="#1f2328">The same repository, two ways</text>
+
+  <rect class="dump" x="16" y="44" width="404" height="272" rx="10" />
+  <text class="t dt" x="36" y="74">What a plain dump gives you</text>
+  <text class="mono d" x="36" y="102">cat $(git ls-files) &gt; context.txt</text>
+  <text class="b d" x="36" y="134">· one file, cut off where the model's limit ran out</text>
+  <text class="b d" x="36" y="158">· no index of what was included, or what was left behind</text>
+  <text class="b d" x="36" y="182">· no record of which revision it came from</text>
+  <text class="b d" x="36" y="206">· no way to know it drifted after the code moved</text>
+  <text class="b d" x="36" y="230">· secrets inside normal files travel with it, unless someone looked</text>
+  <text class="caption d" x="36" y="288" font-size="12">You find out something was missing when the answer is wrong.</text>
+
+  <rect class="snap" x="460" y="44" width="404" height="272" rx="10" />
+  <text class="t st" x="480" y="74">What a snapshot gives you</text>
+  <text class="mono s" x="480" y="102">snapshot</text>
+  <text class="b s" x="480" y="134">· parts that each stay under maxPartBytes, never over</text>
+  <text class="b s" x="480" y="158">· manifest.json: every file and every skip, with the reason</text>
+  <text class="b s" x="480" y="182">· secrets masked in place — the file stays, the value does not</text>
+  <text class="b s" x="480" y="206">· a fingerprint, identical on every machine for the same input</text>
+  <text class="b s" x="480" y="230">· validate: re-hash the repository, exit 1 on drift</text>
+  <text class="caption s" x="480" y="288" font-size="12">You find out something moved before the answer is wrong.</text>
+
+  <text class="cap" x="16" y="352">The difference is not speed or format. It is whether the thing you handed over can be checked afterwards.</text>
+</svg>

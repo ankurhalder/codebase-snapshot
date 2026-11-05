@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="codebase-snapshot">
+  <!-- A favicon has one chance to be legible: 16 pixels, light or dark tab bar, no
+       media queries of its own. A solid plate carries the mark on both. -->
+  <rect width="32" height="32" rx="7" fill="#0d1117" />
+  <g fill="none" stroke="#e6edf3" stroke-width="2" stroke-linecap="square">
+    <path d="M7 12.5V7h5.5" />
+    <path d="M19.5 7H25v5.5" />
+    <path d="M25 19.5V25h-5.5" />
+    <path d="M12.5 25H7v-5.5" />
+  </g>
+  <circle cx="16" cy="18.4" r="1.7" fill="#e6edf3" />
+  <g fill="none" stroke="#e6edf3" stroke-width="1.6" stroke-linecap="round">
+    <path d="M16 11.6a4.2 4.2 0 0 1 4.2 4.2" />
+    <path d="M11.8 15.8A4.2 4.2 0 0 1 16 11.6" />
+  </g>
+</svg>
