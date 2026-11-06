@@ -10,6 +10,17 @@ import * as readline from "node:readline";
  *
  * The rendering and selection logic is exported as pure functions so it can be
  * unit-tested without a real TTY; only the thin IO layer needs one.
+ *
+ * ## Going back
+ *
+ * A question that a later answer can invalidate must be reversible. Any prompt
+ * given `allowBack` throws {@link PromptBack} when the developer asks to return,
+ * and the caller re-runs the previous question with the answers so far intact.
+ * Two keys are deliberately different:
+ *
+ *  - `←` on a list or a text field, `b` on a list. `confirm` uses `←`/`→` for
+ *    yes/no, so it takes `b` alone.
+ *  - `text` accepts only `←`: `b` there is a character the developer is typing.
  */
 
 export interface Choice<T> {
@@ -28,6 +39,14 @@ export class PromptCancelled extends Error {
   constructor() {
     super("Prompt cancelled");
     this.name = "PromptCancelled";
+  }
+}
+
+/** Thrown when the developer asks to return to the previous question. */
+export class PromptBack extends Error {
+  constructor() {
+    super("Prompt back");
+    this.name = "PromptBack";
   }
 }
 
@@ -64,10 +83,20 @@ function choiceLine<T>(choice: Choice<T>, active: boolean): string {
   return `  ${marker(active)} ${choice.label}${hint}`;
 }
 
-export function renderSelect<T>(message: string, choices: Choice<T>[], index: number): string {
+/** The footer under a list, naming only the keys this prompt actually accepts. */
+function listFooter(base: string, allowBack: boolean): string {
+  return allowBack ? `${base} · ← back` : base;
+}
+
+export function renderSelect<T>(
+  message: string,
+  choices: Choice<T>[],
+  index: number,
+  allowBack = false
+): string {
   const lines = [`◆ ${message}`, ""];
   choices.forEach((choice, position) => lines.push(choiceLine(choice, position === index)));
-  lines.push("", "  ↑↓ move · enter select");
+  lines.push("", `  ${listFooter("↑↓ move · enter select", allowBack)}`);
   return lines.join("\n");
 }
 
@@ -75,7 +104,8 @@ export function renderMultiSelect<T>(
   message: string,
   choices: Choice<T>[],
   index: number,
-  selected: ReadonlySet<number>
+  selected: ReadonlySet<number>,
+  allowBack = false
 ): string {
   const lines = [`◆ ${message}`, ""];
   choices.forEach((choice, position) => {
@@ -83,24 +113,26 @@ export function renderMultiSelect<T>(
     const hint = choice.hint ? `  ${choice.hint}` : "";
     lines.push(`  ${marker(position === index)} ${box} ${choice.label}${hint}`);
   });
-  lines.push("", "  ↑↓ move · space toggle · enter confirm");
+  lines.push("", `  ${listFooter("↑↓ move · space toggle · enter confirm", allowBack)}`);
   return lines.join("\n");
 }
 
-export function renderConfirm(message: string, value: boolean): string {
+export function renderConfirm(message: string, value: boolean, allowBack = false): string {
+  const footer = allowBack ? "←→ or y/n · enter confirm · b back" : "←→ or y/n · enter confirm";
   return [
     `◆ ${message}`,
     "",
     `  ${marker(value)} Yes`,
     `  ${marker(!value)} No`,
     "",
-    "  ←→ or y/n · enter confirm",
+    `  ${footer}`,
   ].join("\n");
 }
 
-export function renderText(message: string, value: string, error?: string): string {
+export function renderText(message: string, value: string, error?: string, allowBack = false): string {
   const lines = [`◆ ${message}`, "", `  ${value || "▏"}`];
   if (error) lines.push("", `  ✖ ${error}`);
+  if (allowBack) lines.push("", "  enter confirm · ← back");
   return lines.join("\n");
 }
 
@@ -163,22 +195,28 @@ function isCancel(key: readline.Key): boolean {
   return (key.ctrl === true && key.name === "c") || (key.ctrl === true && key.name === "d");
 }
 
+/** `←` or `b` on a list. */
+function isListBack(key: readline.Key, allowBack: boolean): boolean {
+  return allowBack && (key.name === "left" || key.name === "b");
+}
+
 // --------------------------------------------------------------------- prompts
 
 export async function select<T>(
   io: PromptIO,
   message: string,
   choices: Choice<T>[],
-  options: { defaultValue?: T } = {}
+  options: { defaultValue?: T; allowBack?: boolean } = {}
 ): Promise<T> {
   if (choices.length === 0) throw new Error("select() requires at least one choice.");
+  const allowBack = options.allowBack === true;
   const fallbackIndex = Math.max(
     0,
     choices.findIndex((choice) => choice.value === options.defaultValue)
   );
 
   if (!isInteractive(io)) {
-    io.output.write(`${renderSelect(message, choices, fallbackIndex)}\n`);
+    io.output.write(`${renderSelect(message, choices, fallbackIndex, allowBack)}\n`);
     return choices[fallbackIndex].value;
   }
 
@@ -188,9 +226,10 @@ export async function select<T>(
 
   try {
     for (;;) {
-      frame.draw(renderSelect(message, choices, index));
+      frame.draw(renderSelect(message, choices, index, allowBack));
       const key = await reader.next();
       if (isCancel(key)) throw new PromptCancelled();
+      if (isListBack(key, allowBack)) throw new PromptBack();
       if (key.name === "up") index = moveSelection(index, -1, choices.length);
       else if (key.name === "down") index = moveSelection(index, 1, choices.length);
       else if (key.name === "return" || key.name === "enter") {
@@ -199,6 +238,11 @@ export async function select<T>(
       } else if (key.name === "j") index = moveSelection(index, 1, choices.length);
       else if (key.name === "k") index = moveSelection(index, -1, choices.length);
     }
+  } catch (error) {
+    // A question that is being abandoned must not leave its last frame on screen, or the
+    // terminal shows a stale menu above the one that is about to be asked.
+    frame.erase();
+    throw error;
   } finally {
     reader.close();
   }
@@ -208,8 +252,9 @@ export async function multiSelect<T>(
   io: PromptIO,
   message: string,
   choices: Choice<T>[],
-  options: { defaults?: T[] } = {}
+  options: { defaults?: T[]; allowBack?: boolean } = {}
 ): Promise<T[]> {
+  const allowBack = options.allowBack === true;
   const selected = new Set<number>();
   choices.forEach((choice, position) => {
     if (options.defaults?.includes(choice.value)) selected.add(position);
@@ -219,7 +264,7 @@ export async function multiSelect<T>(
     choices.filter((_, position) => selected.has(position)).map((choice) => choice.value);
 
   if (!isInteractive(io)) {
-    io.output.write(`${renderMultiSelect(message, choices, 0, selected)}\n`);
+    io.output.write(`${renderMultiSelect(message, choices, 0, selected, allowBack)}\n`);
     return result();
   }
 
@@ -229,9 +274,10 @@ export async function multiSelect<T>(
 
   try {
     for (;;) {
-      frame.draw(renderMultiSelect(message, choices, index, selected));
+      frame.draw(renderMultiSelect(message, choices, index, selected, allowBack));
       const key = await reader.next();
       if (isCancel(key)) throw new PromptCancelled();
+      if (isListBack(key, allowBack)) throw new PromptBack();
       if (key.name === "up") index = moveSelection(index, -1, choices.length);
       else if (key.name === "down") index = moveSelection(index, 1, choices.length);
       else if (key.name === "space") {
@@ -246,6 +292,9 @@ export async function multiSelect<T>(
         return result();
       }
     }
+  } catch (error) {
+    frame.erase();
+    throw error;
   } finally {
     reader.close();
   }
@@ -254,11 +303,12 @@ export async function multiSelect<T>(
 export async function confirm(
   io: PromptIO,
   message: string,
-  options: { defaultValue?: boolean } = {}
+  options: { defaultValue?: boolean; allowBack?: boolean } = {}
 ): Promise<boolean> {
+  const allowBack = options.allowBack === true;
   let value = options.defaultValue ?? true;
   if (!isInteractive(io)) {
-    io.output.write(`${renderConfirm(message, value)}\n`);
+    io.output.write(`${renderConfirm(message, value, allowBack)}\n`);
     return value;
   }
 
@@ -267,9 +317,11 @@ export async function confirm(
 
   try {
     for (;;) {
-      frame.draw(renderConfirm(message, value));
+      frame.draw(renderConfirm(message, value, allowBack));
       const key = await reader.next();
       if (isCancel(key)) throw new PromptCancelled();
+      // `←`/`→` already mean yes/no here, so back is `b` only.
+      if (allowBack && key.name === "b") throw new PromptBack();
       if (key.name === "up" || key.name === "left") value = true;
       else if (key.name === "down" || key.name === "right") value = false;
       else if (key.name === "y") value = true;
@@ -279,6 +331,9 @@ export async function confirm(
         return value;
       }
     }
+  } catch (error) {
+    frame.erase();
+    throw error;
   } finally {
     reader.close();
   }
@@ -287,11 +342,16 @@ export async function confirm(
 export async function text(
   io: PromptIO,
   message: string,
-  options: { defaultValue?: string; validate?: (value: string) => string | null } = {}
+  options: {
+    defaultValue?: string;
+    validate?: (value: string) => string | null;
+    allowBack?: boolean;
+  } = {}
 ): Promise<string> {
+  const allowBack = options.allowBack === true;
   const fallback = options.defaultValue ?? "";
   if (!isInteractive(io)) {
-    io.output.write(`${renderText(message, fallback)}\n`);
+    io.output.write(`${renderText(message, fallback, undefined, allowBack)}\n`);
     return fallback;
   }
 
@@ -302,9 +362,11 @@ export async function text(
 
   try {
     for (;;) {
-      frame.draw(renderText(message, value, error));
+      frame.draw(renderText(message, value, error, allowBack));
       const key = await reader.next();
       if (isCancel(key)) throw new PromptCancelled();
+      // Only `←` here: `b` is a character somebody may be typing into this field.
+      if (allowBack && key.name === "left") throw new PromptBack();
       error = undefined;
 
       if (key.name === "return" || key.name === "enter") {
@@ -327,6 +389,9 @@ export async function text(
       // Printable single characters only: control keys never enter the buffer.
       if (_isPrintable(key)) value += _keyText(key);
     }
+  } catch (error_) {
+    frame.erase();
+    throw error_;
   } finally {
     reader.close();
   }

@@ -768,14 +768,21 @@ function installDependencies(cwd: string): InstallOutcome {
   const manager = detectPackageManager(cwd);
   const command = `${manager.command} ${manager.args.join(" ")}`;
   const started = performance.now();
-  const result = spawnSync(manager.command, manager.args, {
+  // On Windows the package managers are `.cmd` shims that only run through a shell, and Node
+  // deprecates that combination with an args array (DEP0190): the arguments are concatenated, not
+  // escaped. Handing the shell one pre-formed string avoids the deprecated form, and both halves
+  // are fixed literals from `detectPackageManager`, so there is nothing here to escape. Everywhere
+  // else the command is spawned directly, with no shell involved at all.
+  const spawnOptions = {
     cwd,
-    encoding: "utf8",
-    // npm, pnpm and yarn ship as `.cmd` shims on Windows, which spawnSync cannot exec directly.
-    shell: process.platform === "win32",
+    encoding: "utf8" as const,
     timeout: INSTALL_TIMEOUT_MS,
     env: cleanInstallEnv(),
-  });
+  };
+  const result =
+    process.platform === "win32"
+      ? spawnSync(command, { ...spawnOptions, shell: true })
+      : spawnSync(manager.command, manager.args, spawnOptions);
   const seconds = `${((performance.now() - started) / 1000).toFixed(1)}s`;
   if (result.error) {
     return { manager: manager.name, command, ok: false, detail: `${result.error.message} (${seconds})` };

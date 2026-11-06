@@ -197,7 +197,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.9.4 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.9.5 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

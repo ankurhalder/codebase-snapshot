@@ -21,6 +21,44 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.5
+
+### Every question in the wizard is reversible
+
+The first run asked five questions and accepted one answer each. Reaching the part-size question and
+changing your mind meant killing the process and starting again — and at the review screen,
+answering **No** to "Write this and continue?" threw the same cancellation Ctrl+C does, so "that is
+not what I meant" ended the run instead of correcting it.
+
+- **`←` goes back** on any list or text field, `b` on any list or confirmation. Each footer names
+  the keys that question actually accepts: `text` takes `←` alone (`b` there is a character you are
+  typing) and `confirm` takes `b` alone (`←`/`→` already mean yes/no).
+- **Back is a step, not a restart.** The five questions are now steps — scope → part size →
+  artifacts → credentials → review. Going back re-asks the previous one with your earlier answer
+  still selected, and back from the first step returns to *"How should I set this up?"* rather than
+  out of the wizard.
+- **`No` at the review steps back.** It used to abort. Ctrl+C is still how you say stop.
+- **Answers are rebuilt, not mutated.** Re-entering the scope step clears the globs it added, so
+  choosing "skip tests", going back, and choosing "everything" no longer leaves `**/*.test.*` in
+  the written config.
+
+Four new tests drive real keypress events through a fake TTY, alongside the four that already
+covered the forward path.
+
+### A clean first run
+
+Setup printed a Node `DEP0190` deprecation warning after installing dependencies: `spawnSync` was
+given an args array *and* `shell: true`, which Node deprecated because the arguments are
+concatenated rather than escaped. The Windows path now hands the shell one pre-formed command
+string — both halves are fixed literals from `detectPackageManager` — and every other platform
+spawns with no shell at all.
+
+### Still untested here
+
+The MCP server has not been run against a real client. Its protocol is exercised against the built
+binary, but a client's own configuration, timeouts and approval prompts are theirs. That is the next
+thing to check, not something this release proves.
+
 ## 0.9.4
 
 ### The snapshot is now something an agent can ask for

@@ -16,7 +16,7 @@ import {
   defaultIO,
   isInteractive,
   multiSelect,
-  PromptCancelled,
+  PromptBack,
   select,
   text,
   type Choice,
@@ -451,116 +451,128 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
           { value: "choose", label: "Pick a different preset", hint: "everything else stays at the defaults" },
         ];
 
-    const pace = await select(io, "How should I set this up?", paceChoices, {
-      defaultValue: fallback ? "choose" : "recommended",
-    });
+    // The walk is reversible. A question that a later answer can invalidate may be revisited,
+    // and `Review → No` steps back instead of aborting the way Ctrl+C does.
+    const baseInclude = [...answers.include];
+    const baseExclude = [...answers.excludePatterns];
+    let lastScope = "all";
 
-    if (pace === "choose") {
-      answers.preset = await select(
-        io,
-        "What kind of project is this?",
-        listPresetNames().map((name) =>
-          resolvePresetChoice(fallback ? null : detected.presetName, name)
-        ),
-        { defaultValue: answers.preset }
-      );
-      const chosen = detectPreset(options.cwd, answers.preset);
-      answers.preset = chosen.presetName;
-      // The developer made the decision, so there is no detection to report and this is not
-      // a fallback any more.
-      reason = null;
-      fallback = false;
-    }
+    const artifactChoices: Array<Choice<keyof ArtifactSelection>> = [
+      { value: "readme", label: "README.md", hint: "orientation page" },
+      { value: "manifest", label: "manifest.json", hint: "required by validate and report" },
+      { value: "parts", label: "parts/", hint: "the code payload" },
+      { value: "navigation", label: "reports/navigation.md", hint: "file → part index" },
+      { value: "projectTree", label: "reports/project-tree.md", hint: "ASCII tree" },
+      { value: "audit", label: "reports/audit.md", hint: "security and health findings" },
+      { value: "monolith", label: "full-codebase.json + .md", hint: "roughly doubles output" },
+    ];
 
-    if (pace === "walk") {
-      const scope = await select(
-        io,
-        "What should go into the snapshot?",
-        [
-          { value: "all", label: "Everything the scanner finds", hint: "recommended · respects .gitignore" },
-          { value: "folders", label: "Only specific folders…" },
-          { value: "no-tests", label: "Everything, but skip tests" },
-          { value: "custom", label: "Let me write glob patterns" },
-        ],
-        { defaultValue: "all" }
-      );
+    const scopeStep = async (): Promise<void> => {
+      for (;;) {
+        const scope = await select(
+          io,
+          "What should go into the snapshot?",
+          [
+            { value: "all", label: "Everything the scanner finds", hint: "recommended · respects .gitignore" },
+            { value: "folders", label: "Only specific folders…" },
+            { value: "no-tests", label: "Everything, but skip tests" },
+            { value: "custom", label: "Let me write glob patterns" },
+          ],
+          { defaultValue: lastScope, allowBack: true }
+        );
+        lastScope = scope;
+        // Re-entry starts from the flags the caller passed, so going back and choosing
+        // differently never leaves the previous answer's globs behind in the config.
+        answers.include = [...baseInclude];
+        answers.excludePatterns = [...baseExclude];
 
-      if (scope === "folders") {
-        const dirs = topLevelDirs(options.cwd).slice(0, 40);
-        if (dirs.length === 0) {
-          notes.push("No top-level directories found; the snapshot will include everything.");
-        } else {
-          const chosen = await multiSelect(
-            io,
-            "Select folders",
-            dirs.map((name) => ({ value: name, label: `${name}/` })),
-            { defaults: dirs }
-          );
-          answers.include = chosen.map((name) => `${name}/**`);
+        try {
+          if (scope === "folders") {
+            const dirs = topLevelDirs(options.cwd).slice(0, 40);
+            if (dirs.length === 0) {
+              notes.push("No top-level directories found; the snapshot will include everything.");
+            } else {
+              const chosen = await multiSelect(
+                io,
+                "Select folders",
+                dirs.map((name) => ({ value: name, label: `${name}/` })),
+                { defaults: dirs, allowBack: true }
+              );
+              answers.include = chosen.map((name) => `${name}/**`);
+            }
+          } else if (scope === "no-tests") {
+            answers.excludePatterns = [...baseExclude, "**/*.test.*", "**/*.spec.*", "tests", "test"];
+          } else if (scope === "custom") {
+            const raw = await text(io, "Glob patterns to include (comma separated)", {
+              defaultValue: baseInclude.join(", "),
+              allowBack: true,
+            });
+            answers.include = raw
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean);
+          }
+          return;
+        } catch (error) {
+          // Back inside a sub-question returns to the question that opened it.
+          if (error instanceof PromptBack) continue;
+          throw error;
         }
-      } else if (scope === "no-tests") {
-        answers.excludePatterns = [
-          ...answers.excludePatterns,
-          "**/*.test.*",
-          "**/*.spec.*",
-          "tests",
-          "test",
-        ];
-      } else if (scope === "custom") {
-        const raw = await text(io, "Glob patterns to include (comma separated)", {
-          defaultValue: "",
-        });
-        answers.include = raw
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean);
       }
+    };
 
-      // The recommended budget belongs to the preset, so the selector starts on it rather than
-      // on a fixed "120k" that silently overrode a 300k Next.js recommendation.
-      const currentBudget = String(answers.maxPartBytes);
-      const sizeChoice = await select(io, "How large should each part be?", SIZE_CHOICES, {
-        defaultValue: SIZE_CHOICES.some((choice) => choice.value === currentBudget)
-          ? currentBudget
-          : "120k",
-      });
-
-      if (sizeChoice === "custom") {
-        const raw = await text(io, "Part size (e.g. 150k, 1.5mb, 900000)", {
-          defaultValue: String(answers.maxPartBytes),
-          validate: (value) => (parseByteSize(value) === undefined ? "Not a valid size." : null),
+    const sizeStep = async (): Promise<void> => {
+      for (;;) {
+        // The recommended budget belongs to the preset, so the selector starts on it rather than
+        // on a fixed "120k" that silently overrode a 300k Next.js recommendation.
+        const currentBudget = String(answers.maxPartBytes);
+        const sizeChoice = await select(io, "How large should each part be?", SIZE_CHOICES, {
+          defaultValue: SIZE_CHOICES.some((choice) => choice.value === currentBudget)
+            ? currentBudget
+            : "custom",
+          allowBack: true,
         });
-        answers.maxPartBytes = parseByteSize(raw) ?? answers.maxPartBytes;
-      } else {
-        answers.maxPartBytes = sizeChoice;
+
+        if (sizeChoice !== "custom") {
+          answers.maxPartBytes = sizeChoice;
+          return;
+        }
+        try {
+          const raw = await text(io, "Part size (e.g. 150k, 1.5mb, 900000)", {
+            defaultValue: currentBudget,
+            validate: (value) => (parseByteSize(value) === undefined ? "Not a valid size." : null),
+            allowBack: true,
+          });
+          answers.maxPartBytes = parseByteSize(raw) ?? answers.maxPartBytes;
+          return;
+        } catch (error) {
+          if (error instanceof PromptBack) continue;
+          throw error;
+        }
       }
+    };
 
-      const artifactChoices: Array<Choice<keyof ArtifactSelection>> = [
-        { value: "readme", label: "README.md", hint: "orientation page" },
-        { value: "manifest", label: "manifest.json", hint: "required by validate and report" },
-        { value: "parts", label: "parts/", hint: "the code payload" },
-        { value: "navigation", label: "reports/navigation.md", hint: "file → part index" },
-        { value: "projectTree", label: "reports/project-tree.md", hint: "ASCII tree" },
-        { value: "audit", label: "reports/audit.md", hint: "security and health findings" },
-        { value: "monolith", label: "full-codebase.json + .md", hint: "roughly doubles output" },
-      ];
-
-      const presetEnabled = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]);
+    const artifactsStep = async (): Promise<void> => {
+      const enabled = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]);
       const selectedArtifacts = await multiSelect(
         io,
         "Which artifacts should be generated?",
         artifactChoices,
-        { defaults: presetEnabled }
+        { defaults: enabled, allowBack: true }
       );
       for (const name of ARTIFACT_NAMES) answers.artifacts[name] = selectedArtifacts.includes(name);
-      const enabledCount = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]).length;
+    };
 
+    const credentialsStep = async (): Promise<void> => {
       answers.includeSensitiveFiles = await confirm(
         io,
-        "Include credential files (.env, *.pem, .npmrc, .ssh/)?",
-        { defaultValue: false }
+        "Include credential files (.env, *.pem, *.npmrc, *.ssh/)?",
+        { defaultValue: answers.includeSensitiveFiles, allowBack: true }
       );
+    };
 
+    const reviewStep = async (): Promise<void> => {
+      const enabledCount = ARTIFACT_NAMES.filter((name) => answers.artifacts[name]).length;
       io.output.write("\n  Review\n\n");
       io.output.write(`  project          ${answers.preset}\n`);
       io.output.write(`  include          ${answers.include.length ? answers.include.join(", ") : "everything"}\n`);
@@ -570,9 +582,65 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       io.output.write("  Will write snapshot.config with your answers, plus every other setting\n");
       io.output.write("  at its default — so nothing is hidden behind the docs.\n\n");
 
-      const proceed = await confirm(io, "Write this and continue?", { defaultValue: true });
-      if (!proceed) throw new PromptCancelled();
+      const proceed = await confirm(io, "Write this and continue?", {
+        defaultValue: true,
+        allowBack: true,
+      });
+      // "No" means "not like this", which is a step back. Ctrl+C is how you say stop.
+      if (!proceed) throw new PromptBack();
+    };
+
+    /** Runs the walk, returning false when the developer backs out of its first question. */
+    const walk = async (): Promise<boolean> => {
+      const steps = [scopeStep, sizeStep, artifactsStep, credentialsStep, reviewStep];
+      let index = 0;
+      while (index < steps.length) {
+        try {
+          await steps[index]();
+          index += 1;
+        } catch (error) {
+          if (!(error instanceof PromptBack)) throw error;
+          if (index === 0) return false;
+          index -= 1;
+          io.output.write("\n");
+        }
+      }
+      return true;
+    };
+
+    // Re-entered when the first walk step asks to go back, so "go through each setting" is not
+    // a one-way door.
+    for (;;) {
+      const pace = await select(io, "How should I set this up?", paceChoices, {
+        defaultValue: fallback ? "choose" : "recommended",
+      });
+
+      if (pace === "choose") {
+        try {
+          answers.preset = await select(
+            io,
+            "What kind of project is this?",
+            listPresetNames().map((name) =>
+              resolvePresetChoice(fallback ? null : detected.presetName, name)
+            ),
+            { defaultValue: answers.preset, allowBack: true }
+          );
+        } catch (error) {
+          if (error instanceof PromptBack) continue;
+          throw error;
+        }
+        const chosen = detectPreset(options.cwd, answers.preset);
+        answers.preset = chosen.presetName;
+        // The developer made the decision, so there is no detection to report and this is not
+        // a fallback any more.
+        reason = null;
+        fallback = false;
+      }
+
+      if (pace === "walk" && !(await walk())) continue;
+      break;
     }
+
   }
 
   const configText = renderConfig(answers);

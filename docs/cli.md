@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.4
+   Added devDependency: codebase-snapshot ^0.9.5
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.4
+   Added devDependency: codebase-snapshot ^0.9.5
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -224,6 +224,16 @@ It also has three side effects on files you own, and it says so when it does the
   declared — including a pin to an older version — is never overwritten.
 - `snapshot/` and `snapshot.tmp/` are appended to `.gitignore` if they are not already listed;
   the file is created if missing, and entries already present are not duplicated.
+
+### Going back
+
+At a terminal, `init` asks five questions and every one of them can be revisited: **`←`** goes back
+on a list or a text field, **`b`** on a list or a confirmation. `text` takes `←` alone because `b` is
+a character you may be typing, and `confirm` takes `b` alone because `←`/`→` already mean yes/no.
+
+Back steps to the previous question with your earlier answer still selected; back from the first one
+returns to *"How should I set this up?"*. Answering **No** at the review steps back rather than
+abandoning the run — Ctrl+C is how you abandon.
 
 Nothing else in the repository is touched: no `AGENTS.md`, no `.claude/`, no `.cursor/`. In a
 repository with a `package.json` and no config, `git status` shows the config as the only new
