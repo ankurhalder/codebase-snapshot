@@ -12,6 +12,7 @@ import test from "node:test";
 import {
   ERROR_CODES,
   classifyRequest,
+  coerceNumericStrings,
   createLineReader,
   createMcpServer,
   createSession,
@@ -545,5 +546,32 @@ test("argument validation", async (t) => {
     assert.match(validateArguments(schema, { mode: "medium" })[0], /must be one of/);
     assert.match(validateArguments(schema, { mode: "fast", size: 1.5 })[0], /must be an integer/);
     assert.match(validateArguments(schema, { mode: "fast", size: 99 })[0], /<= 10/);
+  });
+
+  await t.test("accepts a numeric argument that arrived as a digit string", () => {
+    const coerced = coerceNumericStrings(schema, { mode: "fast", size: "3" });
+    assert.equal(coerced.size, 3);
+    assert.deepEqual(validateArguments(schema, coerced), []);
+  });
+
+  await t.test("still rejects a string that is not a number", () => {
+    const coerced = coerceNumericStrings(schema, { mode: "fast", size: "ten" });
+    assert.equal(coerced.size, "ten", "an unparseable string is left for validation to reject");
+    assert.match(validateArguments(schema, coerced)[0], /must be a number/);
+  });
+
+  await t.test("a numeric string for an integer field is still checked as one", () => {
+    const coerced = coerceNumericStrings(schema, { mode: "fast", size: "1.5" });
+    assert.match(validateArguments(schema, coerced)[0], /must be an integer/);
+  });
+
+  await t.test("leaves fields the schema declares as strings alone", () => {
+    const budgetSchema = {
+      type: "object",
+      properties: { maxPartBytes: { type: "string" } },
+      additionalProperties: false,
+    };
+    const coerced = coerceNumericStrings(budgetSchema, { maxPartBytes: "307200" });
+    assert.equal(coerced.maxPartBytes, "307200", "a byte budget keeps its human spelling");
   });
 });

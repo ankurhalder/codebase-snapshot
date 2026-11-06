@@ -33,7 +33,7 @@ export type { JsonRpcResponse, JsonSchema } from "./protocol.js";
 export { classifyRequest, createSession, inspectModernMeta, negotiateLegacyVersion } from "./era.js";
 export type { ProtocolEra, SessionState } from "./era.js";
 
-export { validateArguments } from "./schema.js";
+export { validateArguments, coerceNumericStrings } from "./schema.js";
 
 export type {
   McpPrompt,

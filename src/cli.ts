@@ -32,6 +32,7 @@ import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
+import { cacheFilePath, checkForUpdate, formatUpdateNotice, shouldCheck } from "./update-check.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
@@ -107,6 +108,7 @@ const CLI_OPTIONS = {
   install: { type: "boolean" },
   "no-install": { type: "boolean" },
   target: { type: "string" },
+  "no-update-check": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -182,6 +184,8 @@ Options:
   skill only:
   --install                     Write the skill into the repository instead of printing
   --target <name>               claude | cursor | all (default: all)
+
+  --no-update-check             Skip the daily check for a newer published version
 
   -h, --help                    Display this help message
   -v, --version                 Display version
@@ -1104,8 +1108,32 @@ function requestsJsonFormat(argv: readonly string[]): boolean {
   return format === "json";
 }
 
-/** Runs the CLI and returns the process exit code. */
+/**
+ * Runs one invocation, and mentions a newer release when there is one.
+ *
+ * The check is *started* before the command and awaited after it, so on any real work the request
+ * overlaps the command entirely and adds no wall time. The notice goes to stderr: stdout belongs
+ * to the payload, and a JSON consumer must never have to parse a suggestion.
+ */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  // `stdout.isTTY` is the honest gate for "a person is watching": a pipe, a file or a CI job has
+  // nobody to tell, and those are exactly the cases where a network call costs something.
+  const pending =
+    process.stdout.isTTY === true && shouldCheck(argv, process.env)
+      ? checkForUpdate({ current: GENERATOR_VERSION, cacheFile: cacheFilePath() })
+      : null;
+
+  const code = await runCommand(argv);
+
+  if (pending) {
+    const notice = await pending;
+    if (notice) process.stderr.write(`\n${formatUpdateNotice(notice)}\n`);
+  }
+  return code;
+}
+
+/** The command itself. Every early return here is a finished invocation. */
+async function runCommand(argv: string[]): Promise<number> {
   let invocation: ParsedInvocation;
   try {
     invocation = parseCliArgs(argv);

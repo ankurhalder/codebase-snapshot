@@ -188,6 +188,9 @@ to trust it.
 Exit codes: `0` success · `1` drift, refused generation, or nothing to snapshot · `2` usage error,
 or a first run with no terminal and no `--autopilot`.
 
+Once a day it checks the npm registry for a newer release and mentions it on stderr — skipped in CI,
+in any `--format json` run, and in `mcp`. Turn it off with `--no-update-check`.
+
 → [Full CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md)
 
 ## For AI agents
@@ -197,7 +200,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.9.5 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.9.6 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

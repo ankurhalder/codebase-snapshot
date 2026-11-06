@@ -21,6 +21,52 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.6
+
+### It tells you when it is out of date
+
+The tool's claim is that you can prove a thing is current, so it now asks that about itself. After
+a command finishes, if a newer release is published, it says so on stderr:
+
+```
+↑ codebase-snapshot 0.9.6 is available — you have 0.9.5.
+  npm install -g codebase-snapshot
+```
+
+The constraints matter more than the feature, because this is a network call in a tool people run
+in CI and behind firewalls:
+
+- **One GET, no identifier.** `registry.npmjs.org/codebase-snapshot/latest` and nothing else. The
+  registry learns that some machine ran this version; there is no telemetry, query string or install
+  id.
+- **It never runs where it costs something.** Not when stdout is not a terminal, not in CI, not in
+  any `--format json` invocation, and never in `mcp` — the server still makes no outbound
+  connections at all, which `docs/mcp.md` promises.
+- **It cannot break a command.** A 1.2 s cap, every failure returns null, and a cold cache is a miss
+  rather than an error. The request starts before the command and is awaited after it, so on real
+  work it overlaps entirely and adds no wall time.
+- **One request per machine per day.** A 24 h cache holds the answer; a *failed* check is remembered
+  for one hour, so a single blip neither hides a release for a day nor retries on every run.
+- **Off if you want.** `--no-update-check` or `CODEBASE_SNAPSHOT_NO_UPDATE_CHECK=1`.
+
+### A tool argument that arrived as a string is no longer rejected
+
+Reported from a real client session: the same `snapshot_read` call worked through one code path and
+failed through another because the client serialised `fromLine` as `"1"`. A digit string is the same
+value in a different spelling, and the caller cannot fix what their client did — so numeric fields
+now accept it.
+
+This is not a loosening of validation: only fields the schema declares as numbers are converted, only
+strings that parse to a finite number are converted, and `"ten"` still fails with the type message.
+`"1.5"` for an integer field still fails too.
+
+### Also
+
+- `--no-update-check` is scoped to the commands that can show the notice; it is not accepted by
+  `describe`, `skill` or `mcp`, whose scope would make it a flag that does nothing.
+- The `describe` contract gained the option, and the contract-diff test keeps it in step with the
+  parser.
+
 ## 0.9.5
 
 ### Every question in the wizard is reversible

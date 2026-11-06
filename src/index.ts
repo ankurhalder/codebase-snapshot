@@ -60,6 +60,26 @@ export { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
 export const SCHEMA_VERSION = "3.0.0";
 
 /**
+ * The update check, exported because it is useful on its own: an embedder that wraps this package
+ * can ask whether a newer release exists without reimplementing the cache or the comparison, and
+ * the tests need the same functions the CLI runs.
+ */
+export {
+  CHECK_INTERVAL_MS,
+  FAILURE_INTERVAL_MS,
+  PACKAGE_LATEST_URL,
+  REQUEST_TIMEOUT_MS,
+  cacheDirectory,
+  cacheFilePath,
+  checkForUpdate,
+  fetchLatestVersion,
+  formatUpdateNotice,
+  isNewer,
+  shouldCheck,
+} from "./update-check.js";
+export type { UpdateCheckOptions, UpdateNotice } from "./update-check.js";
+
+/**
  * Files whose UTF-8 body is larger than this are not parsed for a structural summary.
  *
  * The parser's AST costs far more than the text it reads — a 50 MB source file peaked at 3.3 GB

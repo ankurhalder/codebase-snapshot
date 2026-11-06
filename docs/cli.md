@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.5
+   Added devDependency: codebase-snapshot ^0.9.6
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.5
+   Added devDependency: codebase-snapshot ^0.9.6
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -484,6 +484,23 @@ replacement. A successful run never carries an `error` key.
 So `codebase-snapshot describe --format json > contract.json`,
 `codebase-snapshot validate --format json | jq .drift` and
 `codebase-snapshot report --format json || jq -r .error.message` all work.
+
+## Update notice
+
+Once a day, after a command finishes, `snapshot` asks the npm registry whether a newer version is
+published and prints two lines on stderr if there is one:
+
+```
+↑ codebase-snapshot 0.9.6 is available — you have 0.9.5.
+  npm install -g codebase-snapshot
+```
+
+The request goes to `registry.npmjs.org/codebase-snapshot/latest`, carries no identifier of any
+kind, and its answer is remembered for 24 hours — one request per machine per day at most. It is
+skipped when stdout is not a terminal, in CI, in any `--format json` run, and in `mcp`, whose server
+makes no outbound connections at all.
+
+`--no-update-check` or `CODEBASE_SNAPSHOT_NO_UPDATE_CHECK=1` turns it off entirely.
 
 ## Examples
 

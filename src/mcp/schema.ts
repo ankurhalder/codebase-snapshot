@@ -105,3 +105,28 @@ export function applyDefaults(schema: InputSchema, value: JsonObject): JsonObjec
   }
   return out;
 }
+
+/**
+ * Accepts a numeric argument that arrived as a digit string.
+ *
+ * Reported from a real client: the same `snapshot_read` call succeeded through one code path and
+ * was rejected through another, because one of them serialised `fromLine` as `"1"`. A digit string
+ * is the same value in a different spelling, and the caller cannot fix what their client did — so
+ * refusing it makes the tool unusable there while teaching nobody anything.
+ *
+ * This is not a relaxation of type checking: only fields the schema declares as numbers are
+ * touched, only strings that parse to a finite number are converted, and anything else still fails
+ * validation with the type message. `"ten"`, `""` and `"1.5"` for an integer all still fail.
+ */
+export function coerceNumericStrings(schema: InputSchema, value: JsonObject): JsonObject {
+  const out: JsonObject = { ...value };
+  for (const [key, propertySchema] of Object.entries(schema.properties)) {
+    const raw = out[key];
+    if (typeof raw !== "string") continue;
+    if (propertySchema.type !== "number" && propertySchema.type !== "integer") continue;
+    if (raw.trim().length === 0) continue;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) out[key] = parsed;
+  }
+  return out;
+}

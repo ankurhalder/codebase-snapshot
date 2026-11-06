@@ -25,7 +25,7 @@ import {
 import type { JsonObject, JsonRpcId, JsonRpcResponse } from "./protocol.js";
 import { classifyRequest, createSession, negotiateLegacyVersion } from "./era.js";
 import type { SessionState } from "./era.js";
-import { applyDefaults, validateArguments } from "./schema.js";
+import { applyDefaults, coerceNumericStrings, validateArguments } from "./schema.js";
 import type {
   McpPrompt,
   McpServerInfo,
@@ -166,7 +166,10 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       return errorResponse(id, ERROR_CODES.invalidParams, '"arguments" must be a JSON object.');
     }
 
-    const problems = validateArguments(tool.inputSchema, rawArguments);
+    // Some clients serialise every argument as a string; a digit string for a numeric field is
+    // the same value, so it is normalised before validation rather than rejected after it.
+    const supplied = coerceNumericStrings(tool.inputSchema, rawArguments);
+    const problems = validateArguments(tool.inputSchema, supplied);
     if (problems.length > 0) {
       // Argument mistakes are reported as a tool error rather than a protocol error: the model can
       // read the message and retry, where `-32602` reaches the user as an opaque failure.
@@ -180,7 +183,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       );
     }
 
-    const args = applyDefaults(tool.inputSchema, rawArguments);
+    const args = applyDefaults(tool.inputSchema, supplied);
     let outcome: ToolOutcome;
     try {
       outcome = await tool.handler(args, options.context);

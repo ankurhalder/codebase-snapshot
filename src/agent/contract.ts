@@ -570,6 +570,16 @@ export function buildAgentContract(): AgentContract {
           "Skip installing the dependency before generating: `setup`, or `generate --autopilot` " +
           "(CI, offline, or a lockfile you do not want a package manager to touch).",
       },
+      {
+        flag: "--no-update-check",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("no-update-check"),
+        summary:
+          "Skip the once-a-day check for a newer published version. The check is already skipped " +
+          "when stdout is not a terminal, in CI, in a JSON invocation, and in `mcp`, which makes " +
+          "no network requests.",
+      },
     ],
     presets: PRESETS.map((preset) => ({
       name: preset.name,
