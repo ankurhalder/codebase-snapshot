@@ -21,8 +21,8 @@ snapshot                        # detects the project, sets it up, generates
 npx codebase-snapshot generate  # or no install at all, straight to the snapshot
 ```
 
-That writes `./snapshot/` — a directory you can drop into a chat, a prompt, a RAG pipeline or
-a repository review. TypeScript and JavaScript first, but also Python, Go, Rust, Java/Kotlin,
+That writes `./snapshot/` — a directory you can drop into a chat, a prompt, a RAG pipeline or a
+repository review. TypeScript and JavaScript first, but also Python, Go, Rust, Java/Kotlin,
 C#/.NET, PHP, Ruby, C/C++, Vue, Svelte and Astro, without configuration.
 
 ![Two ways to give a repository to a model: a dump that was silently truncated, and a snapshot
@@ -41,26 +41,18 @@ with a manifest and a validator](https://raw.githubusercontent.com/ankurhalder/c
 
 ## Why
 
-Feeding a real repository to a model is awkward: files are too big, context windows are too
-small, and picking what matters by hand does not scale or repeat. `codebase-snapshot` does it
-deterministically:
+Feeding a real repository to a model is awkward: files are too big, context windows are too small,
+and choosing what matters by hand neither scales nor repeats. This does it deterministically.
 
-- **One file per part, never over budget.** `maxPartBytes` is a hard ceiling. A file bigger
-  than the budget is truncated with an explicit omission marker naming the budget rather than
-  blowing the limit — and above `largeFileBytes` it becomes a head/tail excerpt instead.
+- **A hard ceiling, not a target.** `maxPartBytes` is a limit. A file bigger than the budget is cut
+  with an explicit omission marker naming the budget, and above `largeFileBytes` it becomes a
+  head/tail excerpt instead — nothing silently overflows the window you sized.
 - **An index, not just text.** `manifest.json` lists every included file with its layer, kind,
-  language, part, hash and a structural summary — and every *excluded* file with the reason.
-- **Provably current.** `validate` re-hashes the repository against the snapshot and exits
-  non-zero on any drift, so a pipeline can gate on context being fresh.
-- **Deterministic where it matters.** Two runs over unchanged input give byte-identical
-  `parts/`, `reports/navigation.md` and `reports/project-tree.md`, and the same
-  `manifest.fingerprint`. Only `manifest.json`, the snapshot's `README.md`,
-  `reports/audit.md` and `.codebase-snapshot` change between runs, because they carry
-  timestamps, a run id and a pid.
-- **Safe by default.** Credential files are skipped unless asked for, secret-shaped strings are
-  redacted, and a mistyped output directory cannot delete source code.
-- **Usable by agents, not just humans.** A machine-readable contract and an installable skill
-  let an agent with no prior knowledge drive the whole thing.
+  language, part, hash and a structural summary, and every *excluded* file with the reason.
+- **Provably current.** `validate` re-hashes the repository against the snapshot and exits non-zero
+  on any drift, so a pipeline can gate on the context being fresh.
+- **Repeatable.** Two runs over unchanged input give byte-identical parts and the same
+  `manifest.fingerprint`; only the artifacts that carry a timestamp, run id or pid differ.
 
 ## Install
 
@@ -71,16 +63,16 @@ npm install -D codebase-snapshot      # or add it to a project
 ```
 
 `codebase-snapshot` is the canonical name to script against; `snapshot` is the short command a
-global install provides. From a project dependency the same binary is `npx snapshot`,
-`pnpm exec snapshot`, `yarn snapshot` or the `npm run snapshot` script `init` writes — the bare
-word only exists on `PATH` when the package is installed globally.
+global install provides, and from a project dependency the same binary is `npx snapshot` or the
+`npm run snapshot` script `init` writes.
 
-This is a **<!--@major-->0<!--/@major-->.x** release. Version numbers follow semver's 0.x conventions, so the CLI surface may change in a minor release until 1.0.0 — pin an exact version if you need a fixed surface today.
+Requires **Node.js 18+**. Any npm client works — npm, yarn (classic and Berry with strict PnP), pnpm
+and bun. Published from GitHub Actions with [build
+provenance](https://docs.npmjs.com/generating-provenance-statements), so `npm audit signatures`
+verifies the tarball came from this repository at a tagged commit.
 
-Any npm-compatible client works — npm, yarn (classic and Berry with strict PnP), pnpm and bun —
-each verified against the packed tarball before release. Requires **Node.js 18+**.
-
-Published from GitHub Actions with [build provenance](https://docs.npmjs.com/generating-provenance-statements): npm shows the tarball was built from this repository at a tagged commit, and `npm audit signatures` verifies it.
+This is a **<!--@major-->0<!--/@major-->.x** release: the CLI surface may still change in a minor
+release until 1.0.0, so pin an exact version if you need a fixed surface today.
 
 → [Installation guide](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/install.md)
 
@@ -92,12 +84,11 @@ Type it. That is the whole first run.
 snapshot
 ```
 
-In a project with no configuration the tool recognises the project and says what it keyed on —
-`Detected nextjs` / `Because next.config.ts` — then offers one keystroke for the recommended
-setup, or a walk through every setting with each question starting on its default. Either way it
-writes the config, adds the npm scripts and the devDependency, installs with your package
-manager, and generates. In a project that already has a config, or that it has generated before,
-the same command just generates.
+It recognises the project and says what it keyed on — `Detected nextjs` / `Because next.config.ts`
+— then offers the recommended setup in one keystroke, or a walk through every setting with each
+question starting on its default. Either way it writes the config, adds the npm scripts and the
+devDependency, installs with your package manager, and generates. A project that already has a
+config just generates.
 
 Nothing to press — CI, a container, an agent:
 
@@ -105,39 +96,19 @@ Nothing to press — CI, a container, an agent:
 npx codebase-snapshot --autopilot
 ```
 
-Same work, no questions. This is the part that matters: **a first run never guesses.** With no
-terminal and no `--autopilot` it exits `2` and tells you the three ways forward, because a
-snapshot built from settings nobody chose is a snapshot nobody can check.
+**A first run never guesses.** With no terminal and no `--autopilot` it exits `2` and names the
+three ways forward, because a snapshot built from settings nobody chose is a snapshot nobody can
+check.
 
 ```bash
-# Or step by step, if you want to see each stage:
 npx codebase-snapshot init --yes   # config + scripts + devDependency + .gitignore
-npm install                                     # the package, into node_modules
-npm run snapshot                                # generate
-npm run snapshot:validate                       # exit 0 = current with disk
+npm install                        # the package, into node_modules
+npm run snapshot                   # generate
+npm run snapshot:validate          # exit 0 = current with disk
 ```
 
-`setup` is the same one-command path as `--autopilot`, spelled as a command; both keep a config
-the repository already has, and `--no-install` skips the install (CI, offline, or a lockfile you
-would rather not touch).
-
-```
-📸 Generating snapshot for: /Users/you/project
-   Branch: main | Part budget: 300 KB
-
-✅ Snapshot generated in 0.14s:
-   - Tracked files: 128
-   - Total lines:   9,431
-   - Total size:    0.41 MB
-   - Parts written: 3 under snapshot/parts/
-   - Reports:       snapshot/reports/ (project-tree, navigation, audit)
-   - Manifest:      snapshot/manifest.json
-   - Fingerprint:   e4607b570268c8def0911babbace97e4a0196d9eaf2cac22c8847500883d70aa
-   - Integrity:     passed
-```
-
-The fingerprint is printed in full — all 64 hex characters, never elided — and it is the same
-value as `manifest.fingerprint`.
+The fingerprint is printed in full — all 64 hex characters, never elided — and it is the same value
+as `manifest.fingerprint`.
 
 ## What you get
 
@@ -158,34 +129,29 @@ Every artifact can be turned off (`--skip-artifacts`, `--only-artifacts`, or the
 
 ## Built to be trusted with a whole repository
 
-A snapshot is only useful if you can believe it, so the tool is explicit about everything it does
-*not* contain:
+A snapshot is only useful if you can believe it, so the tool is explicit about what it does *not*
+contain.
 
 - **Nothing is dropped silently.** Every excluded path is recorded in `manifest.skipped[]` with a
-  reason — `binary`, `gitignore`, `default-ignore`, `sensitive-file`, `sensitive-path`, `symlink`,
-  `outside-root`, `read-error`, `not-file`, `nested-repository`, `excluded` — and `explain <path>`
-  answers the same question for any single path.
-- **Encoding is stated, not guessed.** UTF-16 files are transcoded instead of vanishing as
-  "binary"; a file that is not valid UTF-8 is kept but labelled `utf-8-lossy` with the count of
-  undecodable bytes, so you never mistake mojibake for source.
+  reason — `binary`, `gitignore`, `sensitive-file`, `symlink`, `read-error`, `excluded` and the
+  rest — and `explain <path>` answers the same question for any single file.
 - **Counts describe what was emitted.** `includedBytes` and `includedLines` are measured from the
-  block in the part, not from the file on disk.
+  block in the part, not from the file on disk. A file that is not valid UTF-8 is kept and labelled
+  `utf-8-lossy` rather than vanishing as "binary".
 - **Drift is checked, not assumed.** `validate` compares every file's hash *and* a digest of the
-  settings the snapshot was generated with, so a changed budget, layer rule or secret pattern is
-  drift rather than silence.
-- **Memory is bounded.** Files above 2 MB are not parsed for a structural summary (that is where a 50 MB file
-  used to reach 3 GB of resident memory), and 130 000 files in one directory or a 3 000-level path
-  scan without crashing.
-- **`diff` compares payloads, not just paths.** Two snapshots of identical sources with different
-  settings say so instead of reporting "0 changed".
-- **When git cannot list files** — an interrupted clone, a dehydrated `.git`, `safe.directory` —
-  the run refuses rather than quietly scanning something different, and `--discovery walk` is the
-  documented escape hatch.
+  settings the snapshot was generated with, so a changed budget or secret pattern is drift rather
+  than silence.
+- **The output directory is the tool's.** Each run is written to a scratch directory and swapped in
+  atomically, and it refuses to replace a directory it did not create — `--out-dir src` cannot
+  destroy source code.
+- **Credential files are excluded by default** — `.env`, `*.pem`, `.npmrc`, `id_rsa`, `*.tfstate`
+  and more — and secret-shaped strings inside ordinary files are redacted by masking only the
+  matched span, never the whole line.
 
 ## Supported projects
 
-25 presets, detected automatically from the repository — each contributing layers, kinds,
-ecosystem ignore patterns and a recommended part budget.
+25 presets, detected from the repository — each contributing layers, kinds, ecosystem ignore
+patterns and a recommended part budget.
 
 | | | | |
 | :--- | :--- | :--- | :--- |
@@ -197,11 +163,9 @@ ecosystem ignore patterns and a recommended part budget.
 | Laravel (PHP) | Rails (Ruby) | Terraform / Docker infra | Docs-only |
 | generic fallback | | | |
 
-Non-TypeScript languages get import/export/class/function summaries rather than being treated
-as opaque text. Vue, Svelte and Astro script blocks go through the real TypeScript compiler.
-Every summary is labelled `ast`, `structural` or `heuristic` so you know how much to trust it —
-Python, for example, is a line-scan `heuristic`, while JSON and Markdown get `structural`
-shapes.
+Non-TypeScript languages get import/export/class/function summaries rather than being treated as
+opaque text, and every summary is labelled `ast`, `structural` or `heuristic` so you know how much
+to trust it.
 
 → [Preset table and detection rules](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md#project-presets)
 
@@ -219,46 +183,39 @@ shapes.
 | `diff <a> <b>` | Compare two snapshots. |
 | `describe` | The machine-readable contract (`--format json`). |
 | `skill` | Print or install the agent skill. |
+| `mcp` | Serve the repository to an MCP client over stdio. |
 
-Exit codes: `0` success · `1` drift, refused generation, or nothing to snapshot · `2` usage
-error, or a first run with no terminal and no `--autopilot`.
+Exit codes: `0` success · `1` drift, refused generation, or nothing to snapshot · `2` usage error,
+or a first run with no terminal and no `--autopilot`.
 
 → [Full CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md)
 
 ## For AI agents
 
-Everything an agent needs is available as data, and the tool can install its own skill:
+Everything an agent needs is available as data, and the tool can install its own skill.
 
 ```bash
-# The contract: workflow, every option and default, exit codes, presets, safety rules
-npx codebase-snapshot describe --format json
-
-# Install the skill into the registries agent tools read: .claude/skills/, .cursor/rules/
-# (it adds those files to .gitignore, and never touches your own AGENTS.md)
-npx codebase-snapshot skill --install
+npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
+npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
+npx -y codebase-snapshot@0.9.4 mcp             # or serve it over MCP
 ```
 
-An agent told only "use `npx codebase-snapshot`" can read the contract, follow its
-ordered workflow, and produce a validated snapshot unaided — that path is covered by a test.
+An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
+workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-Or skip the shell and let the client talk to a server:
-
-```bash
-npx -y codebase-snapshot@0.9.4 mcp
-```
-
-Seven tools over MCP — status, plan, generate, validate, locate, read, explain — with `snapshot://`
-resources and two prompts. Reads are served from the snapshot rather than the working tree, so an
-excluded file stays excluded and a redacted value stays redacted.
+The MCP server exposes seven tools — status, plan, generate, validate, locate, read, explain — plus
+`snapshot://` resources and two prompts. Its reads come from the snapshot rather than the working
+tree, so an excluded file stays excluded and a redacted value stays redacted, and
+`snapshot_validate` answers the question an agent otherwise cannot ask: is the context I was given
+still true?
 
 → [Using this with an AI agent](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) · [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
 
 ## Configuration
 
-`snapshot.config.ts` (or `.mjs`) is written by `init` with **every** setting at its current
-value, commented and grouped, so it doubles as the reference. Deleting any line is safe: the
-defaults are real. The object is exported through a name — `export default { … }` is
-`import/no-anonymous-default-export`, on by default in `eslint-config-next`.
+`snapshot.config.ts` (or `.mjs`) is written by `init` with **every** setting at its current value,
+commented and grouped, so it doubles as the reference. Deleting any line is safe: the defaults are
+real.
 
 ```js
 const config = {
@@ -287,8 +244,9 @@ const manifest = generateSnapshot(config);
 const validation = validateSnapshot(config);
 ```
 
-CommonJS works too (`require("codebase-snapshot")`), with type definitions for
-both. The CLI and the API share one implementation, so anything the CLI does is available here.
+CommonJS works too (`require("codebase-snapshot")`), with type definitions for both. The CLI, the
+API and the MCP server share one implementation, so anything one of them does is available in the
+others.
 
 ## Documentation
 
@@ -299,37 +257,28 @@ both. The CLI and the API share one implementation, so anything the CLI does is 
 | [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md) | Every setting, all 25 presets, budgets, hooks, secrets |
 | [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md) | Directory layout and the full manifest schema |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
+| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | Seven tools, resources, both protocol eras |
 | [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md) | Every message and what to do about it |
 | [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md) | Release history and breaking changes |
 
-## Guides
-
-| | |
-| :--- | :--- |
-| [Feeding a codebase to ChatGPT, Claude or Cursor](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-feed-a-repo-to-claude.md) | The full recipe, including the parts most guides skip |
-| [Stale LLM context is a bug](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/stale-context-is-your-bug.md) | Drift, fingerprints and the CI gate that catches a snapshot going out of date |
-| [How many tokens is a codebase?](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/codebase-token-budget.md) | The arithmetic of bytes, tokens and context windows, measured |
-| [Budgeting LLM context](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-context-budget.md) | Choosing the numbers from the destination, not from taste |
-| [vs repomix](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-repomix.md) | Including where repomix is the better choice |
-| [vs gitingest](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-gitingest.md) | Including where gitingest is the better choice |
-| [vs code2prompt](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-code2prompt.md) | Including where code2prompt is the better choice |
-
-## Safety
-
-- **Credential files are excluded by default** — `.env`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
-  `.git-credentials`, `id_rsa`, `.kube/config`, `*.tfstate` — and listed in
-  `manifest.skipped[]` with the reason.
-- **Secrets are redacted** inside ordinary files: only the matched span is masked, never the
-  whole line, and no excerpt reaches any artifact.
-- **The output directory is owned by the tool.** Each run is written to a scratch directory and
-  swapped in atomically; the previous snapshot survives a failure.
-- **It refuses to replace a directory it did not create**, so `--out-dir src` cannot destroy
-  source code.
+Guides: [feeding a codebase to ChatGPT, Claude or
+Cursor](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-feed-a-repo-to-claude.md)
+· [stale LLM context is a
+bug](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/stale-context-is-your-bug.md) ·
+[how many tokens a codebase
+is](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/codebase-token-budget.md) ·
+[budgeting a context
+window](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/how-to-context-budget.md) ·
+[vs repomix](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-repomix.md) · [vs
+gitingest](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-gitingest.md) · [vs
+code2prompt](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/vs-code2prompt.md)
 
 ## Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/CONTRIBUTING.md) and the
-[code of conduct](https://github.com/ankurhalder/codebase-snapshot/blob/main/CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/SECURITY.md).
+Issues and pull requests are welcome — see
+[CONTRIBUTING.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/CONTRIBUTING.md) and the
+[code of conduct](https://github.com/ankurhalder/codebase-snapshot/blob/main/CODE_OF_CONDUCT.md).
+Security reports: [SECURITY.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/SECURITY.md).
 
 ## License
 

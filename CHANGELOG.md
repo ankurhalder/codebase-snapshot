@@ -83,6 +83,9 @@ time out.
 
 ### Ships alongside
 
+- The README was cut from 2,311 to 1,814 tokens (measured by `readme-lint`, which counts URLs and
+  code blocks too). The narrative lost about a third of its length; the command table, the preset
+  names and the links stayed, because they are what a reader scans for.
 - A `codebase-snapshot/mcp` subpath so another tool can mount the server in-process.
 - `snapshot://` resources: the manifest, each part, the three reports, the contract and the skill,
   plus `snapshot://parts/{index}` as a template.
