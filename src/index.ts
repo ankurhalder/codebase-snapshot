@@ -2089,6 +2089,9 @@ export { renumberParts } from "./partitioner/chunker.js";
 export { collectFiles, isSensitivePath, matchesExclude, globToRegExp } from "./scanner/files.js";
 export {
   ARTIFACT_NAMES,
+  classifyKind,
+  classifyLayer,
+  configDigest,
   loadConfigFileDetailed,
   parseByteSize,
   supportsTypeScriptImports,

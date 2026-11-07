@@ -370,8 +370,11 @@ const isThenable = (value: object): boolean =>
 /**
  * Every key a configuration file may carry.
  *
- * This is `SnapshotConfig` plus the two spellings that are read through casts: `discovery`
- * (validated separately) and `exclude` (the flag spelling of `excludePatterns`).
+ * This is `SnapshotConfig` plus the spellings that are read through casts: `discovery`
+ * (validated separately), `exclude` (the flag spelling of `excludePatterns`) and
+ * `secretRules` (the library spelling of a rule list, accepted by `resolveConfig` and
+ * therefore needed here too — omitting it made a config file that used it fail with
+ * "unknown setting(s): secretRules" while the same key worked when passed in code).
  */
 const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "artifacts",
@@ -395,6 +398,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "preset",
   "previewHeadLines",
   "previewTailLines",
+  "secretRules",
   "secrets",
   "tmpDir",
 ]);
@@ -572,6 +576,14 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       // rule that a wrong type is a warning, and against the hard error an array throws in a module
       // config. The array is a wrong type like any other.
       if (snapshotKey && typeof snapshotKey === "object" && !Array.isArray(snapshotKey)) {
+        // The same guard every other config file gets. It was skipped here, so
+        // `"snapshot": { "maxPartByte": 4096 }` in package.json fell back to the default
+        // budget at exit 0 — the silent fallback rule 1 forbids, in the one config
+        // location a Node project is most likely to use.
+        assertKnownConfigKeys(
+          snapshotKey as Record<string, unknown>,
+          `${pkgJsonPath} (the "snapshot" key)`
+        );
         return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings, errors };
       }
       // A wrong-typed key is a mistake but not proof of intent — plenty of other
@@ -1318,10 +1330,21 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     preset: config.preset,
     layersMode: config.layersMode,
     budgets: config.budgets,
-    layers: config.layers.map((layer) => layer.name),
-    kinds: config.kinds.map((kind) => kind.kind),
+    // The matcher is what makes a layer a layer. Hashing only the names meant that
+    // moving `{ name: "api", match: "src/api/**" }` to `"src/v2/**"` produced the same
+    // digest, so `validate` reported "valid and up to date" for a snapshot whose files
+    // had all been reclassified — and per-layer budgets applied to different files.
+    layers: config.layers.map((layer) => ({ name: layer.name, match: String(layer.match) })),
+    kinds: config.kinds.map((kind) => ({ kind: kind.kind, match: String(kind.match) })),
+    // How files are enumerated decides what is in the snapshot at all.
+    discovery: config.discovery ?? "auto",
+    // `flags` and `valueGroup` change *what is masked*, and a rule's source alone does
+    // not imply either: the same source with and without `i` redacts different lines.
     secretRules: config.secretRules
-      .map((rule) => `${rule.rule}:${rule.pattern.source}`)
+      .map(
+        (rule) =>
+          `${rule.rule}:${rule.pattern.source}/${rule.pattern.flags}:${rule.valueGroup ?? ""}`
+      )
       .sort(),
   };
   return createHash("sha256").update(JSON.stringify(material)).digest("hex");
