@@ -35,7 +35,20 @@ export const pythonProfile: LanguageProfile = {
 
       const from = FROM_IMPORT.exec(trimmed);
       if (from) {
-        summary.imports.push(from[1]);
+        const module = from[1];
+        // `from . import models` is the same edge as `from .models import …` — the module is the
+        // name, and the leading dots are the package. Recording it as the bare `.` lost the edge:
+        // the resolver had a package directory and no module in it. Only the name list form (which
+        // the module path cannot spell) is expanded, and each name is its own edge because a
+        // package's `__init__` and each submodule are separate files.
+        if (/^\.+$/.test(module)) {
+          for (const name of from[2].split(",")) {
+            const imported = name.replace(/[()]/g, "").trim().split(/\s+as\s+/)[0].trim();
+            if (/^[A-Za-z_]\w*$/.test(imported)) summary.imports.push(`${module}${imported}`);
+          }
+        } else {
+          summary.imports.push(module);
+        }
         routePending = false;
         return;
       }

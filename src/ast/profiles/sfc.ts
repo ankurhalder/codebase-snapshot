@@ -2,7 +2,10 @@ import { summarizeTypeScriptSource } from "../ts-parser.js";
 import type { LanguageProfile } from "./shared.js";
 import { emptySummary, finalizeSummary } from "./shared.js";
 
-const SCRIPT_BLOCK = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+const SCRIPT_BLOCK = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+
+/** `lang="tsx"` / `lang='jsx'`: the block holds JSX, whatever the component's extension says. */
+const JSX_LANG = /\blang\s*=\s*["']?[tj]sx\b/i;
 
 /**
  * The `---` fence at the top of an Astro component.
@@ -30,6 +33,11 @@ export const sfcProfile: LanguageProfile = {
   extensions: [".vue", ".svelte", ".astro"],
   summarize(path, content) {
     let script = "";
+    // Which script kind the block is parsed as. A `.ts` kind reads `<div>hi</div>` as a type
+    // assertion and then reports four to six parse errors for a file that is perfectly valid —
+    // and never records the component, because it finds no JSX. Astro frontmatter is JSX-capable
+    // by construction, and a Vue or Svelte block says so with `lang="tsx"` / `lang="jsx"`.
+    let usesJsx = path.toLowerCase().endsWith(".astro");
 
     // Astro keeps its script in a leading `---` fence rather than a <script> tag.
     if (path.toLowerCase().endsWith(".astro")) {
@@ -38,7 +46,8 @@ export const sfcProfile: LanguageProfile = {
     }
 
     for (const match of content.matchAll(SCRIPT_BLOCK)) {
-      script += `${match[1]}\n`;
+      if (JSX_LANG.test(match[1] ?? "")) usesJsx = true;
+      script += `${match[2]}\n`;
     }
 
     const name = componentName(path);
@@ -53,7 +62,7 @@ export const sfcProfile: LanguageProfile = {
       return { summary: finalizeSummary(summary), quality: "heuristic" };
     }
 
-    const summary = summarizeTypeScriptSource(`${name}.ts`, script);
+    const summary = summarizeTypeScriptSource(`${name}.${usesJsx ? "tsx" : "ts"}`, script);
     // `summarizeTypeScriptSource` already sorted and de-duplicated its lists, and the
     // component name is pushed afterwards — so a component whose script also exported
     // its own name (the normal `<script setup>` shape) was listed twice, and the index

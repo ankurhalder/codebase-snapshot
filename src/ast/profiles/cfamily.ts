@@ -1,7 +1,7 @@
 import type { LanguageProfile } from "./shared.js";
 import { eachLine, emptySummary, finalizeSummary, isTopLevel } from "./shared.js";
 
-const INCLUDE = /^#\s*include\s*[<"]([^>"]+)[>"]/;
+const INCLUDE = /^#\s*include\s*([<"])([^>"]+)[>"]/;
 const DEFINE = /^#\s*define\s+([A-Za-z_]\w*)/;
 const USING = /^using\s+(?:namespace\s+)?([\w:]+)\s*;/;
 const TYPE_DECL = /^(?:typedef\s+)?(?:struct|union|class|enum)\s+([A-Za-z_]\w*)/;
@@ -30,7 +30,10 @@ export const cfamilyProfile: LanguageProfile = {
 
       const included = INCLUDE.exec(trimmed);
       if (included) {
-        summary.imports.push(included[1]);
+        // `#include "board.h"` is a header in this repository; `#include <stdio.h>` is a system
+        // one. The two are recorded differently so the resolver can tell them apart — the quoted
+        // form gets a `./` prefix, which is also how the local form is searched first.
+        summary.imports.push(included[1] === '"' ? `./${included[2]}` : included[2]);
         return;
       }
 

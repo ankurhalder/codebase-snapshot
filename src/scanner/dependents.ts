@@ -42,7 +42,39 @@ const SOURCE_EXTENSIONS = new Set([
 ]);
 
 /**
- * One-pass lookup tables for relative-import resolution.
+ * Extensions whose relative imports are *not* JavaScript's `./x` shape.
+ *
+ * `importsOfText` has recorded Python, Ruby, C/C++ and Dart imports since the language profiles
+ * landed, and `resolveSpecifier` only ever understood `./` and `../`, so every non-JavaScript edge
+ * in the graph pointed at nothing: `from .models import Order` was in the manifest, resolved to
+ * `null`, and the module that imports it was dropped from a `--with-dependents` snapshot.
+ *
+ * Each of these languages spells "this directory" differently, and the difference is the whole
+ * reason a single rule cannot serve them:
+ *
+ * - **Python** writes it with dots: `from .models import Order` is `.models`, `from ..util import x`
+ *   is `..util`. One dot is the current package (the file's directory), two is its parent.
+ * - **Ruby** has no marker at all — `require_relative "user"` is relative to the file and
+ *   `require "json"` is a gem. The profile prefixes the first form with `./` so the two stay
+ *   distinguishable.
+ * - **C and C++** use `#include "board.h"` for a local header and `<stdio.h>` for a system one.
+ *   The profile prefixes the quoted form with `./`.
+ * - **Dart** writes a relative import bare: `import 'widget.dart'` next to the file, while
+ *   `package:flutter/…` and `dart:async` are not paths in this repository at all.
+ *
+ * Package-rooted languages (Go modules, Rust `crate::`, PHP PSR-4, JVM packages, Swift modules) are
+ * deliberately absent: their specifiers are resolved through a manifest — `go.mod`, `Cargo.toml`,
+ * `composer.json` — and guessing a path from them would fabricate edges that `validate` then has
+ * to disagree about.
+ */
+const PYTHON_EXTENSIONS = new Set([".py", ".pyi"]);
+const RUBY_EXTENSIONS = new Set([".rb", ".rake", ".gemspec"]);
+const C_EXTENSIONS = new Set([".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx", ".m", ".mm"]);
+
+/** Suffixes a Python module specifier may resolve to, in the order Python's own finder tries. */
+const PYTHON_SUFFIXES = [".py", ".pyi", "/__init__.py", "/__init__.pyi"];
+
+/** One-pass lookup tables for relative-import resolution.
  *
  * `resolveSpecifier` used to fall back to scanning every known file for every
  * unresolved import — 100k files × 100k imports — and built a RegExp from the
@@ -106,13 +138,57 @@ export function resolveSpecifier(
   specifier: string,
   resolver: ImportResolver
 ): string | null {
+  const extension = path.posix.extname(fromFile).toLowerCase();
+
+  const exact = (key: string): string | null =>
+    resolver.byPath.get(key) ?? resolver.byPathFolded.get(key.toLowerCase()) ?? null;
+  const firstOf = (candidates: readonly string[]): string | null => {
+    for (const candidate of candidates) {
+      const hit = exact(candidate);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  if (PYTHON_EXTENSIONS.has(extension) && specifier.startsWith(".")) {
+    const dots = /^\.+/.exec(specifier)?.[0].length ?? 0;
+    const rest = specifier.slice(dots).replace(/\./g, "/");
+    let base = path.posix.dirname(fromFile);
+    // One dot is this package; every further dot is one directory up.
+    for (let up = 1; up < dots; up += 1) base = path.posix.dirname(base);
+    const joined = rest ? path.posix.normalize(path.posix.join(base, rest)) : base;
+    return firstOf([joined, ...PYTHON_SUFFIXES.map((suffix) => `${joined}${suffix}`)]);
+  }
+
+  if (RUBY_EXTENSIONS.has(extension) && specifier.startsWith("./")) {
+    // `require_relative` only: the profile keeps a bare `require` bare, because a gem name is not
+    // a path and resolving one would invent an edge to any same-named file.
+    const joined = path.posix.normalize(
+      path.posix.join(path.posix.dirname(fromFile), specifier)
+    );
+    return firstOf([`${joined}.rb`, joined]);
+  }
+
+  if (C_EXTENSIONS.has(extension) && specifier.startsWith("./")) {
+    // `#include "local.h"` only: `<stdio.h>` is recorded without the prefix and stays unresolved.
+    const joined = path.posix.normalize(
+      path.posix.join(path.posix.dirname(fromFile), specifier)
+    );
+    return exact(joined);
+  }
+
+  if (extension === ".dart" && !specifier.includes(":")) {
+    // Dart has no `./` convention: a specifier with no scheme is a path beside this file.
+    const joined = path.posix.normalize(
+      path.posix.join(path.posix.dirname(fromFile), specifier)
+    );
+    return firstOf([joined, `${joined}.dart`]);
+  }
+
   if (!RELATIVE_SPECIFIER.test(specifier)) return null;
   const joined = path.posix.normalize(
     path.posix.join(path.posix.dirname(fromFile), specifier)
   );
-
-  const exact = (key: string): string | null =>
-    resolver.byPath.get(key) ?? resolver.byPathFolded.get(key.toLowerCase()) ?? null;
 
   const direct = exact(joined);
   if (direct) return direct;

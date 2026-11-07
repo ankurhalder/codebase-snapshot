@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
+import { importsOfText, SUMMARY_MAX_SOURCE_BYTES as SUMMARY_MAX_SOURCE_BYTES_SHARED } from "./ast/imports.js";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
 import { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
 import { summarizeTypeScriptSource } from "./ast/ts-parser.js";
@@ -97,8 +98,12 @@ export type { InstallKind, UpdateCheckOptions, UpdateNotice } from "./update-che
  *
  * The comparison is in bytes, not UTF-16 code units: a 3-byte-per-character file of 2 M characters
  * is 6 MB, and measuring characters let it through the ceiling the warning claims to enforce.
+ *
+ * Defined in `ast/imports.ts` and imported: `validate` and `explain` read imports from disk, and
+ * they have to refuse exactly the files this run refused to parse. Two constants would be two
+ * ceilings, and the day they disagree a file is a dependent for one command and not the other.
  */
-const SUMMARY_MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+const SUMMARY_MAX_SOURCE_BYTES = SUMMARY_MAX_SOURCE_BYTES_SHARED;
 
 
 function sha256Hex(input: string | Buffer): string {
@@ -1429,6 +1434,18 @@ export function generateSnapshot(
    * one grouped warning, exactly like the oversize case.
    */
   const previewSummaryPaths: string[] = [];
+  /**
+   * Import specifiers of the files whose summary was skipped.
+   *
+   * `--with-dependents` is decided from `file.summary.imports`, and a previewed or oversized file
+   * has no summary — so an importer that happened to be large was dropped from the snapshot as
+   * "unchanged" while `validate` and `explain`, which read the file from disk, called it a
+   * dependent. Both of those commands got the answer right; the generator lost a file the change
+   * genuinely affects. Imports are cheap to extract from text already in hand (they are module
+   * specifiers at the top of the file), so they are collected here even when the structural
+   * summary is refused.
+   */
+  const skippedSummaryImports = new Map<string, string[]>();
   const layerCounts: LayerOrKindCounts = {};
   const kindCounts: LayerOrKindCounts = {};
 
@@ -1614,12 +1631,17 @@ export function generateSnapshot(
       // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
       // describe a file the snapshot does not contain. Recorded, never silent.
       oversizeSummaryPaths.push(relativePath);
+      // `[]` here, from the same helper and the same ceiling `validate` and `explain` apply.
+      skippedSummaryImports.set(relativePath, importsOfText(relativePath, rawContent));
     } else if (SKIP_PREVIEW_SUMMARIES && isPreviewTruncated && hasStructuralSummary(relativePath)) {
       // The body in the snapshot is a head/tail preview, so a whole-file summary
       // would describe lines no artifact carries. Skipping it is also the single
       // largest cost saving on a big source file: masking tens of thousands of
       // identifiers for a summary the partitioner discards.
       previewSummaryPaths.push(relativePath);
+      // The *imports* are still needed, and they are the cheap half of the summary: module
+      // specifiers live at the top of the file, which the head of a preview keeps.
+      skippedSummaryImports.set(relativePath, importsOfText(relativePath, rawContent));
     } else {
       try {
         // Always parse the original source. Masking a credential-shaped identifier such as
@@ -1685,8 +1707,11 @@ export function generateSnapshot(
     // One hop, and only one hop — `importsChangedFile` is the shared test, so `explain` and
     // `validate` answer this question with the same rule the generator applies here.
     for (const file of files) {
-      if (!isSourceSummary(file.summary)) continue;
-      if (importsChangedFile(file.relativePath, file.summary.imports, changedPaths, resolver)) {
+      const fileImports = isSourceSummary(file.summary)
+        ? file.summary.imports
+        : (skippedSummaryImports.get(file.relativePath) ?? []);
+      if (fileImports.length === 0) continue;
+      if (importsChangedFile(file.relativePath, fileImports, changedPaths, resolver)) {
         keep.add(file.relativePath);
       }
     }
@@ -1720,6 +1745,9 @@ export function generateSnapshot(
     retain(fileWarnings, (warning) => keep.has(warning.path));
     for (const path of [...monolithBodies.keys()]) {
       if (!keep.has(path)) monolithBodies.delete(path);
+    }
+    for (const path of [...skippedSummaryImports.keys()]) {
+      if (!keep.has(path)) skippedSummaryImports.delete(path);
     }
   }
 
