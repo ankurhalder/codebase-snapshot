@@ -1527,6 +1527,13 @@ async function runCommand(argv: string[]): Promise<number> {
     }
   }
 
+  // `--watch` asks for something the runtime may be unable to do at all, so it is answered before
+  // the run writes anything. See {@link watchSupportProblem}.
+  if (invocation.watch) {
+    const problem = watchSupportProblem();
+    if (problem !== null) throw new UsageError(problem);
+  }
+
   const started = performance.now();
   info(`📸 ${invocation.dryRun ? "Planning snapshot (dry run)" : "Generating snapshot"} for: ${resolved.cwd}`);
   info(
@@ -1800,6 +1807,35 @@ export function watchPathsFor(config: ResolvedSnapshotConfig): WatchPaths {
   };
 }
 
+/**
+ * Why `--watch` cannot work here, or `null` when it can.
+ *
+ * `fs.watch(dir, { recursive: true })` is only available on Linux from Node 20.13: before that it
+ * throws `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. The package declares `engines: >=18`, so a user can
+ * legitimately be running a Node that cannot honour this flag — and what they got was an uncaught
+ * exception *after* the first snapshot had been written and "Watching for changes" printed, which
+ * reads as a broken tool rather than as a version requirement.
+ *
+ * The platform and version are parameters so the boundary is testable off the machine that happens
+ * to run the tests: this is the kind of check that is written on one OS and shipped broken to
+ * another, which is precisely how it went unnoticed.
+ */
+export function watchSupportProblem(
+  platform: string = process.platform,
+  version: string = process.versions.node
+): string | null {
+  // macOS and Windows have had a recursive watcher for years.
+  if (platform !== "linux") return null;
+  const [major, minor] = version.split(".").map((part) => Number.parseInt(part, 10));
+  if (!Number.isFinite(major)) return null;
+  if (major > 20 || (major === 20 && (minor ?? 0) >= 13)) return null;
+  return (
+    "--watch needs recursive directory watching, which Node only provides on Linux from 20.13 " +
+    `(this is ${version}). Re-run \`generate\` after each change, or upgrade to Node 20.13 or ` +
+    "later."
+  );
+}
+
 async function runWatchLoop(
   invocation: ParsedInvocation,
   resolved: ResolvedSnapshotConfig,
@@ -1898,27 +1934,46 @@ async function runWatchLoop(
   // cost of the command and printed two summaries for one invocation.
   if (!options.generatedAlready) void regenerate();
 
-  const watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
-    const decision = decideWatchEvent(
-      state,
-      {
-        path: filename ? path.resolve(resolved.cwd, filename.toString()) : null,
-        now: performance.now(),
-      },
-      paths
-    );
-    state = decision.state;
-    if (decision.action === "pending") {
-      // The run that is in flight will schedule the single follow-up when it
-      // finishes; a debounce timer now would be consumed by the early return.
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
+  // The watcher can refuse to start at all. `fs.watch` throws rather than emitting `error` for a
+  // missing feature (see `watchSupportProblem`) and for ENOSPC — the Linux inotify watch limit,
+  // which a large repository or a busy machine can reach on a Node that *does* support the
+  // feature. Both used to arrive as an uncaught exception after the snapshot had been written.
+  let watcher: fs.FSWatcher;
+  try {
+    watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
+      const decision = decideWatchEvent(
+        state,
+        {
+          path: filename ? path.resolve(resolved.cwd, filename.toString()) : null,
+          now: performance.now(),
+        },
+        paths
+      );
+      state = decision.state;
+      if (decision.action === "pending") {
+        // The run that is in flight will schedule the single follow-up when it
+        // finishes; a debounce timer now would be consumed by the early return.
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        return;
       }
-      return;
-    }
-    if (decision.action === "schedule") schedule();
-  });
+      if (decision.action === "schedule") schedule();
+    });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const detail =
+      code === "ENOSPC"
+        ? "the operating system's file-watch limit is exhausted; raise it " +
+          "(`fs.inotify.max_user_watches` on Linux) or run `generate` by hand"
+        : code === "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM"
+          ? (watchSupportProblem() ?? "this platform has no recursive directory watching")
+          : (err as Error).message;
+    warn(`❌ Could not start watching ${resolved.cwd}: ${detail}`);
+    warn("   The snapshot that was just written is complete and valid.");
+    return 1;
+  }
 
   // An `fs.watch` handle emits `error` instead of throwing: EPERM when a watched
   // directory is removed on Windows, ENOSPC when the Linux inotify watch limit is hit.

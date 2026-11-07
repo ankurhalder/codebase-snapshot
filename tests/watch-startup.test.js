@@ -6,7 +6,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { isGeneratedWatchPath, watchPathsFor } from "../dist/cli.js";
+import { isGeneratedWatchPath, watchPathsFor, watchSupportProblem } from "../dist/cli.js";
 import { resolveConfig } from "../dist/index.js";
 
 /**
@@ -19,6 +19,9 @@ import { resolveConfig } from "../dist/index.js";
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
 
+/** The CLI refuses `--watch` where the runtime cannot do it, so this file cannot run it either. */
+const watchUnavailable = watchSupportProblem();
+
 function tempRepo(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watch-start-"));
   fs.writeFileSync(path.join(dir, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
@@ -28,6 +31,10 @@ function tempRepo(t) {
 }
 
 test("watching does not generate a second time on startup", async (t) => {
+  if (watchUnavailable !== null) {
+    t.skip(`recursive watching is unavailable here: ${watchUnavailable}`);
+    return;
+  }
   const dir = tempRepo(t);
   const child = spawn(process.execPath, [BIN, "generate", "--watch", "--cwd", dir], {
     cwd: dir,
@@ -38,11 +45,25 @@ test("watching does not generate a second time on startup", async (t) => {
   child.stdout.on("data", (chunk) => (output += String(chunk)));
   child.stderr.on("data", (chunk) => (output += String(chunk)));
 
+  // Attached before the kill, not after. Waiting for `exit` on a child that has already exited
+  // leaves the promise pending for ever, and a `node --test` worker with no handles left reports
+  // that as "Promise resolution is still pending but the event loop has already resolved" — a
+  // hang, not the assertion failure it really is. That is how a crash on Node 18 hid behind this.
+  const exited = new Promise((resolve) =>
+    child.once("exit", (code, signal) => resolve({ code, signal }))
+  );
+
   // Long enough for the initial generate plus a debounce window to have fired if it were going
   // to. The regenerate line is the one this assertion counts: it is printed only by the loop.
   await new Promise((resolve) => setTimeout(resolve, 3000));
+  const premature = await Promise.race([exited, Promise.resolve(null)]);
+  assert.equal(
+    premature,
+    null,
+    `the watcher exited before the first window (${JSON.stringify(premature)}):\n${output}`
+  );
   child.kill();
-  await new Promise((resolve) => child.once("exit", resolve));
+  await exited;
 
   const regenerations = (output.match(/♻️/g) ?? []).length;
   assert.equal(
@@ -51,6 +72,36 @@ test("watching does not generate a second time on startup", async (t) => {
     `the startup snapshot is generated once; the loop produced ${regenerations} more:\n${output}`
   );
   assert.match(output, /Watching for changes/, "and the loop did start");
+});
+
+test("--watch is refused, not crashed, where the runtime cannot watch a tree", (t) => {
+  // The package declares `engines: >=18`, and `fs.watch({recursive:true})` only arrived on Linux
+  // in Node 20.13. Before that the CLI threw ERR_FEATURE_UNAVAILABLE_ON_PLATFORM *after* writing
+  // a snapshot and printing "Watching for changes" — a working tool crashing at the end.
+  assert.match(watchSupportProblem("linux", "18.20.4") ?? "", /20\.13/);
+  assert.match(watchSupportProblem("linux", "20.12.2") ?? "", /20\.13/);
+  assert.equal(watchSupportProblem("linux", "20.13.0"), null, "the first version that works");
+  assert.equal(watchSupportProblem("linux", "22.11.0"), null);
+  assert.equal(watchSupportProblem("win32", "18.0.0"), null, "Windows has always had one");
+  assert.equal(watchSupportProblem("darwin", "18.0.0"), null, "and so has macOS");
+
+  // A Node too old to watch must be told so by the CLI itself, with exit 2 and nothing written.
+  if (watchUnavailable === null) {
+    t.skip("this runtime can watch a tree, so it cannot exercise the refusal");
+    return;
+  }
+  const dir = tempRepo(t);
+  const refused = spawnSync(process.execPath, [BIN, "generate", "--watch", "--cwd", dir], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /20\.13/);
+  assert.equal(
+    fs.existsSync(path.join(dir, "snapshot")),
+    false,
+    "and it refused before writing anything"
+  );
 });
 
 test("the watch paths follow the config, not the startup snapshot of it", () => {

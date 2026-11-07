@@ -148,6 +148,13 @@ the snapshot is actually finished.
   full file.
 - **Every published file ended with a `sourceMappingURL`** pointing at a `.map` that
   `package.json#files` deliberately does not ship. The build no longer emits them.
+- **`--watch` crashed on Node 18 on Linux**, where `fs.watch(cwd, { recursive: true })` does not
+  exist before Node 20.13. The package declares `engines: >=18`, and the run wrote a snapshot,
+  printed "Watching for changes", and *then* threw `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. It is now
+  refused up front, with exit `2` and a message naming the version that works — and before anything
+  is written. A watcher that cannot start for any other reason (`ENOSPC`, the Linux inotify limit)
+  reports it as a message instead of a stack trace, and the snapshot it already wrote stays valid.
+  Found by the release's own Node 18 job: 0.9.10 and 0.9.11 never ran one.
 
 ---
 
