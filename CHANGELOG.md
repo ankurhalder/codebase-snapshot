@@ -205,12 +205,22 @@ stable across runs so an alert is not orphaned, and each result carries a
 `partialFingerprint` so Code Scanning keeps an alert open instead of closing and reopening it
 on every run.
 
-### Still open
+### `snapshot_generate` runs off the JSON-RPC thread
 
-One item from the audit is not in this release, and this entry names it rather than leaving it to
-be discovered: offloading `snapshot_generate` to a worker thread so the MCP server keeps
-answering `ping` while a large repository is written. The synchronous call is correct and
-bounded; what it costs is event-loop latency during that write, not correctness.
+The 0.9.4 measurement stands: a synchronous generate blocks the stdio server for about 7.5
+seconds on a 3,000-file repository. In that window the process cannot answer `ping` or
+acknowledge `notifications/cancelled`, and a client with a socket timeout reports a working tool
+call as a dead server.
+
+The work moves to a worker thread. A resolved config cannot cross a thread boundary —
+`layers[].match` may be a function and `hooks.afterGenerate` always is — so the worker loads
+the config file and applies the same CLI options the calling thread did, rather than receiving
+values that would all look like explicit overrides. A worker that fails to start, exits without
+posting, or throws is reported as a tool failure naming the reason; there is no quiet retry on the
+calling thread, because that would hide exactly the condition this exists to avoid.
+
+One consequence is documented rather than discovered: `hooks.afterGenerate` does not run for a
+generation started from MCP, only for a CLI `generate`.
 
 ---
 

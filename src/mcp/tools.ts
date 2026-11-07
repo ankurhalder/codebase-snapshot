@@ -22,6 +22,7 @@ import { buildImportResolver, generateSnapshot, resolveSpecifier } from "../inde
 import { truncateToBytes } from "../partitioner/preview.js";
 import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
+import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import type { JsonObject } from "./protocol.js";
 import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
@@ -374,12 +375,12 @@ const generateTool: McpTool = {
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
-    let manifest: Manifest;
-    try {
-      manifest = generateSnapshot(workspace.config);
-    } catch (error) {
-      return failure(error instanceof Error ? error.message : String(error));
-    }
+    // Off the JSON-RPC thread: a synchronous generate stops this server answering `ping` for
+    // seconds on a large repository, and a client with a socket timeout then reports a working
+    // tool call as a dead server.
+    const result = await generateInWorker(workspace.root, workspace.cliOptions);
+    if (!result.ok) return failure(result.message);
+    const summary = result.summary;
     // The new manifest has the same path as the cached one; dropping it here means the next call
     // cannot be served a snapshot from before this write on a filesystem with coarse mtimes.
     forgetManifest(manifestPathFor(workspace));
@@ -387,27 +388,27 @@ const generateTool: McpTool = {
     const written = relativeFor(workspace, path.resolve(workspace.root, workspace.config.outDir));
     const lines = [
       `Wrote ${written}/`,
-      `Files: ${manifest.counts.totalFiles} included, ${manifest.counts.skippedCount} skipped, ` +
-        `${plural(manifest.counts.partsCount, "part")}`,
-      `Parts: ${manifest.parts.map((part) => `${part.filename} (${formatBytes(part.byteSize)})`).join(", ")}`,
-      `Fingerprint: ${manifest.fingerprint}`,
+      `Files: ${summary.totalFiles} included, ${summary.skippedCount} skipped, ` +
+        `${plural(summary.partsCount, "part")}`,
+      `Parts: ${summary.parts.map((part) => `${part.filename} (${formatBytes(part.byteSize)})`).join(", ")}`,
+      `Fingerprint: ${summary.fingerprint}`,
     ];
-    if (manifest.warnings.length > 0) {
-      lines.push(`Warnings (${manifest.warnings.length}):`);
-      for (const warning of manifest.warnings.slice(0, 5)) lines.push(`  - ${warning}`);
+    if (summary.warnings.length > 0) {
+      lines.push(`Warnings (${summary.warnings.length}):`);
+      for (const warning of summary.warnings.slice(0, 5)) lines.push(`  - ${warning}`);
     }
 
     return {
       text: lines.join("\n"),
       structured: {
-        fingerprint: manifest.fingerprint,
-        files: manifest.counts.totalFiles,
-        skipped: manifest.counts.skippedCount,
-        parts: manifest.counts.partsCount,
-        emittedBytes: manifest.totals.totalContentBytes,
+        fingerprint: summary.fingerprint,
+        files: summary.totalFiles,
+        skipped: summary.skippedCount,
+        parts: summary.partsCount,
+        emittedBytes: summary.totalContentBytes,
         outDir: written,
-        partFiles: manifest.parts.map((part) => part.filename),
-        warningCount: manifest.warnings.length,
+        partFiles: summary.parts.map((part) => part.filename),
+        warningCount: summary.warnings.length,
       },
     };
   },

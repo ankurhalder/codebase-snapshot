@@ -25,6 +25,16 @@ export interface Workspace {
   /** Absolute, symlink-resolved repository root. */
   root: string;
   config: ResolvedSnapshotConfig;
+  /**
+   * The options esolveConfig was called with.
+   *
+   * Kept because a worker thread cannot receive a resolved config: layers[].match may be a
+   * function and hooks.afterGenerate is one, so neither survives structured cloning. The
+   * worker re-resolves from the config file *and these*, which is the same computation this
+   * thread performed — passing the resolved values instead would mark them all as explicit
+   * overrides and change how per-layer budgets resolve.
+   */
+  cliOptions: { cwd: string; maxPartBytes?: number; outDir?: string };
   /** Absolute path of the config file that was loaded, when there was one. */
   configFile: string | null;
 }
@@ -140,7 +150,7 @@ export async function openWorkspace(
 
   try {
     const config = resolveConfig(loaded.config, cliOptions, root);
-    return { ok: true, workspace: { root, config, configFile: loaded.file } };
+    return { ok: true, workspace: { root, config, configFile: loaded.file, cliOptions } };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }

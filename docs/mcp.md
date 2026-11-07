@@ -123,17 +123,24 @@ the presence of a library.
 
 ## Performance
 
-Generation is synchronous, so a tool call blocks the server for its duration. Both numbers are
-measured, not estimated:
+Generation runs in a worker thread, so the server keeps answering `ping` and acknowledging
+`notifications/cancelled` while the snapshot is written. The numbers below are measured, not
+estimated:
 
 | Repository | Files | `snapshot_generate` |
 | :-- | --: | --: |
 | This project | 127 | 1.1 s |
 | A synthetic tree | 3,000 | 7.5 s |
 
-Both are under any client's request timeout. If a repository large enough to exceed yours shows up,
-`snapshot_plan` gives the same numbers without writing, and the fix — moving generation to a worker
-thread — is tracked rather than assumed.
+They describe how long the *write* takes, not how long the server is deaf — which is the
+distinction a client's request timeout actually cares about. `snapshot_plan` produces the same
+numbers without writing anything.
+
+The worker re-reads the configuration and applies the same options this thread used, because a
+resolved config cannot cross a thread boundary: `layers[].match` may be a function and
+`hooks.afterGenerate` always is. That also means `hooks.afterGenerate` does **not** run for a
+generation started from MCP — a CLI `generate` runs it. If a hook is part of your pipeline, run
+the CLI.
 
 ## Troubleshooting
 
