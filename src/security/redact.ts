@@ -254,10 +254,17 @@ export function scanAndRedactSecrets(
           // A constant whose value spells its own name is a symbol table entry, not a
           // credential; masking it would rewrite the meaning of the code it documents.
           if (group && isSelfNamingConstant(line, group[0], group[1])) continue;
-          // A tail-matching key that began inside a string literal is text, not an assignment.
-          if (valueGroup !== undefined && startsInsideStringLiteral(line, match.index)) continue;
+          // A tail-matching key that began inside a string literal is text, not an assignment —
+          // unless the literal closes between the key and the value.
+          if (valueGroup !== undefined && startsInsideStringLiteral(line, match.index, group?.[0])) {
+            continue;
+          }
           // An unquoted value in a declaration is an expression, not a credential literal.
-          if (group && isUnquotedValue(line, group[0]) && isDeclaredBinding(line, match.index)) {
+          if (
+            group &&
+            isUnquotedValue(line, group[0]) &&
+            isDeclaredBinding(line, match.index, filePath)
+          ) {
             continue;
           }
           // A "quoted value" that is entirely a template interpolation is code, not a literal.
@@ -341,11 +348,36 @@ function expandOverToken(line: string, start: number, end: number): { start: num
  * at the quote, so its run begins there and the preceding character is not a
  * quote; only a match that began *inside* a literal is rejected.
  */
-function startsInsideStringLiteral(line: string, matchIndex: number): boolean {
+/**
+ * True when the matched credential name is text rather than a key: it begins inside a string
+ * literal **and** that literal closes before the value does.
+ *
+ * `["awsSecret:", "apiKey:"]` is a list of key *names*, and a documentation line that shows
+ * `password: "${DB_PASSWORD:-hunter2}"` inside a code span is showing an assignment. Both put the
+ * name immediately after an opening quote — the list because the element is a string, the code
+ * span because Markdown opens it with a backtick — so the quote is evidence that the name belongs
+ * to the surrounding text.
+ *
+ * That test alone also discarded every credential written into a string, and a connection string
+ * is written into a string: `const dsn = "password=hunter2;host=db"` and
+ * `curl -d "password=hunter2"` were emitted in clear. What separates them is whether a quote sits
+ * between the name and the value. In `"password=hunter2"` there is none — the name and the value
+ * are in the same literal, which is what an assignment looks like when it is written inside one.
+ * In `` `password: "…"` `` there is: the literal opened before the name closes, and the value
+ * belongs to a different one.
+ */
+function startsInsideStringLiteral(
+  line: string,
+  matchIndex: number,
+  valueStart?: number
+): boolean {
   let runStart = matchIndex;
   while (runStart > 0 && /[A-Za-z0-9_-]/.test(line[runStart - 1])) runStart -= 1;
   const before = runStart > 0 ? line[runStart - 1] : "";
-  return before === '"' || before === "'" || before === "`";
+  if (before !== '"' && before !== "'" && before !== "`") return false;
+  // Without a value span there is nothing to weigh: the match is the credential itself.
+  if (valueStart === undefined) return true;
+  return /["'`]/.test(line.slice(matchIndex, valueStart));
 }
 
 /**
@@ -436,7 +468,8 @@ function isUnquotedValue(line: string, start: number): boolean {
  * Keywords that introduce a binding. Everything after the separator is an initializer.
  *
  * `readonly`/`private`/`static` are included because a class field is a declaration too:
- * `private readonly apiKey = /…/` has the same shape as the module-level constant below.
+ * `private readonly apiKey = /…/` has the same shape as the module-level constant below. They only
+ * mean that in a source file — see {@link isAssignmentFile}.
  *
  * Bare `export` is **not** here. In JavaScript and TypeScript it can never be followed by a name
  * and an `=` — `export foo = 1` does not parse; the keyword always comes first in
@@ -444,9 +477,34 @@ function isUnquotedValue(line: string, start: number): boolean {
  * still matches it. In a shell script or a `.envrc`, though, `export api_key=hunter2` is an
  * ordinary assignment with a literal value, and listing `export` made the guard suppress
  * redaction for exactly the files most likely to hold a credential.
+ *
+ * Bare `declare` was the same mistake and is now gone for the same reason. `declare api_key=hunter2`
+ * is a shell assignment; in TypeScript the keyword cannot introduce an initialised binding on its
+ * own (`declare x = 1` does not parse) and the form that can, `declare const x = 1`, is matched
+ * through `const` — the word immediately before the name.
  */
 const DECLARATION_KEYWORDS =
-  /\b(?:const|let|var|readonly|public|private|protected|static|declare|using)\s+$/;
+  /\b(?:const|let|var|readonly|public|private|protected|static|using)\s+$/;
+
+/**
+ * Files whose `NAME=value` is an assignment in a *data* format or a shell script.
+ *
+ * `readonly` and `declare` introduce a binding in TypeScript and an assignment in POSIX sh, bash,
+ * zsh and `.envrc` — the same word, opposite meaning — and the file a line came from is the only
+ * thing that distinguishes them. In these files nothing is a declaration, so the guard never
+ * applies: `readonly api_key=hunter2` was read as a class field and emitted in clear.
+ */
+const ASSIGNMENT_FILE =
+  /\.(?:sh|bash|zsh|ksh|fish|env|ya?ml|toml|ini|conf|cfg|properties|tf|tfvars|service)$/i;
+const ASSIGNMENT_BASENAME = /^(?:\.env(?:\.[^/]*)?|\.envrc|\.profile|\.bashrc|\.zshrc|\.bash_profile)$/i;
+
+function isAssignmentFile(filePath: string | undefined): boolean {
+  if (filePath === undefined) return false;
+  const normalised = filePath.replace(/\\/g, "/");
+  if (ASSIGNMENT_FILE.test(normalised)) return true;
+  const base = normalised.slice(normalised.lastIndexOf("/") + 1);
+  return ASSIGNMENT_BASENAME.test(base);
+}
 
 /**
  * How far left of the name a declaration keyword can be.
@@ -473,7 +531,8 @@ const DECLARATION_WINDOW = 40;
  * keyword is what makes the guard apply to the tail as well — a check at `match.index` alone
  * would let the shorter match through and corrupt the line anyway.
  */
-function isDeclaredBinding(line: string, matchIndex: number): boolean {
+function isDeclaredBinding(line: string, matchIndex: number, filePath?: string): boolean {
+  if (isAssignmentFile(filePath)) return false;
   let runStart = matchIndex;
   while (runStart > 0 && /[A-Za-z0-9_$]/.test(line[runStart - 1])) runStart -= 1;
   const from = Math.max(0, runStart - DECLARATION_WINDOW);

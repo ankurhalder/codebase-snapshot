@@ -351,9 +351,18 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // The unquoted twin for YAML, docker-compose and `.env`: those formats never
     // quote their values, so the rules above cannot see them. `valueGroup` keeps
     // `POSTGRES_PASSWORD:` in the output.
+    //
+    // This is the one unquoted rule without `NOT_AFTER_QUOTE`, and the lookbehind is a
+    // string-literal guard rather than a precision rule: a credential assignment *inside* a
+    // literal — `const dsn = "password=hunter2;host=db"`, `curl -d "password=hunter2"` — was
+    // rejected before it could be considered, and a DSN is a credential in a string. What made the
+    // lookbehind redundant is the shape of `UNQUOTED_LITERAL`: a value has to start with a word
+    // character, so `["awsSecret:", "apiKey:"]` — the list of key names the lookbehind was added
+    // for — cannot match here anyway. `redact.ts` still refuses a match whose separator is inside
+    // the literal, which is the case that list actually is.
     rule: "credential-assignment-unquoted",
     pattern: new RegExp(
-      `${NOT_AFTER_QUOTE}${UNQUOTED_STRONG_NAME}\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}`,
+      `${UNQUOTED_STRONG_NAME}\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}`,
       "i"
     ),
     valueGroup: 1,
@@ -388,6 +397,27 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     rule: "generic-secret-assignment",
     pattern:
       /(?<!["'])(?:api[_-]?key|secret[_-]?key|auth[_-]?token|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|password|passwd|pwd)["']?\s*(?<![=!<>])[:=](?!=)\s*["']([^"'\s]{8,256})["']/i,
+    valueGroup: 1,
+  },
+  {
+    // `${VAR:-fallback}` — a default value in a shell script, a `.env`, docker-compose or a
+    // GitHub Actions workflow.
+    //
+    // This shape defeated every rule above it, and each refusal was individually reasonable:
+    // the quoted rules need a quote after the separator, and the unquoted ones need the value to
+    // begin with a word character — a fallback begins with `$`. So
+    // `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-MyProdPassword123!}` was emitted whole, `.env` files
+    // and compose files included, which is where that idiom is the norm.
+    //
+    // The **fallback** is what gets masked, not the whole expansion: the variable name is the
+    // readable context, exactly as `POSTGRES_PASSWORD:` is kept by the rule above. A single
+    // interpolation with no operator (`${DB_PASSWORD}`) still does not match — there is nothing
+    // between the braces to mask, and `isTemplateInterpolation` keeps such a value readable.
+    rule: "interpolation-fallback-secret",
+    pattern: new RegExp(
+      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}["'\`]?\\$\\{[A-Za-z_][A-Za-z0-9_]*:?[-=?+]([^}"'\`\\r\\n]{2,512})\\}["'\`]?`,
+      "i"
+    ),
     valueGroup: 1,
   },
   {

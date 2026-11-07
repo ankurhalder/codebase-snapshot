@@ -66,6 +66,7 @@ export interface LineReaderOptions {
  */
 export function createLineReader(input: Readable, options: LineReaderOptions): () => void {
   let buffer = "";
+  let bufferBytes = 0;
   let discarding = false;
   let discardedBytes = 0;
 
@@ -81,6 +82,15 @@ export function createLineReader(input: Readable, options: LineReaderOptions): (
     options.onLine(trimmed);
   };
 
+  /** Drops what is buffered as the tail of an oversized line, and reports it once. */
+  const discardBuffered = (): void => {
+    discarding = true;
+    discardedBytes += bufferBytes;
+    buffer = "";
+    bufferBytes = 0;
+    options.onOverflow?.(discardedBytes);
+  };
+
   const drain = (): void => {
     let index = buffer.indexOf("\n");
     while (index >= 0) {
@@ -90,52 +100,77 @@ export function createLineReader(input: Readable, options: LineReaderOptions): (
         // Still draining the tail of a discarded line: this terminator ends it. `deliver` resets
         // the discard state and drops the fragment.
         deliver(line);
-      } else if (line.length > MAX_LINE_BYTES) {
-        // The cap exists to bound the work one message costs to parse, so it has to be applied to
-        // a **complete** line too. Checking only "buffer is over the cap and holds no newline"
-        // meant a 33 MB line that arrived with its own terminator in the same chunk had a `\n` in
-        // the buffer, skipped the guard, and went to `JSON.parse` whole.
-        options.onOverflow?.(line.length);
       } else {
-        deliver(line);
+        // The cap exists to bound the work one message costs to parse, so it is applied to a
+        // **complete** line too, and in bytes: `.length` is UTF-16 code units, and a line of
+        // astral characters is twice that many bytes.
+        const lineBytes = Buffer.byteLength(line, "utf8");
+        if (lineBytes > MAX_LINE_BYTES) options.onOverflow?.(lineBytes);
+        else deliver(line);
       }
       index = buffer.indexOf("\n");
     }
+
+    bufferBytes = Buffer.byteLength(buffer, "utf8");
+    // Whatever is left has no terminator yet, and an over-cap remainder has to be dropped here:
+    // the next chunk may never arrive, and `onEnd` delivers whatever is in the buffer. This is the
+    // hole a chunk that carried both a discarded line's terminator *and* the start of the next
+    // message fell through — the remainder sat here unmeasured until the stream ended, and
+    // `onEnd` handed it to `JSON.parse` whole.
+    if (!discarding && bufferBytes > MAX_LINE_BYTES) discardBuffered();
   };
 
   const onData = (chunk: string): void => {
+    const chunkBytes = Buffer.byteLength(chunk, "utf8");
+
     if (discarding) {
       // Still inside the oversized line: look for its terminator and drop everything up to it.
       const index = chunk.indexOf("\n");
       if (index < 0) {
-        discardedBytes += chunk.length;
+        discardedBytes += chunkBytes;
         return;
       }
       buffer = chunk.slice(index + 1);
+      bufferBytes = Buffer.byteLength(buffer, "utf8");
       deliver("");
       drain();
       return;
     }
 
-    buffer += chunk;
-    drain();
-    // Whatever is left has no terminator yet. If it is already past the cap the line will be
-    // discarded as it arrives rather than accumulated in memory first.
-    if (buffer.length > MAX_LINE_BYTES) {
+    // Measure before appending when the chunk holds no terminator. `buffer += chunk` on a stream of
+    // 64 KB chunks built a 300 MB string one copy at a time before anything looked at its length,
+    // and this cap exists to bound exactly that.
+    if (chunk.indexOf("\n") < 0 && bufferBytes + chunkBytes > MAX_LINE_BYTES) {
       discarding = true;
-      discardedBytes = buffer.length;
+      discardedBytes = bufferBytes + chunkBytes;
       buffer = "";
+      bufferBytes = 0;
       options.onOverflow?.(discardedBytes);
       return;
     }
+
+    buffer += chunk;
+    drain();
   };
 
   const onEnd = (): void => {
-    if (buffer.length > 0) {
-      const rest = buffer;
-      buffer = "";
-      deliver(rest);
+    const rest = buffer;
+    const restBytes = bufferBytes || Buffer.byteLength(rest, "utf8");
+    buffer = "";
+    bufferBytes = 0;
+    if (rest.length === 0) return;
+    if (discarding) {
+      discarding = false;
+      discardedBytes = 0;
+      return;
     }
+    // The final line may arrive without a newline, and it is still a line: the cap applies to it
+    // for the same reason it applies to every other one.
+    if (restBytes > MAX_LINE_BYTES) {
+      options.onOverflow?.(restBytes);
+      return;
+    }
+    deliver(rest);
   };
 
   input.setEncoding("utf8");

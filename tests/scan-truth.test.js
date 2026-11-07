@@ -151,10 +151,11 @@ test("S6: a 40-char AWS secret value is redacted, a 40-char git SHA is not", () 
   assert.equal(scan(commit).redacted, commit, "a 40-char git SHA must never be masked");
 });
 
-test("the built-in rule set is 30 rules and none is stateful", () => {
+test("the built-in rule set is 31 rules and none is stateful", () => {
   // 29 vendor/assignment rules plus `base64-private-key` (4.3.0), which matches the base64 of a
-  // PEM header so a wrapped key is found without a decoder.
-  assert.equal(DEFAULT_SECRET_PATTERNS.length, 30);
+  // PEM header so a wrapped key is found without a decoder, and
+  // `interpolation-fallback-secret` (0.9.14), which masks the fallback in `${VAR:-fallback}`.
+  assert.equal(DEFAULT_SECRET_PATTERNS.length, 31);
   assert.ok(
     DEFAULT_SECRET_PATTERNS.some((rule) => rule.rule === "base64-private-key"),
     "the wrapped-key rule is part of the default set"
