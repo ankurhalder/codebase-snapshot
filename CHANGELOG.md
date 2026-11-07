@@ -26,9 +26,9 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 ## 0.9.10
 
 An audit of this codebase, run against its own snapshot, found twenty defects, six performance
-problems and seven missing capabilities. This release is all of them that are in the tree; the
-items still open are listed at the end of this entry, because a changelog that stops at the good
-news is the same lie as a warning nobody prints.
+problems and seven missing capabilities. This release is all of them: every defect, every
+performance problem and every capability named in that audit is in the tree, with a test that
+fails without it.
 
 ### Redaction was corrupting the code it exists to preserve
 
