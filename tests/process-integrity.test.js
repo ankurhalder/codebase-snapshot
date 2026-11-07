@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { generateSnapshot, loadConfigFileDetailed, lockPathFor, resolveConfig } from "../dist/index.js";
 import { generateInWorker } from "../dist/mcp.js";
@@ -27,7 +27,7 @@ import { generateInWorker } from "../dist/mcp.js";
  * 2.5 — the MCP worker ran `hooks.afterGenerate`, which the documentation says it does not.
  */
 
-const CLI = path.join(import.meta.dirname, "..", "dist", "cli.js");
+const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
 
 function makeRepo(t, files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "process-integrity-"));
@@ -161,6 +161,19 @@ test("a backup directory that cannot be removed does not roll the swap back", (t
       }
     }
   });
+
+  // Prove the trigger before relying on it. A host that does not enforce directory permissions —
+  // root in a container, or a filesystem that ignores the mode — would let the backup be removed and
+  // the test would then pass while proving nothing.
+  const probe = path.join(dir, "snapshot", ".permission-probe");
+  fs.writeFileSync(probe, "x");
+  try {
+    fs.rmSync(probe, { force: true });
+    t.skip("this host does not enforce directory permissions");
+    return;
+  } catch {
+    // Expected: unlink inside a 0555 directory is EACCES.
+  }
 
   const second = generateSnapshot(config());
   const secondHash = second.files.find((file) => file.relativePath === "src/a.ts").hashSha256;
