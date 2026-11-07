@@ -20,6 +20,7 @@ import {
 } from "./config.js";
 import { defineConfig } from "./define-config.js";
 import { generateAuditReport } from "./generator/audit.js";
+import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
 import { generateReadme } from "./generator/readme.js";
@@ -1841,6 +1842,7 @@ export function generateSnapshot(
       ...(config.staged === true ? { staged: true } : {}),
       ...(config.withDependents === true ? { withDependents: true } : {}),
       ...(config.skeleton === true ? { skeleton: true } : {}),
+      ...(config.sarif === true ? { sarif: true } : {}),
       artifacts: { ...config.artifacts },
       include: [...config.include].map(maskName),
       preset: config.preset,
@@ -2060,7 +2062,7 @@ export function generateSnapshot(
     const partsDir = path.join(stagingDir, "parts");
     const reportsDir = path.join(stagingDir, "reports");
     if (artifacts.parts) fs.mkdirSync(partsDir, { recursive: true });
-    if (artifacts.navigation || artifacts.projectTree || artifacts.audit) {
+    if (artifacts.navigation || artifacts.projectTree || artifacts.audit || config.sarif === true) {
       fs.mkdirSync(reportsDir, { recursive: true });
     }
 
@@ -2082,6 +2084,16 @@ export function generateSnapshot(
         generateAuditReport(manifest, secretFindings, config.secretRules),
         "utf8"
       );
+    }
+    if (config.sarif === true) {
+      // Written beside udit.md rather than instead of it: a human reads one and a CI gate
+      // reads the other, and asking which one you want is a false choice.
+      const sarif = generateSarifReport(manifest, secretFindings, config.secretRules, GENERATOR_VERSION);
+      fs.writeFileSync(path.join(reportsDir, "audit.sarif"), sarif, "utf8");
+      manifest.artifacts.sarif = {
+        byteSize: Buffer.byteLength(sarif, "utf8"),
+        sha256: sha256Hex(sarif),
+      };
     }
     if (artifacts.readme) {
       fs.writeFileSync(path.join(stagingDir, "README.md"), generateReadme(manifest, artifacts), "utf8");
@@ -2253,6 +2265,7 @@ export { HOOK_MARKER, installPreCommitHook } from "./agent/hook.js";
 export type { HookInstallResult } from "./agent/hook.js";
 export { resolveChangedScope } from "./scanner/changed.js";
 export { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
+export { generateSarifReport } from "./generator/sarif.js";
 export type { ChangedScope, ChangedScopeRequest } from "./scanner/changed.js";
 export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 

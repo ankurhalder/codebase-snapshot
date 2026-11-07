@@ -122,6 +122,7 @@ const CLI_OPTIONS = {
   "with-dependents": { type: "boolean" },
   staged: { type: "boolean" },
   skeleton: { type: "boolean" },
+  sarif: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -169,6 +170,7 @@ Options:
   --staged                      Only files staged for the next commit
   --with-dependents             With the two above: also include their importers
   --skeleton                    Emit TypeScript signatures instead of bodies
+  --sarif                       Also write reports/audit.sarif for GitHub Code Scanning
   --include-sensitive-files     Emit .env / *.pem / .npmrc / credential files
   --skip-artifacts <names>      Comma-separated artifacts to omit
                                 (readme, manifest, parts, navigation,
@@ -282,6 +284,8 @@ interface ParsedInvocation {
   withDependents?: boolean;
   /** Emit signatures instead of bodies for TypeScript and TSX. */
   skeleton?: boolean;
+  /** Also write reports/audit.sarif for a CI security gate. */
+  sarif?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -666,6 +670,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     staged: values.staged === true,
     withDependents: values["with-dependents"] === true,
     skeleton: values.skeleton === true,
+    sarif: values.sarif === true,
   };
 }
 
@@ -1367,6 +1372,7 @@ async function runCommand(argv: string[]): Promise<number> {
       staged: invocation.staged,
       withDependents: invocation.withDependents,
       skeleton: invocation.skeleton,
+      sarif: invocation.sarif,
     } as Partial<CliOptions> & { discovery?: DiscoveryMode },
     invocation.cwd
   );
@@ -1795,6 +1801,7 @@ async function runWatchLoop(
           staged: invocation.staged,
           withDependents: invocation.withDependents,
           skeleton: invocation.skeleton,
+          sarif: invocation.sarif,
         } as Partial<CliOptions> & { discovery?: DiscoveryMode; maxPartTokens?: number },
         invocation.cwd
       );

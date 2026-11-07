@@ -310,6 +310,8 @@ export interface ManifestConfigSnapshot {
   withDependents?: boolean;
   /** True when bodies were replaced by signatures. */
   skeleton?: boolean;
+  /** True when eports/audit.sarif was written. */
+  sarif?: boolean;
   artifacts: ResolvedArtifacts;
   include: string[];
   preset: string;
@@ -363,6 +365,14 @@ export interface Manifest {
   artifacts: {
     fullJson: ManifestArtifact | null;
     fullMarkdown: ManifestArtifact | null;
+    /**
+     * `reports/audit.sarif`, when `--sarif` asked for it.
+     *
+     * Optional because most runs do not write one, and a manifest written before this
+     * existed has no such key at all — the two are indistinguishable to a reader, which is
+     * why the presence of the file is also recorded in `config`.
+     */
+    sarif?: ManifestArtifact;
   };
   layers: Record<string, number>;
   kinds: Record<string, number>;
@@ -475,6 +485,8 @@ export interface SnapshotConfig {
    * compressed file from a whole one without diffing it against the source.
    */
   skeleton?: boolean;
+  /** Also write `reports/audit.sarif` so a CI security gate can read the findings. */
+  sarif?: boolean;
   /**
    * With `changedSince` or `staged`, also include the files that import a changed one.
    *
@@ -528,6 +540,13 @@ export interface ResolvedSnapshotConfig {
   staged?: boolean;
   /** Emit signatures instead of bodies for TypeScript and TSX files. */
   skeleton?: boolean;
+  /**
+   * Also write eports/audit.sarif, the findings in SARIF 2.1.0.
+   *
+   * For a CI security gate: GitHub Code Scanning reads SARIF, and a markdown report it cannot
+   * ingest is a finding nobody's build can act on.
+   */
+  sarif?: boolean;
   /** Also include the files that import a changed one. */
   withDependents?: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */

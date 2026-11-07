@@ -402,6 +402,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "previewTailLines",
   "secretRules",
   "secrets",
+  "sarif",
   "skeleton",
   "tmpDir",
   "withDependents",
@@ -1259,6 +1260,14 @@ export function resolveConfig(
     throw new Error(`\`skeleton\` must be a boolean (received ${describeValue(rawSkeleton)}).`);
   }
   const skeleton = rawSkeleton === true;
+
+  const rawSarif =
+    (cliOptions as { sarif?: unknown } | undefined)?.sarif ??
+    (userConfig as { sarif?: unknown } | null | undefined)?.sarif;
+  if (rawSarif !== undefined && typeof rawSarif !== "boolean") {
+    throw new Error(`\`sarif\` must be a boolean (received ${describeValue(rawSarif)}).`);
+  }
+  const sarif = rawSarif === true;
   if (withDependents && changedSince === undefined && !staged) {
     throw new Error(
       "`withDependents` widens a changed-files scope, so it needs `changedSince` or `staged` " +
@@ -1306,6 +1315,7 @@ export function resolveConfig(
     ...(staged ? { staged } : {}),
     ...(withDependents ? { withDependents } : {}),
     ...(skeleton ? { skeleton } : {}),
+    ...(sarif ? { sarif } : {}),
     include: resolveInclude(userConfig?.include),
     preset: preset.presetName,
     presetExclude,
