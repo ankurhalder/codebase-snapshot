@@ -371,8 +371,9 @@ export function renumberParts(
   );
 }
 
-/** Characters reserved for the omission notice appended to a hard-truncated section. */
-const SECTION_TRUNCATION_NOTICE =  "\n... [section truncated: metadata alone exceeds the part budget] ...\n";
+/** Line reserved for the notice a section cut by the part budget has to carry. */
+const SECTION_TRUNCATION_NOTICE =
+  "... [section truncated: the fixed metadata and a code fence did not fit the part budget] ...";
 /** Cap on any single metadata value interpolated into a section or header. */
 const METADATA_VALUE_MAX = 200;
 /** Cap on a path shown in the `## Files` list and the `### FILE:` heading. */
@@ -458,15 +459,92 @@ function prepareSection(file: FileEntry, sectionBudget: number): PreparedSection
   }
 
   if (byteSize > sectionBudget) {
-    // Fixed metadata (a very long path or layer/kind name) still exceeds the
-    // budget on its own; the hard bound wins over readability.
-    const target = sectionBudget - Buffer.byteLength(SECTION_TRUNCATION_NOTICE, "utf8");
-    const truncated = truncateToBytes(text, Math.max(0, target));
-    text = truncated.content + SECTION_TRUNCATION_NOTICE;
+    // The fixed metadata and the fence the body forces do not fit together. The body goes, and
+    // the notice takes its place inside the code block.
+    //
+    // The alternative — cutting the *rendered* text at a byte offset — is what left the fence
+    // open: the cut lands in the body or in the opening fence, the closing fence it removed is
+    // the one that ends the block, and every section after this one in the part is then rendered
+    // inside this file's code block (`parsePartSections` merges the next file into this body).
+    // Dropping the body instead keeps the section whole and readable, and marking the file first
+    // is what makes the re-render honest: `- Meta:` says `preview`, the summary is dropped, and
+    // the fence collapses to four backticks because there is no body left to outrun.
+    applyTruncatedContent(file, SECTION_TRUNCATION_NOTICE);
+    file.summary = undefined;
+    file.summaryOmitted = true;
+    text = renderFileSection(file);
     byteSize = Buffer.byteLength(text, "utf8");
+    if (byteSize > sectionBudget) {
+      // Fixed metadata alone is over budget, which needs a path near its display cap *and* a
+      // summary that was not dropped — kept as a guard rather than as an expected path. The byte
+      // bound wins, and the cut still may not leave a fence open.
+      text = truncateRenderedSection(text, sectionBudget, fenceForContent(file.content ?? ""));
+      byteSize = Buffer.byteLength(text, "utf8");
+    }
   }
 
   return { file, text, byteSize };
+}
+
+/**
+ * Cuts a rendered section down to `sectionBudget` bytes without leaving a code fence open.
+ *
+ * The cut is rounded down to a whole line first: a partial run of backticks is still a fence to
+ * Markdown, and it is not a line the reader will ever match. If an opening fence survives the
+ * cut, the closing one is appended along with the notice; if it does not fit either, the block is
+ * replaced by an empty one carrying the notice, because a section with no block at all is
+ * invisible to `parsePartSections`.
+ */
+function truncateRenderedSection(text: string, sectionBudget: number, fence: string): string {
+  const closing = `\n${SECTION_TRUNCATION_NOTICE}\n${fence}\n`;
+  const bodyRoom = sectionBudget - Buffer.byteLength(closing, "utf8");
+  if (bodyRoom > 0) {
+    const cut = truncateToBytes(text, bodyRoom).content;
+    const lastBreak = cut.lastIndexOf("\n");
+    const kept = lastBreak >= 0 ? cut.slice(0, lastBreak + 1) : "";
+    if (fenceIsOpen(kept, fence)) return `${kept}${closing}`;
+  }
+
+  // The fence is longer than the budget on its own. The replacement block measures its fence on
+  // the complete metadata lines that precede the code block, never on the section as a whole —
+  // inheriting the body's fence length is exactly what did not fit.
+  const probe = text.slice(0, 512);
+  const emptyFence = fenceForText(probe.slice(0, Math.max(0, probe.lastIndexOf("\n") + 1)), 4);
+  const block = `\n${emptyFence}\n${SECTION_TRUNCATION_NOTICE}\n${emptyFence}\n`;
+  const prefixRoom = sectionBudget - Buffer.byteLength(block, "utf8");
+  const cut = prefixRoom > 0 ? truncateToBytes(text, prefixRoom).content : "";
+  const lastBreak = cut.lastIndexOf("\n");
+  const prefix = lastBreak >= 0 ? cut.slice(0, lastBreak + 1) : "";
+  return `${dropTrailingOpenFence(prefix, fence)}${block}`;
+}
+
+/**
+ * Removes a complete opening-fence line and everything after it.
+ *
+ * Only reachable defensively: the caller reaches this path when the fence did not fit in a
+ * *larger* budget, so it cannot fit here either.
+ */
+function dropTrailingOpenFence(text: string, fence: string): string {
+  if (!fenceIsOpen(text, fence)) return text;
+  const lines = text.split("\n");
+  const opening = lines.findIndex((line) => line.startsWith(fence));
+  if (opening < 0) return text;
+  return lines.slice(0, opening).join("\n") + (opening > 0 ? "\n" : "");
+}
+
+/**
+ * True when `text` ends inside a fenced block opened by `fence`.
+ *
+ * A body cannot contain a run of backticks as long as its own fence — {@link fenceForText} picks
+ * one character longer than the longest run in the content — so every line that starts with the
+ * fence string is either the opening line (which carries the language) or the closing one.
+ */
+function fenceIsOpen(text: string, fence: string): boolean {
+  let open = false;
+  for (const line of text.split("\n")) {
+    if (line.startsWith(fence)) open = !open;
+  }
+  return open;
 }
 
 function applyTruncatedContent(file: FileEntry, content: string): void {
@@ -586,7 +664,7 @@ function renderGroups(
     ].join("\n");
 
     const assembled = (header + group.sections.map((s) => s.text).join("")).replace(
-      /\r\n/g,
+      /\r\n|\r/g,
       "\n"
     );
     const estimatedTokens = estimateTokens(assembled);
@@ -630,7 +708,7 @@ function renderGroups(
  * bytes it will actually read.
  */
 export function emittedBody(content: string): string {
-  const normalised = content.replace(/\r\n/g, "\n");
+  const normalised = content.replace(/\r\n|\r/g, "\n");
   return normalised.endsWith("\n") ? normalised.slice(0, -1) : normalised;
 }
 

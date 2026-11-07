@@ -23,7 +23,7 @@ export function generateMonolithMarkdown(
   filesWithContent: FileEntry[]
 ): string {
   const sections = filesWithContent.map((file) => {
-    const content = (file.content ?? "").replace(/\r\n/g, "\n");
+    const content = (file.content ?? "").replace(/\r\n|\r/g, "\n");
     // Adaptive fence: a fixed 3-backtick fence let any file containing a fenced
     // block escape its code block and inject document markup.
     const fence = fenceForContent(content);

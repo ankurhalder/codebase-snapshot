@@ -423,9 +423,22 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
  * A PEM private-key block spanning one or more lines. Applied as a whole-text
  * pass because the per-line rules can only see the `BEGIN` header, which left
  * every body line of a real key in the snapshot.
+ *
+ * The body may not contain another `-----BEGIN`. `[\s\S]*?` has no opinion about what lies
+ * between a `BEGIN` and the next `END`, so a file holding an *unterminated* header — a truncated
+ * key, a fixture, a half-written file — followed later by a properly terminated block had
+ * everything between the two headers replaced by blank lines: the first `BEGIN` bridged 36 lines
+ * of test source to the second block's `END` and erased them. With the lookahead, a `BEGIN` that
+ * has no `END` before the next `BEGIN` simply does not match, and `PEM_UNTERMINATED_PATTERN`
+ * handles the header and its own base64 body instead.
+ *
+ * The newline after the header is deliberately **not** required. A PEM block inside a JSON or
+ * `.env` value is written with escaped `\n` — two characters, not a line break — and a rule that
+ * insisted on a real line break would mask the header alone and leave the whole base64 body in
+ * clear, which is strictly worse than the bridging bug.
  */
 export const PEM_BLOCK_PATTERN =
-  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g;
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN)[\s\S])*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g;
 
 /**
  * A private key whose `END` marker was cut off — either truncated by the
