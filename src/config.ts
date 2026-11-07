@@ -11,6 +11,7 @@ import {
 } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
+import { bytesForTokens } from "./tokenize.js";
 import type {
   ByteSize,
   CliOptions,
@@ -392,6 +393,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "layersMode",
   "maxMonolithBytes",
   "maxPartBytes",
+  "maxPartTokens",
   "outDir",
   "preset",
   "previewHeadLines",
@@ -1184,10 +1186,26 @@ export function resolveConfig(
     MIN_MAX_PART_BYTES,
     "maxPartBytes"
   );
+  // A token budget is a *ceiling on the same thing*, so it narrows the byte budget instead of
+  // living beside it: the partitioner enforces bytes, every validator and report reads bytes,
+  // and a second, parallel limit that the partitioner did not know about would be a promise
+  // nothing kept. The conversion uses the same ratio the estimate is built on, and the token
+  // number the user chose is recorded so the manifest states their unit, not only ours.
+  const requestedMaxPartTokens = (cliOptions as { maxPartTokens?: ByteSize } | undefined)
+    ?.maxPartTokens ?? (userConfig as { maxPartTokens?: ByteSize } | null | undefined)
+    ?.maxPartTokens;
+  const maxPartTokens =
+    requestedMaxPartTokens === undefined
+      ? undefined
+      : boundedBytes(requestedMaxPartTokens, 0, 1, "maxPartTokens");
+  const effectiveMaxPartBytes =
+    maxPartTokens === undefined
+      ? maxPartBytes
+      : Math.max(MIN_MAX_PART_BYTES, Math.min(maxPartBytes, bytesForTokens(maxPartTokens)));
   const budgets = resolveBudgets(
     userConfig?.budgets,
-    maxPartBytes,
-    explicitMaxPartBytes !== undefined
+    effectiveMaxPartBytes,
+    explicitMaxPartBytes !== undefined || maxPartTokens !== undefined
   );
 
   const configuredOutDir = strictString(userConfig?.outDir, "snapshot", "`outDir`");
@@ -1217,7 +1235,8 @@ export function resolveConfig(
     branch,
     outDir,
     tmpDir,
-    maxPartBytes,
+    maxPartBytes: effectiveMaxPartBytes,
+    ...(maxPartTokens === undefined ? {} : { maxPartTokens }),
     largeFileBytes: boundedBytes(cliOptions?.largeFileBytes ?? userConfig?.largeFileBytes, 200 * 1024, 1, "largeFileBytes"),
     previewHeadLines: strictPositiveInteger(userConfig?.previewHeadLines, 80, "`previewHeadLines`"),
     previewTailLines: strictPositiveInteger(userConfig?.previewTailLines, 40, "`previewTailLines`"),
@@ -1315,6 +1334,10 @@ export function classifyKind(filePath: string, kinds: KindRule[]): string {
 export function configDigest(config: ResolvedSnapshotConfig): string {
   const material = {
     maxPartBytes: config.maxPartBytes,
+    // The user's own unit. `maxPartBytes` above already reflects the converted ceiling, but
+    // recording the token number means changing 32k to 64k moves the digest even in the
+    // corner where both round to the same byte budget.
+    maxPartTokens: config.maxPartTokens ?? null,
     largeFileBytes: config.largeFileBytes,
     previewHeadLines: config.previewHeadLines,
     previewTailLines: config.previewTailLines,

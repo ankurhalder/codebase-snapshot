@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import { countLines, truncateToBytes } from "./preview.js";
 import { escapeControls, UNTRUSTED_CONTENT_NOTICE } from "../terminal.js";
+import { estimateTokens, formatTokens } from "../tokenize.js";
 import type { FileEntry, PartFileEntry, PartMetadata } from "../types.js";
 
 export interface PartitionedPart {
@@ -21,6 +22,23 @@ const MAX_SPLIT_PASSES = 64;
 
 /** Bytes reserved for the `[N lines omitted]` notice a budget-cut body must carry. */
 const BUDGET_MARKER_RESERVE = 96;
+
+/**
+ * Inserts the token line under the file count.
+ *
+ * The estimate is taken on the part *without* this line and then states itself, so the
+ * header and the manifest always carry the same number. Folding the line into its own
+ * estimate made them disagree by one, because writing the digits changes the count that is
+ * being written — a ~10-token difference either way, in a number that is labelled an
+ * estimate, and an exact match between two places that claim the same thing is worth more
+ * than the last digit.
+ */
+function insertTokenLine(markdown: string, tokens: number): string {
+  return markdown.replace(
+    /^(- Files: .*)$/m,
+    `$1\n- Estimated Tokens: ~${formatTokens(tokens)}`
+  );
+}
 
 /** Recognises a marker already appended, so a second shrink does not cut it in half. */
 const BUDGET_MARKER_SUFFIX = /\n\.\.\. \[\d+ lines omitted: part budget \d+ B\] \.\.\.$/;
@@ -203,12 +221,15 @@ export function renumberParts(
       "",
     ].join("\n");
 
-    const markdown = (header + body).replace(/\r\n/g, "\n");
+    const assembled = (header + body).replace(/\r\n/g, "\n");
+    const estimatedTokens = estimateTokens(assembled);
+    const markdown = insertTokenLine(assembled, estimatedTokens);
     const metadata: PartMetadata = {
       ...part.metadata,
       index: index + 1,
       filename: nameFor(index + 1),
       byteSize: Buffer.byteLength(markdown, "utf8"),
+      estimatedTokens,
       sha256: crypto.createHash("sha256").update(markdown).digest("hex"),
       lines: countLines(markdown),
       fileCount: included.length,
@@ -228,8 +249,7 @@ export function renumberParts(
 }
 
 /** Characters reserved for the omission notice appended to a hard-truncated section. */
-const SECTION_TRUNCATION_NOTICE =
-  "\n... [section truncated: metadata alone exceeds the part budget] ...\n";
+const SECTION_TRUNCATION_NOTICE =  "\n... [section truncated: metadata alone exceeds the part budget] ...\n";
 /** Cap on any single metadata value interpolated into a section or header. */
 const METADATA_VALUE_MAX = 200;
 /** Cap on a path shown in the `## Files` list and the `### FILE:` heading. */
@@ -431,7 +451,9 @@ function renderGroups(
       "",
     ].join("\n");
 
-    const content = (header + group.map((s) => s.text).join("")).replace(/\r\n/g, "\n");
+    const assembled = (header + group.map((s) => s.text).join("")).replace(/\r\n/g, "\n");
+    const estimatedTokens = estimateTokens(assembled);
+    const content = insertTokenLine(assembled, estimatedTokens);
     const byteSize = Buffer.byteLength(content, "utf8");
     const sha256 = crypto.createHash("sha256").update(content).digest("hex");
 
@@ -448,6 +470,7 @@ function renderGroups(
       index: index + 1,
       filename,
       byteSize,
+      estimatedTokens,
       budgetBytes: budget,
       sha256,
       lines: countLines(content),

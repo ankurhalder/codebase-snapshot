@@ -160,6 +160,14 @@ export interface PartMetadata {
   /** Exact UTF-8 byte length of the emitted part file. */
   byteSize: number;
   /**
+   * Estimated tokens in this part.
+   *
+   * `byteSize` answers "will this fit the byte budget"; this answers the question a caller
+   * actually has, which is "will this fit my context window". An estimate, and labelled as
+   * one: `estimateTokens` documents exactly what it counts.
+   */
+  estimatedTokens: number;
+  /**
    * The byte budget this part was partitioned against.
    *
    * With per-layer budgets a snapshot has several budgets at once, so "within budget"
@@ -225,6 +233,14 @@ export interface ManifestTotals {
   skippedFiles: number;
   totalSourceBytes: number;
   totalContentBytes: number;
+  /**
+   * Estimated tokens in the emitted parts.
+   *
+   * Optional because a manifest written before this was recorded has no such key. The number
+   * is an estimate — see `estimateTokens` for the method — and it exists because the snapshot
+   * is pasted into a context window, which is measured in tokens rather than bytes.
+   */
+  estimatedTokens?: number;
   partCount: number;
   warningCount: number;
   /**
@@ -260,6 +276,13 @@ export interface ManifestConfigSnapshot {
   /** Digest of the effective settings; see `configDigest`. */
   digest?: string;
   maxPartBytes: number;
+  /**
+   * The token ceiling the run was given, or `undefined` when only bytes were named.
+   *
+   * Recorded so the manifest states the budget the user chose rather than only the byte
+   * value it was converted to.
+   */
+  maxPartTokens?: number;
   largeFileBytes: number;
   previewHeadLines: number;
   previewTailLines: number;
@@ -402,6 +425,15 @@ export interface SnapshotConfig {
   tmpDir?: string;
   /** Raw bytes, or a human-readable size (`"120k"`, `"1.5mb"`). */
   maxPartBytes?: ByteSize;
+  /**
+   * A per-part ceiling in *tokens* rather than bytes.
+   *
+   * The snapshot is pasted into a context window, and a context window is measured in tokens;
+   * bytes are what the partitioner writes. Naming a token budget sets `maxPartBytes` to the
+   * byte count that corresponds to it, so the byte bound — the thing the partitioner actually
+   * enforces — never stops being true. The smaller of the two ceilings wins.
+   */
+  maxPartTokens?: ByteSize;
   largeFileBytes?: ByteSize;
   previewHeadLines?: number;
   previewTailLines?: number;
@@ -439,6 +471,8 @@ export interface ResolvedSnapshotConfig {
   outDir: string;
   tmpDir: string;
   maxPartBytes: number;
+  /** The token ceiling the user asked for, before it was turned into `maxPartBytes`. */
+  maxPartTokens?: number;
   largeFileBytes: number;
   previewHeadLines: number;
   previewTailLines: number;

@@ -1749,6 +1749,9 @@ export function generateSnapshot(
     config: {
       digest: configDigest(config),
       maxPartBytes: config.maxPartBytes,
+      // The ceiling the user named, in their own unit. `maxPartBytes` above is what the
+      // partitioner enforced; both are recorded so the manifest can explain the gap.
+      ...(config.maxPartTokens === undefined ? {} : { maxPartTokens: config.maxPartTokens }),
       largeFileBytes: config.largeFileBytes,
       previewHeadLines: config.previewHeadLines,
       previewTailLines: config.previewTailLines,
@@ -1790,6 +1793,9 @@ export function generateSnapshot(
       skippedFiles: skipped.length,
       totalSourceBytes: totalSizeBytes,
       totalContentBytes,
+      // The parts are what a model is handed, so the estimate is over the parts rather than
+      // over the sources: previews and the byte budget both shrink the number.
+      estimatedTokens: parts.reduce((total, part) => total + part.metadata.estimatedTokens, 0),
       partCount: parts.length,
       warningCount: 0,
       redactedLines: 0,
@@ -2163,6 +2169,7 @@ export {
   assertUsableConfigInput,
 } from "./config.js";
 export { truncateToBytes } from "./partitioner/preview.js";
+export { estimateTokens, bytesForTokens, formatTokens } from "./tokenize.js";
 export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 
 export type * from "./types.js";

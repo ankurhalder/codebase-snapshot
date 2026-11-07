@@ -105,6 +105,7 @@ const CLI_OPTIONS = {
   watch: { type: "boolean" },
   "no-config": { type: "boolean" },
   discovery: { type: "string" },
+  "max-part-tokens": { type: "string" },
   preset: { type: "string" },
   include: { type: "string" },
   exclude: { type: "string" },
@@ -238,6 +239,8 @@ interface ParsedInvocation {
   includeMonolith?: boolean;
   includeSensitiveFiles?: boolean;
   maxPartBytes?: number;
+  /** A per-part ceiling in tokens; resolved into `maxPartBytes` by `resolveConfig`. */
+  maxPartTokens?: number;
   largeFileBytes?: number;
   maxMonolithBytes?: number | null;
   skipArtifacts?: string[];
@@ -612,6 +615,13 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       values["max-part-bytes"] as string | undefined,
       "max-part-bytes",
       MIN_MAX_PART_BYTES
+    ),
+    // Tokens are counted, so `32k` is a shorthand a context window is often named with; the
+    // same parser accepts a bare integer.
+    maxPartTokens: parseByteOption(
+      values["max-part-tokens"] as string | undefined,
+      "max-part-tokens",
+      1
     ),
     largeFileBytes: parseByteOption(
       values["large-file-bytes"] as string | undefined,
@@ -1304,6 +1314,7 @@ async function runCommand(argv: string[]): Promise<number> {
       includeMonolith: invocation.includeMonolith,
       includeSensitiveFiles: invocation.includeSensitiveFiles,
       maxPartBytes: invocation.maxPartBytes,
+      maxPartTokens: invocation.maxPartTokens,
       largeFileBytes: invocation.largeFileBytes,
       maxMonolithBytes: invocation.maxMonolithBytes,
       skipArtifacts: invocation.skipArtifacts,
@@ -1727,11 +1738,12 @@ async function runWatchLoop(
           includeMonolith: invocation.includeMonolith,
           includeSensitiveFiles: invocation.includeSensitiveFiles,
           maxPartBytes: invocation.maxPartBytes,
+          maxPartTokens: invocation.maxPartTokens,
           largeFileBytes: invocation.largeFileBytes,
           maxMonolithBytes: invocation.maxMonolithBytes,
           skipArtifacts: invocation.skipArtifacts,
           discovery: invocation.discovery,
-        } as Partial<CliOptions> & { discovery?: DiscoveryMode },
+        } as Partial<CliOptions> & { discovery?: DiscoveryMode; maxPartTokens?: number },
         invocation.cwd
       );
       const manifest = generateSnapshot(next, { dryRun: invocation.dryRun });

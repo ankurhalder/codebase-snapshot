@@ -53,6 +53,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "cwd",
     "out-dir",
     "max-part-bytes",
+    "max-part-tokens",
     "large-file-bytes",
     "max-monolith-bytes",
     "include-monolith",
