@@ -206,7 +206,7 @@ npx -y codebase-snapshot@0.9.10 mcp             # or serve it over MCP
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
 workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-The MCP server exposes seven tools — status, plan, generate, validate, locate, read, explain — plus
+The MCP server exposes eight tools — status, plan, generate, validate, locate, dependents, read, explain — plus
 `snapshot://` resources and two prompts. Its reads come from the snapshot rather than the working
 tree, so an excluded file stays excluded and a redacted value stays redacted, and
 `snapshot_validate` answers the question an agent otherwise cannot ask: is the context I was given

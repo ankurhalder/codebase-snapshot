@@ -211,15 +211,21 @@ const SOURCE_EXTENSIONS = new Set([
  * candidate path, so a directory named `[unmatched` aborted the run and `[id]`
  * matched unrelated files. Both are gone: every candidate is a map lookup, and
  * no path is ever used as a pattern.
+ *
+ * Exported so a consumer can answer "what imports this file" from the snapshot's own
+ * index using the same rules the generator used. `manifest.indexes.imports.byFile`
+ * records the *raw* specifiers a file imports (`"./user.js"`), and a second
+ * implementation of the resolution would eventually disagree with this one — leaving
+ * two accounts of one graph.
  */
-interface ImportResolver {
+export interface ImportResolver {
   byPath: Map<string, string>;
   byPathFolded: Map<string, string>;
   byStem: Map<string, string>;
   byStemFolded: Map<string, string>;
 }
 
-function buildImportResolver(files: FileEntry[]): ImportResolver {
+export function buildImportResolver(files: FileEntry[]): ImportResolver {
   const byPath = new Map<string, string>();
   const byPathFolded = new Map<string, string>();
   const byStem = new Map<string, string>();
@@ -252,7 +258,7 @@ function buildImportResolver(files: FileEntry[]): ImportResolver {
 }
 
 /** Best-effort resolution of a relative import to an included file. */
-function resolveSpecifier(
+export function resolveSpecifier(
   fromFile: string,
   specifier: string,
   resolver: ImportResolver

@@ -378,7 +378,7 @@ codebase-snapshot mcp                 # serve the current directory over stdio
 codebase-snapshot mcp --cwd <path>    # serve another repository
 ```
 
-Serves the repository to a Model Context Protocol client over stdio: seven tools, `snapshot://`
+Serves the repository to a Model Context Protocol client over stdio: eight tools, `snapshot://`
 resources and two prompts. Stdout carries JSON-RPC messages and nothing else; every note goes to
 stderr. It speaks both protocol eras — the legacy `initialize` handshake and the stateless
 `2026-07-28` revision — and answers whichever the client starts with.

@@ -161,7 +161,7 @@ diff, and the commit, are then yours.
 ## When the client speaks MCP
 
 If the agent runs inside an MCP client, \`npx ${PACKAGE_NAME}@latest mcp\` serves this repository
-as seven tools over stdio instead of shelling out. Its reads come from the snapshot rather than
+as eight tools over stdio instead of shelling out. Its reads come from the snapshot rather than
 the working tree, so excluded files and redacted values never reach the context. Use
 \`snapshot_locate\` before \`snapshot_read\`, and \`snapshot_validate\` before trusting a snapshot
 from an earlier session.

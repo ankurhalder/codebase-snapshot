@@ -1,5 +1,5 @@
 /**
- * The seven tools this server exposes.
+ * The eight tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
-import { generateSnapshot } from "../index.js";
+import { buildImportResolver, generateSnapshot, resolveSpecifier } from "../index.js";
 import { truncateToBytes } from "../partitioner/preview.js";
 import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
@@ -621,6 +621,158 @@ const locateTool: McpTool = {
   },
 };
 
+/**
+ * The import graph, in both directions.
+ *
+ * `manifest.indexes.imports` has always held enough to answer "what does this file use" and
+ * "what uses this file" — `centralFiles` ranks the most-imported files — but nothing an agent
+ * could ask. So the one question that decides what to read next ("if I change this, what
+ * breaks?") was answered by reading parts until the picture appeared, which is the cost the
+ * snapshot exists to remove.
+ *
+ * The resolution runs through `buildImportResolver`, the same code the generator used, so
+ * this cannot describe a different graph from the one in `centralFiles`.
+ */
+const dependentsTool: McpTool = {
+  name: "snapshot_dependents",
+  title: "Follow the import graph",
+  description:
+    "For one file in the snapshot: what it imports, and which files import it. Answers " +
+    "\"what breaks if I change this?\" without reading the parts.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description:
+          "Snapshot-relative path, exactly as snapshot_locate or manifest.files[] reports it.",
+      },
+      direction: {
+        type: "string",
+        enum: ["both", "imports", "imported-by"],
+        default: "both",
+        description: "Which edges to return.",
+      },
+      limit: {
+        type: "integer",
+        minimum: 1,
+        maximum: 200,
+        default: 50,
+        description: "Maximum entries per direction.",
+      },
+      root: ROOT_PROPERTY,
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      imports: { type: "array" },
+      importedBy: { type: "array" },
+      unresolved: { type: "array" },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context);
+    if (!prepared.ok) return prepared.outcome;
+
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return failure(read.message);
+    const manifest = read.manifest;
+
+    const requested = String(args.path ?? "").trim().replace(/\\/g, "/");
+    if (requested.length === 0) return failure('"path" must not be empty.');
+
+    const filesByPath = new Map(manifest.files.map((file) => [file.relativePath, file]));
+    const entry =
+      filesByPath.get(requested) ??
+      manifest.files.find((file) => file.relativePath.toLowerCase() === requested.toLowerCase());
+    if (!entry) {
+      return failure(
+        `${requested} is not in the snapshot. Use snapshot_locate to find its path, or ` +
+          "snapshot_explain to see whether it was excluded."
+      );
+    }
+
+    const direction = args.direction === "imports" || args.direction === "imported-by"
+      ? String(args.direction)
+      : "both";
+    const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : 50;
+
+    const resolver = buildImportResolver(manifest.files);
+    const imports: Array<{ path: string; specifier: string; part: string }> = [];
+    const unresolved: string[] = [];
+
+    if (direction !== "imported-by") {
+      const own = manifest.indexes.imports.byFile.find((file) => file.path === entry.relativePath);
+      for (const specifier of own?.imports ?? []) {
+        const resolved = resolveSpecifier(entry.relativePath, specifier, resolver);
+        if (resolved === null) {
+          unresolved.push(specifier);
+          continue;
+        }
+        const target = filesByPath.get(resolved);
+        if (target) imports.push({ path: resolved, specifier, part: target.part });
+      }
+    }
+
+    const importedBy: Array<{ path: string; part: string }> = [];
+    if (direction !== "imports") {
+      for (const candidate of manifest.indexes.imports.byFile) {
+        if (candidate.path === entry.relativePath) continue;
+        const edge = candidate.imports.some(
+          (specifier) => resolveSpecifier(candidate.path, specifier, resolver) === entry.relativePath
+        );
+        if (!edge) continue;
+        const source = filesByPath.get(candidate.path);
+        importedBy.push({ path: candidate.path, part: source?.part ?? "" });
+      }
+    }
+
+    const shownImports = imports.slice(0, limit);
+    const shownImportedBy = importedBy.slice(0, limit);
+
+    const lines = [
+      `${entry.relativePath} — ${importedBy.length} importer(s), ${imports.length} import(s), ` +
+        `${unresolved.length} outside the snapshot.`,
+    ];
+    if (direction !== "imports") {
+      lines.push("", "Imported by:");
+      if (shownImportedBy.length === 0) lines.push("  (nothing in the snapshot imports it)");
+      for (const item of shownImportedBy) lines.push(`  ${item.path}  [${item.part}]`);
+      if (importedBy.length > shownImportedBy.length) {
+        lines.push(`  … ${importedBy.length - shownImportedBy.length} more; raise \`limit\`.`);
+      }
+    }
+    if (direction !== "imported-by") {
+      lines.push("", "Imports:");
+      if (shownImports.length === 0) lines.push("  (none recorded for this file)");
+      for (const item of shownImports) {
+        lines.push(`  ${item.path}  (from "${item.specifier}")  [${item.part}]`);
+      }
+      if (imports.length > shownImports.length) {
+        lines.push(`  … ${imports.length - shownImports.length} more; raise \`limit\`.`);
+      }
+      if (unresolved.length > 0) {
+        lines.push("", `Outside the snapshot (${unresolved.length}): ${unresolved.join(", ")}`);
+      }
+    }
+
+    return {
+      text: lines.join("\n"),
+      structured: {
+        path: entry.relativePath,
+        imports: shownImports,
+        importedBy: shownImportedBy,
+        unresolved,
+      },
+    };
+  },
+};
+
 const readTool: McpTool = {
   name: "snapshot_read",
   title: "Read a file from the snapshot",
@@ -843,6 +995,7 @@ export function buildTools(): McpTool[] {
     generateTool,
     validateTool,
     locateTool,
+    dependentsTool,
     readTool,
     explainTool,
   ];

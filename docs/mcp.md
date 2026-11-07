@@ -40,7 +40,7 @@ claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.10 mcp --cwd /a
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
 there, and clients that spawn without a shell cannot execute it directly.
 
-## The seven tools
+## The eight tools
 
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |
@@ -49,10 +49,11 @@ there, and clients that spawn without a shell cannot execute it directly.
 | `snapshot_generate` | Build it. | yes |
 | `snapshot_validate` | Is the context the agent was given still current? | no |
 | `snapshot_locate` | Which part holds this symbol, route or file? | no |
+| `snapshot_dependents` | What does this file import, and what imports it? | no |
 | `snapshot_read` | A window of one file, as the snapshot contains it. | no |
 | `snapshot_explain` | Why is this path not in the snapshot? | no |
 
-Six are declared `readOnlyHint`, which most clients use to run them without asking. Only
+Seven are declared `readOnlyHint`, which most clients use to run them without asking. Only
 `snapshot_generate` prompts.
 
 `snapshot_locate` is the one that makes the others usable: a twelve-part snapshot is hundreds of

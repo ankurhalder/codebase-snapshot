@@ -21,7 +21,7 @@ export interface ToolContext {
  * Client-facing hints.
  *
  * `readOnlyHint` is the one that changes behaviour rather than appearance: clients use it to
- * auto-approve a call. Six of the seven tools never touch the filesystem, so they are marked
+ * auto-approve a call. Seven of the eight tools never touch the filesystem, so they are marked
  * read-only and only `snapshot_generate` prompts.
  */
 export interface ToolAnnotations {
