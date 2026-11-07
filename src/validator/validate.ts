@@ -11,6 +11,9 @@ import {
 } from "../config.js";
 import { collectFiles, findSecretInPath, getGitInfo } from "../scanner/files.js";
 import { resolveChangedScope } from "../scanner/changed.js";
+import { buildImportResolver, importsChangedFile } from "../scanner/dependents.js";
+import type { ImportResolver } from "../scanner/dependents.js";
+import { importsOfFile } from "../ast/imports.js";
 import { decodeText, isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
@@ -354,6 +357,7 @@ export function validateSnapshot(
   let unchangedScope: Set<string> | null = null;
   const recordedChangedSince = manifest.config?.changedSince;
   const recordedStaged = manifest.config?.staged === true;
+  const recordedWithDependents = manifest.config?.withDependents === true;
   if (recordedChangedSince !== undefined || recordedStaged) {
     try {
       unchangedScope = new Set(
@@ -368,6 +372,34 @@ export function validateSnapshot(
           "re-resolved; files it recorded as `unchanged` were trusted rather than re-checked."
       );
     }
+  }
+
+  /**
+   * True when a file recorded as `unchanged` now imports something that changed.
+   *
+   * With `--with-dependents` the effective scope is the changed set **plus one hop of importers**,
+   * and only the generator applied that hop. A file that has since started importing a changed
+   * module belongs in the snapshot and is not in it, which is drift — but `validate` compared
+   * path sets only, so it called a snapshot stale-in-the-other-direction correct.
+   *
+   * Only the file under test is parsed, and only when the manifest says the run used
+   * `--with-dependents`. The alternative — parsing every candidate up front — would make a
+   * scoped `validate` read the whole repository to answer a question about one file.
+   */
+  let dependentResolver: ImportResolver | null = null;
+  function becameDependent(diskFile: string): boolean {
+    if (!recordedWithDependents || unchangedScope === null) return false;
+    // Built on first use: `collection` is created just below, and the common case has no
+    // dependents at all, so the resolver must not be built for every scoped validation.
+    dependentResolver ??= buildImportResolver(
+      collection.files.map((file) => ({ relativePath: file }))
+    );
+    return importsChangedFile(
+      diskFile,
+      importsOfFile(diskFile, path.join(config.cwd, diskFile)),
+      unchangedScope,
+      dependentResolver
+    );
   }
 
   const collection = collectFiles(config.cwd, {
@@ -402,8 +434,10 @@ export function validateSnapshot(
       // whether the file is *still* outside the recorded scope: if it has changed since, the
       // snapshot predates it and the drift is real.
       if (skipReason === "unchanged") {
-        if (unchangedScope !== null && unchangedScope.has(diskFile)) {
-          drift.missingInSnapshot.push(diskFile);
+        if (unchangedScope !== null) {
+          if (unchangedScope.has(diskFile) || becameDependent(diskFile)) {
+            drift.missingInSnapshot.push(diskFile);
+          }
         }
         continue;
       }

@@ -246,6 +246,8 @@ export function scanAndRedactSecrets(
           if (group && isUnquotedValue(line, group[0]) && isDeclaredBinding(line, match.index)) {
             continue;
           }
+          // A "quoted value" that is entirely a template interpolation is code, not a literal.
+          if (group && isTemplateInterpolation(line, group[0], group[1])) continue;
           spans.push(
             group
               ? { start: group[0], end: group[1], rule }
@@ -330,6 +332,22 @@ function startsInsideStringLiteral(line: string, matchIndex: number): boolean {
   while (runStart > 0 && /[A-Za-z0-9_-]/.test(line[runStart - 1])) runStart -= 1;
   const before = runStart > 0 ? line[runStart - 1] : "";
   return before === '"' || before === "'" || before === "`";
+}
+
+/**
+ * True when the whole matched "value" is a `${…}` interpolation.
+ *
+ * A template literal is a string, so `startsInsideStringLiteral` — which only looks for a quote
+ * immediately before the identifier — cannot tell `` `… an empty token: "${appliesTo}"` `` from
+ * a real assignment. The credential rule then masked the interpolation and emitted
+ * `` `… an empty token: "[REDACTED…]"` ``, rewriting a test's assertion message.
+ *
+ * The test is on the *value*, not on the line: an interpolated value is an expression, and no
+ * credential is spelled `${…}`. A mixed value (`"prefix-${x}"`) is still masked, because that
+ * shape is not provably prose and rule 3 asks for fail-closed.
+ */
+function isTemplateInterpolation(line: string, start: number, end: number): boolean {
+  return line[start] === "$" && line[start + 1] === "{" && line[end - 1] === "}";
 }
 
 /**

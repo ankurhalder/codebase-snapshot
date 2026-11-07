@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   enforceBudget,
   estimateTokens,
+  formatTokens,
   isTsxFileName,
   skeletonizeTypeScript,
   summarizeMarkdown,
@@ -139,9 +140,19 @@ test("a clipped part reports the token count of the text it actually holds", () 
   assert.ok(clipped.markdown.includes("cannot fit budget"), "the part really was clipped");
   assert.ok(clipped.metadata.byteSize <= 4096, "and it fits the budget it was clipped to");
   assert.notEqual(clipped.metadata.estimatedTokens, 100_000, "the pre-clip number is gone");
+  // Every other part estimates the text *before* its own token line is inserted — that is what
+  // `renderGroups` and `renumberParts` do — so a clipped part uses the same definition. Counting
+  // the line that is about to be rewritten made the recorded total include the width of a number
+  // that no longer exists in the file.
+  const withoutTokenLine = clipped.markdown.replace(/^- Estimated Tokens: .*$/m, "");
   assert.equal(
     clipped.metadata.estimatedTokens,
-    estimateTokens(clipped.markdown),
-    "the recorded count describes the text that was actually written"
+    estimateTokens(withoutTokenLine),
+    "the recorded count matches the definition every other part uses"
+  );
+  assert.match(
+    clipped.markdown,
+    new RegExp(`^- Estimated Tokens: ~${formatTokens(clipped.metadata.estimatedTokens)}$`, "m"),
+    "and the header states the same number the metadata records"
   );
 });

@@ -58,6 +58,23 @@ const ROOT_PROPERTY = {
   description: "Repository root. Defaults to the directory this server was started in.",
 };
 
+/**
+ * Where the snapshot lives, when it is not the `outDir` in the project configuration.
+ *
+ * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
+ * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
+ * a single one of the eight tools: `snapshot_generate` wrote it, and everything else looked in
+ * the configured directory and reported "there is no snapshot manifest here".
+ */
+const OUT_DIR_PROPERTY = {
+  type: "string" as const,
+  description:
+    "Snapshot directory, relative to the root. Defaults to the project configuration's outDir.",
+};
+
+/** The override every tool takes from `args.outDir`, so the two cannot drift apart. */
+const outDirOverride = (args: JsonObject): WorkspaceOverrides => ({ outDir: args.outDir });
+
 function failure(message: string): ToolOutcome {
   return { text: message, isError: true };
 }
@@ -178,7 +195,7 @@ const statusTool: McpTool = {
     "whether a snapshot needs to be generated.",
   inputSchema: {
     type: "object",
-    properties: { root: ROOT_PROPERTY },
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
     additionalProperties: false,
   },
   outputSchema: {
@@ -199,7 +216,7 @@ const statusTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context);
+    const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
     const read = readManifest(workspace);
@@ -266,6 +283,7 @@ const planTool: McpTool = {
     type: "object",
     properties: {
       root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
       maxPartBytes: {
         type: "string",
         description:
@@ -287,7 +305,7 @@ const planTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context, { maxPartBytes: args.maxPartBytes });
+    const prepared = await prepare(args, context, { maxPartBytes: args.maxPartBytes, outDir: args.outDir });
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -353,14 +371,11 @@ const generateTool: McpTool = {
     type: "object",
     properties: {
       root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
       maxPartBytes: {
         type: "string",
         description:
           'Byte budget per part, for example 307200 or "300k". Defaults to the project configuration.',
-      },
-      outDir: {
-        type: "string",
-        description: "Output directory relative to the root. Defaults to the project configuration.",
       },
     },
     additionalProperties: false,
@@ -431,7 +446,7 @@ const validateTool: McpTool = {
     "before trusting context that came from an earlier session, or after changing the config.",
   inputSchema: {
     type: "object",
-    properties: { root: ROOT_PROPERTY },
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
     additionalProperties: false,
   },
   outputSchema: {
@@ -443,7 +458,7 @@ const validateTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context);
+    const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -517,6 +532,7 @@ const locateTool: McpTool = {
         description: "Maximum matches to return.",
       },
       root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
     },
     required: ["query"],
     additionalProperties: false,
@@ -527,7 +543,7 @@ const locateTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context);
+    const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -671,6 +687,7 @@ const dependentsTool: McpTool = {
         description: "Maximum entries per direction.",
       },
       root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
     },
     required: ["path"],
     additionalProperties: false,
@@ -686,7 +703,7 @@ const dependentsTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context);
+    const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
 
     const read = readManifest(prepared.workspace);
@@ -810,6 +827,7 @@ const readTool: McpTool = {
         description: "How many lines to return.",
       },
       root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
     },
     required: ["path"],
     additionalProperties: false,
@@ -827,7 +845,7 @@ const readTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context);
+    const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -872,7 +890,7 @@ const readTool: McpTool = {
       );
     }
 
-    const section = findSection(parsePartSections(partText), entry.relativePath, entry.hashSha256);
+    const section = findSection(parsePartSections(partText), entry.relativePath);
     if (!section) {
       return failure(
         `${relativePath} is recorded in ${entry.part} but its section could not be located there. ` +
@@ -902,13 +920,28 @@ const readTool: McpTool = {
 
     const header = [
       `${entry.relativePath} — ${entry.part}, ${entry.layer}/${entry.kind}, ${entry.language}`,
-      section.inclusion === "preview"
-        ? "Bounded preview: this source file is large, so the snapshot holds only its head and tail."
-        : window.totalLines === 0
-          ? "This file is empty."
-          : window.pastEnd
-            ? `This file has ${window.totalLines} line(s); fromLine=${window.fromLine} is past its end.`
-            : `Lines ${window.fromLine}\u2013${window.fromLine + returnedLines - 1} of ${window.totalLines}.`,
+      // The line range is the answer to "where am I in this file", and it is computed from the
+      // body the window was taken from, so it is just as meaningful for a preview as for a full
+      // file. It used to be replaced — not augmented — by the preview note, so a 40-line window
+      // into a 300-line preview came back with no range at all and the caller could not tell
+      // where the window ended. Both facts are stated now, and `signatures` is no longer
+      // silently treated as a full file.
+      ...(section.inclusion === "preview"
+        ? [
+            "Bounded preview: the snapshot holds this file's head and tail only, so these line " +
+              "numbers count the preview, not the source.",
+          ]
+        : section.inclusion === "signatures"
+          ? [
+              "Signatures: function and method bodies were replaced with `{ /* ... */ }` when the " +
+                "snapshot was generated.",
+            ]
+          : []),
+      window.totalLines === 0
+        ? "This file is empty."
+        : window.pastEnd
+          ? `This file has ${window.totalLines} line(s); fromLine=${window.fromLine} is past its end.`
+          : `Lines ${window.fromLine}\u2013${window.fromLine + returnedLines - 1} of ${window.totalLines}.`,
     ];
     const lines = [...header, "", body];
     if (moreRemain) {
@@ -950,6 +983,7 @@ const explainTool: McpTool = {
         description: "Path relative to the repository root. Directories are explained as a whole.",
       },
       root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
     },
     required: ["path"],
     additionalProperties: false,
@@ -964,7 +998,7 @@ const explainTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context);
+    const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 

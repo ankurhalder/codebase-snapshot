@@ -23,6 +23,134 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.12
+
+A third audit, this time of what the snapshot *costs* as well as what it gets wrong. Two of the
+defects were circular — `validate` demanded a flag it refused to accept — and one of them meant a
+config file could not turn a setting on at all. Every item below has a test that fails without it.
+
+### The parts were 32 000 tokens of duplicated metadata
+
+Each file section carried nine metadata bullets and, for a TS/JSON/Markdown file, a
+pretty-printed JSON summary of code that followed three lines later. On this repository — 234
+files — that was **195 619 bytes, about 32 600 tokens, 12 % of the snapshot**, spent on a
+`SHA-256:` line per file and on listing every variable and export immediately above the code that
+declares it.
+
+A section is now an anchor, a heading and one line:
+
+```text
+- Meta: src/other | typescript | full | 3 lines (63 B)
+```
+
+- The per-file `SHA-256` is **gone from the parts** and stays in `manifest.json`, which is the file
+  a machine reads. `snapshot_read` used to fall back to it when a path was too long for the
+  heading; it now matches the `<a id>` anchor, which is a digest of the exact `relativePath` and was
+  already there — exact even for the 300-character paths the heading caps.
+- The structural summary is **not printed for a `full` file**: `manifest.json` keeps it, and
+  `preview` and `signatures` sections keep it, because there the body is not the file. A one-line
+  string summary survives either way.
+- `- Content Fingerprint:` stays in the part header (~22 tokens per part), which anchors an answer
+  to a verifiable state of the repository.
+
+Nothing else about the format moved, so `snapshot_read` and both structural parsers still read it.
+
+### `validate` refused the flag its own comparison needed
+
+`manifest.config.digest` hashes `skeleton`, `sarif`, `maxPartTokens`, `changedSince`, `staged` and
+`withDependents`, and `validate` compared that digest — but `COMMAND_OPTION_SCOPE` allowed those six
+flags on `generate` only. So a snapshot generated with `--skeleton`:
+
+1. failed `validate` with "the settings differ from the ones this snapshot was generated with", and
+2. failed `validate --skeleton` with "`--skeleton` does not apply to validate".
+
+There was no way to validate it. `validate` now accepts all six, `explain` accepts the three that
+decide its answer, and `report` accepts none: it reads the manifest and prints what is there, so a
+generation setting would change nothing.
+
+### A config file could not turn these four settings on
+
+`parseArgs` returned `skeleton: values.skeleton === true`, so a run that did not pass the flag sent
+**`false`** — and `resolveConfig` reads these as `cliOptions.x ?? config.x`, where `false` is an
+explicit override. `skeleton: true` in `snapshot.config.ts` was silently turned off by every run
+that did not repeat the flag on the command line. The same applied to `staged`, `withDependents`
+and `sarif`. All four are now `undefined` when the flag is absent.
+
+### `explain` and `validate` ignored `--with-dependents`
+
+The generator widened a changed-files scope by one hop of importers; both readers compared the raw
+path set. A file that was **in** the snapshot because it imported something that changed was
+explained as `included: false, reason: "unchanged"`, and `validate` called the snapshot current
+while a file it should contain was missing from it. The import graph moved to
+`src/scanner/dependents.ts` so all three apply one rule, and `validate` now re-parses a recorded
+`unchanged` skip only when the manifest says the run used `--with-dependents`.
+
+### `setup` wrote a config its own snapshot did not match
+
+`setup --discovery walk --large-file-bytes 100000` forwarded both flags to the generation it runs
+and wrote the defaults into the config beside it, so a brand-new project's one-command setup
+finished with a snapshot that `validate` immediately called drifted — three configuration
+mismatches on the first run. `--max-part-tokens`, `--skeleton` and `--sarif` are now accepted by
+`setup` too, and every one of them is written into the generated config as well as forwarded.
+
+### Redaction that corrupted what it protected
+
+Three shapes were found in this repository's own snapshot, where the tool rewrote its own
+documentation and tests:
+
+- **Prose.** `credential-assignment-unquoted` masked any word after `secret: ` or `token: `, so
+  `indistinguishable from a secret: a` became `…from a secret: [REDACTED…]`. An unquoted value in a
+  line-oriented format never continues after a space (`PASSWORD: hunter2` ends the line; `secret: a
+  value` is a sentence), and a one-character bare value is not a credential. Quoted values keep
+  their one-character floor — quotes are evidence somebody meant to write a value.
+- **Template literals.** `` `… an empty token: "${appliesTo}"` `` had the interpolation masked,
+  because `startsInsideStringLiteral` only looks at the character before the identifier. A value
+  that is entirely `${…}` is an expression, so it is not masked.
+- **Doubly-escaped quotes.** `JSON.parse('{"password": "p@\\"ssw0rdINVENTED"}')` — how every
+  fixture that embeds JSON is written — emitted `"[REDACTED…]"ssw0rdINVENTED"`: a fragment of the
+  credential in clear and a line that no longer parses. A quote after `\\` that is followed by a
+  value character is an escaped quote in a deeper literal, and the value now runs to the real close.
+
+### An async `afterGenerate` hook's files were not recorded
+
+The hook is documented as the way to write your own artifact into the snapshot directory, and that
+directory is only replaceable while `.codebase-snapshot` accounts for every file in it. Only the
+*rejection* path re-shipped the marker, so an async hook that succeeded left its file unrecorded
+and the next `generate` refused the directory as foreign. The marker is now re-shipped when the
+hook settles either way, and only while it still records this run — the lock is released when
+`generateSnapshot` returns, so a slow hook can outlive the snapshot it belongs to.
+`generateSnapshotAsync` now awaits the hook, so a caller of the async API gets control back when
+the snapshot is actually finished.
+
+### Smaller fixes
+
+- **`getGitInfo` used Node's 1 MB `maxBuffer`** where every sibling call passed 32 or 50 MB. On a
+  repository with enough dirty entries, `git status` overflowed, threw, and the `catch` returned
+  `isDirty: false` — reporting the dirtiest possible tree as clean. The limit is raised and shared,
+  and an overflow now reports `isDirty: true`, because a buffer that large only fills when there is
+  a great deal to report. All three git invocations use `execFileSync` instead of a shell string.
+- **`.gitignore` character classes** were escaped as literals, so `*.[oa]`, `[Tt]humbs.db` and
+  `log[0-9].txt` matched nothing in `--discovery walk` while working in `git` mode.
+- **A layer or kind rule** was glob-translated only when it contained `*` or `?`, so
+  `src/{api,web}/index.ts` fell through to a substring search and classified nothing; and a plain
+  pattern like `test` used `String.includes`, so it matched `src/contest/a.ts`. Both now go through
+  `matchesExclude`, which is the single implementation of "does this pattern select this path".
+- **`export { handler as GET }`** and `export { GET } from "./handlers"` recorded the export but no
+  route method, so those App Router routes had no `methods` in `manifest.indexes.routes`.
+  `export default () => <div />` recorded no component for the same reason.
+- **The last-resort clip** reserved room for its own truncation marker but not for the token count
+  rewritten afterwards, so a part clipped to exactly its budget came back over it. `rehashPart` also
+  estimated tokens from text that still carried the *old* number, unlike every other part.
+- **Seven MCP tools ignored `outDir`**, so a snapshot generated into a custom directory could be
+  written by `snapshot_generate` and inspected by nothing.
+- **`snapshot_read`** replaced the line range with the preview note instead of adding to it, so a
+  window into a preview came back with no `Lines X–Y of Z` at all; `signatures` was treated as a
+  full file.
+- **Every published file ended with a `sourceMappingURL`** pointing at a `.map` that
+  `package.json#files` deliberately does not ship. The build no longer emits them.
+
+---
+
 ## 0.9.11
 
 A second audit, run against 0.9.10's own output, found that several defects the previous release

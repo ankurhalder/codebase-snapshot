@@ -685,10 +685,17 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     noUpdateCheck: values["no-update-check"] === true,
     installHook: values["install-hook"] === true,
     changedSince: values["changed-since"] === undefined ? undefined : String(values["changed-since"]),
-    staged: values.staged === true,
-    withDependents: values["with-dependents"] === true,
-    skeleton: values.skeleton === true,
-    sarif: values.sarif === true,
+    // `undefined` when the flag was not given, never `false`.
+    //
+    // `resolveConfig` reads these as `cliOptions.x ?? config.x`, so a `false` here is an
+    // *explicit override* — it beat `skeleton: true` in a `snapshot.config.ts` and turned the
+    // setting off without a word. Every run that did not pass the flag sent `false`, so a config
+    // file could not turn any of these four on at all, and a snapshot generated with `--skeleton`
+    // could never be validated against the config that describes it.
+    staged: values.staged === true ? true : undefined,
+    withDependents: values["with-dependents"] === true ? true : undefined,
+    skeleton: values.skeleton === true ? true : undefined,
+    sarif: values.sarif === true ? true : undefined,
   };
 }
 
@@ -988,6 +995,16 @@ async function runSetupCommand(
       preset: invocation.preset,
       outDir: invocation.outDir,
       maxPartBytes: invocation.maxPartBytesRaw ?? invocation.maxPartBytes,
+      // Written into the config, not just forwarded to the generation below. A setting that
+      // reaches the snapshot but not the file beside it is drift the very next run reports:
+      // `setup --discovery walk --large-file-bytes 100000` used to exit 0 and then fail its own
+      // `validate` with three configuration mismatches.
+      maxPartTokens: invocation.maxPartTokens,
+      largeFileBytes: invocation.largeFileBytes,
+      maxMonolithBytes: invocation.maxMonolithBytes ?? undefined,
+      discovery: invocation.discovery,
+      skeleton: invocation.skeleton === true ? true : undefined,
+      sarif: invocation.sarif === true ? true : undefined,
       include: splitList(invocation.include),
       exclude: splitList(invocation.exclude),
       skipArtifacts: invocation.skipArtifacts,
@@ -1090,6 +1107,11 @@ async function runSetupCommand(
     if (invocation.maxMonolithBytes !== undefined && invocation.maxMonolithBytes !== null) {
       generateArgs.push("--max-monolith-bytes", String(invocation.maxMonolithBytes));
     }
+    if (invocation.maxPartTokens !== undefined) {
+      generateArgs.push("--max-part-tokens", String(invocation.maxPartTokens));
+    }
+    if (invocation.skeleton === true) generateArgs.push("--skeleton");
+    if (invocation.sarif === true) generateArgs.push("--sarif");
     // `main` runs the update check per invocation, so without this the nested `generate`
     // would ask again after the caller said not to be asked.
     if (invocation.noUpdateCheck) generateArgs.push("--no-update-check");

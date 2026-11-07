@@ -1,5 +1,14 @@
 import { defineConfig } from "tsup";
 
+/**
+ * No source maps in the published bundle.
+ *
+ * `package.json#files` does not ship `*.map`, and `scripts/pack-check.mjs` enforces that — but the
+ * build still emitted `//# sourceMappingURL=index.js.map` at the end of every `dist/*.js`, `*.cjs`
+ * and `*.d.ts`. Every consumer's debugger therefore resolved the comment, found nothing, and
+ * reported a missing source map for a file it had just loaded. A comment pointing at a file that
+ * is deliberately not shipped is a wrong answer at the exact moment someone is debugging.
+ */
 export default defineConfig([
   {
     entry: {
@@ -12,7 +21,7 @@ export default defineConfig([
     },
     format: ["esm", "cjs"],
     dts: true,
-    sourcemap: true,
+    sourcemap: false,
     clean: true,
     treeshake: true,
     target: "node18",
@@ -25,7 +34,7 @@ export default defineConfig([
     // here would emit it twice and produce an unparsable second line.
     entry: { bin: "src/bin.ts" },
     format: ["esm"],
-    sourcemap: true,
+    sourcemap: false,
     target: "node18",
     external: ["typescript"],
   },

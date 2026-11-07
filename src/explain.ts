@@ -1,9 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { importsOfFile } from "./ast/imports.js";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { countLines } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
 import { resolveChangedScope } from "./scanner/changed.js";
+import { buildImportResolver, importsChangedFile } from "./scanner/dependents.js";
 import { BINARY_SCAN_BYTES, isBinaryFile, decodeText } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
@@ -188,6 +190,19 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
         ...(config.staged === true ? { staged: true } : {}),
       });
       inScope = scope.paths.has(relative);
+      if (!inScope && config.withDependents === true) {
+        // `--with-dependents` widens the scope by one hop of importers, and `generate` applies
+        // that hop. Explaining only the path set answered `included: false, reason: "unchanged"`
+        // for exactly the files the snapshot contains, so the two accounts of one run disagreed.
+        // The hop is answered from this file alone: the question is whether *it* imports
+        // something that changed, which needs its own imports and nothing else's.
+        inScope = importsChangedFile(
+          relative,
+          importsOfFile(relative, absolute),
+          scope.paths,
+          buildImportResolver(collection.files.map((file) => ({ relativePath: file })))
+        );
+      }
       scopeDetail = scope.detail;
     } catch (err) {
       // The scope is a fact about the repository this tool cannot reconstruct without git. Saying

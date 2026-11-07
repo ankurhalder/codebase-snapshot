@@ -14,21 +14,31 @@
  * is what makes "the next line equal to this exact fence" an unambiguous terminator.
  */
 
-import { displayPath } from "../partitioner/chunker.js";
+import { anchorForPath, displayPath } from "../partitioner/chunker.js";
 
 export interface PartSection {
   /** The path as rendered in the `### FILE:` heading. */
   path: string;
+  /** The `<a id="…">` anchor from the line above the heading, when present. */
+  anchor: string | null;
   /** The file body, without its fence. Redacted and possibly a bounded preview. */
   body: string;
-  /** `full` or `preview`. */
+  /** `full`, `preview` or `signatures`. */
   inclusion: string | null;
-  sha256: string | null;
   includedLines: number | null;
 }
 
 const FILE_HEADING = "### FILE: ";
 const CONTENT_MARKERS = new Set(["#### Content", "#### Bounded Preview"]);
+const ANCHOR_LINE = /^<a id="([^"]+)"><\/a>$/;
+/**
+ * The inclusion modes a part can declare.
+ *
+ * The metadata line is `layer/kind | language | inclusion | N lines (M B)`, and the first three
+ * fields are free-form names a config can set — so the inclusion is found by *value* rather than
+ * by position. A layer called `api|v2` must not shift the field the reader is looking for.
+ */
+const INCLUSION_MODES = new Set(["full", "preview", "signatures"]);
 
 /** Splits a part into one section per emitted file. */
 export function parsePartSections(partText: string): PartSection[] {
@@ -43,9 +53,12 @@ export function parsePartSections(partText: string): PartSection[] {
     }
 
     const heading = lines[index].slice(FILE_HEADING.length);
+    // The anchor sits on the line immediately above the heading. It is the only exact
+    // identifier a section has: the heading is the *display* form, capped and escaped, so two
+    // long paths can share it, while the anchor hashes the real path.
+    const anchorMatch = index > 0 ? ANCHOR_LINE.exec(lines[index - 1]) : null;
     let cursor = index + 1;
     let inclusion: string | null = null;
-    let sha256: string | null = null;
     let includedLines: number | null = null;
 
     while (cursor < lines.length && !CONTENT_MARKERS.has(lines[cursor])) {
@@ -53,9 +66,21 @@ export function parsePartSections(partText: string): PartSection[] {
       // A new heading before a content marker means this section was malformed; stop scanning it
       // rather than adopting the next file's metadata.
       if (line.startsWith(FILE_HEADING)) break;
-      if (line.startsWith("- Inclusion: ")) inclusion = line.slice("- Inclusion: ".length).trim();
-      else if (line.startsWith("- SHA-256: ")) sha256 = line.slice("- SHA-256: ".length).trim();
-      else if (line.startsWith("- Included Lines: ")) {
+      if (line.startsWith("- Meta: ")) {
+        for (const field of line.slice("- Meta: ".length).split("|")) {
+          const value = field.trim();
+          if (INCLUSION_MODES.has(value)) inclusion = value;
+        }
+        const counts = /(-?\d+) of (-?\d+) lines|(\d+) lines/.exec(line);
+        if (counts) {
+          const emitted = counts[1] ?? counts[3];
+          includedLines = Number.isFinite(Number(emitted)) ? Number(emitted) : null;
+        }
+      } else if (line.startsWith("- Inclusion: ")) {
+        // Snapshots written before 0.9.12 carry a bullet per field; the reader still reads them
+        // so an existing snapshot directory does not have to be regenerated to be readable.
+        inclusion = line.slice("- Inclusion: ".length).trim();
+      } else if (line.startsWith("- Included Lines: ")) {
         const value = Number(line.slice("- Included Lines: ".length).trim());
         includedLines = Number.isFinite(value) ? value : null;
       }
@@ -84,7 +109,7 @@ export function parsePartSections(partText: string): PartSection[] {
       bodyLine += 1;
     }
 
-    sections.push({ path: heading, body: body.join("\n"), inclusion, sha256, includedLines });
+    sections.push({ path: heading, anchor: anchorMatch?.[1] ?? null, body: body.join("\n"), inclusion, includedLines });
     index = bodyLine + 1;
   }
 
@@ -94,44 +119,36 @@ export function parsePartSections(partText: string): PartSection[] {
 /**
  * Finds the section for one file.
  *
- * The heading is matched first, because it is exact for every ordinary path. Two forms
- * have to be compared: the manifest's `relativePath` and the *rendered* path the heading
- * actually holds, which differs whenever the name carries a control character (escaped
- * as `\uXXXX`) or is long enough to be capped. Comparing only the raw form left such a
- * file unreadable through `snapshot_read` in a snapshot where another file had the same
- * content — the hash fallback could not disambiguate, and the path comparison always
- * failed.
+ * The **anchor** is the identifier, not the heading. `anchorForPath` hashes the real
+ * `relativePath`, so it is exact and injective; the heading is the display form, and for a path
+ * with a control character (escaped as `\uXXXX`) or one longer than 300 characters (capped from
+ * the middle) it is not the path at all. The old fallback for those cases was the content
+ * SHA-256, which the part no longer carries — and which could never disambiguate two files with
+ * the same content, the exact case that needs it.
  *
- * The SHA-256 is the fallback that matters for a path the heading cannot reproduce. When
- * several files share content and therefore a hash, an ambiguous hash match is refused
- * rather than guessed, and the path comparison decides.
+ * The heading comparison is kept as a second chance, for a snapshot written before the anchor
+ * was read, or a part whose anchor line was edited by hand.
  */
 export function findSection(
   sections: readonly PartSection[],
-  relativePath: string,
-  sha256: string | null
+  relativePath: string
 ): PartSection | null {
+  const anchor = anchorForPath(relativePath);
+  const byAnchor = sections.find((section) => section.anchor === anchor);
+  if (byAnchor) return byAnchor;
+
   const rendered = displayPath(relativePath);
   const samePath = (section: PartSection): boolean =>
     section.path === relativePath || section.path === rendered;
-  const samePathFolded = (section: PartSection): boolean => {
-    const path = section.path.toLowerCase();
-    return path === relativePath.toLowerCase() || path === rendered.toLowerCase();
-  };
 
   const exact = sections.find(samePath);
   if (exact) return exact;
 
-  if (sha256) {
-    const byHash = sections.filter((section) => section.sha256 === sha256);
-    if (byHash.length === 1) return byHash[0];
-    if (byHash.length > 1) {
-      const byPath = byHash.find(samePathFolded);
-      if (byPath) return byPath;
-    }
-  }
-
-  const folded = sections.filter(samePathFolded);
+  const foldedPath = rendered.toLowerCase();
+  const folded = sections.filter((section) => {
+    const path = section.path.toLowerCase();
+    return path === relativePath.toLowerCase() || path === foldedPath;
+  });
   return folded.length === 1 ? folded[0] : null;
 }
 

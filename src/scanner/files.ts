@@ -90,6 +90,15 @@ function isInside(root: string, candidate: string): boolean {
   );
 }
 
+/**
+ * Ceiling on any single git listing.
+ *
+ * Node's default is 1 MB, which is not a lot of paths — a monorepo with a few hundred thousand
+ * tracked-and-ignored entries exceeds it. The limit exists so a runaway listing cannot exhaust
+ * memory, not so a legitimate one can fail; these are the sizes the sibling helpers already use.
+ */
+const GIT_OUTPUT_LIMIT = 68_157_440;
+
 export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
   try {
     // One subprocess, not three.
@@ -107,11 +116,27 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
     // `-z` disables C-quoting of paths, so a path containing a newline cannot be
     // mistaken for a header: parsing stops at the first record that is not a header,
     // and everything from there on is an entry, which is all `isDirty` needs.
-    const output = childProcess.execSync("git status --porcelain=v2 --branch -z", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8",
-    });
+    //
+    // `execFileSync`, not `execSync`: the same call written as a command string goes through a
+    // shell on this platform, so every path in the output is quoted for it and a repository
+    // whose name contains shell metacharacters was misparsed. Nothing here is user input any
+    // more either way, but `src/scanner/changed.ts` already runs git the direct way.
+    //
+    // `maxBuffer`, because the default is 1 MB and this output is *proportional to the number
+    // of changed files*: on a repository with more than roughly ten thousand dirty entries
+    // `git status` overflows, `execSync` throws ENOBUFS, and the catch below reported the
+    // dirtiest possible tree as `isDirty: false`. Every sibling call in this file already
+    // passes a limit — this one just kept Node's default.
+    const output = childProcess.execFileSync(
+      "git",
+      ["status", "--porcelain=v2", "--branch", "-z"],
+      {
+        cwd,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
+        maxBuffer: GIT_OUTPUT_LIMIT,
+      }
+    );
 
     let branch = fallbackBranch;
     let commit = "unknown";
@@ -136,8 +161,14 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
     }
 
     return { branch, commit, isDirty };
-  } catch {
-    return { branch: fallbackBranch, commit: "unknown", isDirty: false };
+  } catch (err) {
+    // An overflowed buffer is *evidence*, not a failure to answer: `git status` only exceeds
+    // the ceiling when it has an enormous number of entries, which is the definition of a dirty
+    // tree. Reporting "clean" there was the worst possible answer, because the snapshot then
+    // claims its own contents match the commit that is being described.
+    const code = (err as { code?: unknown }).code;
+    const isDirty = code === "ENOBUFS";
+    return { branch: fallbackBranch, commit: "unknown", isDirty };
   }
 }
 
@@ -596,6 +627,24 @@ function matchGitignorePattern(target: string, pattern: string): boolean {
       source += "[^/]";
       continue;
     }
+    // `[abc]`, `[!abc]`, `[0-9]`: a character class is part of gitignore's pattern language,
+    // and escaping the brackets made every rule that used one match nothing at all —
+    // `*.[oa]`, `[Tt]humbs.db` and `log[0-9].txt` were ignored in `walk` mode while the same
+    // rules worked in `git` mode. Parsed exactly like `globBodyToRegExp` does, so the two
+    // matchers cannot disagree about what a class means.
+    if (character === "[") {
+      const close = body.indexOf("]", i + 1);
+      if (close !== -1 && close > i + 1) {
+        const inner = body.slice(i + 1, close);
+        const negated = inner.startsWith("!") || inner.startsWith("^");
+        const chars = negated ? inner.slice(1) : inner;
+        // `-` keeps range semantics; everything else that is special is escaped.
+        const safe = chars.replace(/[\\^\]]/g, (value) => `\\${value}`);
+        source += negated ? `[^/${safe}]` : `[${safe}]`;
+        i = close;
+        continue;
+      }
+    }
     source += escapeRegExpChar(character);
   }
   const prefix = anchored || body.includes("/") ? "^" : "(?:^|.*/)";
@@ -706,13 +755,14 @@ export function defaultIgnoreReason(relativePath: string): string | null {
  */
 function listIgnoredPaths(cwd: string): string[] {
   try {
-    const stdout = childProcess.execSync(
-      "git ls-files -z --others --ignored --exclude-standard --directory",
+    const stdout = childProcess.execFileSync(
+      "git",
+      ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
       {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
         encoding: "utf8",
-        maxBuffer: 32 * 1024 * 1024,
+        maxBuffer: GIT_OUTPUT_LIMIT,
       }
     );
     return stdout
@@ -881,13 +931,14 @@ function listGitCandidates(
   skipped: SkipRecord[],
   isToolOwned: (relativePath: string) => boolean
 ): string[] {
-  const stdout = childProcess.execSync(
-    "git ls-files -z --cached --others --exclude-standard",
+  const stdout = childProcess.execFileSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
     {
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8",
-      maxBuffer: 50 * 1024 * 1024,
+      maxBuffer: GIT_OUTPUT_LIMIT,
     }
   );
   let candidates = stdout

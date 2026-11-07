@@ -45,9 +45,28 @@ same persistently. The ownership marker is always written.
 Each `part-NNN.md` holds whole files under the byte budget (`maxPartBytes`, default 300 KB).
 A file larger than the budget is not split mid-file: it is truncated and carries an omission
 marker naming the budget that cut it (`... [347 lines omitted: part budget 1887 B] ...`). A file
-above `largeFileBytes` is emitted as a head/tail excerpt instead, with the same marker. Each file
-section is tagged with its layer, kind, language and a structural summary (imports, exports,
-classes, functions) so a reader can navigate without opening every file.
+above `largeFileBytes` is emitted as a head/tail excerpt instead, with the same marker.
+
+Each file section is an anchor, a `### FILE:` heading, and **one** metadata line:
+
+```text
+<a id="src-math-ts-1a2b3c4d"></a>
+### FILE: src/math.ts
+
+- Meta: src/other | typescript | full | 3 lines (63 B)
+- Summary Quality: ast
+```
+
+The four fields are `layer/kind`, language, inclusion mode and size. The inclusion mode is `full`,
+`preview` or `signatures`, and the line count reads `40 of 300 lines` when the body holds less than
+the source. What a part deliberately does **not** print is the per-file SHA-256 and the structural
+summary of a full file: the digest is in `manifest.json` where a machine reads it, and the summary
+would repeat the code that follows it by three lines. On a 234-file repository that was about
+32 000 tokens of pure duplication. A `preview` or a `signatures` file keeps its structural summary,
+because there the body is not the file.
+
+A file above `largeFileBytes` is a preview, and a preview section is a window like any other:
+`snapshot_read` states `Lines 1–40 of 300` for it too, so a reader always knows where it is.
 
 Parts are packed in a stable order, so the same input produces the same content — which is
 what makes `manifest.fingerprint` meaningful.

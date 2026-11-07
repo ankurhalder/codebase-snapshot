@@ -182,13 +182,25 @@ export function summarizeTypeScriptSource(
       }
       if (node.exportClause && ts.isNamedExports(node.exportClause)) {
         for (const element of node.exportClause.elements) {
-          summary.exports.push(element.name.text);
+          // The **exported** name, which is `element.name`. In `export { handler as GET }` that
+          // is `GET`, and it is what the consuming module actually sees.
+          const exported = element.name.text;
+          summary.exports.push(exported);
+          // `export { handler as GET }` and `export { GET } from "./handlers"` are how the App
+          // Router declares a route in a directory that keeps the implementations elsewhere.
+          // The summary listed the export and left `routeHandlers` empty, so these routes were
+          // invisible to `manifest.indexes.routes[].methods`.
+          if (ROUTE_HANDLER_NAMES.has(exported)) summary.routeHandlers.push(exported);
         }
       }
     }
 
     if (ts.isExportAssignment(node)) {
       summary.exports.push("default");
+      // `export default () => <div />` is a component with no name to record, so it is recorded
+      // as what it is exported as. Without this the anonymous form was the one React component
+      // shape missing from `reactComponents`, while the named forms were all present.
+      if (rendersJsx(node.expression)) summary.reactComponents.push("default");
     }
 
     if (ts.isFunctionDeclaration(node)) {

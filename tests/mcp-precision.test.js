@@ -5,7 +5,7 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { buildTools, findSection } from "../dist/mcp.js";
-import { displayPath } from "../dist/index.js";
+import { anchorForPath, displayPath } from "../dist/index.js";
 
 /**
  * Precision of the MCP read/locate tools, from the 0.9.9 audit.
@@ -131,18 +131,19 @@ test("snapshot_locate matches a layer and a kind by fragment", async (t) => {
 });
 
 test("findSection resolves a path the heading had to cap or escape", () => {
-  // Two files with identical content share a hash, so the hash cannot disambiguate; the
-  // heading holds the *rendered* path, which is not the manifest's `relativePath`.
+  // Two files whose headings cap to text that cannot be told apart by path alone. The anchor
+  // hashes the real `relativePath`, so it is exact for both — the content hash the part used to
+  // carry could not help here at all, because these two files have the same content.
   const long = `src/${"very-long-directory-name/".repeat(14)}file.ts`;
   const other = `src/${"another-directory/".repeat(14)}file.ts`;
   assert.notEqual(displayPath(long), long, "the fixture must actually be capped");
 
   const sections = [
-    { path: displayPath(long), body: "same", inclusion: "full", sha256: "abc", includedLines: 1 },
-    { path: displayPath(other), body: "same", inclusion: "full", sha256: "abc", includedLines: 1 },
+    { path: displayPath(long), anchor: anchorForPath(long), body: "same", inclusion: "full", includedLines: 1 },
+    { path: displayPath(other), anchor: anchorForPath(other), body: "same", inclusion: "full", includedLines: 1 },
   ];
 
-  const found = findSection(sections, long, "abc");
+  const found = findSection(sections, long);
   assert.ok(found, "the section must be locatable");
-  assert.equal(found.path, displayPath(long));
+  assert.equal(found.anchor, anchorForPath(long), "and it must be the right one of the two");
 });

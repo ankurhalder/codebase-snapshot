@@ -4,6 +4,7 @@ import { ARTIFACT_NAMES, parseByteSize, supportsTypeScriptImports } from "../con
 import { appendGitignoreEntries } from "../gitignore.js";
 import { detectPreset, listPresetNames } from "../presets/index.js";
 import { getGitInfo } from "../scanner/files.js";
+import type { DiscoveryMode } from "../scanner/files.js";
 import type { ArtifactSelection, ByteSize } from "../types.js";
 import { GENERATOR_NAME, GENERATOR_VERSION } from "../version.js";
 import {
@@ -28,6 +29,13 @@ export interface InitOptions {
   /** Force a preset instead of detecting one. */
   preset?: string;
   maxPartBytes?: ByteSize;
+  /** Ceiling in tokens; narrows `maxPartBytes` rather than replacing it. */
+  maxPartTokens?: number;
+  largeFileBytes?: ByteSize;
+  maxMonolithBytes?: ByteSize;
+  discovery?: DiscoveryMode;
+  skeleton?: boolean;
+  sarif?: boolean;
   include?: string[];
   exclude?: string[];
   skipArtifacts?: string[];
@@ -439,7 +447,15 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       options.maxPartBytes ??
       detected.recommendedBudget ??
       DEFAULT_ANSWERS.maxPartBytes,
-    largeFileBytes: DEFAULT_ANSWERS.largeFileBytes,
+    // Every setting the caller named is written down, not just forwarded. A config that omits
+    // what the run used is drift the next `validate` reports, and `setup` is the one command
+    // that is supposed to leave a project in a consistent state.
+    maxPartTokens: options.maxPartTokens ?? DEFAULT_ANSWERS.maxPartTokens,
+    largeFileBytes: options.largeFileBytes ?? DEFAULT_ANSWERS.largeFileBytes,
+    maxMonolithBytes: options.maxMonolithBytes ?? DEFAULT_ANSWERS.maxMonolithBytes,
+    discovery: options.discovery ?? DEFAULT_ANSWERS.discovery,
+    skeleton: options.skeleton ?? DEFAULT_ANSWERS.skeleton,
+    sarif: options.sarif ?? DEFAULT_ANSWERS.sarif,
     include: options.include ?? [],
     excludePatterns: options.exclude ?? [],
     artifacts: artifactAnswers(options),

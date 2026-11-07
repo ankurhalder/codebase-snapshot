@@ -5,8 +5,8 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
 import {
-  globToRegExp,
   isDiscoveryMode,
+  matchesExclude,
   type DiscoveryMode,
 } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
@@ -1425,6 +1425,13 @@ export function resolveConfig(
  * `"src/app/**"` now means "exactly `src/app` or below": the previous
  * implementation stripped `**` **and** the trailing slash, so the pattern also
  * matched `src/apple/` and `src/application/`.
+ *
+ * Everything else is answered by {@link matchesExclude}, which is the one implementation of
+ * "does this pattern select this path": glob metacharacters (including `{a,b}` and `[abc]`,
+ * which used to be tested for `*`/`?` only and then silently compared as literal text) go
+ * through the glob translator, and a plain pattern means a whole **path segment** sequence
+ * rather than a substring. `match: "test"` used to select `src/contest/a.ts`, and a layer rule
+ * that matched nothing classified every file under it as `other`.
  */
 export function matchRule(
   filePath: string,
@@ -1445,14 +1452,11 @@ export function matchRule(
       // itself contains glob characters (e.g. `**/features/**`) must fall
       // through to the glob matcher instead.
       if (!prefix) return true;
-      if (!/[*?]/.test(prefix)) {
+      if (!/[*?{[]/.test(prefix)) {
         return filePath === prefix || filePath.startsWith(`${prefix}/`);
       }
     }
-    if (pattern.includes("*") || pattern.includes("?")) {
-      return globToRegExp(pattern).test(filePath);
-    }
-    return filePath.includes(pattern);
+    return matchesExclude(filePath, pattern);
   }
   return false;
 }

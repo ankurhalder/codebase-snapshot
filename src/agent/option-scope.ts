@@ -24,11 +24,29 @@ export type CommandName =
   | "skill"
   | "mcp";
 
-/** `check` is an alias of `validate`; appliesTo names the canonical command only. */
+/**
+ * Every option `validate` accepts. `check` is an alias of `validate`; appliesTo names the
+ * canonical command only.
+ *
+ * The six generation settings are here because `validate` compares the manifest's
+ * `config.digest`, and that digest is computed over all of them. Leaving them out made a
+ * legitimate snapshot permanently unvalidatable: `generate --skeleton` recorded a digest that
+ * includes `skeleton: true`, `validate` resolved `skeleton: false` and reported
+ * "the settings differ from the ones this snapshot was generated with", and passing
+ * `--skeleton` to `validate` to fix it was rejected as "does not apply to validate". The two
+ * errors pointed at each other. `--changed-since`/`--staged`/`--with-dependents` additionally
+ * decide which of the recorded `unchanged` skips are re-checked.
+ */
 const VALIDATE_OPTIONS = [
+  "sarif",
+  "skeleton",
+  "changed-since",
+  "staged",
+  "with-dependents",
   "cwd",
   "out-dir",
   "max-part-bytes",
+  "max-part-tokens",
   "large-file-bytes",
   "max-monolith-bytes",
   "include-monolith",
@@ -96,6 +114,12 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "version",
   ],
   explain: [
+    // The scope decides what `explain` says about a file, dependents included: without these,
+    // a file that is in the snapshot only because it imports a changed one was explained as
+    // `included: false, reason: "unchanged"`.
+    "changed-since",
+    "staged",
+    "with-dependents",
     "cwd",
     "out-dir",
     "max-part-bytes",
@@ -148,6 +172,13 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "cwd",
     "out-dir",
     "max-part-bytes",
+    // Persisted into the config `setup` writes, then forwarded to the generation it runs — so
+    // the snapshot it produces validates against the config beside it. Accepting a setting here
+    // without writing it down made `setup --large-file-bytes 100k` finish with a snapshot its
+    // own `validate` called drifted, on the first run of a brand-new project.
+    "max-part-tokens",
+    "skeleton",
+    "sarif",
     "large-file-bytes",
     "max-monolith-bytes",
     "include-monolith",

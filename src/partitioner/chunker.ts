@@ -57,6 +57,20 @@ function replaceTokenLine(markdown: string, tokens: number): string {
 /** Recognises a marker already appended, so a second shrink does not cut it in half. */
 const BUDGET_MARKER_SUFFIX = /\n\.\.\. \[\d+ lines omitted: part budget \d+ B\] \.\.\.$/;
 
+/** The headline token estimate, rewritten in place after a part is clipped. */
+const TOKEN_LINE = /^- Estimated Tokens: .*$/m;
+
+/**
+ * Room reserved for rewriting {@link TOKEN_LINE} after a part has been clipped to its budget.
+ *
+ * Clipping happens at `budget - marker`, and fixing the token count afterwards changes the
+ * header: the new number is not always as wide as the old one (`~99` grows to `~100`), and when
+ * the clip cut the header itself away, `replaceTokenLine` falls back to *inserting* the line —
+ * about 28 bytes that were not in the clipped text. Reserving the room is what keeps the byte
+ * bound a guarantee instead of an aspiration; both clip sites subtract it.
+ */
+const TOKEN_LINE_SLACK = 32;
+
 interface PreparedSection {
   file: FileEntry;
   text: string;
@@ -151,9 +165,16 @@ export function partitionFiles(
     }
 
     // Last resort: the single section still does not fit, so hard-truncate the
-    // rendered part. The byte bound is a guarantee, not an aspiration.
-    const marker = "\n... [part truncated: cannot fit budget] ...\n";
-    const target = Math.max(0, budget - Buffer.byteLength(marker, "utf8"));
+    // rendered part. The byte bound is a guarantee, not an aspiration — which includes the
+    // token line {@link rehashPart} rewrites below, so the same room is held back here as in
+    // `enforceBudget`. Without it a part clipped exactly to budget came out over it whenever the
+    // rewoven estimate was a digit wider.
+    const marker = TRUNCATION_MARKER;
+    assertBudgetHoldsMarker(budget);
+    const target = Math.max(
+      0,
+      budget - Buffer.byteLength(marker, "utf8") - TOKEN_LINE_SLACK
+    );
     const clipped = truncateToBytes(rendered[oversized].markdown, target);
     rendered[oversized] = rehashPart(rendered[oversized], clipped.content + marker);
     return rendered;
@@ -173,18 +194,48 @@ export function partitionFiles(
  * rather than clipping them, so no ordinary fixture reaches this branch, and the stale token
  * count it used to leave behind was therefore invisible to every end-to-end test.
  */
+/** Appended to a part that had to be cut because it could not fit its budget. */
+const TRUNCATION_MARKER = "\n... [part truncated: cannot fit budget] ...\n";
+
+/**
+ * Refuses a budget that cannot hold the notice a truncated part is required to carry.
+ *
+ * Below this ceiling the two obligations are contradictory: the part must fit, and a part that was
+ * cut must say so. Keeping its own marker after the cut means the smallest honest part is the
+ * marker itself, so a budget under its length cannot be honoured — and returning a part that is
+ * bigger than the budget it was clipped to is the one thing a byte bound may not do. A configured
+ * budget cannot request this (`--max-part-bytes` has a floor of 4096), so this is a guard for
+ * direct callers of `partitionFiles` and `enforceBudget`.
+ */
+function assertBudgetHoldsMarker(budget: number): void {
+  const minimum = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
+  if (budget < minimum) {
+    throw new Error(
+      `A part budget of ${budget} B cannot hold the truncation notice (${minimum} B), so a ` +
+        "clipped part could not fit and still say it was clipped. Use a budget of at least " +
+        `${minimum} B.`
+    );
+  }
+}
+
+/**
+ * Hard-clips any part that is still above `budget`, re-hashing what it wrote.
+ *
+ * Exported so the clip path can be tested at all: the partitioner splits oversized sections
+ * rather than clipping them, so no ordinary fixture reaches this branch, and the stale token
+ * count it used to leave behind was therefore invisible to every end-to-end test.
+ */
 export function enforceBudget(parts: PartitionedPart[], budget: number): PartitionedPart[] {
-  const marker = "\n... [part truncated: cannot fit budget] ...\n";
-  // The token line is rewritten with the post-clip estimate, and the new number is not always
-  // the same width as the old one (`~99` grew to `~100`). Holding back a few bytes keeps the
-  // header rewrite from pushing the part back over the budget it was clipped to meet.
-  const TOKEN_LINE_SLACK = 32;
-  const target = Math.max(0, budget - Buffer.byteLength(marker, "utf8") - TOKEN_LINE_SLACK);
+  const target = Math.max(
+    0,
+    budget - Buffer.byteLength(TRUNCATION_MARKER, "utf8") - TOKEN_LINE_SLACK
+  );
 
   return parts.map((part) => {
     if (part.metadata.byteSize <= budget) return part;
+    assertBudgetHoldsMarker(budget);
     const clipped = truncateToBytes(part.markdown, target);
-    return rehashPart(part, clipped.content + marker);
+    return rehashPart(part, clipped.content + TRUNCATION_MARKER);
   });
 }
 
@@ -385,7 +436,12 @@ function rehashPart(part: PartitionedPart, markdown: string): PartitionedPart {
   // pre-clip number made a part's own header, its metadata and the report that sums metadata
   // all disagree with the bytes underneath — and `metadata.estimatedTokens` is the field every
   // reader trusts.
-  const estimatedTokens = estimateTokens(markdown);
+  //
+  // Estimated over the markdown **without** its token line, which is how `renderGroups` and
+  // `renumberParts` estimate theirs. Estimating the text that still carried the *old* number
+  // counted the old digits as content, so the rewritten line and the recorded total disagreed
+  // by the width of the number being replaced.
+  const estimatedTokens = estimateTokens(markdown.replace(TOKEN_LINE, ""));
   const redistributed = replaceTokenLine(markdown, estimatedTokens);
   return {
     filename: part.filename,
@@ -529,10 +585,45 @@ export function emittedBody(content: string): string {
   return normalised.endsWith("\n") ? normalised.slice(0, -1) : normalised;
 }
 
+/**
+ * One compact metadata line per file, instead of nine.
+ *
+ * This is the only per-file metadata a reader pays for, and the nine bullets it replaces were
+ * `Layer`, `Kind`, `Language`, `Inclusion`, `Source Bytes`, `Source Lines`, `Included Lines`,
+ * `SHA-256` and `Summary Quality` — about 32 tokens on every file in the snapshot, which is
+ * roughly 160 000 tokens in a 5 000-file monorepo, spent before a line of code is read.
+ *
+ * Nothing was dropped that a reader can use:
+ *
+ * - `layer/kind` and `language` are unchanged, just joined.
+ * - `inclusion` is a closed set (`full`, `preview`, `signatures`), which is what lets the
+ *   reader in `mcp/part.ts` find it again in a line whose other fields are free-form.
+ * - The line counts and the source byte count are unchanged; a body that holds fewer lines
+ *   than its source says so (`40 of 300 lines`) instead of needing two labels to say it.
+ * - `SHA-256` is **gone from the part** and stays authoritative in `manifest.json`. The part is
+ *   the text a model reads; the manifest is the file-machine-reads. The digest was there for two
+ *   internal lookups — one of which was a fallback for a path the heading cannot spell, now
+ *   answered by {@link anchorForPath}'s own digest — and a 64-character hex string is pure
+ *   context cost to the reader.
+ */
+function compactMetadata(file: FileEntry): string {
+  const count = (value: number): string => `${value} line${value === 1 ? "" : "s"}`;
+  const lines =
+    file.includedLines === file.originalLines
+      ? count(file.originalLines)
+      : `${count(file.includedLines)} of ${count(file.originalLines)}`;
+  return [
+    `- Meta: ${capMetadata(file.layer)}/${capMetadata(file.kind)}`,
+    capMetadata(file.language),
+    file.inclusionMode,
+    `${lines} (${file.sizeBytes} B)`,
+  ].join(" | ");
+}
+
 function renderFileSection(file: FileEntry): string {
   const content = file.content ?? "";
   const body = emittedBody(content);
-  // Settled before the metadata lines are built, because `- Included Lines:` is rendered from
+  // Settled before the metadata line is built, because it is rendered from
   // these values and both are read afterwards by `PartFileEntry` and by the manifest entry.
   file.includedBytes = Buffer.byteLength(body, "utf8");
   file.includedLines = countLines(body);
@@ -543,16 +634,9 @@ function renderFileSection(file: FileEntry): string {
     `<a id="${anchor}"></a>`,
     `### FILE: ${displayPath(file.relativePath)}`,
     "",
-    `- Layer: ${capMetadata(file.layer)}`,
-    `- Kind: ${capMetadata(file.kind)}`,
-    `- Language: ${capMetadata(file.language)}`,
-    `- Inclusion: ${file.inclusionMode}`,
-    `- Source Bytes: ${file.sizeBytes}`,
-    `- Source Lines: ${file.originalLines}`,
-    `- Included Lines: ${file.includedLines}`,
-    `- SHA-256: ${file.hashSha256}`,
+    compactMetadata(file),
     ...(file.summaryQuality ? [`- Summary Quality: ${file.summaryQuality}`] : []),
-    ...renderSummary(file.summary),
+    ...renderSummary(file.summary, file.inclusionMode),
     ...(file.summaryOmitted ? ["- Summary: (omitted: exceeds the part budget)"] : []),
     "",
     file.inclusionMode === "preview" ? "#### Bounded Preview" : "#### Content",
@@ -588,9 +672,23 @@ export function fenceForText(content: string, minimum: number): string {
   return "`".repeat(Math.max(minimum, maxRun + 1));
 }
 
-function renderSummary(summary: FileEntry["summary"]): string[] {
+/**
+ * The structural summary, when it says something the body does not.
+ *
+ * A `full` file is about to print every line of itself three lines below, so a pretty-printed
+ * JSON summary above it lists every variable, import and export the reader is about to read
+ * anyway — 30 duplicated lines for a 12-line file. The summary is still computed, still recorded
+ * in `manifest.json`, and still what `snapshot_locate` and `snapshot_dependents` answer from; it
+ * is only the *part* that stops repeating it. For `preview` and `signatures` the body is not the
+ * file, so the summary is the only structural account the reader gets, and it stays.
+ *
+ * A one-line string summary is kept either way: it costs a dozen tokens and states the shape of
+ * the file before the reader commits to reading it.
+ */
+function renderSummary(summary: FileEntry["summary"], inclusionMode: string): string[] {
   if (!summary) return [];
   if (typeof summary === "string") return [`- Summary: ${summary}`];
+  if (inclusionMode === "full") return [];
   return ["- Summary:", "```json", JSON.stringify(summary, null, 2), "```"];
 }
 

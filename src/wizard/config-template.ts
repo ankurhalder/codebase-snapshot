@@ -1,11 +1,17 @@
 import type { ArtifactSelection, ByteSize } from "../types.js";
+import type { DiscoveryMode } from "../scanner/files.js";
 
 /** What the wizard decided, after prompts or flags. */
 export interface WizardAnswers {
   preset: string;
   branch: string;
   maxPartBytes: ByteSize;
+  maxPartTokens: number | null;
   largeFileBytes: ByteSize;
+  maxMonolithBytes: ByteSize | null;
+  discovery: DiscoveryMode;
+  skeleton: boolean;
+  sarif: boolean;
   include: string[];
   excludePatterns: string[];
   artifacts: Required<ArtifactSelection>;
@@ -17,7 +23,12 @@ export const DEFAULT_ANSWERS: WizardAnswers = {
   preset: "generic",
   branch: "main",
   maxPartBytes: "300k",
+  maxPartTokens: null,
   largeFileBytes: "200k",
+  maxMonolithBytes: null,
+  discovery: "auto",
+  skeleton: false,
+  sarif: false,
   include: [],
   excludePatterns: [],
   artifacts: {
@@ -105,7 +116,7 @@ export function renderConfig(answers: WizardAnswers): string {
   maxPartBytes: ${size(answers.maxPartBytes)},
   // The same ceiling expressed in tokens; it narrows maxPartBytes rather than
   // replacing it. null = not set. Minimum 1024.
-  maxPartTokens: null,
+  maxPartTokens: ${answers.maxPartTokens === null ? "null" : String(answers.maxPartTokens)},
   // Files above this size get a head/tail preview instead of the full body.
   largeFileBytes: ${size(answers.largeFileBytes)},
   previewHeadLines: 80,
@@ -119,10 +130,10 @@ export function renderConfig(answers: WizardAnswers): string {
   // ── Scope and compression ──────────────────────────────────────────────
   // Replace function and method bodies with \`{ /* ... */ }\` in TypeScript files.
   // Signatures and comments stay, so the structure of the file survives.
-  skeleton: false,
+  skeleton: ${answers.skeleton},
   // Also write reports/audit.sarif (SARIF 2.1.0) for a CI security gate. The
   // matched value is never included — only the path, the line and the rule.
-  sarif: false,
+  sarif: ${answers.sarif},
   // Snapshot only the files that differ from a git ref (for example "main"),
   // plus untracked ones. null and false both mean "snapshot everything".
   changedSince: null,
@@ -141,7 +152,7 @@ export function renderConfig(answers: WizardAnswers): string {
   // How candidate files are found: "auto" lists them through git when git can
   // and walks the tree otherwise; "git" and "walk" force one path, and "walk" is
   // the escape hatch when .git exists but git cannot list it.
-  discovery: "auto",
+  discovery: ${JSON.stringify(answers.discovery)},
 
   // ── Classification ─────────────────────────────────────────────────────
   // "merge" = the preset's rules plus yours (yours win). "replace" = yours only.
@@ -172,7 +183,7 @@ export function renderConfig(answers: WizardAnswers): string {
     monolith: ${artifacts.monolith},     // full-codebase.json + .md (roughly doubles output)
   },
   // Skip the monolith above this size. null = no limit.
-  maxMonolithBytes: null,
+  maxMonolithBytes: ${answers.maxMonolithBytes === null ? "null" : size(answers.maxMonolithBytes)},
   // Top-level switch for the monolith, equivalent to artifacts.monolith.
   // When both are present the artifact entry wins; this one exists so the
   // generated file lists every setting the tool accepts.

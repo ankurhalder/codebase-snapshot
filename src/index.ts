@@ -38,6 +38,7 @@ import {
   isBinaryFile,
 } from "./scanner/binary.js";
 import { resolveChangedScope } from "./scanner/changed.js";
+import { buildImportResolver, importsChangedFile, resolveSpecifier } from "./scanner/dependents.js";
 import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
@@ -196,117 +197,6 @@ function retain<T>(items: T[], keep: (item: T) => boolean): void {
  * measurement stays reproducible by flipping this one value.
  */
 const SKIP_PREVIEW_SUMMARIES = true;
-
-const RELATIVE_SPECIFIER = /^\.{1,2}\//;
-const IMPORT_CANDIDATE_SUFFIXES = [
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  "/index.ts",
-  "/index.tsx",
-  "/index.js",
-  "/index.mjs",
-];
-
-const SOURCE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-]);
-
-/**
- * One-pass lookup tables for relative-import resolution.
- *
- * `resolveSpecifier` used to fall back to scanning every known file for every
- * unresolved import — 100k files × 100k imports — and built a RegExp from the
- * candidate path, so a directory named `[unmatched` aborted the run and `[id]`
- * matched unrelated files. Both are gone: every candidate is a map lookup, and
- * no path is ever used as a pattern.
- *
- * Exported so a consumer can answer "what imports this file" from the snapshot's own
- * index using the same rules the generator used. `manifest.indexes.imports.byFile`
- * records the *raw* specifiers a file imports (`"./user.js"`), and a second
- * implementation of the resolution would eventually disagree with this one — leaving
- * two accounts of one graph.
- */
-export interface ImportResolver {
-  byPath: Map<string, string>;
-  byPathFolded: Map<string, string>;
-  byStem: Map<string, string>;
-  byStemFolded: Map<string, string>;
-}
-
-export function buildImportResolver(files: FileEntry[]): ImportResolver {
-  const byPath = new Map<string, string>();
-  const byPathFolded = new Map<string, string>();
-  const byStem = new Map<string, string>();
-  const byStemFolded = new Map<string, string>();
-  // First writer wins, so ambiguity resolves to the lexicographically first
-  // path (the scanner hands files over sorted) and stays deterministic.
-  const remember = (map: Map<string, string>, key: string, value: string): void => {
-    if (!map.has(key)) map.set(key, value);
-  };
-
-  for (const file of files) {
-    const relativePath = file.relativePath;
-    remember(byPath, relativePath, relativePath);
-    remember(byPathFolded, relativePath.toLowerCase(), relativePath);
-
-    const extension = path.posix.extname(relativePath);
-    if (!SOURCE_EXTENSIONS.has(extension)) continue;
-    const stem = relativePath.slice(0, -extension.length);
-    remember(byStem, stem, relativePath);
-    remember(byStemFolded, stem.toLowerCase(), relativePath);
-    // `import "./dir"` resolves to `dir/index.ts`.
-    if (path.posix.basename(stem) === "index") {
-      const directory = path.posix.dirname(stem);
-      remember(byStem, directory, relativePath);
-      remember(byStemFolded, directory.toLowerCase(), relativePath);
-    }
-  }
-
-  return { byPath, byPathFolded, byStem, byStemFolded };
-}
-
-/** Best-effort resolution of a relative import to an included file. */
-export function resolveSpecifier(
-  fromFile: string,
-  specifier: string,
-  resolver: ImportResolver
-): string | null {
-  if (!RELATIVE_SPECIFIER.test(specifier)) return null;
-  const joined = path.posix.normalize(
-    path.posix.join(path.posix.dirname(fromFile), specifier)
-  );
-
-  const exact = (key: string): string | null =>
-    resolver.byPath.get(key) ?? resolver.byPathFolded.get(key.toLowerCase()) ?? null;
-
-  const direct = exact(joined);
-  if (direct) return direct;
-
-  for (const suffix of IMPORT_CANDIDATE_SUFFIXES) {
-    const hit = exact(`${joined}${suffix}`);
-    if (hit) return hit;
-  }
-
-  // An extensionless import (`./x`), a directory import (`./dir` → index), or a
-  // TypeScript-style `./x.js` that actually lives in `./x.ts`.
-  const stem = joined.replace(/\.(?:js|mjs|cjs|jsx)$/, "");
-  const byStem = (key: string): string | null =>
-    resolver.byStem.get(key) ?? resolver.byStemFolded.get(key.toLowerCase()) ?? null;
-  return byStem(joined) ?? byStem(stem);
-}
 
 function buildIndexes(files: FileEntry[]): ManifestIndexes {
   const resolver = buildImportResolver(files);
@@ -623,6 +513,20 @@ function writeOwnershipMarker(dir: string, marker: OwnershipMarker): void {
     `${JSON.stringify(marker, null, 2)}\n`,
     "utf8"
   );
+}
+
+/**
+ * True when `dir`'s marker still records the run `id`.
+ *
+ * Used by the post-hook re-ship, which can run long after the run's lock was released. A missing or
+ * unreadable marker answers `true`: the directory is this run's output and rewriting the marker is
+ * the repair, not the damage. A marker naming a *different* run answers `false`, because then the
+ * directory has moved on and this run's bookkeeping no longer describes it.
+ */
+function markerBelongsTo(dir: string, id: string): boolean {
+  const evidence = readOwnershipMarker(dir);
+  if (evidence.marker === null) return true;
+  return evidence.marker.id === id;
 }
 
 interface MarkerEvidence {
@@ -1757,18 +1661,13 @@ export function generateSnapshot(
   if (changedScope !== null && changedPaths !== null && config.withDependents === true) {
     const keep = new Set(changedPaths);
     const resolver = buildImportResolver(files);
-    // One hop, and only one hop. The test is against the **changed set**, never against `keep`:
-    // adding to `keep` while testing it walked the import graph transitively, so a changed
-    // `a.ts` pulled in `b.ts` (which imports it) and then `c.ts` (which imports `b.ts`), and
-    // whether the two-hop file was included depended on whether its name happened to sort after
-    // `b.ts`. The same repository produced different snapshots depending on file names.
+    // One hop, and only one hop — `importsChangedFile` is the shared test, so `explain` and
+    // `validate` answer this question with the same rule the generator applies here.
     for (const file of files) {
       if (!isSourceSummary(file.summary)) continue;
-      const importsChanged = file.summary.imports.some((specifier) => {
-        const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
-        return resolved !== null && changedPaths.has(resolved);
-      });
-      if (importsChanged) keep.add(file.relativePath);
+      if (importsChangedFile(file.relativePath, file.summary.imports, changedPaths, resolver)) {
+        keep.add(file.relativePath);
+      }
     }
 
     for (const file of files) {
@@ -2242,6 +2141,11 @@ export function generateSnapshot(
     // The marker is rewritten after the hook for the same reason: its inventory
     // must include what the hook added, or the next run refuses the directory.
     const shipHookState = (): void => {
+      // A hook outlives the lock: the run's own lock is released when this function returns, so
+      // by the time a slow async hook settles another `generate` may have replaced the directory.
+      // Writing this run's marker over that one would attach the wrong inventory to somebody
+      // else's snapshot — so the marker is only re-shipped while it still records *this* run.
+      if (!markerBelongsTo(outDir, snapshotId)) return;
       if (artifacts.manifest && manifest.warnings.length !== warningsBeforeHook) {
         writeManifestAtomically(path.join(outDir, "manifest.json"), manifest);
       }
@@ -2250,24 +2154,46 @@ export function generateSnapshot(
     shipHookState();
 
     if (pendingHook) {
-      // The hook is still running. A rejection cannot be awaited from here, so it is recorded and
-      // re-shipped when it lands — never left to become an unhandled rejection.
-      pendingHook.catch((err: unknown) => {
-        // Hook messages are user code and can quote a credential; mask before it
-        // becomes a warning in the manifest and on stdout.
-        const message = maskPathText(
-          err instanceof Error ? err.message : String(err),
-          config.secretRules
-        );
-        manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
-        manifest.totals.warningCount = manifest.warnings.length;
-        try {
-          shipHookState();
-        } catch {
-          // The run already succeeded and the failure is recorded in memory; a write error here
-          // must not turn a warning into a crash.
+      // An async hook is still running when this function returns. Two things have to happen when
+      // it settles, and only the second one was wired up before:
+      //
+      // - **Success**: re-ship the marker. Its inventory is read from the directory, so it must
+      //   be taken *after* the hook has written whatever it writes. `docs/configuration.md`
+      //   documents writing a custom artifact from an `afterGenerate` hook, and doing that from
+      //   an async hook left the file out of `.codebase-snapshot` — so the very next `generate`
+      //   refused the directory with "Refusing to replace outDir", because the directory held
+      //   something the marker did not account for. The re-ship also picks up a warning the hook
+      //   pushed without failing.
+      // - **Failure**: record it as a warning and re-ship, so a rejection never becomes an
+      //   unhandled rejection that kills the process after "Snapshot generated … Integrity:
+      //   passed" has already been printed.
+      pendingHook.then(
+        () => {
+          try {
+            shipHookState();
+          } catch {
+            // The snapshot is already written and correct; a bookkeeping rewrite that fails must
+            // not turn a successful run into a crash. The next run re-creates the marker.
+          }
+        },
+        (err: unknown) => {
+          // Hook messages are user code and can quote a credential; mask before it
+          // becomes a warning in the manifest and on stdout.
+          const message = maskPathText(
+            err instanceof Error ? err.message : String(err),
+            config.secretRules
+          );
+          manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
+          manifest.totals.warningCount = manifest.warnings.length;
+          try {
+            shipHookState();
+          } catch {
+            // The run already succeeded and the failure is recorded in memory; a write error here
+            // must not turn a warning into a crash.
+          }
         }
-      });
+      );
+      pendingHooks.set(outDir, pendingHook);
     }
 
     return manifest;
@@ -2290,12 +2216,34 @@ export function generateSnapshot(
   }
 }
 
+/**
+ * `hooks.afterGenerate` promises still running, keyed by the output directory they write into.
+ *
+ * `generateSnapshot` is synchronous and cannot await them; `generateSnapshotAsync` can, and
+ * should: a caller that awaited the async form used to get control back while the hook was still
+ * writing files into the snapshot it had just been told was finished.
+ */
+const pendingHooks = new Map<string, Promise<unknown>>();
+
 /** Promise-returning wrapper for consumers that prefer an async call site. */
 export async function generateSnapshotAsync(
   configInput?: SnapshotConfig | ResolvedSnapshotConfig | null,
   options?: GenerateOptions
 ): Promise<Manifest> {
-  return generateSnapshot(configInput, options);
+  const manifest = generateSnapshot(configInput, options);
+  const config = isResolvedConfig(configInput)
+    ? normalizeResolvedConfig(configInput)
+    : resolveConfig((configInput as SnapshotConfig | null | undefined) ?? null);
+  const { outDir } = resolveSafeOutputDirs(config);
+  const pending = pendingHooks.get(outDir);
+  if (pending !== undefined) {
+    pendingHooks.delete(outDir);
+    // A rejection is not rethrown: the snapshot is written, and the failure is recorded in
+    // `manifest.warnings` exactly as it is for the synchronous caller. Throwing here would make
+    // a *successful* generation look like a failed one.
+    await pending.catch(() => undefined);
+  }
+  return manifest;
 }
 
 export {
@@ -2381,6 +2329,11 @@ export { estimateTokens, bytesForTokens, formatTokens } from "./tokenize.js";
 export { HOOK_MARKER, installPreCommitHook } from "./agent/hook.js";
 export type { HookInstallResult } from "./agent/hook.js";
 export { resolveChangedScope } from "./scanner/changed.js";
+// The import graph moved to its own module so `explain` and `validate` can apply the same
+// `--with-dependents` hop the generator applies; it stays on the public surface from here.
+export { buildImportResolver, importsChangedFile, resolveSpecifier } from "./scanner/dependents.js";
+export type { ImportCandidate, ImportResolver } from "./scanner/dependents.js";
+export { importsOfFile, importsOfText } from "./ast/imports.js";
 export { isSkeletonizable, isTsxFileName, skeletonizeTypeScript } from "./ast/skeleton.js";
 export { generateSarifReport } from "./generator/sarif.js";
 export { workerEntry } from "./mcp/generate-worker.js";

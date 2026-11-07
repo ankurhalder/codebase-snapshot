@@ -100,14 +100,19 @@ do not assume the repository is broken.
    matches the files on disk. Exit 1 means drift — re-run step 5.
 
 7. **Read the output in this order:**
-   - \`snapshot/parts/part-*.md\` — the code itself, each file tagged with its layer, kind,
-     language and, when it fits the budget, a structural summary (imports, exports,
-     classes, functions). A dropped summary appears as a \`Summary: (omitted …)\` line.
+   - \`snapshot/parts/part-*.md\` — the code itself. Each file carries one \`- Meta:\` line
+     (layer/kind, language, inclusion, size) and, only when the body is **not** the whole
+     file, a structural summary (imports, exports, classes, functions). A full file has no
+     summary line, because the summary would repeat the code three lines below it — read
+     \`manifest.json\` for it. A summary dropped to fit the budget appears as a
+     \`Summary: (omitted …)\` line.
    - \`snapshot/manifest.json\` — the index. \`files[]\` has \`relativePath\`, \`layer\`,
-     \`kind\`, \`language\`, \`part\`, \`inclusionMode\` and \`hashSha256\`, plus \`encoding\`
-     when the file was not plain UTF-8. \`summary\` is **optional**: it is absent for
-     languages with no structural summary, and \`summaryOmitted: true\` marks one dropped
-     to fit the part budget — never assume it exists.
+     \`kind\`, \`language\`, \`part\`, \`inclusionMode\`, \`hashSha256\` and the structural
+     \`summary\`, plus \`encoding\` when the file was not plain UTF-8. \`summary\` is
+     **optional**: it is absent for languages with no structural summary, and
+     \`summaryOmitted: true\` marks one dropped to fit the part budget — never assume it
+     exists. The per-file \`hashSha256\` is only here and in the manifest; it is not printed
+     into the parts.
      \`skipped[]\` records every excluded file **and why**. Prefer querying this over
      re-reading the parts.
    - \`snapshot/reports/audit.md\` — secrets found, large files, parse diagnostics, git

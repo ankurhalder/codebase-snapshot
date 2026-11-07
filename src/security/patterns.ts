@@ -84,11 +84,31 @@ const NOT_A_LITERAL_VALUE =
  * These two rules are necessary but not sufficient — a bareword initializer
  * (`const token = someVar`) still begins with a word character. `redact.ts` refuses
  * values that sit in a declaration for exactly that reason.
+ *
+ * The value is at least two characters long ({@link UNQUOTED_MIN_LENGTH}). One-character
+ * values bought nothing and cost real meaning: prose ending `…is indistinguishable from a
+ * secret: a` was emitted with the `a` masked, which is the sentence the documentation reads.
+ * A lone character is not a credential, and the *quoted* rule keeps its one-character floor —
+ * quotes are evidence that somebody meant to write a value, which a bare word is not.
  */
+const UNQUOTED_MIN_LENGTH = 2;
+
+/**
+ * A space and a lowercase word after the value means the value was not the whole value.
+ *
+ * `.env`, YAML, TOML and compose never put an unquoted space inside a value, so
+ * `secret: a value` is a sentence and `PASSWORD: hunter2` is an assignment. Without this,
+ * any prose that happened to contain the word `secret: ` or `token: ` had its next word
+ * masked — including this repository's own documentation and test comments.
+ */
+const PROSE_CONTINUATION = String.raw`(?!\s+[a-z])`;
+
 const UNQUOTED_LITERAL =
-  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{0,511})(?![A-Za-z0-9_+=/%:.~-]|[({[])";
+  String.raw`(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{${UNQUOTED_MIN_LENGTH - 1},511})(?![A-Za-z0-9_+=/%:.~-]|[({[])` +
+  PROSE_CONTINUATION;
 const UNQUOTED_AMBIGUOUS_LITERAL =
-  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{7,511})(?![A-Za-z0-9_+=/%:.~-]|[({[])";
+  String.raw`(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{7,511})(?![A-Za-z0-9_+=/%:.~-]|[({[])` +
+  PROSE_CONTINUATION;
 
 /**
  * The assignment separator, and only the assignment separator.
@@ -130,8 +150,19 @@ const NOT_A_NAMESPACED_IDENTIFIER = String.raw`(?![a-z][a-z0-9]*(?:\.[a-z][a-z0-
  * `{"password": "p\"ssw0rd"}` was masked to `"[REDACTED…]"ssw0rd"` — most of the value left in
  * clear, and the line left syntactically broken. `\\.` consumes the escaped pair, so the match
  * ends at the real closing quote.
+ *
+ * **Doubly-escaped quote.** One case defeats `\\.`: a quoted value *inside* a quoted string,
+ * which is how every test fixture and every code sample that embeds JSON is written —
+ * `JSON.parse('{"password": "p@\\"ssw0rd"}' )`. There the backslash before the inner quote is
+ * itself escaped, so `\\.` consumes `\\` and the `"` that follows reads as the closing quote.
+ * The value was emitted as `"[REDACTED…]"ssw0rdINVENTED"`: a fragment of the credential in
+ * clear, and a line that no longer parses. A run of two backslashes followed by a quote that
+ * is followed by a value character is an escaped quote inside a deeper literal, not the end of
+ * this one, so it is consumed as three characters and the match continues to the real close.
+ * `password: "C:\\temp"` and `password: "abc\\"` are unaffected: there the quote after `\\`
+ * is followed by end-of-line, `,` or `}`, not by another value character.
  */
-const QUOTED_VALUE = String.raw`((?:[^"'\\\n]|\\.){1,512})`;
+const QUOTED_VALUE = String.raw`((?:[^"'\\\n]|\\\\["'](?=[A-Za-z0-9_])|\\.){1,512})`;
 
 /**
  * `id-token` / `id_token` is a GitHub Actions permission, not a credential: the

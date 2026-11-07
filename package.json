@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.9.11",
+  "version": "0.9.12",
   "description": "Pack a codebase for an LLM into budgeted Markdown parts, with a manifest of every file and skip, and validate to prove the snapshot is current.",
   "keywords": [
     "codebase",
