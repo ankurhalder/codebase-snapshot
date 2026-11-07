@@ -110,18 +110,33 @@ export function displayWidth(line: string): number {
   return width;
 }
 
+/**
+ * The leading cells a line spends on layout rather than content: its indent, plus any marker
+ * glyphs (`❯ ◻ ◆ ✖`) and the space that follows each.
+ *
+ * Continuation rows line up with the content, which is what makes a wrapped choice read as one
+ * item. It also has to be *stable*: a selected row begins `  ❯ ` and an unselected one `    `, so
+ * measuring the indent by whitespace alone gives the two lines different wrap points — the menu
+ * then changes height as the cursor moves through it, and a wrapped hint shifts sideways when it
+ * is not the one selected.
+ */
+const GUTTER_PATTERN = /^[ \t]*(?:[❯◆◻◼▏✖][ \t]+)*/;
+
 function wrapOneLine(line: string, limit: number): string[] {
   if (displayWidth(line) <= limit) return [line];
-  const indent = /^[ \t]*/.exec(line)?.[0] ?? "";
-  const continuation = `${indent}  `;
+  const gutter = GUTTER_PATTERN.exec(line)?.[0] ?? "";
+  const gutterWidth = displayWidth(gutter);
+  const continuation = " ".repeat(gutterWidth);
   const rows: string[] = [];
-  let prefix = indent;
-  let rest = line.slice(indent.length).trimEnd();
+  // The first row keeps the real gutter so the marker stays where it belongs; the rest are blank
+  // cells of the same width.
+  let prefix = gutter;
+  let rest = line.slice(gutter.length).trimEnd();
 
   while (rest.length > 0) {
     const room = limit - displayWidth(prefix);
     if (room <= 0 || displayWidth(rest) <= room) {
-      // A pathological indent leaves nothing to wrap into; emit the remainder rather than spin.
+      // A pathological gutter leaves nothing to wrap into; emit the remainder rather than spin.
       rows.push(prefix + rest);
       break;
     }

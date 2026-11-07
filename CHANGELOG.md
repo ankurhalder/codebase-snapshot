@@ -21,6 +21,23 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.8
+
+### A wrapped menu no longer changes height under the cursor
+
+Found while checking 0.9.7, by rendering it at 48 columns. The wrapping added there made a frame
+the height it claimed to be, but the wrap point was measured from a line's leading whitespace — and
+a selected row starts `  ❯ ` while an unselected one starts `    `. So the same hint wrapped one
+word differently depending on whether the cursor was on it, and at some widths the whole menu grew
+a row as you moved through it.
+
+Continuation rows now line up with the *content*: the marker gutter is measured rather than guessed,
+which keeps the wrap stable — and puts a wrapped hint under the label instead of two columns past
+it, which reads better at any width.
+
+`tests/wizard-frame.test.js` now also asserts that five repaints of the same menu are all the same
+height, at 48 columns: the width where it used to flicker.
+
 ## 0.9.7
 
 ### The setup menu stops eating its own screen

@@ -114,7 +114,9 @@ test("wrapLines breaks a single token that is longer than the width", () => {
 
 test("every frame is erased by exactly the number of rows it drew", async (t) => {
   const dir = makeProject(t);
-  const columns = 60;
+  // 48 columns is narrow enough that the recommended answer wraps, and narrow enough that it used
+  // to wrap *differently* once the cursor left it — which made the menu change height as you moved.
+  const columns = 48;
   const keys = [
     { name: "down" },
     { name: "down" },
@@ -153,6 +155,13 @@ test("every frame is erased by exactly the number of rows it drew", async (t) =>
         check.payload
     );
   }
+  // It is the same menu every time, so it must be the same height every time. A wrapped hint that
+  // re-wraps when the marker moves makes the whole menu jump one row as the cursor passes it.
+  assert.equal(
+    new Set(checks.map((check) => check.announced)).size,
+    1,
+    `the menu kept one height as the cursor moved: ${checks.map((check) => check.announced).join(", ")}`
+  );
 });
 
 /**
