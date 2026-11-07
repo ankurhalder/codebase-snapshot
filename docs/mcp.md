@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.9.12 mcp
+npx -y codebase-snapshot@0.9.13 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.9.12", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.9.13", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.12 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.13 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -60,6 +60,19 @@ All eight take `outDir`, so a snapshot generated into a directory other than the
 still reachable: pass the same value to the read side that you passed to `snapshot_generate`. Before
 that, only `snapshot_generate` honoured it and every other tool looked in the configured directory
 and reported "there is no snapshot manifest here".
+
+`snapshot_plan`, `snapshot_generate`, `snapshot_validate` and `snapshot_explain` also take the
+**scope and compression** switches `generate` accepts: `maxPartTokens`, `skeleton`, `sarif`,
+`changedSince`, `staged` and `withDependents`. They have to: `manifest.config.digest` covers those
+settings, so a snapshot generated with `--skeleton` was not merely un-inspectable over MCP, it was
+reported as configuration drift on every `snapshot_validate`. Pass the same switches you generated
+with, exactly as you would on the command line. The four remaining tools do not take them, because
+none of them re-derives the configuration and a flag that changes nothing is the command-line form
+of a silent fallback.
+
+`includeSensitiveFiles` is deliberately absent from every one of them. A prompt can ask for
+anything, and a tool that emits `.env` on request is a secret-exfiltration primitive with a
+friendly name.
 
 `snapshot_locate` is the one that makes the others usable: a twelve-part snapshot is hundreds of
 kilobytes, and asking "which part holds authentication?" is cheaper than reading all twelve. It

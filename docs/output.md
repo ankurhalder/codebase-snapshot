@@ -202,6 +202,13 @@ has several at once, and "within budget" cannot be answered without knowing whic
   `variables`, `reactComponents`, `hooks`, `routeHandlers`), plus `parseErrors` when the parser
   reported syntax errors. JSON gets `{ shape, itemCount, keys, sampleKeys }` and Markdown gets
   `{ headings, frontmatterKeys }` — a shape description rather than a code summary.
+  `imports` covers `import` declarations, named and star re-exports, `require("…")`, `import("…")`
+  and `import x = require("…")`; a computed specifier is an expression and is not recorded, because
+  a wrong edge in the import graph is worse than a missing one. The JSON reader follows JSONC —
+  comments, trailing commas and a BOM — and reports `invalid-json` only for a file that still does
+  not parse. `headings` skips headings inside fenced code and inside YAML front matter, and a
+  document that *opens* with a `---` horizontal rule keeps its headings: the block has to look like
+  YAML before it counts as front matter.
 - `summaryOmitted: true` means the file's summary was dropped because the summary alone would
   not fit the part budget. The entry then has `summaryQuality` but no `summary`, and the
   file's body is still emitted in full. It is only ever present when `true`.

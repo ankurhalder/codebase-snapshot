@@ -23,6 +23,185 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.13
+
+A fourth audit, this time of the seams: places where two code paths answer the same question with
+different rules, and places where a command accepts something it does not apply. Every item below
+has a test that fails without it, except one — the per-layer budget overflow, which I could not
+reproduce and which is called out honestly at the end.
+
+### A scoped snapshot could expire and still validate
+
+`validate` re-resolves the recorded changed-files scope and checks that every file it *skipped* as
+`unchanged` is still outside that scope. It never asked the mirror question. So:
+
+```bash
+git add src/a.ts
+codebase-snapshot generate --staged     # snapshot holds src/a.ts
+git reset HEAD src/a.ts                 # same bytes on disk, nothing staged
+codebase-snapshot validate --staged     # said: "Snapshot is valid and up to date"
+```
+
+The file on disk is byte-identical, so the hash comparison passed — and the scope the snapshot was
+taken over had silently become empty. A file that is in the snapshot and would not be if it were
+generated now is drift, and it is now reported, with `--with-dependents` still allowing for the
+one-hop importer exception.
+
+### A part name in `manifest.json` could reach any file on the host
+
+`validate` has confined part filenames since 0.9.9, but the **MCP server** resolved
+`parts[].filename` with a bare `path.resolve`, in `snapshot_read` and in the `snapshot://parts/{n}`
+resource. A repository under review could commit a manifest naming `../../../.env`, and a client
+would read it — resource reads are auto-approved as read-only. A part name is bare by construction,
+so `describeManifestShapeProblem` now requires one, which makes all five readers (`validate`,
+`report`, `diff`, `snapshot_read`, the resource) refuse the same manifest for the same stated
+reason.
+
+`snapshot_explain` had the mirror problem. `toRelativePath` resolved *after* its "is it absolute?"
+test and `normalizeTarget` returned anything starting with `..` unchanged, so `../other-repo/.env`
+was joined to the root and passed to `existsSync`: one read-only, auto-approved call per probe, for
+any path on the machine. Out-of-root targets now answer `outside-root` without touching the
+filesystem. A file named `..foo.ts` is no longer mistaken for a traversal.
+
+### Four credentials that looked like code
+
+- `password: "${DB_PASSWORD:-hunter2}"` — the shell and Compose idiom for a **default** — was
+  exempted as "an interpolation" because it starts with `${` and ends with `}`. So was
+  `${prefix}-real_secret-${suffix}` and any value with a `??` fallback. Only a value that is one
+  interpolation of a plain (optionally dotted) reference is exempt now; anything else in the braces
+  settles it the other way.
+- `export api_key=hunter2` — bare `export` was in `DECLARATION_KEYWORDS`, so a shell assignment was
+  read as a JavaScript binding whose initializer is an expression. `export` can never be followed by
+  a bare assignment in JS or TS (`export foo = 1` does not parse), so the word only ever suppressed
+  redaction for the files most likely to hold a secret.
+- An **indented, unterminated** private key — `privateKey: |` in YAML, or an indented template
+  literal — leaked every body line. The rule required base64 at column 0 and knew nothing about the
+  RFC 1421 header lines (`Proc-Type`, `DEK-Info`) that an encrypted key puts after the marker.
+- A masked key block in a **CR-only** file swallowed its line breaks, because pass 1 counted `\n`
+  only, so every reported line number after it was wrong.
+
+`.github/workflows/deprecate.yml` and `unpublish.yml` interpolated `${{ inputs.… }}` straight into
+`run:` in jobs that carry `NPM_TOKEN`. GitHub expands an expression into the script *before* bash
+parses it, so a dispatch input of `"; curl … $NODE_AUTH_TOKEN #` ran as a command. Inputs now arrive
+through `env:` and are referenced quoted.
+
+### Two enumerations, two answers
+
+The same repository produced different snapshots depending on `--discovery`, which is the one
+property a reproducible snapshot tool cannot have:
+
+- A tracked **file symlink** was dropped as `symlink` in `git` mode — the loop tested
+  `depth <= parts.length`, which includes the candidate itself — and emitted as a file by the walk.
+- A **broken** symlink was `symlink` in `git` mode, because `targetReal` started at the link's own
+  path and so always compared as "inside the root". It is `read-error`, or `outside-root` when its
+  written target leaves the tree, in both modes now.
+
+The output directory's crash leftovers had the same shape: the backup and partial-swap directories
+were recognised by the hardcoded prefix `snapshot.backup-`. With `outDir: ".context"` an interrupted
+run left `.context.backup-<pid>-<ts>` — a copy of the previous snapshot — to be scanned back in as
+user source. The names now come from the resolved output and staging directories. `--watch` also
+matched only `.backup-`, and only the directory itself, so an event for `part-001.md` *inside* a
+`.partial-` copy was treated as a source edit: on a cross-device swap that is an infinite
+regeneration loop.
+
+### The index described files that were not there
+
+- `summarizeMarkdown` called a leading `---` a front-matter block if *any* later line was `---`,
+  so a document opening with a horizontal rule and using another as a section divider lost every
+  heading between them. The block must now also *be* YAML — a heading, a fence or prose means the
+  `---` was a rule. `...` closes a YAML document as well as `---`.
+- The JSONC reader in `src/ast/structured.ts` ended a `//` comment only at `\n` and never removed a
+  trailing comma, so a `.jsonc` or an editor-reformatted `tsconfig.json` summarised as
+  `invalid-json` with no keys. Both are JSONC rather than extensions of it.
+- `summarizeTypeScriptSource` looked at `ImportDeclaration` and `ExportDeclaration` and nothing
+  else, so `require("./x")`, `import("./x")` and `import fs = require("fs")` produced no import
+  edge. A CommonJS project had no import graph at all, and `--with-dependents` had nothing to walk.
+  `export { a } from "./x"` was not recorded as a re-export either.
+
+### Flags that were accepted and not applied
+
+- `--only-artifacts audit` in a project whose config says `artifacts: { audit: false }` disabled the
+  other six and left audit off too: nothing written, exit 0. The flag was forwarded only as its
+  complement, and a suppression list cannot switch anything on.
+- `findConfigFile` parsed `package.json` with bare `JSON.parse` while the loader used the JSONC
+  reader, so a BOM or a trailing comma made the two disagree about whether the project was
+  configured. And `"snapshot": []` counted as this tool's configuration, which skipped the setup
+  question entirely.
+- `--skeleton` covered `.ts`, `.tsx`, `.mts` and `.cts` while `ts.createSourceFile` parses `.js`,
+  `.jsx`, `.mjs` and `.cjs` natively — so the files most repositories are made of were the ones it
+  could not compress, and `.d.ts` files, which have no bodies, were the ones it did parse.
+- Over MCP, `WorkspaceOverrides` accepted only `maxPartBytes` and `outDir`. `snapshot_validate`
+  re-derives the configuration and compares digests, so a `--skeleton` snapshot could not be
+  validated at all. `maxPartTokens`, `skeleton`, `sarif`, `changedSince`, `staged` and
+  `withDependents` are now accepted by `snapshot_plan`, `snapshot_generate`, `snapshot_validate`
+  and `snapshot_explain` — schema and application coming from one definition, so a tool cannot
+  advertise a flag it would ignore.
+- `npm create codebase-snapshot -- --preset=nextjs` ignored the preset: the shim parsed `argv` with
+  `indexOf`, which finds nothing for `--flag=value`, treats a missing value as "not given", and
+  ignores `--forse` entirely. `node:util.parseArgs` in strict mode now rejects all three by name.
+
+### Configuration answers that disagreed with each other
+
+- `loadConfigFileDetailed` did not attach `CONFIG_DIR_SYMBOL` — only `loadConfigFile` did — so
+  `resolveConfig((await loadConfigFileDetailed(dir)).config)` scanned `process.cwd()`.
+- `normalizeResolvedConfig` re-derived `artifacts` with `includeMonolith` as the default, so
+  `{ ...resolved, includeMonolith: true }` produced a config claiming `includeMonolith: true`
+  beside `artifacts.monolith: false`, and `generate` — which reads the map — wrote no monolith.
+- `configDigest` hashed `budgets` with `JSON.stringify`, which preserves insertion order, so
+  `{ docs, api }` and `{ api, docs }` produced different digests and `validate` reported drift for
+  a snapshot nobody changed.
+
+### Cost
+
+- `pathScanRules` returned `[...DEFAULT_SECRET_PATTERNS, ...extraRules]` although
+  `config.secretRules` already begins with those patterns: every file path, skip record and AST
+  summary string ran all 30 built-in rules twice. `disableDefaultPatterns` also had no effect on
+  paths while it worked on content.
+- `globToRegExp` and `matchGitignorePattern` compiled a fresh `RegExp` per call — over a million per
+  run on a 20 000-file repository with 55 patterns. Both are cached by pattern. A malformed
+  character class no longer escapes as a raw `SyntaxError`: a `.gitignore` range like `[z-a]`
+  matches nothing (which is what git's own `fnmatch` does), while the same range in a configured
+  glob is reported as the configuration mistake it is, naming the pattern.
+- `generateSnapshotAsync` resolved the configuration twice, and `validate` in the CLI re-read and
+  re-parsed `manifest.json` to re-run a shape check the validator had already run.
+- `pendingHooks` was drained only by `generateSnapshotAsync`, so a synchronous caller left one
+  settled promise per output directory for the life of the process.
+
+### Lifecycle
+
+- Each `hooks.afterGenerate` installed its own `process.stdout.write` wrapper and restored it only
+  if the current write was still its own. With two overlapping async hooks the first to finish never
+  restored, and the second put the first one's wrapper back — permanently. There is now one scope
+  and one wrapper, released by reference counting.
+- The update check used `request.setTimeout`, an *idle socket* timeout that resets on every chunk:
+  a trickling proxy kept the CLI alive indefinitely. It has a wall-clock deadline now, `.unref()`d
+  so a pending check never holds the process open. And `isNewer` stripped prerelease tags before
+  comparing, so `0.9.13-alpha.1` was recommended to everyone on a stable release and a stable
+  release was never announced to anyone on a beta.
+
+### Smaller
+
+- `wrapOneLine` measured `room` in terminal cells and cut with `String.prototype.slice`, which
+  counts UTF-16 code units. CJK text produced rows twice as wide as the frame believed, and a
+  surrogate pair could be cut in half. The cut advances by code point now.
+- Part numbering is decided **before** rendering, in one pass over every budget bucket, instead of
+  partitioning each budget and re-numbering the merged set afterwards.
+
+### What I could not reproduce
+
+The audit reported that per-layer budgets caused parts to overflow their budget by seven to twenty
+bytes when `renumberParts` rewrote their headers, and were then hard-clipped into a broken document.
+**I could not make that happen.** I swept file sizes against a two-budget configuration and again
+with six layers and eight kinds whose names are 180 characters long, and no part ever came out over
+its budget, with or without the clamp. The arithmetic explains why: `partitionFiles` reserves about
+2.2 kB of header room up front and shrinks sections to `budget - reserve`, so a rendered part sits
+roughly 1.4 kB below its ceiling, and the header growth being reported is fourteen bytes.
+
+The mechanism was removed anyway — the numbering pass now happens before rendering, so a fitted part
+cannot be rewritten — but the claim was not verified, and this changelog will not pretend it was.
+The four tests added with it pass on the previous build too; they pin the invariants the refactor
+must not break rather than reproducing a defect.
+
 ## 0.9.12
 
 A third audit, this time of what the snapshot *costs* as well as what it gets wrong. Two of the

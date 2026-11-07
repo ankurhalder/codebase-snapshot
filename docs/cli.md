@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.12
+   Added devDependency: codebase-snapshot ^0.9.13
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.12
+   Added devDependency: codebase-snapshot ^0.9.13
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -407,10 +407,10 @@ narrowest cases of the same rule.
 | `--include-monolith` | flag | off | generate, validate, report, explain | Also write `full-codebase.json` and `full-codebase.md`. |
 | `--include-sensitive-files` | flag | off | generate, validate, report, explain, init | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
-| `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
+| `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write *only* these, and **turn on** any this names: a config with `artifacts: { audit: false }` still gets `reports/audit.md` from `--only-artifacts audit`, because "only these" is a statement about the whole selection rather than a suppression list. Cannot be combined with `--skip-artifacts`. |
 | `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
 | `--sarif` | flag | off | generate, validate, setup | Also write `reports/audit.sarif`: the redaction findings as SARIF 2.1.0, for upload to GitHub Code Scanning. The artefact carries the path, the line and the rule — never the value. Works with `--skip-artifacts audit`, because a CI gate does not read markdown. Rule ids are fixed per rule name, so adding a custom rule never re-points an existing alert. |
-| `--skeleton` | flag | off | generate, validate, setup | Emit TypeScript and TSX signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. `--include-monolith` still writes the whole body, so the monolith's `inclusionMode: "full"` stays true. |
+| `--skeleton` | flag | off | generate, validate, setup | Emit signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. Covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` and `.cjs`; `.d.ts` files are left alone because they are already declarations. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. `--include-monolith` still writes the whole body, so the monolith's `inclusionMode: "full"` stays true. |
 | `--changed-since <ref>` | git ref | unset | generate, validate, explain | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged` and is never opened. `validate` re-resolves the scope: a skipped file that has changed since is reported as drift, and one that has not is left alone — and with `--with-dependents`, so is a file that now imports one that changed. `explain` answers with the same rule. A ref beginning with `-` is refused. |
 | `--staged` | flag | off | generate, validate, explain | Include only files staged for the next commit. |
 | `--with-dependents` | flag | off | generate, validate, explain | With either of the two above, also include the files that import a changed one — a one-hop closure, not a transitive walk. Needs a scope; alone it is a usage error. |

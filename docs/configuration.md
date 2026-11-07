@@ -192,7 +192,7 @@ export default {
   // changedSince: "main",      // only files changed since this git ref
   // staged: true,             // only files staged for the next commit
   // withDependents: true,     // ...and the files that import them
-  // skeleton: true,           // TypeScript signatures instead of bodies (--skeleton)
+  // skeleton: true,           // signatures instead of bodies (--skeleton); TS, JS, TSX and JSX
   largeFileBytes: "200k",      // above this a file becomes a head/tail preview
   previewHeadLines: 80,
   previewTailLines: 40,
@@ -229,8 +229,9 @@ export default {
 ```
 
 Everything except `monolith` is on by default; `monolith` follows `includeMonolith`. Turn
-artifacts off with the config, `--skip-artifacts a,b`, or `--only-artifacts a,b` (the two
-cannot be combined).
+artifacts off with the config or `--skip-artifacts a,b`. `--only-artifacts a,b` is different: it
+*writes only* those and turns each named artifact **on**, so `--only-artifacts audit` still produces
+`reports/audit.md` in a project whose config says `audit: false`. The two flags cannot be combined.
 
 Two combinations warn because they produce a snapshot that contradicts itself: `manifest` off
 means `validate` and `report` cannot inspect the snapshot, and `parts` off with `navigation`
@@ -266,18 +267,24 @@ makes an audit entry mean something.
   matched span is masked, never the whole line, and no excerpt of a matched line reaches any
   artifact. Multi-line PEM keys are masked as a block.
 - `customPatterns` add rules; `disableDefaultPatterns` removes the built-in set — it does not
-  disable redaction itself.
+  disable redaction itself, and it applies to **paths** as well as to content, so a
+  credential-shaped file name is no longer skipped by a rule you switched off.
 
 Redaction is **fail-closed**, so a placeholder is indistinguishable from a secret: a
 `.env.example` whose line reads `JWT_SECRET=replace-with-base64url-48-bytes` is masked like a
 live key would be, and a test fixture literal such as `process.env.X_SECRET = "test-value"` is
-masked too. The same holds for an environment reference written as a quoted value —
-`password: "${DB_PASSWORD}"` is masked exactly like a literal password, because the rule sees a
-credential-shaped key followed by a string and a `${…}` reference cannot be told apart from a
-secret by shape alone. That is the intended trade-off — the alternative is guessing which values
-are throwaway — and it is worth knowing before you hand the snapshot to a model and find the
-template less readable than the original. To narrow it, remove a rule by name with
+masked too. That is the intended trade-off — the alternative is guessing which values are
+throwaway — and it is worth knowing before you hand the snapshot to a model and find the template
+less readable than the original. To narrow it, remove a rule by name with
 `disableDefaultPatterns: true` plus your own `customPatterns`.
+
+The one shape that is *not* masked is a value that is a single `${…}` reference and nothing else —
+`password: "${DB_PASSWORD}"`, `` `${process.env.TOKEN}` `` — because that is an expression and
+masking it rewrites a program (or an assertion message) rather than hiding a credential. Anything
+inside the braces that is not a plain reference settles it the other way:
+`password: "${DB_PASSWORD:-hunter2}"` is masked, because the shell and Compose idiom for a default
+puts a **hardcoded credential** in the fallback position. So does a second interpolation, or any
+quote inside the braces.
 
 Findings are summarised in `reports/audit.md` (one row per line, naming every rule that matched
 it), counted in `manifest.totals.redactedLines`, and shown in the `generate` summary as a

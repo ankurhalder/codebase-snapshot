@@ -671,7 +671,7 @@ export function buildAgentContract(): AgentContract {
         { key: "preset", type: "string", default: "detected", summary: "Force a preset. Unknown names are an error." },
         { key: "maxPartBytes", type: "number | string", default: 307200, summary: "Per-part byte budget." },
         { key: "maxPartTokens", type: "number | string | null", default: null, summary: "Per-part token ceiling; narrows maxPartBytes. Minimum 1024." },
-        { key: "skeleton", type: "boolean", default: false, summary: "Collapse function bodies to `{ /* ... */ }` in TypeScript files." },
+        { key: "skeleton", type: "boolean", default: false, summary: "Collapse function bodies to `{ /* ... */ }` in TS, JS, TSX and JSX files." },
         { key: "sarif", type: "boolean", default: false, summary: "Also write reports/audit.sarif." },
         { key: "changedSince", type: "string | null", default: null, summary: "Snapshot only files that differ from this git ref." },
         { key: "staged", type: "boolean", default: false, summary: "Snapshot only files staged in the index." },
