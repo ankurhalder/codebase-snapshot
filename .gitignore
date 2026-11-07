@@ -18,3 +18,5 @@ site/
 # are regenerable and are deliberately not.
 audit/poc/*/
 audit/poc/*.txt
+snapshot/
+snapshot.tmp/
