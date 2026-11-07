@@ -245,8 +245,25 @@ export function describeManifestShapeProblem(value: unknown): string | null {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       return 'a "parts" entry is not an object';
     }
-    if (typeof (entry as Record<string, unknown>).filename !== "string") {
+    const filename = (entry as Record<string, unknown>).filename;
+    if (typeof filename !== "string" || filename.trim() === "") {
       return 'a "parts" entry has no "filename"';
+    }
+    // A part is a file directly inside `parts/`, so its name is bare by construction. The check is
+    // here rather than only at the read sites because three separate readers — `validate`,
+    // the MCP `snapshot_read` tool and the `snapshot://parts/{n}` resource — answer from this
+    // manifest, and a manifest is an input that a repository author controls. A name that leaves
+    // the directory is not a snapshot manifest at all, which is a shape problem and is reported
+    // as one everywhere at once.
+    if (
+      filename.includes("/") ||
+      filename.includes("\\") ||
+      filename.includes("\0") ||
+      filename === "." ||
+      filename === ".." ||
+      path.isAbsolute(filename)
+    ) {
+      return 'a "parts" entry "filename" must be a bare filename inside parts/';
     }
   }
 

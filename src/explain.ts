@@ -55,11 +55,35 @@ function describeMatcher(matcher: unknown): string {
   return String(matcher);
 }
 
-function normalizeTarget(cwd: string, target: string): string {
-  const absolute = path.resolve(cwd, target);
-  const relative = path.relative(cwd, absolute);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return target;
-  return relative.split(path.sep).join("/");
+/**
+ * Normalises a caller-supplied path against the repository root.
+ *
+ * `explain` is reachable from an MCP tool that a prompt can call, so the target is not a trusted
+ * argument. This used to answer "target unchanged" for anything whose relative form began with
+ * `..`, and `explainPath` then joined it to `cwd` and called `fs.existsSync` — which made a
+ * read-only tool an existence oracle for every path on the machine (`../../../etc/shadow`,
+ * `../other-repo/.env`). Resolving first and refusing outside the root is the whole fix; the
+ * caller gets `outside-root` and nothing is stat-ed.
+ *
+ * `relative.startsWith("..")` alone was also wrong in the other direction: a file legitimately
+ * named `..foo.ts` is inside the root and was classified as a traversal.
+ */
+function normalizeTarget(
+  cwd: string,
+  target: string
+): { relative: string; outsideRoot: boolean } {
+  const resolvedCwd = path.resolve(cwd);
+  const absolute = path.resolve(resolvedCwd, target);
+  const relative = path.relative(resolvedCwd, absolute);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    return { relative: target.replace(/\\/g, "/"), outsideRoot: true };
+  }
+  return { relative: relative.split(path.sep).join("/"), outsideRoot: false };
 }
 
 function findRuleMatch<T extends { match: unknown }>(
@@ -117,12 +141,28 @@ function readManifest(config: ResolvedSnapshotConfig): Manifest | null {
  * secret rule fires. Re-running the real scanner is what keeps it honest.
  */
 export function explainPath(config: ResolvedSnapshotConfig, target: string): ExplainResult {
-  const relative = normalizeTarget(config.cwd, target);
-  const absolute = path.join(config.cwd, relative);
+  const normalized = normalizeTarget(config.cwd, target);
+  const relative = normalized.relative;
 
   // The echoed path is an artifact too: a token in a filename must not come back
   // out of explain.
   const maskedPath = findSecretInPath(relative, config.secretRules)?.masked ?? relative;
+
+  if (normalized.outsideRoot) {
+    // Answered without touching the filesystem: `exists` is not "false because it is missing", it
+    // is "not asked", and saying so is the only honest option. The path is still masked, because
+    // the traversal itself can carry a credential-shaped segment.
+    return {
+      path: maskedPath,
+      exists: false,
+      included: false,
+      reason: "outside-root",
+      detail:
+        "path resolves outside the configured repository root and was not inspected",
+    };
+  }
+
+  const absolute = path.join(config.cwd, relative);
   const result: ExplainResult = {
     path: maskedPath,
     exists: fs.existsSync(absolute),

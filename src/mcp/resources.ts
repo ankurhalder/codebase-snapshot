@@ -15,7 +15,7 @@ import { buildAgentContract } from "../agent/contract.js";
 import { renderSkill } from "../agent/skill.js";
 import { parsePartSections } from "./part.js";
 import type { ResourceProvider, ToolContext } from "./types.js";
-import { openWorkspace, readManifest, resolveRoot } from "./workspace.js";
+import { openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
 import type { Workspace } from "./workspace.js";
 
 /** Largest text a single resource read returns. Past this, the tools offer windows instead. */
@@ -177,9 +177,12 @@ export function buildResourceProvider(): ResourceProvider {
         const index = Number(partMatch[1]);
         const part = read.manifest.parts.find((candidate) => candidate.index === index);
         if (!part) return null;
-        const text = readFileIfPresent(
-          path.resolve(workspace.root, workspace.config.outDir, "parts", part.filename)
-        );
+        // Confined: `parts[].filename` comes out of a file on disk. `readManifest` rejects a name
+        // that is not bare, so this is the second of two answers to the same question — and the
+        // cheap one, at the only call site where being wrong reads arbitrary files.
+        const partPath = partPathFor(workspace, part.filename);
+        if (partPath === null) return null;
+        const text = readFileIfPresent(partPath);
         if (text === null) return null;
         return { uri, mimeType: "text/markdown", text: capUtf8(text, MAX_RESOURCE_BYTES).text };
       }

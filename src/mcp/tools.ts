@@ -27,7 +27,7 @@ import { findSection, parsePartSections, windowText } from "./part.js";
 import type { JsonObject } from "./protocol.js";
 import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolOutcome } from "./types.js";
-import { forgetManifest, manifestPathFor, openWorkspace, readManifest, resolveRoot } from "./workspace.js";
+import { forgetManifest, manifestPathFor, openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
 import type { Workspace, WorkspaceOverrides } from "./workspace.js";
 
 /**
@@ -110,15 +110,29 @@ function summarizeDrift(drift: ValidationDrift): JsonObject {
   };
 }
 
-/** Paths the model sees are POSIX-relative to the root, whatever platform is hosting. */
+/**
+ * Paths the model sees are POSIX-relative to the root, whatever platform is hosting.
+ *
+ * The containment check used to run *after* the "is it absolute?" test, so `../secret.txt` and
+ * `src/../../outside.txt` were returned to the caller unchanged — and `snapshot_explain` then
+ * joined that to the root and called `existsSync`, which turned a read-only tool into an existence
+ * oracle for any path on the host. Everything is resolved against the root first now; the answer
+ * is `null` for anything that does not land inside it.
+ */
 function toRelativePath(root: string, value: string): string | null {
   const cleaned = value.trim();
-  if (cleaned.length === 0) return null;
-  if (!path.isAbsolute(cleaned)) {
-    return cleaned.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (cleaned.length === 0 || cleaned.includes("\0")) return null;
+  const resolvedRoot = path.resolve(root);
+  const absolute = path.resolve(resolvedRoot, cleaned);
+  const relative = path.relative(resolvedRoot, absolute);
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    return null;
   }
-  const relative = path.relative(root, cleaned);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
   return relative.split(path.sep).join("/");
 }
 
@@ -880,7 +894,13 @@ const readTool: McpTool = {
       );
     }
 
-    const partPath = path.resolve(workspace.root, workspace.config.outDir, "parts", entry.part);
+    const partPath = partPathFor(workspace, entry.part);
+    if (partPath === null) {
+      return failure(
+        `${entry.part} is not a part of this snapshot: its name leaves ${workspace.config.outDir}/parts. ` +
+          "Run snapshot_generate to rebuild it."
+      );
+    }
     let partText: string;
     try {
       partText = fs.readFileSync(partPath, "utf8");

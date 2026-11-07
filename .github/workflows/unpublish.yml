@@ -27,15 +27,21 @@ permissions:
 jobs:
   unpublish:
     runs-on: ubuntu-latest
+    # See the note in `deprecate.yml`: a dispatch input interpolated into `run:` is expanded before
+    # bash parses the script, so a crafted `spec` could run a command in a job that carries the npm
+    # token. The values arrive through the environment and are referenced quoted.
+    env:
+      SPEC: ${{ inputs.spec }}
+      CONFIRM: ${{ inputs.confirm }}
     steps:
       - name: Refuse unless confirmed
         run: |
-          if [ "${{ inputs.confirm }}" != "yes" ]; then
-            echo "::error::confirmation was not \"yes\" — nothing was changed"
+          if [ "$CONFIRM" != "yes" ]; then
+            echo '::error::confirmation was not "yes" — nothing was changed'
             exit 1
           fi
-          case "${{ inputs.spec }}" in
-            *@*.*.*) echo "unpublishing ${{ inputs.spec }}" ;;
+          case "$SPEC" in
+            *@*.*.*) echo "unpublishing $SPEC" ;;
             *) echo "::error::spec must be an exact version like name@1.2.3"; exit 1 ;;
           esac
 
@@ -47,13 +53,13 @@ jobs:
       - name: Unpublish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm unpublish "${{ inputs.spec }}" --force
+        run: npm unpublish "$SPEC" --force
 
       - name: Confirm it is gone
         run: |
           set -euo pipefail
-          if npm view "${{ inputs.spec }}" version >/dev/null 2>&1; then
-            echo "::error::${{ inputs.spec }} is still resolvable"
+          if npm view "$SPEC" version >/dev/null 2>&1; then
+            echo "::error::$SPEC is still resolvable"
             exit 1
           fi
-          echo "${{ inputs.spec }} is no longer resolvable"
+          echo "$SPEC is no longer resolvable"

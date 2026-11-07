@@ -161,6 +161,16 @@ function toGlobal(rule: SecretRule): RegExp {
 const LINE_BREAK = /(\r\n|\n|\r)/;
 
 /**
+ * Any line terminator, for counting.
+ *
+ * `LINE_BREAK` captures so `String.split` keeps the terminators; this one only counts, and it has
+ * to recognise all three forms or a CR-only file reports every later line number off by the length
+ * of a masked block.
+ */
+const LINE_TERMINATOR = /\r\n|\n|\r/g;
+
+
+/**
  * Redacts secrets from `content`.
  *
  * - Replaces only the matched span, so unrelated code sharing the line survives
@@ -186,7 +196,10 @@ export function scanAndRedactSecrets(
   // per-line rules only see the `BEGIN` header and would remove it, leaving
   // every subsequent body line of a real key behind.
   // The replacement preserves the block's line count so line numbers reported
-  // by pass 2 stay accurate.
+  // by pass 2 stay accurate. "Line count" means every terminator the block
+  // contained, not just `\n`: a CR-only file (old-Mac endings, which `decodeText`
+  // passes through) matched a whole block and replaced it with a marker carrying
+  // *no* line breaks, so every line number after the key was wrong.
   let redacted = content;
   for (const blockPattern of [PEM_BLOCK_PATTERN, PEM_UNTERMINATED_PATTERN]) {
     blockPattern.lastIndex = 0;
@@ -196,11 +209,12 @@ export function scanAndRedactSecrets(
         blockPattern.lastIndex += 1;
         continue;
       }
-      const line = redacted.slice(0, match.index).split("\n").length;
-      const newlines = (match[0].match(/\n/g) ?? []).length;
+      const before = redacted.slice(0, match.index);
+      const line = (before.match(LINE_TERMINATOR) ?? []).length + 1;
+      const newlines = (match[0].match(LINE_TERMINATOR) ?? []).length;
       findings.push({ rules: ["private-key-block"], line, path: filePath });
       redacted =
-        redacted.slice(0, match.index) +
+        before +
         PEM_REDACTION_MARKER +
         "\n".repeat(newlines) +
         redacted.slice(match.index + match[0].length);
@@ -345,9 +359,21 @@ function startsInsideStringLiteral(line: string, matchIndex: number): boolean {
  * The test is on the *value*, not on the line: an interpolated value is an expression, and no
  * credential is spelled `${…}`. A mixed value (`"prefix-${x}"`) is still masked, because that
  * shape is not provably prose and rule 3 asks for fail-closed.
+ *
+ * "Starts with `${` and ends with `}`" was not enough. The shell, Docker Compose and GitHub Actions
+ * idiom for a default — `POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-MyProdPassword123!}"` — begins and
+ * ends exactly that way and contains a **hardcoded fallback credential**, which this then left in
+ * clear text. So did `${process.env.TOKEN ?? "sk_live_…"}` and `${prefix}-real_secret-${suffix}`.
+ * The exemption is now only for a value that is *one* interpolation of a plain (dotted) reference:
+ * no fallback operator, no second interpolation, no quotes. That is the shape that is provably code.
  */
 function isTemplateInterpolation(line: string, start: number, end: number): boolean {
-  return line[start] === "$" && line[start + 1] === "{" && line[end - 1] === "}";
+  if (line[start] !== "$" || line[start + 1] !== "{" || line[end - 1] !== "}") {
+    return false;
+  }
+  const inner = line.slice(start + 2, end - 1).trim();
+  // `:-`, `:=`, `??`, `||`, a nested `${` and a quote all mean "this is not a plain reference".
+  return /^[A-Za-z_$][A-Za-z0-9_$.()[\]]*$/.test(inner);
 }
 
 /**
@@ -411,9 +437,16 @@ function isUnquotedValue(line: string, start: number): boolean {
  *
  * `readonly`/`private`/`static` are included because a class field is a declaration too:
  * `private readonly apiKey = /…/` has the same shape as the module-level constant below.
+ *
+ * Bare `export` is **not** here. In JavaScript and TypeScript it can never be followed by a name
+ * and an `=` — `export foo = 1` does not parse; the keyword always comes first in
+ * `export const foo = …`, where `const` is the word immediately before the name and this pattern
+ * still matches it. In a shell script or a `.envrc`, though, `export api_key=hunter2` is an
+ * ordinary assignment with a literal value, and listing `export` made the guard suppress
+ * redaction for exactly the files most likely to hold a credential.
  */
 const DECLARATION_KEYWORDS =
-  /\b(?:const|let|var|readonly|public|private|protected|static|declare|export|using)\s+$/;
+  /\b(?:const|let|var|readonly|public|private|protected|static|declare|using)\s+$/;
 
 /**
  * How far left of the name a declaration keyword can be.

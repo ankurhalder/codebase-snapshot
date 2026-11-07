@@ -64,14 +64,22 @@ test("T-04: a part filename that climbs out of snapshot/parts is refused, not re
 
   const result = validateSnapshot({ cwd: dir });
 
+  // The refusal moved earlier. `confineToDirectory` caught the escape at the read site, which
+  // meant `validate` reported it while the MCP `snapshot_read` tool and the `snapshot://parts/{n}`
+  // resource — which answer from the same manifest — did not. A part name is bare by construction,
+  // so a manifest carrying anything else is not a snapshot manifest, and that answer now comes from
+  // `describeManifestShapeProblem`, before any caller can act on the name.
+  const errors = result.errors.join("\n");
+  assert.match(errors, /is not a snapshot manifest/, "the manifest itself is refused");
+  assert.match(errors, /bare filename/, "and the reason is stated");
+  assert.equal(result.valid, false);
+
   const issues = result.drift.partIssues.map((issue) => `${issue.part}: ${issue.issue}`).join("\n");
-  assert.match(issues, /resolves outside snapshot\/parts/, "the escape is reported");
   assert.doesNotMatch(
     issues,
     /byteSize is .* on disk/,
     "the outside file was never read, so its size cannot leak"
   );
-  assert.equal(result.valid, false);
 });
 
 test("T-04: an absolute part filename is refused too", (t) => {
@@ -88,8 +96,8 @@ test("T-04: an absolute part filename is refused too", (t) => {
   writeManifest(dir, manifest);
 
   const result = validateSnapshot({ cwd: dir });
-  const issues = result.drift.partIssues.map((issue) => issue.issue).join("\n");
-  assert.match(issues, /resolves outside snapshot\/parts/);
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join("\n"), /bare filename/);
 });
 
 test("T-04: a legitimate snapshot still validates as current", (t) => {

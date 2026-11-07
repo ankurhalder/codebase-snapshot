@@ -432,6 +432,20 @@ export const PEM_BLOCK_PATTERN =
  * preview budget or still being written. Constrained to the header plus the
  * base64-ish lines that immediately follow, so a stray header cannot swallow
  * the rest of the file.
+ *
+ * Two shapes it used to miss, and both of them leaked the whole key:
+ *
+ * - **Indented bodies.** The base64 lines had to start at column 0, so a key
+ *   inside a YAML block scalar (`privateKey: |`) or an indented template literal
+ *   never matched. Pass 2 then masked the `-----BEGIN…-----` line alone and every
+ *   body line stayed in the snapshot.
+ * - **RFC 1421 header lines.** `Proc-Type: 4,ENCRYPTED` and
+ *   `DEK-Info: AES-128-CBC,…` sit between the marker and the body of an encrypted
+ *   key, and their `:` ended the match at the marker.
+ *
+ * Body lines are required to be a run of base64 characters (8 or more, no inner
+ * spaces) rather than "anything base64-ish", so a `BEGIN` line in a comment or a
+ * test fixture is not followed into the prose after it.
  */
 export const PEM_UNTERMINATED_PATTERN =
-  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:\r?\n[A-Za-z0-9+/=]{4,}[ A-Za-z0-9+/=]*)+/g;
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:\r\n|\n|\r)(?:(?:[ \t]*(?:Proc-Type|DEK-Info|Comment|Version):[^\r\n]*|[ \t]*)(?:\r\n|\n|\r))*(?:[ \t]*[A-Za-z0-9+/=]{8,}[ \t]*(?:\r\n|\n|\r|$))+/g;

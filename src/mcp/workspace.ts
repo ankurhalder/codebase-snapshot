@@ -174,6 +174,33 @@ export function manifestPathFor(workspace: Workspace): string {
   return path.resolve(workspace.root, workspace.config.outDir, "manifest.json");
 }
 
+/**
+ * Absolute path of one part, or `null` when the recorded name would leave `parts/`.
+ *
+ * `readManifest` already refuses a manifest whose part names are not bare filenames, so this
+ * cannot fire for a manifest that was shape-checked a moment ago. It is here anyway: the two
+ * callers — `snapshot_read` and the `snapshot://parts/{n}` resource — resolve a name that comes
+ * out of a file on disk, and the second question costs one string comparison. A resource read is
+ * auto-approved by MCP clients because it is read-only, which is exactly the path where being
+ * wrong means handing a prompt-injected request the contents of `~/.ssh/id_rsa`.
+ */
+export function partPathFor(workspace: Workspace, filename: string): string | null {
+  if (filename.length === 0 || filename.includes("\0")) return null;
+  const partsDir = path.resolve(workspace.root, workspace.config.outDir, "parts");
+  const resolved = path.resolve(partsDir, filename);
+  const relative = path.relative(partsDir, resolved);
+  if (
+    relative.length === 0 ||
+    relative.includes(path.sep) ||
+    relative.includes("/") ||
+    relative.includes("\\") ||
+    path.isAbsolute(relative)
+  ) {
+    return null;
+  }
+  return resolved;
+}
+
 /** Reads and shape-checks the manifest, reusing the cache when mtime and size are unchanged. */
 export function readManifest(workspace: Workspace): ManifestOutcome {
   const file = manifestPathFor(workspace);
