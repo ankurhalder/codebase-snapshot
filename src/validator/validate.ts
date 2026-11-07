@@ -440,7 +440,7 @@ export function validateSnapshot(
 
   for (const diskFile of collection.files) {
     const snapshotHash = manifestFileMap.get(diskFile);
-    if (!snapshotHash) {
+    if (snapshotHash === undefined) {
       // A path in `skipped[]` is not permanently exempt: re-evaluate it and
       // report drift when it would now be included.
       const skipReason = skippedReasonOnDisk(diskFile);
@@ -461,6 +461,23 @@ export function validateSnapshot(
       if (skipReason !== null && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
+    }
+
+    // The other direction, which this loop never asked. A file that *is* in the snapshot has to
+    // still be in the recorded scope: staging a file, generating, then committing or unstaging it
+    // leaves the bytes on disk identical, so the hash comparison below is satisfied and `validate`
+    // said "valid and up to date" for a snapshot taken over a scope that no longer exists. The
+    // file is in the snapshot and would not be if it were generated now, which is drift in exactly
+    // the sense that matters.
+    if (
+      unchangedScope !== null &&
+      !unchangedScope.has(diskFile) &&
+      !becameDependent(diskFile)
+    ) {
+      drift.configMismatches.push(
+        `scope: ${maskedPath(diskFile, config.secretRules)} is in the snapshot but is no longer ` +
+          "in the changed-files scope"
+      );
     }
 
     let diskHash: string;

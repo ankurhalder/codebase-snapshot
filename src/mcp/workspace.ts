@@ -34,7 +34,7 @@ export interface Workspace {
    * thread performed — passing the resolved values instead would mark them all as explicit
    * overrides and change how per-layer budgets resolve.
    */
-  cliOptions: { cwd: string; maxPartBytes?: number; outDir?: string };
+  cliOptions: WorkspaceCliOptions;
   /** Absolute path of the config file that was loaded, when there was one. */
   configFile: string | null;
 }
@@ -102,10 +102,48 @@ export function resolveRoot(requested: unknown, context: ToolContext): RootOutco
 
 export type WorkspaceOutcome = { ok: true; workspace: Workspace } | { ok: false; message: string };
 
-/** Overrides a caller may apply. Deliberately narrow: these are the knobs `generate` accepts. */
+/**
+ * Overrides a caller may apply. Deliberately narrow: these are exactly the knobs `generate`
+ * accepts, and no more.
+ *
+ * The scope and compression flags are here because a snapshot is not describable without them.
+ * `generate --skeleton --changed-since main` writes a snapshot whose manifest records those
+ * settings, and `validate` re-derives the effective configuration and compares digests — so a
+ * server that could not pass them reported false configuration drift for every snapshot that used
+ * one, and could not build or preview a scoped or compressed snapshot at all.
+ *
+ * `includeSensitiveFiles` is *not* here and must not become one: a prompt can ask for anything, and
+ * a tool that emits `.env` on request is a secret-exfiltration primitive with a friendly name.
+ */
 export interface WorkspaceOverrides {
   maxPartBytes?: unknown;
+  maxPartTokens?: unknown;
   outDir?: unknown;
+  skeleton?: unknown;
+  sarif?: unknown;
+  changedSince?: unknown;
+  staged?: unknown;
+  withDependents?: unknown;
+}
+
+/** The options `resolveConfig` was called with, as the CLI would have passed them. */
+export interface WorkspaceCliOptions {
+  cwd: string;
+  maxPartBytes?: number;
+  maxPartTokens?: number;
+  outDir?: string;
+  /**
+   * `true` or absent, never `false`.
+   *
+   * `resolveConfig` reads these as `cliOptions.x ?? config.x`, so a `false` here is an *explicit
+   * override* that beats `skeleton: true` in the project's configuration — the same trap the CLI
+   * documents. Absent means "whatever the configuration says".
+   */
+  skeleton?: true;
+  sarif?: true;
+  staged?: true;
+  withDependents?: true;
+  changedSince?: string;
 }
 
 /**
@@ -129,7 +167,7 @@ export async function openWorkspace(
     };
   }
 
-  const cliOptions: { cwd: string; maxPartBytes?: number; outDir?: string } = { cwd: root };
+  const cliOptions: WorkspaceCliOptions = { cwd: root };
 
   if (overrides.maxPartBytes !== undefined) {
     const parsed = parseByteSize(overrides.maxPartBytes as number | string);
@@ -141,12 +179,36 @@ export async function openWorkspace(
     }
     cliOptions.maxPartBytes = parsed;
   }
+  if (overrides.maxPartTokens !== undefined) {
+    const parsed = parseByteSize(overrides.maxPartTokens as number | string);
+    if (parsed === undefined) {
+      return {
+        ok: false,
+        message: '"maxPartTokens" must be a token count, for example 32000 or "32k".',
+      };
+    }
+    cliOptions.maxPartTokens = parsed;
+  }
   if (overrides.outDir !== undefined) {
     if (typeof overrides.outDir !== "string" || overrides.outDir.trim().length === 0) {
       return { ok: false, message: '"outDir" must be a non-empty string.' };
     }
     cliOptions.outDir = overrides.outDir.trim();
   }
+  if (overrides.changedSince !== undefined) {
+    if (typeof overrides.changedSince !== "string" || overrides.changedSince.trim().length === 0) {
+      return {
+        ok: false,
+        message: '"changedSince" must be a git ref such as "main" or "HEAD~3".',
+      };
+    }
+    cliOptions.changedSince = overrides.changedSince.trim();
+  }
+  // Never `false`: see the note on {@link WorkspaceCliOptions}.
+  if (overrides.skeleton === true) cliOptions.skeleton = true;
+  if (overrides.sarif === true) cliOptions.sarif = true;
+  if (overrides.staged === true) cliOptions.staged = true;
+  if (overrides.withDependents === true) cliOptions.withDependents = true;
 
   try {
     const config = resolveConfig(loaded.config, cliOptions, root);

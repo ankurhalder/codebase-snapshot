@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import type { Manifest } from "../types.js";
+import type { WorkspaceCliOptions } from "./workspace.js";
 
 /** What the caller needs from a finished run; the whole manifest can be megabytes. */
 export interface GenerateSummary {
@@ -116,7 +117,7 @@ const { parentPort, workerData } = require("node:worker_threads");
  */
 export function generateInWorker(
   cwd: string,
-  cliOptions: { cwd: string; maxPartBytes?: number; outDir?: string }
+  cliOptions: WorkspaceCliOptions
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
     let settled = false;

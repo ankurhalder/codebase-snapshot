@@ -24,7 +24,7 @@ import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
 import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
-import type { JsonObject } from "./protocol.js";
+import type { JsonObject, JsonSchema } from "./protocol.js";
 import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolOutcome } from "./types.js";
 import { forgetManifest, manifestPathFor, openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
@@ -74,6 +74,60 @@ const OUT_DIR_PROPERTY = {
 
 /** The override every tool takes from `args.outDir`, so the two cannot drift apart. */
 const outDirOverride = (args: JsonObject): WorkspaceOverrides => ({ outDir: args.outDir });
+
+/**
+ * The scope and compression switches `generate` accepts, as schema properties and as overrides.
+ *
+ * One definition for both halves, because a flag that is advertised and not applied is the same
+ * defect as one applied and not advertised. `snapshot_validate` needs them for a reason of its
+ * own: it re-derives the effective configuration and compares digests, so a snapshot generated
+ * with `--skeleton` or `--changed-since` could not be validated at all — every field of the
+ * comparison disagreed with a configuration the server could not describe.
+ */
+const SCOPE_PROPERTIES: Record<string, JsonSchema> = {
+  maxPartTokens: {
+    type: "string",
+    description:
+      'Token ceiling per part, for example 32000 or "32k". Narrower than maxPartBytes; it converts at four bytes per token.',
+  },
+  skeleton: {
+    type: "boolean",
+    description:
+      "Replace every function body with `{ /* ... */ }`, keeping signatures, imports and exports. Applies to TypeScript, JavaScript and JSX.",
+  },
+  sarif: {
+    type: "boolean",
+    description: "Also write reports/audit.sarif beside reports/audit.md, for CI code scanning.",
+  },
+  changedSince: {
+    type: "string",
+    description: 'Only files changed since this git ref, for example "main" or "HEAD~3".',
+  },
+  staged: {
+    type: "boolean",
+    description: "Only files staged in the git index.",
+  },
+  withDependents: {
+    type: "boolean",
+    description:
+      "With staged or changedSince, also include the files that import the changed ones (one hop).",
+  },
+};
+
+/** `args` → the overrides `openWorkspace` understands, for the tools that take them. */
+function workspaceOverrides(args: JsonObject): WorkspaceOverrides {
+  return {
+    outDir: args.outDir,
+    maxPartBytes: args.maxPartBytes,
+    maxPartTokens: args.maxPartTokens,
+    skeleton: args.skeleton,
+    sarif: args.sarif,
+    changedSince: args.changedSince,
+    staged: args.staged,
+    withDependents: args.withDependents,
+  };
+}
+
 
 function failure(message: string): ToolOutcome {
   return { text: message, isError: true };
@@ -303,6 +357,7 @@ const planTool: McpTool = {
         description:
           'Byte budget per part, for example 307200 or "300k". Defaults to the project configuration.',
       },
+      ...SCOPE_PROPERTIES,
     },
     additionalProperties: false,
   },
@@ -319,7 +374,7 @@ const planTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context, { maxPartBytes: args.maxPartBytes, outDir: args.outDir });
+    const prepared = await prepare(args, context, workspaceOverrides(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -391,6 +446,7 @@ const generateTool: McpTool = {
         description:
           'Byte budget per part, for example 307200 or "300k". Defaults to the project configuration.',
       },
+      ...SCOPE_PROPERTIES,
     },
     additionalProperties: false,
   },
@@ -406,10 +462,7 @@ const generateTool: McpTool = {
   },
   annotations: WRITES,
   async handler(args, context) {
-    const prepared = await prepare(args, context, {
-      maxPartBytes: args.maxPartBytes,
-      outDir: args.outDir,
-    });
+    const prepared = await prepare(args, context, workspaceOverrides(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -460,7 +513,7 @@ const validateTool: McpTool = {
     "before trusting context that came from an earlier session, or after changing the config.",
   inputSchema: {
     type: "object",
-    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY, ...SCOPE_PROPERTIES },
     additionalProperties: false,
   },
   outputSchema: {
@@ -472,7 +525,7 @@ const validateTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context, outDirOverride(args));
+    const prepared = await prepare(args, context, workspaceOverrides(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
@@ -1004,6 +1057,7 @@ const explainTool: McpTool = {
       },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
+      ...SCOPE_PROPERTIES,
     },
     required: ["path"],
     additionalProperties: false,
@@ -1018,7 +1072,7 @@ const explainTool: McpTool = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const prepared = await prepare(args, context, outDirOverride(args));
+    const prepared = await prepare(args, context, workspaceOverrides(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
