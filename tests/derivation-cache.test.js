@@ -124,12 +124,15 @@ test("a changed setting invalidates the derivation", (t) => {
 });
 
 test("a warm run is much faster than a cold one", (t) => {
-  // The point of the cache. 250 files of real TypeScript, long enough that the parse and the
-  // masking pass dominate the run; the margin is wide enough that a loaded machine cannot invert
-  // it, and the failure message carries both numbers.
-  const dir = makeRepo(t, 250, (index) => {
+  // The point of the cache, and the fixture is chosen so the *ratio* does not depend on how loaded
+  // the machine is. Twenty files of 4 000 lines each: almost all of the cold cost is per line — the
+  // masking pass runs 31 rules over every line, and the parser builds an AST for the whole file —
+  // while almost all of the warm cost is per byte, which is reading, hashing and partitioning. A
+  // fixture of many *small* files would spend most of both runs in per-file open/stat/write, and the
+  // ratio would then be at the mercy of the filesystem.
+  const dir = makeRepo(t, 20, (index) => {
     const body = Array.from(
-      { length: 120 },
+      { length: 4000 },
       (_value, line) =>
         `  const value${line} = compute(${index} + ${line}) * ${line}; // padding for the parser`
     ).join("\n");
@@ -147,7 +150,7 @@ test("a warm run is much faster than a cold one", (t) => {
   const warmMs = clock() - warm;
 
   assert.ok(
-    warmMs < coldMs / 2,
-    `a warm run should be at least 2x faster (cold ${coldMs.toFixed(0)} ms, warm ${warmMs.toFixed(0)} ms)`
+    warmMs < coldMs / 3,
+    `a warm run should be at least 3x faster (cold ${coldMs.toFixed(0)} ms, warm ${warmMs.toFixed(0)} ms)`
   );
 });

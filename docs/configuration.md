@@ -286,6 +286,33 @@ inside the braces that is not a plain reference settles it the other way:
 puts a **hardcoded credential** in the fallback position. So does a second interpolation, or any
 quote inside the braces.
 
+The same default is masked when it is not quoted, which is how it is usually written:
+
+```bash
+# .env, docker-compose.yml, a workflow, a shell script — all of these are masked
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-MyProdPassword123!}
+POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-MyProdPassword123!}
+```
+
+The fallback is what gets replaced; the variable name stays, exactly as `POSTGRES_PASSWORD:` does.
+`${PORT:-3000}` is untouched: the name is not a credential name, and a port number is not one
+either.
+
+A credential assigned to a name inside a string is also masked — a connection string is a string:
+
+```js
+const dsn = "password=MySuperSecret123;host=db.internal";
+```
+
+What is left alone is a credential *name* in a literal, with nothing assigned to it:
+`["awsSecret:", "apiKey:"]` is a list of keys, not two credentials, and a documentation line showing
+`password: "…"` inside a code span is showing an example. The difference is whether the literal
+closes between the name and the value.
+
+`readonly` and `declare` are shell assignments in a shell file and declarations in a source file, and
+the file decides: `readonly api_key=hunter2` in `.envrc`, `.sh`, `.zsh`, a YAML or an INI file is
+masked, while `private readonly apiKey = someValue` in TypeScript is left alone.
+
 Findings are summarised in `reports/audit.md` (one row per line, naming every rule that matched
 it), counted in `manifest.totals.redactedLines`, and shown in the `generate` summary as a
 `Redacted:` line separate from `Warnings:`.

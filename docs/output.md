@@ -31,6 +31,12 @@ fields in `manifest.json` for the same file. `manifest.json` reports what the pa
 (CRLF normalised, the trailing newline not counted); the monolith reports the content it
 embedded. Compare a file's fields within one artifact, not across the two.
 
+"CRLF normalised" covers all three line endings a file can have. A CR-only file — an old Mac file,
+or anything written by a tool that predates LF on that platform — is written to a part with LF too,
+and its `lines` count is the real one: the preview budget and the line counts used to split on `\n`
+alone, so such a file was one line, `largeFileBytes` never applied, and the whole file went into a
+part with its carriage returns intact.
+
 The manifest embedded in `full-codebase.json` is otherwise identical to `manifest.json` with one
 impossible field: a file cannot record its own sha256, so `artifacts.fullJson` is `null` in the
 embedded copy and a `selfReference` sentence points at `manifest.json`, which carries the real

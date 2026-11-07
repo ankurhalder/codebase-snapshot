@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.13
+   Added devDependency: codebase-snapshot ^0.9.14
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -192,7 +192,9 @@ The whole first run in one command, with defaults and no prompts. This is the sa
   `generate` and `init`.
 - `--format json` emits **one** document:
   `{ "setup": { configPath, configReused, preset, scripts, dependency, gitignoreEntries, install, notes }, "manifest": { … } }`,
-  where `manifest` is the same object `generate --format json` writes.
+  where `manifest` is the same object `generate --format json` writes. If that generate fails, the
+  document is `{ "error": { … }, "setup": { … }, "manifest": null }` and the exit code is the
+  generate's: one document per invocation, a payload or an error, never a payload holding an error.
 - If `outDir` holds files this tool did not write, `setup` still refuses to replace it (exit 1,
   naming the entries) after writing the config — the guard is not weakened by the convenience.
 ### `init`
@@ -211,7 +213,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.13
+   Added devDependency: codebase-snapshot ^0.9.14
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -416,7 +418,7 @@ narrowest cases of the same rule.
 | `--with-dependents` | flag | off | generate, validate, explain | With either of the two above, also include the files that import a changed one — a one-hop closure, not a transitive walk. Needs a scope; alone it is a usage error. |
 | `--install-hook` | flag | off | init, setup | Write `.git/hooks/pre-commit` so a commit is refused while the snapshot is out of date. The hook checks the `outDir` the config names, so it works for a project that does not use `snapshot/`. An existing hook is never replaced; the note says what to add to it instead. |
 | `--dry-run` | flag | off | generate, init, setup | Compute everything, print it, write nothing. |
-| `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
+| `--watch` | flag | off | generate | Regenerate on every change until interrupted. Redaction and parsing are cached per file across runs in the same process, keyed on the content hash, so a one-file edit regenerates from that one file instead of from the whole repository. The cache is memory only and is dropped when the process exits. |
 | `--autopilot` | flag | off | generate | Set the project up without asking — config, `.gitignore`, npm scripts, devDependency, install — then generate. Never overwrites an existing config; refuses an empty directory (exit `1`); contradicts `--no-config` (exit `2`). |
 | `--no-install` | flag | off | setup, generate `--autopilot` | Skip the dependency install. Anywhere else it is a usage error, because it would change nothing. |
 | `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |

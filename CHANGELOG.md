@@ -23,6 +23,204 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.14
+
+A fifth audit, of what the tool does to text it did not write. Three of the defects below were
+editing the user's code: a redaction rule erased 36 lines of source, a truncation left a code fence
+open, and a preview budget did not apply to a file with CR line endings. The rest are credentials
+left in clear text, two records that disagreed with the files beside them, and the performance work
+the previous audits kept deferring.
+
+Every item has a test that fails without it, with the exception of two performance changes that have
+no behavioural signal — both are named.
+
+### A redaction rule erased source code
+
+`PEM_BLOCK_PATTERN` is lazy over `[\s\S]`, which places no restriction on what may lie between a
+`BEGIN` and the next `END`. A file holding an *unterminated* header — a truncated key, a fixture, a
+half-written file — and, later, a properly terminated block had **everything between the two
+headers replaced with blank lines**, including the source code that happened to sit there.
+
+This repository did it to its own test suite: the security fixture's "unterminated key" test was
+followed by another test whose key was terminated, and the generator bridged the two — 36 lines of
+assertions, braces and the second test's declaration, replaced with 36 empty newlines.
+
+The body may no longer contain another `-----BEGIN`. A header with no `END` before the next `BEGIN`
+does not match as a block, and `PEM_UNTERMINATED_PATTERN` handles its header and its own base64 body,
+which is what that pattern is for. The newline after the header is deliberately still not required:
+a PEM inside a JSON or `.env` value is written with escaped `\n`, two characters rather than a line
+break, and a rule that insisted on one would mask the header alone and leave the base64 in clear.
+
+### A truncated section left its code fence open
+
+When the fixed metadata of a section would not fit the part budget, the *rendered* section was cut at
+a byte offset. The cut lands in the body or in the opening fence, and the closing fence it removes is
+the one that ends the block: every section after it was rendered inside this file's code block, and
+`parsePartSections` merged the next file into this one's body.
+
+The body now goes and the notice takes its place inside the block, with the file marked `preview`
+first so the re-rendered `- Meta:` line describes what the reader will actually find. A section that
+is a closed, empty, labelled block is readable; an unclosed fence corrupts the files after it, and no
+block at all is invisible to the part reader.
+
+### A file with CR line endings was never previewed
+
+`countLines` and `truncatePreview` split on `\n` alone, so a CR-only file — an old Mac file, anything
+written by a tool that predates LF on that platform — counted as **one line**. `largeFileBytes`
+therefore never fired: a 5 MB CR file went into a part whole, with its carriage returns intact, and
+`manifest.json` reported `lines: 1` for a 40 000-line file. The redaction pass counted terminators
+with `/\r\n|\n|\r/g`, so `reports/audit.md` reported line numbers the manifest disagreed with.
+
+All four places now normalise CR, LF and CRLF, and `countLines` counts by scanning rather than
+splitting — it runs on every file body and every part, and normalising first allocated a second copy
+of a multi-megabyte string to answer a question about its terminators.
+
+### Four credential shapes were left in clear text
+
+**`${VAR:-fallback}`, unquoted.** `POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-MyProdPassword123!}`
+defeated every rule, and each refusal was individually reasonable: the quoted rules need a quote
+after the separator, and the unquoted ones need the value to begin with a word character — a
+fallback begins with `$`. That idiom is the norm in `.env` files, docker-compose, GitHub Actions and
+shell scripts. A rule for the shape now masks the fallback and keeps the variable name.
+
+**`readonly` and `declare` in shell files.** Those words introduce a binding in TypeScript and an
+assignment in POSIX sh and `.envrc` — the same word, opposite meaning. The guard that suppresses
+redaction for declarations therefore suppressed it for exactly the files most likely to hold a
+credential. Bare `declare` is gone from the keyword list (the form that can initialise a binding in
+TS is `declare const`, matched through `const`), and the guard now knows which files are assignments.
+
+**A credential inside a string literal.** `startsInsideStringLiteral` rejected any match whose name
+began immediately after a quote, which is right for a list of key names and wrong for every
+connection string: `const dsn = "password=Secret;host=db"` and `curl -d "password=Secret"` were
+emitted in clear. The test now also asks whether the literal closes between the name and the value.
+
+**The MCP line cap.** `createLineReader` checked `MAX_LINE_BYTES` only on the buffer it had just
+appended to, so a chunk carrying a discarded line's terminator *and* the start of the next message
+left that remainder unmeasured until the stream ended — and `onEnd` delivered it whole to
+`JSON.parse`. It also compared `.length`, which is UTF-16 code units: a line of astral characters
+could be twice the ceiling in bytes and still pass. The cap is applied at every path that can
+deliver, and measured in bytes.
+
+### `--with-dependents` lost an importer, and three languages had no import graph
+
+The closure was computed from `file.summary.imports`, and a previewed or oversized file has no
+summary. An importer over `largeFileBytes` was therefore dropped as unchanged while `validate` and
+`explain`, which read the same file from disk, called it a dependent — generate and validate
+disagreed about the snapshot generate had just written. Import specifiers are cheap to extract from
+text already in hand, so they are now collected for files whose summary was refused, and the size
+ceiling lives in one place so all three commands refuse the same files.
+
+`resolveSpecifier` only understood JavaScript's `./x` shape, so the Python, Ruby, C/C++ and Dart
+imports the profiles have been recording for several releases resolved to nothing. Each language
+spells "this directory" differently — Python with dots, Ruby with `require_relative`, C with a
+quoted include, Dart with nothing at all — and each is now resolved on its own terms. Package-rooted
+languages (Go modules, Rust `crate::`, PHP PSR-4, JVM packages, Swift modules) stay unresolved on
+purpose: their specifiers go through a manifest, and guessing a path would fabricate edges that
+`validate` then has to disagree about.
+
+### `setup --format json` could corrupt its own output
+
+`setup` replaced `process.stdout.write` with a capture and restored the function it had captured on
+entry. A nested generate with an `async` hook installed the hook diversion inside that window, so
+`setup`'s restore ran first and removed it — the hook's `console.log`, after its first `await`, went
+straight to the real stdout — and the hook's restore then put back `setup`'s *finished* capture.
+Every later write in the process was appended to a dead string and silently discarded.
+
+Both borrow stdout and neither can own it, so there is now one router, installed at most once and
+released by reference counting, consulting two `AsyncLocalStorage` scopes.
+
+The same function also merged a failed nested generate in as `manifest`: `{ setup, manifest: { error } }`
+came out with exit code 1 and no top-level `error`. The failure is now at the top level.
+
+### A transient lock on the old snapshot could cost the new one
+
+`fs.rmSync(backupDir)` ran inside the `try` whose `catch` restores the previous snapshot. `rmSync`
+throws EPERM or EBUSY on Windows and on network filesystems when an indexer, an antivirus or an
+editor holds a handle in the old snapshot — and by then `outDir` already holds the new one. The catch
+deleted the new snapshot, restored the old one and rethrew; the retry then failed with ENOENT
+because the staging directory no longer existed. Removing the backup is no longer part of the
+transaction.
+
+### Two runs could take two different lock files
+
+`realpathSync(stagingRoot)` was used when the root existed and the unresolved path when it did not —
+and the run creates the root *after* taking the lock. On macOS, where `/var` is a symlink to
+`/private/var`, process 1 hashed `/var/folders/…/snapshot.tmp` and process 2, starting once the
+directory existed, hashed `/private/var/…`: two locks, no mutual exclusion, two concurrent writers.
+The key now resolves the nearest existing ancestor. Reclaiming a stale lock also re-checks the file's
+identity immediately before unlinking it, so two runs that both find the same dead lock cannot
+delete each other's.
+
+### The MCP worker ran the hook the docs say it does not
+
+`docs/mcp.md` tells the reader that `hooks.afterGenerate` does not run for a generation started from
+MCP. It did: the worker resolved the config file with its hooks intact, so an after-generate script
+ran from inside an MCP tool call, and a hook still running when the worker posted its result kept
+the thread alive for as long as the server did. The worker now empties `hooks` before resolving, and
+is terminated as soon as the result is settled.
+
+### A byte-order mark in `package.json` broke four readers
+
+`findConfigFile` reads `package.json` through `stripJsonComments`, which drops a BOM, so `generate`
+loaded a BOM'd project happily. Every other reader used bare `JSON.parse`, which throws on `\uFEFF`,
+and every one of them caught the throw and reported the ordinary, wrong answer: an existing
+`"snapshot"` block was invisible, `"type": "module"` was invisible, the scripts and devDependency
+were skipped with a note, and `nextStepHint` told the user to run `npx codebase-snapshot generate` —
+which resolves the *published* package instead of the one the run had just installed. The
+`npm create` shim had the same bug in `hasSnapshotScript`.
+
+A BOM is what a Windows editor writes when it saves UTF-8. All five readers now parse the same way
+the config loader does, and `init` writes the mark back rather than silently removing it.
+
+### `validate` could not name seven of the settings it compared
+
+`maxPartTokens`, `maxMonolithBytes`, `skeleton`, `sarif`, `changedSince`, `staged` and
+`withDependents` were recorded in the manifest and folded into the configuration digest, but never
+joined the field-by-field block. The digest can say *that* something changed; only the per-field
+comparisons say *what*. Toggling `--skeleton` produced the generic "the settings differ" line and
+nothing else.
+
+### A `.vue` or `.astro` script block was always parsed as `.ts`
+
+`<Button onClick={() => go()}>` is a type assertion followed by six parse errors to the TypeScript
+grammar, and no component at all, for a perfectly valid Vue `lang="tsx"` block. The script kind now
+follows the component: Astro frontmatter is JSX-capable by construction, and a Vue or Svelte block
+says so with `lang="tsx"`.
+
+### Performance
+
+- **The split loop re-rendered every part on every pass.** `partitionFilesForBuckets` renders all
+  groups, finds the first one over budget, splits it, and goes round again — up to 64 times. Each
+  pass re-assembled, re-token-estimated and SHA-256 hashed *every* part. A group's rendered size
+  depends on its sections, its index and the *width* of the numbering, and the width only changes
+  when the part count crosses 1 000, so sizes are now measured instead of rendered and cached per
+  group. Each part is hashed exactly once.
+- **The skeleton pass parsed with `setParentNodes: true`** and walked every node a second time to set
+  `.parent`, which nothing reads. It also expanded empty bodies from `{}` to `{ /* ... */ }`, making
+  small files larger, and rewrote the text once per span — 400 functions copied a 200 KB file 400
+  times.
+- **`fullContents` retained every file body on runs that wrote no monolith.** The map held a
+  reference to every pre-partition body and was read only inside `if (config.includeMonolith)`,
+  pinning the multi-megabyte originals that the partitioner had just replaced with previews.
+- **31 regexes were recompiled for every file.** `scanAndRedactSecrets` called `toGlobal` per rule
+  per call, and it is called once per file: a 20 000-file scan built 620 000 identical objects.
+- **`--watch` re-derived the whole repository for one changed file.** The derivation — redaction,
+  findings, skeleton, preview, summary — is a pure function of (bytes, settings, path), so it is now
+  cached and reused when the content hash and a settings digest both match. Validity is the **content
+  hash**, not `mtime`: a formatter or a `git checkout` can rewrite a file within the same timestamp
+  tick at the same length. Measured on a synthetic 250-file TypeScript repository: cold 520 ms, warm
+  196 ms (2.65x); the remainder is reading, hashing, partitioning and writing.
+
+### What has no test, and why
+
+The last two are structural. The regex cache and the `fullContents` change have no behavioural
+signal — the output is byte-identical by construction — so they are covered by the existing suite
+and by the reasoning above rather than by a new test. The `--watch` cache is different: four of its
+five tests are correctness guards that pass on the previous build (that is the requirement — the
+cache must be invisible), and the fifth measures the cold/warm ratio and fails without it.
+
+---
+
 ## 0.9.13
 
 A fourth audit, this time of the seams: places where two code paths answer the same question with
