@@ -35,6 +35,7 @@ import {
   isBinaryExtension,
   isBinaryFile,
 } from "./scanner/binary.js";
+import { resolveChangedScope } from "./scanner/changed.js";
 import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
@@ -1657,6 +1658,55 @@ export function generateSnapshot(
     });
   }
 
+  // A changed-files scope narrows the snapshot to what a review is actually about.
+  //
+  // The filter runs here, after summaries exist, because `--with-dependents` needs the import
+  // graph: "the files that reference this one" cannot be answered from a candidate path. Every
+  // removed file is recorded with reason `unchanged`, which is a different statement from
+  // `excluded` — the file is includable and simply did not move.
+  if (config.changedSince !== undefined || config.staged === true) {
+    const scope = resolveChangedScope(config.cwd, {
+      ...(config.changedSince === undefined ? {} : { changedSince: config.changedSince }),
+      ...(config.staged === true ? { staged: true } : {}),
+    });
+
+    const keep = new Set(scope.paths);
+    if (config.withDependents === true) {
+      const resolver = buildImportResolver(files);
+      for (const file of files) {
+        if (!isSourceSummary(file.summary)) continue;
+        const importsChanged = file.summary.imports.some((specifier) => {
+          const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
+          return resolved !== null && keep.has(resolved);
+        });
+        if (importsChanged) keep.add(file.relativePath);
+      }
+    }
+
+    const kept = files.filter((file) => keep.has(file.relativePath));
+    for (const file of files) {
+      if (keep.has(file.relativePath)) continue;
+      skipped.push({
+        path: file.relativePath,
+        reason: "unchanged",
+        detail: `not ${scope.detail}`,
+      });
+    }
+    files.length = 0;
+    files.push(...kept);
+    // The totals describe the snapshot, not the scan, so they are recomputed from what
+    // survived rather than from what was read.
+    totalLines = files.reduce((total, file) => total + file.lines, 0);
+    totalSizeBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
+
+    if (files.length === 0) {
+      warnings.push(
+        `No file is ${scope.detail}, so the snapshot is empty. ` +
+          "Check the ref, or run without --changed-since to scan the whole repository."
+      );
+    }
+  }
+
   // One warning per encoding class, not per file: a repository with 400 Latin-1 files must not
   // produce 400 warnings that bury everything else.
   const encodingBuckets = new Map<TextEncoding, { paths: string[]; invalidBytes: number }>();
@@ -1768,6 +1818,11 @@ export function generateSnapshot(
       maxMonolithBytes: config.maxMonolithBytes ?? null,
       includeSensitiveFiles: config.includeSensitiveFiles,
       discovery: config.discovery ?? "auto",
+      // A changed-files scope decides which files are in the snapshot, so the manifest that
+      // describes the run has to name it.
+      ...(config.changedSince === undefined ? {} : { changedSince: config.changedSince }),
+      ...(config.staged === true ? { staged: true } : {}),
+      ...(config.withDependents === true ? { withDependents: true } : {}),
       artifacts: { ...config.artifacts },
       include: [...config.include].map(maskName),
       preset: config.preset,
@@ -2178,6 +2233,8 @@ export { truncateToBytes } from "./partitioner/preview.js";
 export { estimateTokens, bytesForTokens, formatTokens } from "./tokenize.js";
 export { HOOK_MARKER, installPreCommitHook } from "./agent/hook.js";
 export type { HookInstallResult } from "./agent/hook.js";
+export { resolveChangedScope } from "./scanner/changed.js";
+export type { ChangedScope, ChangedScopeRequest } from "./scanner/changed.js";
 export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 
 export type * from "./types.js";

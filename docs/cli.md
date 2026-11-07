@@ -409,6 +409,9 @@ narrowest cases of the same rule.
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
 | `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
 | `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
+| `--changed-since <ref>` | git ref | unset | generate | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged`. |
+| `--staged` | flag | off | generate | Include only files staged for the next commit. |
+| `--with-dependents` | flag | off | generate | With either of the two above, also include the files that import a changed one — a one-hop closure. Needs a scope; alone it is a usage error. |
 | `--install-hook` | flag | off | init, setup | Write `.git/hooks/pre-commit` so a commit is refused while the snapshot is out of date. An existing hook is never replaced; the note says what to add to it instead. |
 | `--dry-run` | flag | off | generate, init, setup | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |

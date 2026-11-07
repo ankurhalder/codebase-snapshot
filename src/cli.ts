@@ -118,6 +118,9 @@ const CLI_OPTIONS = {
   target: { type: "string" },
   "no-update-check": { type: "boolean" },
   "install-hook": { type: "boolean" },
+  "changed-since": { type: "string" },
+  "with-dependents": { type: "boolean" },
+  staged: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -161,6 +164,9 @@ Options:
                                 Accepts units: 120k, 1.5mb
   --max-part-tokens <n>         Per-part budget in tokens; narrows --max-part-bytes
   --large-file-bytes <n>        Threshold for head/tail truncation (default: 204800)
+  --changed-since <ref>         Only files changed since this git ref, plus untracked ones
+  --staged                      Only files staged for the next commit
+  --with-dependents             With the two above: also include their importers
   --include-sensitive-files     Emit .env / *.pem / .npmrc / credential files
   --skip-artifacts <names>      Comma-separated artifacts to omit
                                 (readme, manifest, parts, navigation,
@@ -266,6 +272,12 @@ interface ParsedInvocation {
   noUpdateCheck?: boolean;
   /** `init` and `setup` only: write a pre-commit hook that gates on `validate`. */
   installHook?: boolean;
+  /** Only files changed since this git ref. */
+  changedSince?: string;
+  /** Only files staged for the next commit. */
+  staged?: boolean;
+  /** With the two above: also include the files that import a changed one. */
+  withDependents?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -646,6 +658,9 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     discovery: isDiscoveryMode(rawDiscovery) ? rawDiscovery : undefined,
     noUpdateCheck: values["no-update-check"] === true,
     installHook: values["install-hook"] === true,
+    changedSince: values["changed-since"] === undefined ? undefined : String(values["changed-since"]),
+    staged: values.staged === true,
+    withDependents: values["with-dependents"] === true,
   };
 }
 
@@ -1343,6 +1358,9 @@ async function runCommand(argv: string[]): Promise<number> {
       maxMonolithBytes: invocation.maxMonolithBytes,
       skipArtifacts: invocation.skipArtifacts,
       discovery: invocation.discovery,
+      changedSince: invocation.changedSince,
+      staged: invocation.staged,
+      withDependents: invocation.withDependents,
     } as Partial<CliOptions> & { discovery?: DiscoveryMode },
     invocation.cwd
   );
@@ -1767,6 +1785,9 @@ async function runWatchLoop(
           maxMonolithBytes: invocation.maxMonolithBytes,
           skipArtifacts: invocation.skipArtifacts,
           discovery: invocation.discovery,
+          changedSince: invocation.changedSince,
+          staged: invocation.staged,
+          withDependents: invocation.withDependents,
         } as Partial<CliOptions> & { discovery?: DiscoveryMode; maxPartTokens?: number },
         invocation.cwd
       );

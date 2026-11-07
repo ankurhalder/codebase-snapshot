@@ -379,6 +379,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "artifacts",
   "branch",
   "budgets",
+  "changedSince",
   "cwd",
   "discovery",
   "exclude",
@@ -397,10 +398,12 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "outDir",
   "preset",
   "previewHeadLines",
+  "staged",
   "previewTailLines",
   "secretRules",
   "secrets",
   "tmpDir",
+  "withDependents",
 ]);
 
 /**
@@ -1213,7 +1216,46 @@ export function resolveConfig(
 
   const configuredOutDir = strictString(userConfig?.outDir, "snapshot", "`outDir`");
   const outDir = cliOptions?.outDir || configuredOutDir;
-  const tmpDir = strictString(userConfig?.tmpDir, "snapshot.tmp", "`tmpDir`");
+
+  // A changed-files scope is a filter with two settings that must agree. `--with-dependents`
+  // on its own asks to widen a set that was never narrowed, so it is a mistake rather than a
+  // no-op: accepting it silently would let a user believe a filter was applied.
+  const rawChangedSince =
+    (cliOptions as { changedSince?: unknown } | undefined)?.changedSince ??
+    (userConfig as { changedSince?: unknown } | null | undefined)?.changedSince;
+  if (
+    rawChangedSince !== undefined &&
+    (typeof rawChangedSince !== "string" || rawChangedSince.trim().length === 0)
+  ) {
+    throw new Error(
+      `\`changedSince\` must be a git ref such as "main" or "HEAD~3" (received ${describeValue(rawChangedSince)}).`
+    );
+  }
+  const changedSince = rawChangedSince === undefined ? undefined : String(rawChangedSince).trim();
+
+  const rawStaged =
+    (cliOptions as { staged?: unknown } | undefined)?.staged ??
+    (userConfig as { staged?: unknown } | null | undefined)?.staged;
+  if (rawStaged !== undefined && typeof rawStaged !== "boolean") {
+    throw new Error(`\`staged\` must be a boolean (received ${describeValue(rawStaged)}).`);
+  }
+  const staged = rawStaged === true;
+
+  const rawWithDependents =
+    (cliOptions as { withDependents?: unknown } | undefined)?.withDependents ??
+    (userConfig as { withDependents?: unknown } | null | undefined)?.withDependents;
+  if (rawWithDependents !== undefined && typeof rawWithDependents !== "boolean") {
+    throw new Error(
+      `\`withDependents\` must be a boolean (received ${describeValue(rawWithDependents)}).`
+    );
+  }
+  const withDependents = rawWithDependents === true;
+  if (withDependents && changedSince === undefined && !staged) {
+    throw new Error(
+      "`withDependents` widens a changed-files scope, so it needs `changedSince` or `staged` " +
+        "(with neither, every file is already included)."
+    );
+  }  const tmpDir = strictString(userConfig?.tmpDir, "snapshot.tmp", "`tmpDir`");
   const branch = strictString(userConfig?.branch, "main", "`branch`");
   const configuredSensitiveFiles = strictBoolean(
     userConfig?.includeSensitiveFiles,
@@ -1251,6 +1293,9 @@ export function resolveConfig(
       "maxMonolithBytes"
     ),
     includeSensitiveFiles,
+    ...(changedSince === undefined ? {} : { changedSince }),
+    ...(staged ? { staged } : {}),
+    ...(withDependents ? { withDependents } : {}),
     include: resolveInclude(userConfig?.include),
     preset: preset.presetName,
     presetExclude,
@@ -1341,6 +1386,7 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     // recording the token number means changing 32k to 64k moves the digest even in the
     // corner where both round to the same byte budget.
     maxPartTokens: config.maxPartTokens ?? null,
+    // A changed-files scope decides which files are in the snapshot at all, so a snapshot\n    // taken over a different scope is a different snapshot.\n    changedSince: config.changedSince ?? null,\n    staged: config.staged === true,\n    withDependents: config.withDependents === true,
     largeFileBytes: config.largeFileBytes,
     previewHeadLines: config.previewHeadLines,
     previewTailLines: config.previewTailLines,

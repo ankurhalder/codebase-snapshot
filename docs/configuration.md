@@ -189,6 +189,9 @@ Classification drives per-layer budgets and the `Layers:` breakdown in `report`.
 export default {
   maxPartBytes: "300k",        // hard ceiling per part; default 307200, minimum 4096
   // maxPartTokens: 32000,     // a per-part ceiling in tokens; narrows maxPartBytes (tokens x 4)
+  // changedSince: "main",      // only files changed since this git ref
+  // staged: true,             // only files staged for the next commit
+  // withDependents: true,     // ...and the files that import them
   largeFileBytes: "200k",      // above this a file becomes a head/tail preview
   previewHeadLines: 80,
   previewTailLines: 40,

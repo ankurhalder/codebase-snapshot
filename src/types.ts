@@ -99,7 +99,15 @@ export type SkipReason =
    * expected — which used to be recorded as the generic `not-file`, implying the path was a
    * socket or a FIFO rather than a repository whose contents are simply somebody else's.
    */
-  | "nested-repository";
+  | "nested-repository"
+  /**
+   * Not in the set that `--changed-since` or `--staged` asked for.
+   *
+   * Deliberately distinct from `excluded`, which means the user's own glob rejected the path.
+   * Here the file is perfectly includable and simply did not change; reporting it as
+   * `excluded` would send a reader looking for an exclude pattern they never wrote.
+   */
+  | "unchanged";
 
 export interface SkipRecord {
   /** Path as it may be shown in an artifact: secret spans are masked. */
@@ -296,6 +304,10 @@ export interface ManifestConfigSnapshot {
   includeSensitiveFiles: boolean;
   /** How files were discovered; `undefined` on manifests written before this was recorded. */
   discovery?: DiscoveryMode;
+  /** The changed-files scope the snapshot was taken over, when one was used. */
+  changedSince?: string;
+  staged?: boolean;
+  withDependents?: boolean;
   artifacts: ResolvedArtifacts;
   include: string[];
   preset: string;
@@ -445,6 +457,22 @@ export interface SnapshotConfig {
   include?: string[];
   /** Force a preset by name instead of auto-detecting one. */
   preset?: string;
+  /**
+   * Only include files changed since this git ref.
+   *
+   * The pull-request case: the diff is small and the repository is not. Unchanged files are
+   * recorded in `skipped[]` with reason `unchanged`, so the manifest accounts for them.
+   */
+  changedSince?: string;
+  /** Only include files staged for the next commit. */
+  staged?: boolean;
+  /**
+   * With `changedSince` or `staged`, also include the files that import a changed one.
+   *
+   * A one-hop closure: the file you changed and the files that reference it are the context
+   * needed to change it safely.
+   */
+  withDependents?: boolean;
   /** Switch individual snapshot artifacts off. Everything is on by default. */
   artifacts?: ArtifactSelection;
   /**
@@ -485,6 +513,12 @@ export interface ResolvedSnapshotConfig {
    * reader treats `undefined` as `auto`, so the effective mode is never guessed twice.
    */
   discovery?: DiscoveryMode;
+  /** Only files changed since this git ref; `undefined` scans everything. */
+  changedSince?: string;
+  /** Only files staged for the next commit. */
+  staged?: boolean;
+  /** Also include the files that import a changed one. */
+  withDependents?: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */
   include: string[];
   /** The preset that was resolved (detected or forced). */
