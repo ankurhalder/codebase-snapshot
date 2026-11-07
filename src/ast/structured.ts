@@ -122,12 +122,24 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
    * "# The common path", both of which are shell comments in examples. A model reading
    * the index was told the document had sections it does not have.
    */
-  let fence: string | null = null;
+  let fence: { marker: string; length: number } | null = null;
+
+  // Front matter is only front matter if it closes. A document that opens with a `---`
+  // horizontal rule and never repeats it kept `inFrontmatter` true to the end of the file, so
+  // every heading after the rule was dropped from the summary — the index claimed a document
+  // with no sections. Checking for a closing delimiter first is the cheapest correct test.
+  let closesFrontmatter = false;
+  for (let index = 1; index < lines.length; index++) {
+    if ((lines[index] as string).trim() === "---") {
+      closesFrontmatter = true;
+      break;
+    }
+  }
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] as string;
 
-    if (index === 0 && line.trim() === "---") {
+    if (index === 0 && line.trim() === "---" && closesFrontmatter) {
       inFrontmatter = true;
       continue;
     }
@@ -143,13 +155,20 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
     }
 
     const trimmed = line.trim();
-    // CommonMark: a fence opens with three or more backticks or tildes and closes with
-    // at least as many of the same character. The character is enough to pair them.
-    const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+    // CommonMark: a fence opens with three or more backticks or tildes, and closes with a run of
+    // the *same* character that is **at least as long** and carries **no info string**.
+    // Storing only the character paired them wrongly twice over: a three-backtick line inside a
+    // four-backtick block ended the block, and a closing line with an info string (```` ```bash ````)
+    // was accepted as a close instead of being read as content.
+    const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
     if (fenceMatch) {
-      const marker = (fenceMatch[1] as string)[0] as string;
-      if (fence === null) fence = marker;
-      else if (fence === marker) fence = null;
+      const run = fenceMatch[1] as string;
+      const rest = (fenceMatch[2] as string).trim();
+      if (fence === null) {
+        fence = { marker: run[0] as string, length: run.length };
+      } else if (run[0] === fence.marker && run.length >= fence.length && rest === "") {
+        fence = null;
+      }
       continue;
     }
     if (fence !== null) continue;

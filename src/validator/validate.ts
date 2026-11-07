@@ -10,6 +10,7 @@ import {
   resolveConfig,
 } from "../config.js";
 import { collectFiles, findSecretInPath, getGitInfo } from "../scanner/files.js";
+import { resolveChangedScope } from "../scanner/changed.js";
 import { decodeText, isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
@@ -342,6 +343,33 @@ export function validateSnapshot(
     return skippedReasons.get(maskedPath(diskFile, config.secretRules)) ?? null;
   };
 
+  /**
+   * The changed-files scope the snapshot was generated under, re-resolved now.
+   *
+   * `null` means the snapshot was not scoped. `scopeUnresolved` means it was scoped and the
+   * scope cannot be reconstructed (no git, or git refused the ref) — in that case a recorded
+   * `unchanged` skip is trusted, with a warning, because guessing "missing" for every file in
+   * the repository is worse than saying the check could not be completed.
+   */
+  let unchangedScope: Set<string> | null = null;
+  const recordedChangedSince = manifest.config?.changedSince;
+  const recordedStaged = manifest.config?.staged === true;
+  if (recordedChangedSince !== undefined || recordedStaged) {
+    try {
+      unchangedScope = new Set(
+        resolveChangedScope(config.cwd, {
+          ...(recordedChangedSince === undefined ? {} : { changedSince: recordedChangedSince }),
+          ...(recordedStaged ? { staged: true } : {}),
+        }).paths
+      );
+    } catch {
+      warnings.push(
+        "The snapshot was generated with a changed-files scope, but that scope could not be " +
+          "re-resolved; files it recorded as `unchanged` were trusted rather than re-checked."
+      );
+    }
+  }
+
   const collection = collectFiles(config.cwd, {
     includePatterns: config.include,
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
@@ -367,6 +395,18 @@ export function validateSnapshot(
       // A path in `skipped[]` is not permanently exempt: re-evaluate it and
       // report drift when it would now be included.
       const skipReason = skippedReasonOnDisk(diskFile);
+      // A file skipped as `unchanged` was narrowed out on purpose, so it is not missing. Asking
+      // `wouldNowBeIncluded` about it — which only answers "is this text?" — said yes for every
+      // source file in the repository and reported all of them as `new file:`, failing
+      // `validate` on every snapshot built with `--changed-since`. What can be checked is
+      // whether the file is *still* outside the recorded scope: if it has changed since, the
+      // snapshot predates it and the drift is real.
+      if (skipReason === "unchanged") {
+        if (unchangedScope !== null && unchangedScope.has(diskFile)) {
+          drift.missingInSnapshot.push(diskFile);
+        }
+        continue;
+      }
       if (skipReason !== null && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
@@ -750,6 +790,24 @@ export function validateSnapshot(
       }
     } catch {
       drift.partIssues.push({ part: key, issue: "declared artifact is missing" });
+    }
+  }
+
+  // ---- SARIF --------------------------------------------------------------
+  // The SARIF log is the one artifact designed to leave the repository — it is uploaded to code
+  // scanning — so a copy that no longer matches its recorded digest is worse than most stale
+  // files: it is a security report that describes a snapshot that is not the one on disk. It
+  // lives under `reports/`, so it needs its own path rather than the loop above.
+  const sarifArtifact = manifest.artifacts?.sarif;
+  if (sarifArtifact) {
+    const sarifKey = "reports/audit.sarif";
+    try {
+      const buffer = fs.readFileSync(path.join(snapshotDir, "reports", "audit.sarif"));
+      if (sha256Hex(buffer) !== sarifArtifact.sha256 || buffer.length !== sarifArtifact.byteSize) {
+        drift.partIssues.push({ part: sarifKey, issue: "artifact does not match its recorded digest" });
+      }
+    } catch {
+      drift.partIssues.push({ part: sarifKey, issue: "declared artifact is missing" });
     }
   }
 

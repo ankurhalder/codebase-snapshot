@@ -113,7 +113,7 @@ or a team where the person who generated the snapshot is not the person who read
 
 ## Making the gate automatic
 
-alidate only helps if it runs. To gate commits on it:
+Validate only helps if it runs. To gate commits on it:
 
 ```bash
 npx codebase-snapshot init --install-hook     # or: setup --install-hook

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { generateSnapshot, resolveChangedScope, resolveConfig } from "../dist/index.js";
+import { explainPath, validateSnapshot } from "../dist/index.js";
 
 /**
  * Diff-scoped snapshots, from the 0.9.9 audit.
@@ -138,5 +139,169 @@ test("an empty scope warns instead of looking like a success", (t) => {
   assert.ok(
     manifest.warnings.some((warning) => /No file is changed since HEAD/.test(warning)),
     `the empty snapshot must explain itself: ${JSON.stringify(manifest.warnings)}`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 0.9.11 — the changed-files scope, after the audit that found it was applied
+// one layer too late.
+// ---------------------------------------------------------------------------
+
+const scopedOptions = (dir, extra = {}) => ({
+  cwd: dir,
+  outDir: "snapshot",
+  tmpDir: "snapshot.tmp",
+  changedSince: "HEAD",
+  ...extra,
+});
+
+test("validate accepts a snapshot generated with a changed-files scope", (t) => {
+  const { dir, write } = makeRepo(t);
+  write("src/used.ts", "export const used = 2;\n");
+
+  generateSnapshot(scopedOptions(dir));
+  const result = validateSnapshot(scopedOptions(dir));
+
+  // Every unchanged file is valid text, so the old verdict — "the snapshot does not contain this
+  // file and it would be included now" — was reached for every file in the repository, and
+  // `validate` exited 1 on every snapshot built with --changed-since.
+  assert.deepEqual(
+    result.drift.missingInSnapshot,
+    [],
+    "a file the scope excluded is not a file the snapshot forgot"
+  );
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test("validate still reports a file that changed after the snapshot was taken", (t) => {
+  const { dir, write } = makeRepo(t);
+  write("src/used.ts", "export const used = 2;\n");
+  generateSnapshot(scopedOptions(dir));
+
+  // Now it is inside the recorded scope and the snapshot predates it: real drift.
+  write("src/untouched.ts", "export const untouched = 2;\n");
+  const result = validateSnapshot(scopedOptions(dir));
+
+  assert.deepEqual(result.drift.missingInSnapshot, ["src/untouched.ts"]);
+  assert.equal(result.valid, false);
+});
+
+test("explain does not call a file outside the changed scope included", (t) => {
+  const { dir, write } = makeRepo(t);
+  write("src/used.ts", "export const used = 2;\n");
+  const config = resolveConfig(scopedOptions(dir));
+
+  const outside = explainPath(config, "src/untouched.ts");
+  assert.equal(outside.included, false, "generate would not emit this file");
+  assert.equal(outside.reason, "unchanged");
+  assert.match(String(outside.detail), /changed since HEAD/);
+
+  const inside = explainPath(config, "src/used.ts");
+  assert.equal(inside.included, true);
+});
+
+test("a scoped snapshot's counts describe the snapshot, not the repository", (t) => {
+  const { dir, write } = makeRepo(t);
+  // Everything below is committed and then left alone, so the run must never look at it.
+  write("src/leaky.ts", 'const API_KEY = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";\n');
+  write("docs/huge.md", "# big\n" + "x".repeat(4096) + "\n");
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-qm", "background"]);
+  write("src/used.ts", "export const used = 2;\n");
+
+  const manifest = generateSnapshot(scopedOptions(dir, { largeFileBytes: 512 }));
+
+  assert.deepEqual(manifest.files.map((file) => file.relativePath), ["src/used.ts"]);
+  const layerTotal = Object.values(manifest.layers).reduce((total, count) => total + count, 0);
+  const kindTotal = Object.values(manifest.kinds).reduce((total, count) => total + count, 0);
+  assert.equal(layerTotal, manifest.files.length, "layers must count what is in the snapshot");
+  assert.equal(kindTotal, manifest.files.length, "kinds must count what is in the snapshot");
+  assert.equal(
+    manifest.counts.largeFileCount,
+    0,
+    "the 4 KB file is outside the scope, so it is not a large file in this snapshot"
+  );
+  assert.equal(
+    manifest.totals.redactedLines,
+    0,
+    "a secret in a file that is not in the snapshot is not a finding of this run"
+  );
+});
+
+test("files outside the scope are never read", (t) => {
+  const { dir, write } = makeRepo(t);
+  // Latin-1 bytes produce a per-file encoding note — but only for a file that is opened.
+  write("src/latin1.ts", Buffer.from([0x63, 0x6f, 0x6e, 0x73, 0x74, 0x20, 0xe9, 0x3b, 0x0a]));
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-qm", "latin1"]);
+  write("src/used.ts", "export const used = 2;\n");
+
+  const unscoped = generateSnapshot(configFor(dir));
+  assert.ok(
+    unscoped.warnings.some((warning) => warning.includes("src/latin1.ts")),
+    "the fixture is only useful if a full scan really does notice it"
+  );
+
+  const scoped = generateSnapshot(scopedOptions(dir));
+  assert.ok(
+    !scoped.warnings.some((warning) => warning.includes("src/latin1.ts")),
+    `a file the scope removed must never be decoded: ${JSON.stringify(scoped.warnings)}`
+  );
+});
+
+test("--with-dependents is one hop, not a transitive walk", (t) => {
+  const { dir, write } = makeRepo(t);
+  // a <- m <- z, in alphabetical order, which is the order that made the old code walk the
+  // graph: `m` joined the keep-set, so `z` then matched *that* and joined too.
+  write("src/a.ts", "export const a = 1;\n");
+  write("src/m.ts", 'import { a } from "./a.js";\nexport const m = a;\n');
+  write("src/z.ts", 'import { m } from "./m.js";\nexport const z = m;\n');
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-qm", "chain"]);
+  write("src/a.ts", "export const a = 2;\n");
+
+  const manifest = generateSnapshot(scopedOptions(dir, { withDependents: true }));
+
+  assert.deepEqual(
+    manifest.files.map((file) => file.relativePath).sort(),
+    ["src/a.ts", "src/m.ts"],
+    "src/z.ts is two hops away and must not be pulled in"
+  );
+});
+
+test("a ref that git would read as an option is refused", (t) => {
+  const { dir } = makeRepo(t);
+
+  // The ref is the one caller-controlled argument in git's command line, and a committed config
+  // can supply it: `--output=…` reached git as a flag.
+  assert.throws(
+    () => resolveChangedScope(dir, { changedSince: "--output=/tmp/side-effect" }),
+    /must be a git ref, not an option/
+  );
+});
+
+test("--skeleton keeps the whole body in the monolith", (t) => {
+  const { dir, write } = makeRepo(t);
+  write("src/calc.ts", "export function compute(): number {\n  return 41 + 1;\n}\n");
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-qm", "calc"]);
+  write("src/calc.ts", "export function compute(): number {\n  return 42;\n}\n");
+
+  const manifest = generateSnapshot(
+    scopedOptions(dir, { skeleton: true, includeMonolith: true })
+  );
+
+  const partEntry = manifest.files.find((file) => file.relativePath === "src/calc.ts");
+  assert.equal(partEntry.inclusionMode, "signatures", "the parts carry the skeleton");
+
+  const monolith = JSON.parse(
+    fs.readFileSync(path.join(dir, "snapshot", "full-codebase.json"), "utf8")
+  );
+  const entry = monolith.files.find((file) => file.relativePath === "src/calc.ts");
+  assert.equal(entry.inclusionMode, "full");
+  assert.match(
+    entry.content,
+    /return 42/,
+    "the monolith is documented as the whole codebase, so it cannot hold the stripped body"
   );
 });

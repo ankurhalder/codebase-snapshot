@@ -406,6 +406,15 @@ export function buildAgentContract(): AgentContract {
         summary: 'Byte budget per markdown part. Accepts "120k" / "1.5mb". Minimum 4096.',
       },
       {
+        flag: "--max-part-tokens",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("max-part-tokens"),
+        summary:
+          'Ceiling on a part expressed in tokens. Narrows --max-part-bytes instead of replacing it; ' +
+          "the manifest records both units. Minimum 1024.",
+      },
+      {
         flag: "--large-file-bytes",
         type: "string",
         default: 204800,
@@ -453,6 +462,49 @@ export function buildAgentContract(): AgentContract {
         default: "unset",
         appliesTo: optionAppliesTo("only-artifacts"),
         summary: "Write only these artifacts. Cannot be combined with --skip-artifacts.",
+      },
+      {
+        flag: "--skeleton",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("skeleton"),
+        summary:
+          "Replace function and method bodies with `{ /* ... */ }` in TypeScript/TSX files, keeping " +
+          "signatures and comments. The part records inclusionMode \"signatures\" for each file it touched.",
+      },
+      {
+        flag: "--sarif",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("sarif"),
+        summary:
+          "Also write reports/audit.sarif (SARIF 2.1.0) so a CI security gate can read the redaction " +
+          "findings. The matched value is never included.",
+      },
+      {
+        flag: "--changed-since",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("changed-since"),
+        summary:
+          "Snapshot only the files that differ from this git ref, plus untracked ones. Everything else " +
+          "is recorded in skipped[] with reason \"unchanged\". Requires a git checkout.",
+      },
+      {
+        flag: "--staged",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("staged"),
+        summary: "Snapshot only the files staged in the index. The pre-commit counterpart of --changed-since.",
+      },
+      {
+        flag: "--with-dependents",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("with-dependents"),
+        summary:
+          "Widen a changed-files scope by one hop: files that import a changed file are included too. " +
+          "Only meaningful with --changed-since or --staged.",
       },
       {
         flag: "--format",
@@ -571,6 +623,15 @@ export function buildAgentContract(): AgentContract {
           "(CI, offline, or a lockfile you do not want a package manager to touch).",
       },
       {
+        flag: "--install-hook",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("install-hook"),
+        summary:
+          "After writing the config, install a pre-commit hook that runs `validate`. An existing hook " +
+          "this tool did not write is left alone.",
+      },
+      {
         flag: "--no-update-check",
         type: "boolean",
         default: false,
@@ -609,6 +670,12 @@ export function buildAgentContract(): AgentContract {
         { key: "branch", type: "string", default: "main", summary: "Branch recorded when git cannot report one." },
         { key: "preset", type: "string", default: "detected", summary: "Force a preset. Unknown names are an error." },
         { key: "maxPartBytes", type: "number | string", default: 307200, summary: "Per-part byte budget." },
+        { key: "maxPartTokens", type: "number | string | null", default: null, summary: "Per-part token ceiling; narrows maxPartBytes. Minimum 1024." },
+        { key: "skeleton", type: "boolean", default: false, summary: "Collapse function bodies to `{ /* ... */ }` in TypeScript files." },
+        { key: "sarif", type: "boolean", default: false, summary: "Also write reports/audit.sarif." },
+        { key: "changedSince", type: "string | null", default: null, summary: "Snapshot only files that differ from this git ref." },
+        { key: "staged", type: "boolean", default: false, summary: "Snapshot only files staged in the index." },
+        { key: "withDependents", type: "boolean", default: false, summary: "With a changed-files scope, also include one hop of importers." },
         { key: "largeFileBytes", type: "number | string", default: 204800, summary: "Preview threshold for large files." },
         { key: "previewHeadLines", type: "number", default: 80, summary: "Lines kept from the head of a large file." },
         { key: "previewTailLines", type: "number", default: 40, summary: "Lines kept from the tail of a large file." },

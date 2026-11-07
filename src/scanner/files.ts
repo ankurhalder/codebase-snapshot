@@ -544,14 +544,25 @@ function escapeRegExpChar(character: string): string {
 }
 
 /**
- * Matches a gitignore pattern that contains backslash escapes.
+ * Matches `target` against one gitignore pattern, with gitignore's own semantics.
  *
- * `globToRegExp` normalises every `\` to `/` (it is fed user globs, where that is
- * the Windows convenience), which destroys gitignore escapes: `spaced\ .ts`
- * became the path `spaced/ .ts`. Here a backslash always escapes the next
- * character, so an escaped space, `#`, `!` or glob metacharacter stays literal.
+ * This used to be reached only when the pattern contained a backslash; every other pattern was
+ * handed to `matchesExclude`, which is a *different* language. Two whole classes of rule were
+ * therefore wrong in `walk` mode, and both are fixed by using this matcher unconditionally:
+ *
+ * - **Root-anchored rules never matched.** `readGitignoreRules` keeps the leading `/`, and
+ *   `matchesExclude` compares it against a path that has no leading slash, so `/build`
+ *   could not equal `build`, could not prefix `build/x`, and could not appear between two
+ *   slashes. A `/secret-notes.txt` rule silently kept its file in the snapshot.
+ * - **Unanchored rules with an inner slash matched too deep.** gitignore(5) anchors a pattern
+ *   that contains a non-trailing `/` to the directory holding the `.gitignore`, so `doc/frotz`
+ *   ignores the top-level `doc/frotz` only. `matchesExclude` matched `a/doc/frotz` as well.
+ *
+ * `anchored || body.includes("/")` below is exactly that rule, so this function is the whole
+ * of gitignore matching and `matchesExclude` is left to configuration excludes, where "match
+ * at any depth" is the documented behaviour.
  */
-function matchEscapedGitignorePattern(target: string, pattern: string): boolean {
+function matchGitignorePattern(target: string, pattern: string): boolean {
   const anchored = pattern.startsWith("/");
   const body = anchored ? pattern.slice(1) : pattern;
   let source = "";
@@ -591,13 +602,6 @@ function matchEscapedGitignorePattern(target: string, pattern: string): boolean 
   return new RegExp(`${prefix}${source}(?:/.*)?$`).test(target);
 }
 
-/** Matches `target` against one gitignore rule, honouring backslash escapes. */
-function matchesGitignorePattern(target: string, pattern: string): boolean {
-  return pattern.includes("\\")
-    ? matchEscapedGitignorePattern(target, pattern)
-    : matchesExclude(target, pattern);
-}
-
 /** One `.gitignore` file together with the directory it governs, relative to the scan root. */
 interface GitignoreLayer {
   prefix: string;
@@ -621,11 +625,11 @@ function matchesGitignoreRule(
   scoped: string,
   isDirectory: boolean
 ): boolean {
-  if (!rule.dirOnly) return matchesGitignorePattern(scoped, rule.pattern);
+  if (!rule.dirOnly) return matchGitignorePattern(scoped, rule.pattern);
   const segments = scoped.split("/");
   const limit = isDirectory ? segments.length : segments.length - 1;
   for (let depth = 1; depth <= limit; depth += 1) {
-    if (matchesGitignorePattern(segments.slice(0, depth).join("/"), rule.pattern)) return true;
+    if (matchGitignorePattern(segments.slice(0, depth).join("/"), rule.pattern)) return true;
   }
   return false;
 }

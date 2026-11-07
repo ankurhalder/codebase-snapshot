@@ -79,6 +79,14 @@ export interface InitResult {
   dependency: InitDependency;
   /** Human-readable notes about anything that was skipped or could not be done. */
   notes: string[];
+  /**
+   * The output directory the written config names.
+   *
+   * Returned so the caller can bake it into the pre-commit hook: the hook is a shell script and
+   * cannot read the config, and hardcoding `snapshot` there made a gate that never ran for any
+   * project that chose a different directory.
+   */
+  outDir: string;
 }
 
 const CONFIG_CANDIDATES = [
@@ -707,6 +715,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       gitignoreEntries: [],
       dependency: { name: GENERATOR_NAME, range: `^${GENERATOR_VERSION}`, added: false },
       notes,
+      outDir: answers.outDir,
     };
   }
 
@@ -749,5 +758,6 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     gitignoreEntries: ignore.added,
     dependency,
     notes,
+    outDir: answers.outDir,
   };
 }

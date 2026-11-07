@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.10
+   Added devDependency: codebase-snapshot ^0.9.11
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.10
+   Added devDependency: codebase-snapshot ^0.9.11
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -401,7 +401,7 @@ narrowest cases of the same rule.
 | `--cwd <path>` | path | current directory | generate, validate, report, explain, init, skill | Repository to operate on. Must exist and be a directory. `diff` and `describe` take no `--cwd`. |
 | `--out-dir <path>` | path | `snapshot` | generate, validate, report, explain, init | Where the snapshot is written or read. May be absolute. |
 | `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, report, explain, init | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
-| `--max-part-tokens <n>` | size | unset | generate | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. |
+| `--max-part-tokens <n>` | size | unset | generate | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. Minimum 1024 — below that it is a usage error, not a value quietly raised to the floor. |
 | `--large-file-bytes <n>` | size | `204800` (200 KB) | generate, validate, report, explain | Above this, a file becomes a head/tail preview. |
 | `--max-monolith-bytes <n>` | size | unset | generate, validate, report, explain | Skip the single-file monolith when it would exceed this. |
 | `--include-monolith` | flag | off | generate, validate, report, explain | Also write `full-codebase.json` and `full-codebase.md`. |
@@ -409,12 +409,12 @@ narrowest cases of the same rule.
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
 | `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
 | `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
-| `--sarif` | flag | off | generate | Also write `reports/audit.sarif`: the redaction findings as SARIF 2.1.0, for upload to GitHub Code Scanning. The artefact carries the path, the line and the rule — never the value. Works with `--skip-artifacts audit`, because a CI gate does not read markdown. |
-| `--skeleton` | flag | off | generate | Emit TypeScript and TSX signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. |
-| `--changed-since <ref>` | git ref | unset | generate | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged`. |
+| `--sarif` | flag | off | generate | Also write `reports/audit.sarif`: the redaction findings as SARIF 2.1.0, for upload to GitHub Code Scanning. The artefact carries the path, the line and the rule — never the value. Works with `--skip-artifacts audit`, because a CI gate does not read markdown. Rule ids are fixed per rule name, so adding a custom rule never re-points an existing alert. |
+| `--skeleton` | flag | off | generate | Emit TypeScript and TSX signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. `--include-monolith` still writes the whole body, so the monolith's `inclusionMode: "full"` stays true. |
+| `--changed-since <ref>` | git ref | unset | generate | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged` and is never opened. `validate` re-resolves the scope: a skipped file that has changed since is reported as drift, and one that has not is left alone. A ref beginning with `-` is refused. |
 | `--staged` | flag | off | generate | Include only files staged for the next commit. |
-| `--with-dependents` | flag | off | generate | With either of the two above, also include the files that import a changed one — a one-hop closure. Needs a scope; alone it is a usage error. |
-| `--install-hook` | flag | off | init, setup | Write `.git/hooks/pre-commit` so a commit is refused while the snapshot is out of date. An existing hook is never replaced; the note says what to add to it instead. |
+| `--with-dependents` | flag | off | generate | With either of the two above, also include the files that import a changed one — a one-hop closure, not a transitive walk. Needs a scope; alone it is a usage error. |
+| `--install-hook` | flag | off | init, setup | Write `.git/hooks/pre-commit` so a commit is refused while the snapshot is out of date. The hook checks the `outDir` the config names, so it works for a project that does not use `snapshot/`. An existing hook is never replaced; the note says what to add to it instead. |
 | `--dry-run` | flag | off | generate, init, setup | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
 | `--autopilot` | flag | off | generate | Set the project up without asking — config, `.gitignore`, npm scripts, devDependency, install — then generate. Never overwrites an existing config; refuses an empty directory (exit `1`); contradicts `--no-config` (exit `2`). |

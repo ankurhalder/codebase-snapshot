@@ -12,6 +12,8 @@
  * in a place with a different retention policy. A code-scanning alert with a path and a line
  * number is enough to act on.
  */
+import * as crypto from "node:crypto";
+import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import type { Manifest, SecretFinding, SecretRule } from "../types.js";
 
 /** SARIF's document version and schema. */
@@ -19,19 +21,36 @@ const SARIF_VERSION = "2.1.0";
 const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 
 /**
- * Rule identifiers: `CS001`-style, stable across runs.
+ * Rule identifiers, stable across runs and across configurations.
  *
- * A rule id that changed between versions would orphan every open alert that referenced it, so
- * these are derived from the rule's *name* by ordering the names once. A custom rule from the
- * user's config gets an id from its own name, hashed, so it stays stable without depending on
- * the order rules happen to be in.
+ * A rule id that moves orphans every open code-scanning alert that referenced it, and the
+ * previous scheme moved them: ids were handed out by position in the *alphabetically sorted* set
+ * of rule names this run happened to use, so a single custom rule sorting before the built-ins
+ * (`acme-key` does) shifted every built-in id by one and re-pointed every existing alert at a
+ * different rule.
+ *
+ * Built-in rules therefore take a fixed id from the order they are **declared** in
+ * `patterns.ts`, which does not depend on which rules are active or on how the caller spelled
+ * their config. Anything else — a `customPatterns` rule — gets an id hashed from its own name:
+ * stable, independent of sort order, and unable to collide with the three-digit built-in ids
+ * because the two shapes are disjoint.
+ *
+ * This renumbers the built-in rules once, relative to 0.9.10. That is the last time they move.
  */
-function ruleIdFor(name: string, seen: Map<string, string>): string {
-  const existing = seen.get(name);
-  if (existing !== undefined) return existing;
-  const id = `CS${String(seen.size + 1).padStart(3, "0")}`;
-  seen.set(name, id);
-  return id;
+const BUILTIN_RULE_IDS: ReadonlyMap<string, string> = new Map(
+  [
+    ...DEFAULT_SECRET_PATTERNS.map((rule) => rule.rule),
+    // Produced by the whole-block pass in `redact.ts`, not by a pattern in the catalogue.
+    "private-key-block",
+  ].map((name, index) => [name, `CS${String(index + 1).padStart(3, "0")}`] as const)
+);
+
+/** Id for a rule that is not built in: eight hex digits of its own name. */
+function ruleIdFor(name: string): string {
+  const builtin = BUILTIN_RULE_IDS.get(name);
+  if (builtin !== undefined) return builtin;
+  const digest = crypto.createHash("sha256").update(name).digest("hex").slice(0, 8);
+  return `CS${digest.toUpperCase()}`;
 }
 
 /**
@@ -48,7 +67,6 @@ export function generateSarifReport(
   rules: readonly SecretRule[],
   toolVersion: string
 ): string {
-  const ids = new Map<string, string>();
   // The rule catalogue comes from the rules the run actually used, in a stable order, so the
   // same configuration always produces the same document.
   const ruleNames = Array.from(
@@ -58,7 +76,7 @@ export function generateSarifReport(
   const ruleIndex = new Map<string, number>();
   const sarifRules = ruleNames.map((name, index) => {
     ruleIndex.set(name, index);
-    const id = ruleIdFor(name, ids);
+    const id = ruleIdFor(name);
     return {
       id,
       name,
@@ -80,7 +98,7 @@ export function generateSarifReport(
       const line = Math.max(1, finding.line);
       const findingPath = String(finding.path).replace(/\\/g, "/");
       return {
-        ruleId: ruleIdFor(primary, ids),
+        ruleId: ruleIdFor(primary),
         ruleIndex: ruleIndex.get(primary) ?? 0,
         level: "note" as const,
         message: {

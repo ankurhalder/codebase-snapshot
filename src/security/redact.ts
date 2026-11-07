@@ -242,6 +242,10 @@ export function scanAndRedactSecrets(
           if (group && isSelfNamingConstant(line, group[0], group[1])) continue;
           // A tail-matching key that began inside a string literal is text, not an assignment.
           if (valueGroup !== undefined && startsInsideStringLiteral(line, match.index)) continue;
+          // An unquoted value in a declaration is an expression, not a credential literal.
+          if (group && isUnquotedValue(line, group[0]) && isDeclaredBinding(line, match.index)) {
+            continue;
+          }
           spans.push(
             group
               ? { start: group[0], end: group[1], rule }
@@ -349,8 +353,85 @@ function startsInsideStringLiteral(line: string, matchIndex: number): boolean {
 function isSelfNamingConstant(line: string, start: number, end: number): boolean {
   const value = line.slice(start, end);
   if (!/[a-z][A-Z]/.test(value)) return false;
-  const before = line.slice(0, start).replace(/["'`]?\s*[:=]\s*["'`]$/, "");
-  return before.endsWith(value);
+  // Walk left over the separator instead of slicing the prefix: `line.slice(0, start)` allocated
+  // a fresh string per match, and a 236 KB line holding 4,000 assignments spent most of its time
+  // copying prefixes. The walk is bounded by the value's own length.
+  //
+  // The order is the reverse of `["'\`]?\s*[:=]\s*["'\`]$`: opening quote, whitespace, separator,
+  // whitespace, the key's closing quote.
+  let index = start;
+  if (index > 0) {
+    const openingQuote = line[index - 1];
+    if (openingQuote === '"' || openingQuote === "'" || openingQuote === "`") index -= 1;
+  }
+  while (index > 0 && /\s/.test(line[index - 1])) index -= 1;
+  if (index === 0) return false;
+  if (line[index - 1] !== ":" && line[index - 1] !== "=") return false;
+  index -= 1;
+  while (index > 0 && /\s/.test(line[index - 1])) index -= 1;
+  if (index > 0) {
+    const closingQuote = line[index - 1];
+    if (closingQuote === '"' || closingQuote === "'" || closingQuote === "`") index -= 1;
+  }
+  return line.endsWith(value, index);
+}
+
+/**
+ * True when the matched value is **not** quoted, and therefore may be code rather than data.
+ *
+ * `dbPassword: "…"` is a literal in every file type. A bare `dbPassword: …` is a literal in
+ * `.env`, YAML and compose — the formats the unquoted rules exist for — but an expression in
+ * a source file. This only classifies the value; what to do about it is `isDeclaredBinding`.
+ */
+function isUnquotedValue(line: string, start: number): boolean {
+  const before = start > 0 ? line[start - 1] : "";
+  return before !== '"' && before !== "'" && before !== "`";
+}
+
+/**
+ * Keywords that introduce a binding. Everything after the separator is an initializer.
+ *
+ * `readonly`/`private`/`static` are included because a class field is a declaration too:
+ * `private readonly apiKey = /…/` has the same shape as the module-level constant below.
+ */
+const DECLARATION_KEYWORDS =
+  /\b(?:const|let|var|readonly|public|private|protected|static|declare|export|using)\s+$/;
+
+/**
+ * How far left of the name a declaration keyword can be.
+ *
+ * The longest modifier run this recognises is `private static readonly ` (24 characters) plus the
+ * keyword itself, so 40 is generous. The window exists so the guard costs the same on a long line
+ * as on a short one: matching against `line.slice(0, runStart)` allocated the whole prefix once
+ * per match, and a 236 KB line of 4,000 assignments went from under a second to 2.7 s.
+ */
+const DECLARATION_WINDOW = 40;
+
+/**
+ * True when the matched credential name is the target of a **declaration**, not a key.
+ *
+ * In a data file `NAME=value` the value is a literal. In a source file `const NAME = value`
+ * the value is an expression, and masking any part of it edits the program: `const SINGLE_TOKEN
+ * = /[^\sA-Za-z0-9_]/g;` was emitted by this tool as
+ * `const SINGLE_TOKEN = [REDACTED: …][^\sA-Za-z0-9_]/g;` — the regex was destroyed and the
+ * emitted line no longer parses. The same shape reaches `const accessToken = tokens[0]` and
+ * `const apiKey = someVariable`, where the "secret" is a reference.
+ *
+ * The engine retries every start position, so the **tail** of a longer identifier matches too
+ * (`TOKEN` inside `SINGLE_TOKEN`). Walking back to the start of the run before looking for the
+ * keyword is what makes the guard apply to the tail as well — a check at `match.index` alone
+ * would let the shorter match through and corrupt the line anyway.
+ */
+function isDeclaredBinding(line: string, matchIndex: number): boolean {
+  let runStart = matchIndex;
+  while (runStart > 0 && /[A-Za-z0-9_$]/.test(line[runStart - 1])) runStart -= 1;
+  const from = Math.max(0, runStart - DECLARATION_WINDOW);
+  // A keyword is a whole word, so `\b` refuses `xconst `. When the window begins mid-identifier
+  // the `\b` is measured against the window's own edge, which can only misjudge a keyword that
+  // starts at the very first window character — a shape that needs an identifier ending in
+  // `const` immediately before the credential name, and whose only effect is to leave a literal
+  // unmasked.
+  return DECLARATION_KEYWORDS.test(line.slice(from, runStart));
 }
 
 /**

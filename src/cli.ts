@@ -20,7 +20,13 @@ import {
 } from "./wizard/autopilot.js";
 import { DEFAULT_ANSWERS } from "./wizard/config-template.js";
 import { defaultIO, isInteractive, PromptCancelled } from "./wizard/prompts.js";
-import { GENERATOR_NAME, GENERATOR_VERSION, MIN_MAX_PART_BYTES, generateSnapshot } from "./index.js";
+import {
+  GENERATOR_NAME,
+  GENERATOR_VERSION,
+  MIN_MAX_PART_BYTES,
+  MIN_MAX_PART_TOKENS,
+  generateSnapshot,
+} from "./index.js";
 import {
   describeManifestShapeProblem,
   validateSnapshot,
@@ -28,6 +34,11 @@ import {
 import { getPreset, unknownPresetMessage } from "./presets/index.js";
 import { isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
 import { buildAgentContract, renderContractText } from "./agent/contract.js";
+
+// Exported so the contract-completeness test can hold `describe` to the parser. A test that
+// re-states the option list by hand cannot notice a flag the parser gained and the contract
+// did not — which is exactly how the seven 0.9.10 flags went missing.
+export { buildAgentContract } from "./agent/contract.js";
 import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
@@ -90,7 +101,7 @@ const COMMAND_ARITY: Record<Command, number> = {
   mcp: 0,
 };
 
-const CLI_OPTIONS = {
+export const CLI_OPTIONS = {
   cwd: { type: "string" },
   "out-dir": { type: "string" },
   "max-part-bytes": { type: "string" },
@@ -312,13 +323,14 @@ export function parsePositiveInteger(
 export function parseByteOption(
   raw: string | undefined,
   optionName: string,
-  minimum: number
+  minimum: number,
+  unit = "byte count"
 ): number | undefined {
   if (raw === undefined) return undefined;
   const value = parseByteSize(raw);
   if (value === undefined || !Number.isSafeInteger(value)) {
     throw new UsageError(
-      `--${optionName} expects a byte count such as 120000 or "120k", received "${raw}".`
+      `--${optionName} expects a ${unit} such as 120000 or "120k", received "${raw}".`
     );
   }
   if (value < minimum) {
@@ -584,7 +596,11 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
   // a preset nobody asked for, while still exiting 0. The docs promise a usage
   // error listing every valid preset, so validate the name here (exit 2) rather
   // than letting it surface later as a generic failure.
-  if (command === "init" && values.preset !== undefined) {
+  //
+  // `setup` takes `--preset` too and had no check here at all, so a typo there fell through to
+  // `runInit` and surfaced as an ordinary error — exit 1, no list of valid presets, and two
+  // commands documenting the same flag that answered a bad value differently.
+  if ((command === "init" || command === "setup") && values.preset !== undefined) {
     const requested = String(values.preset);
     if (!getPreset(requested)) throw new UsageError(unknownPresetMessage(requested));
   }
@@ -645,11 +661,13 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       MIN_MAX_PART_BYTES
     ),
     // Tokens are counted, so `32k` is a shorthand a context window is often named with; the
-    // same parser accepts a bare integer.
+    // same parser accepts a bare integer. The floor is the byte floor rewritten in tokens —
+    // clamping a smaller budget up to it accepted the flag and then applied a different number.
     maxPartTokens: parseByteOption(
       values["max-part-tokens"] as string | undefined,
       "max-part-tokens",
-      1
+      MIN_MAX_PART_TOKENS,
+      "token count"
     ),
     largeFileBytes: parseByteOption(
       values["large-file-bytes"] as string | undefined,
@@ -798,8 +816,13 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  
 
     // The hook is installed after the config exists: it gates on `validate`, which needs a
     // config and a snapshot, and `init` writes the config. A separate `hook` command would
-    // have to re-derive everything this run already knows.
-    const hook = invocation.installHook === true ? installPreCommitHook(invocation.cwd) : null;
+    // have to re-derive everything this run already knows. The output directory comes from the
+    // config that was just written, so a project using `outDir: ".context"` gets a hook that
+    // actually finds the snapshot.
+    const hook =
+      invocation.installHook === true
+        ? installPreCommitHook(invocation.cwd, result.outDir)
+        : null;
 
     if (invocation.format === "json") {
       process.stdout.write(
@@ -979,7 +1002,10 @@ async function runSetupCommand(
 
     // Installed after the config exists and before the first generate, so the very first
     // commit of the setup is already gated. A dry run writes nothing, so it is skipped there.
-    const hook = invocation.installHook === true ? installPreCommitHook(invocation.cwd) : null;
+    const hook =
+      invocation.installHook === true
+        ? installPreCommitHook(invocation.cwd, init.outDir)
+        : null;
 
     if (invocation.dryRun) {
       const manager = invocation.noInstall ? null : detectPackageManager(invocation.cwd).name;
@@ -1524,6 +1550,10 @@ async function runCommand(argv: string[]): Promise<number> {
         artifacts.projectTree && "project-tree",
         artifacts.navigation && "navigation",
         artifacts.audit && "audit",
+        // `--sarif` writes beside the audit rather than inside `artifacts`, so it is listed
+        // here by hand. Without it a run that produced `reports/audit.sarif` still reported
+        // that every artifact was disabled and only the ownership marker had been written.
+        resolved.sarif === true && "audit.sarif",
       ].filter(Boolean);
       if (reports.length > 0) {
         info(
@@ -1580,7 +1610,7 @@ async function runCommand(argv: string[]): Promise<number> {
     }
 
     if (invocation.watch) {
-      return await runWatchLoop(invocation, resolved);
+      return await runWatchLoop(invocation, resolved, { generatedAlready: true });
     }
 
     return manifest.validation.status === "passed" ? 0 : 1;
@@ -1733,14 +1763,32 @@ export function decideWatchEvent(
  * a run is in flight sets a pending flag and gets exactly one follow-up run;
  * the settle window only suppresses unattributed events.
  */
+/**
+ * The directories the watcher must ignore, derived from a resolved config.
+ *
+ * A function rather than an inline literal because the loop now recomputes it after every config
+ * reload: a watcher that keeps the `outDir` it started with treats the new one as user content,
+ * regenerates, writes, sees that write, and never settles.
+ */
+export function watchPathsFor(config: ResolvedSnapshotConfig): WatchPaths {
+  return {
+    cwd: config.cwd,
+    outDir: path.resolve(config.cwd, config.outDir),
+    tmpDir: path.resolve(config.cwd, config.tmpDir),
+  };
+}
+
 async function runWatchLoop(
   invocation: ParsedInvocation,
-  resolved: ResolvedSnapshotConfig
+  resolved: ResolvedSnapshotConfig,
+  options: { generatedAlready: boolean }
 ): Promise<number> {
-  const outDir = path.resolve(resolved.cwd, resolved.outDir);
-  const tmpDir = path.resolve(resolved.cwd, resolved.tmpDir);
-
-  const paths: WatchPaths = { cwd: resolved.cwd, outDir, tmpDir };
+  // Reassigned by every regeneration. The directories are resolved again from the freshly
+  // loaded config, because `isGeneratedWatchPath` uses them to ignore this tool's own output —
+  // and a watcher that keeps pointing at the *old* `outDir` after the config moved it sees the
+  // new one as user content, regenerates, writes, sees that write, regenerates again, and never
+  // stops. `cwd` cannot move: the watcher is rooted there.
+  let paths: WatchPaths = watchPathsFor(resolved);
   let state = initialWatchState();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
@@ -1806,6 +1854,8 @@ async function runWatchLoop(
         invocation.cwd
       );
       const manifest = generateSnapshot(next, { dryRun: invocation.dryRun });
+      // The output directories may have moved in the config that was just reloaded.
+      paths = watchPathsFor(next);
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       info(
         `♻️  ${new Date().toISOString()}  ${manifest.counts.totalFiles} file(s), ` +
@@ -1821,7 +1871,10 @@ async function runWatchLoop(
   };
 
   info("👀 Watching for changes. Press Ctrl+C to stop.");
-  void regenerate();
+  // `generate --watch` has already produced the snapshot before entering the loop. Regenerating
+  // here ran the whole scan a second time before any file had changed, which doubled the startup
+  // cost of the command and printed two summaries for one invocation.
+  if (!options.generatedAlready) void regenerate();
 
   const watcher = fs.watch(resolved.cwd, { recursive: true }, (_event, filename) => {
     const decision = decideWatchEvent(

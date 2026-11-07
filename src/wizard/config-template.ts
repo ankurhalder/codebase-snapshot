@@ -103,6 +103,9 @@ export function renderConfig(answers: WizardAnswers): string {
   // ── Size ───────────────────────────────────────────────────────────────
   // Hard ceiling per part. "300k", 307200 and "1.5mb" are all accepted.
   maxPartBytes: ${size(answers.maxPartBytes)},
+  // The same ceiling expressed in tokens; it narrows maxPartBytes rather than
+  // replacing it. null = not set. Minimum 1024.
+  maxPartTokens: null,
   // Files above this size get a head/tail preview instead of the full body.
   largeFileBytes: ${size(answers.largeFileBytes)},
   previewHeadLines: 80,
@@ -112,6 +115,22 @@ export function renderConfig(answers: WizardAnswers): string {
     default: ${size(answers.maxPartBytes)},
     byLayer: {},
   },
+
+  // ── Scope and compression ──────────────────────────────────────────────
+  // Replace function and method bodies with \`{ /* ... */ }\` in TypeScript files.
+  // Signatures and comments stay, so the structure of the file survives.
+  skeleton: false,
+  // Also write reports/audit.sarif (SARIF 2.1.0) for a CI security gate. The
+  // matched value is never included — only the path, the line and the rule.
+  sarif: false,
+  // Snapshot only the files that differ from a git ref (for example "main"),
+  // plus untracked ones. null and false both mean "snapshot everything".
+  changedSince: null,
+  // Snapshot only what is staged in the index: the pre-commit counterpart.
+  staged: false,
+  // With changedSince or staged, also include the files that import a changed
+  // one, one hop out. Meaningless without a scope.
+  withDependents: false,
 
   // ── What goes in ───────────────────────────────────────────────────────
   // Allow-list. Empty means "everything that is not ignored".

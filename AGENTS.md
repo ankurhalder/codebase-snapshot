@@ -31,7 +31,7 @@ should paste the output of `skill`, so the commit belongs to that repository.
 The installable skill's canonical text lives in `src/agent/skill.ts` and is rendered by
 `codebase-snapshot skill` — do not hand-edit a generated copy.
 
-If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as seven
+If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as eight
 tools over stdio instead of shelling out. Reads come from the snapshot rather than the working
 tree, so excluded and redacted content stays out of context. See [docs/mcp.md](docs/mcp.md).
 

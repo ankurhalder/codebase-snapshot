@@ -51,6 +51,24 @@ function gitPaths(cwd: string, args: string[]): string[] {
 }
 
 /**
+ * Rejects a ref that git would read as an option.
+ *
+ * The ref is the one argument a caller can put into `git diff`'s command line, so a value
+ * starting with `-` is a flag injection rather than a revision: `--changed-since=-o/etc/passwd`
+ * reached git as `--output=…`, and a config file — which can be committed by a pull request and
+ * is read by a CI job — is enough to supply one. A leading `-` is never a ref name (git refuses
+ * to create one), so refusing it loses nothing.
+ */
+function assertUsableRef(ref: string): void {
+  if (ref.startsWith("-")) {
+    throw new Error(
+      `--changed-since must be a git ref, not an option (received ${JSON.stringify(ref)}). ` +
+        "Name a branch, tag, or commit such as `main` or `HEAD~1`."
+    );
+  }
+}
+
+/**
  * Resolves the request into a path set.
  *
  * `--changed-since <ref>` is the working tree against that ref — committed, staged and
@@ -63,20 +81,35 @@ export function resolveChangedScope(cwd: string, request: ChangedScopeRequest): 
   const descriptions: string[] = [];
 
   if (request.changedSince !== undefined) {
-    for (const path of gitPaths(cwd, ["diff", "--name-only", "-z", "--relative", request.changedSince])) {
+    assertUsableRef(request.changedSince);
+    // The trailing `--` separates revisions from paths, so nothing after it can be read as one.
+    // `--relative` keeps the listing relative to the directory git runs in (the scan root), and
+    // no `--full-name` is passed: mixing the two bases produces paths that match nothing.
+    for (const path of gitPaths(cwd, [
+      "diff",
+      "--name-only",
+      "-z",
+      "--relative",
+      request.changedSince,
+      "--",
+    ])) {
       paths.add(path);
     }
-    // No `--full-name`: like `git diff --relative`, the listing is relative to the directory
-    // git runs in, which is the scan root. Mixing the two bases would produce paths that
-    // silently match nothing.
-    for (const path of gitPaths(cwd, ["ls-files", "--others", "--exclude-standard", "-z"])) {
+    for (const path of gitPaths(cwd, ["ls-files", "--others", "--exclude-standard", "-z", "--"])) {
       paths.add(path);
     }
     descriptions.push(`changed since ${request.changedSince}`);
   }
 
   if (request.staged === true) {
-    for (const path of gitPaths(cwd, ["diff", "--cached", "--name-only", "-z", "--relative"])) {
+    for (const path of gitPaths(cwd, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "-z",
+      "--relative",
+      "--",
+    ])) {
       paths.add(path);
     }
     descriptions.push("staged");

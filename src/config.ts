@@ -147,6 +147,43 @@ export function isResolvedConfig(value: unknown): value is ResolvedSnapshotConfi
 }
 
 /**
+ * Normalises a resolved `budgets` object against the single-part budget.
+ *
+ * `maxPartBytes` and `budgets.default` are two names for the same number, and `resolveConfig`
+ * keeps them equal. A caller that spreads a resolved config cannot: `{ ...resolved, maxPartBytes:
+ * 64 * 1024 }` carries the **old** `budgets` object along, and because `isResolvedConfig`
+ * accepts the spread, the new byte budget was dropped on the floor. The partitioner reads
+ * `budgets.default`, so the run kept producing 300 KB parts while the config said 64 KB — and
+ * the manifest recorded the number that had been ignored.
+ *
+ * `byLayer` is capped rather than replaced: `resolveBudgets` already caps it for an explicit
+ * `maxPartBytes`, and a per-layer budget above the single-part budget contradicts it.
+ */
+function normalizeBudgets(
+  budgets: ResolvedBudgets | undefined,
+  maxPartBytes: unknown
+): ResolvedBudgets {
+  const clearer =
+    typeof maxPartBytes === "number" && Number.isFinite(maxPartBytes) && maxPartBytes > 0
+      ? maxPartBytes
+      : undefined;
+
+  if (budgets === undefined || typeof budgets !== "object" || budgets === null) {
+    return { default: clearer ?? 0, byLayer: {} };
+  }
+
+  const fallbackDefault = clearer ?? budgets.default;
+  const byLayer: Record<string, number> = {};
+  const layers = budgets.byLayer;
+  if (layers !== undefined && typeof layers === "object" && layers !== null) {
+    for (const [layer, value] of Object.entries(layers)) {
+      byLayer[layer] = Math.min(value, fallbackDefault);
+    }
+  }
+  return { default: fallbackDefault, byLayer };
+}
+
+/**
  * Re-validates a resolved config taken from an untrusted path (e.g. a spread
  * copy), recompiling secret rules so string patterns and stray `g`/`y` flags are
  * normalised even when the object did not come from `resolveConfig`.
@@ -179,10 +216,7 @@ export function normalizeResolvedConfig(
       ]),
     ],
     layersMode: config.layersMode === "replace" ? "replace" : "merge",
-    budgets:
-      config.budgets && typeof config.budgets === "object"
-        ? config.budgets
-        : { default: config.maxPartBytes, byLayer: {} },
+    budgets: normalizeBudgets(config.budgets, config.maxPartBytes),
     hooks: resolveHooks(config.hooks),
     excludePatterns: Array.isArray(config.excludePatterns) ? config.excludePatterns : [],
     layers: Array.isArray(config.layers) ? config.layers : [],
@@ -375,7 +409,7 @@ const isThenable = (value: object): boolean =>
  * therefore needed here too — omitting it made a config file that used it fail with
  * "unknown setting(s): secretRules" while the same key worked when passed in code).
  */
-const CONFIG_KEYS: ReadonlySet<string> = new Set([
+export const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "artifacts",
   "branch",
   "budgets",
@@ -632,6 +666,17 @@ export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null
 
 /** Smallest usable part budget: a part header plus one section must fit. */
 export const MIN_MAX_PART_BYTES = 4096;
+
+/**
+ * The same floor expressed in the unit `--max-part-tokens` is written in.
+ *
+ * `bytesForTokens` multiplies by four, so 1024 tokens and 4096 bytes are the same budget. A
+ * smaller token budget used to be raised to the floor without a word: `--max-part-tokens 200`
+ * was accepted, reported as 1024 tokens, and the setting the user wrote never applied. Rule 1
+ * says an impossible budget is an error, so this is the number the CLI and the config both
+ * refuse to go below.
+ */
+export const MIN_MAX_PART_TOKENS = MIN_MAX_PART_BYTES / 4;
 
 /** Every artifact this package can write, in the order it is written. */
 export const ARTIFACT_NAMES = [
@@ -948,7 +993,29 @@ function boundedBytes(
   if (parsed < minimum) {
     throw new Error(`${label} must be at least ${minimum} bytes (received ${describeBytes(value)}).`);
   }
-  return parsed;}
+  return parsed;
+}
+
+/**
+ * Validates a budget written in **tokens**, refusing anything below the shared floor.
+ *
+ * The message says "token count" rather than "byte count": `--max-part-tokens 200` used to be
+ * rejected with advice about bytes, which is the other unit.
+ */
+function boundedTokens(value: ByteSize, label: string): number {
+  const parsed = parseByteSize(value);
+  if (parsed === undefined || !Number.isInteger(parsed)) {
+    throw new Error(
+      `${label} must be a whole token count such as 30000 or "30k" (received ${describeBytes(value)}).`
+    );
+  }
+  if (parsed < MIN_MAX_PART_TOKENS) {
+    throw new Error(
+      `${label} must be at least ${MIN_MAX_PART_TOKENS} tokens (${MIN_MAX_PART_BYTES} bytes is the smallest part budget); received ${describeBytes(value)}.`
+    );
+  }
+  return parsed;
+}
 
 function optionalBytes(
   value: ByteSize | null | undefined,
@@ -1205,16 +1272,25 @@ export function resolveConfig(
   const maxPartTokens =
     requestedMaxPartTokens === undefined
       ? undefined
-      : boundedBytes(requestedMaxPartTokens, 0, 1, "maxPartTokens");
+      : boundedTokens(requestedMaxPartTokens, "maxPartTokens");
   const effectiveMaxPartBytes =
     maxPartTokens === undefined
       ? maxPartBytes
-      : Math.max(MIN_MAX_PART_BYTES, Math.min(maxPartBytes, bytesForTokens(maxPartTokens)));
+      : Math.min(maxPartBytes, bytesForTokens(maxPartTokens));
   const budgets = resolveBudgets(
     userConfig?.budgets,
     effectiveMaxPartBytes,
     explicitMaxPartBytes !== undefined || maxPartTokens !== undefined
   );
+  // When the budget came from `budgets.default` rather than from `maxPartBytes`, the two still
+  // have to agree. The partitioner reads `budgets` and the manifest records `maxPartBytes`, so a
+  // config with only `budgets: { default: "100k" }` described itself as 300 KB while emitting
+  // 100 KB parts — and `normalizeResolvedConfig` cannot repair the disagreement afterwards
+  // without overruling the user's own budget.
+  const resolvedMaxPartBytes =
+    explicitMaxPartBytes !== undefined || maxPartTokens !== undefined
+      ? effectiveMaxPartBytes
+      : budgets.default;
 
   const configuredOutDir = strictString(userConfig?.outDir, "snapshot", "`outDir`");
   const outDir = cliOptions?.outDir || configuredOutDir;
@@ -1222,9 +1298,14 @@ export function resolveConfig(
   // A changed-files scope is a filter with two settings that must agree. `--with-dependents`
   // on its own asks to widen a set that was never narrowed, so it is a mistake rather than a
   // no-op: accepting it silently would let a user believe a filter was applied.
-  const rawChangedSince =
+  const rawChangedSinceSetting =
     (cliOptions as { changedSince?: unknown } | undefined)?.changedSince ??
     (userConfig as { changedSince?: unknown } | null | undefined)?.changedSince;
+  // `null` is how the generated config spells "not set" — `maxMonolithBytes: null` and
+  // `maxPartTokens: null` are read the same way — so a config that simply wrote the default must
+  // not fail the type check below.
+  const rawChangedSince =
+    rawChangedSinceSetting === null ? undefined : rawChangedSinceSetting;
   if (
     rawChangedSince !== undefined &&
     (typeof rawChangedSince !== "string" || rawChangedSince.trim().length === 0)
@@ -1298,7 +1379,7 @@ export function resolveConfig(
     branch,
     outDir,
     tmpDir,
-    maxPartBytes: effectiveMaxPartBytes,
+    maxPartBytes: resolvedMaxPartBytes,
     ...(maxPartTokens === undefined ? {} : { maxPartTokens }),
     largeFileBytes: boundedBytes(cliOptions?.largeFileBytes ?? userConfig?.largeFileBytes, 200 * 1024, 1, "largeFileBytes"),
     previewHeadLines: strictPositiveInteger(userConfig?.previewHeadLines, 80, "`previewHeadLines`"),
@@ -1413,6 +1494,10 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     withDependents: config.withDependents === true,
     // Signature compression changes the emitted bytes of every TypeScript file it touches.
     skeleton: config.skeleton === true,
+    // `sarif` is not one of `artifacts`: it writes `reports/audit.sarif` beside the audit, and
+    // leaving it out of the digest meant a snapshot taken without it and one taken with it
+    // compared equal even though their directories differ.
+    sarif: config.sarif === true,
     largeFileBytes: config.largeFileBytes,
     previewHeadLines: config.previewHeadLines,
     previewTailLines: config.previewTailLines,

@@ -70,10 +70,25 @@ const NOT_A_LITERAL_VALUE =
  * eight-character, non-digit floor, because that is what keeps `pass: 3` and
  * `id-token: write` readable.
  */
+/**
+ * The value must **begin** with a word character.
+ *
+ * `[A-Za-z0-9_+=/%:~-]` includes `/`, so a regex literal assigned to a name ending in
+ * `token` had its opening slash masked: this repository's own snapshot emitted
+ * `const SINGLE_TOKEN = [REDACTED: …][^\sA-Za-z0-9_]/g;` — the pattern destroyed and the
+ * line no longer parseable. `/`, `+`, `-` and `%` can only *continue* a value here.
+ *
+ * The trailing lookahead also refuses `[` and `{`: in `const accessToken = tokens[0]`
+ * the value is a reference, and masking `tokens` left `[REDACTED][0]`.
+ *
+ * These two rules are necessary but not sufficient — a bareword initializer
+ * (`const token = someVar`) still begins with a word character. `redact.ts` refuses
+ * values that sit in a declaration for exactly that reason.
+ */
 const UNQUOTED_LITERAL =
-  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_+=/%:~-]{1,512})(?![A-Za-z0-9_+=/%:.~-]|\\()";
+  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{0,511})(?![A-Za-z0-9_+=/%:.~-]|[({[])";
 const UNQUOTED_AMBIGUOUS_LITERAL =
-  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_+=/%:~-]{8,512})(?![A-Za-z0-9_+=/%:.~-]|\\()";
+  "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{7,511})(?![A-Za-z0-9_+=/%:.~-]|[({[])";
 
 /**
  * The assignment separator, and only the assignment separator.

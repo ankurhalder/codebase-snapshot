@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { countLines } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
+import { resolveChangedScope } from "./scanner/changed.js";
 import { BINARY_SCAN_BYTES, isBinaryFile, decodeText } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
@@ -118,7 +119,7 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   const absolute = path.join(config.cwd, relative);
 
   // The echoed path is an artifact too: a token in a filename must not come back
-  // out of xplain.
+  // out of explain.
   const maskedPath = findSecretInPath(relative, config.secretRules)?.masked ?? relative;
   const result: ExplainResult = {
     path: maskedPath,
@@ -174,6 +175,37 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   }
 
   result.included = true;
+  // A changed-files scope narrows what `generate` emits: a file outside it stays out of the
+  // snapshot however includable it is. `explain` ignored the scope entirely and answered
+  // `included: true` for exactly the files the generator would have recorded as `unchanged` —
+  // the one thing an explanation must not do.
+  if (config.changedSince !== undefined || config.staged === true) {
+    let inScope: boolean;
+    let scopeDetail = "";
+    try {
+      const scope = resolveChangedScope(config.cwd, {
+        ...(config.changedSince === undefined ? {} : { changedSince: config.changedSince }),
+        ...(config.staged === true ? { staged: true } : {}),
+      });
+      inScope = scope.paths.has(relative);
+      scopeDetail = scope.detail;
+    } catch (err) {
+      // The scope is a fact about the repository this tool cannot reconstruct without git. Saying
+      // "included" here would be a guess presented as an answer.
+      result.included = false;
+      result.reason = "unknown";
+      result.detail = `the changed-files scope could not be resolved: ${(err as Error).message}`;
+      return result;
+    }
+    if (!inScope) {
+      result.included = false;
+      result.reason = "unchanged";
+      result.detail =
+        `not ${scopeDetail}; the snapshot was generated with a changed-files scope, ` +
+        "which keeps only the files that moved (plus dependents, with --with-dependents)";
+      return result;
+    }
+  }
   // `generate` skips binaries and records `binary` in manifest.skipped[]. The
   // explanation used to answer "included: true" for a file the very next run
   // would drop, which is worse than no answer at all.

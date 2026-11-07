@@ -12,6 +12,26 @@ const ROUTE_HANDLER_NAMES = new Set([
 ]);
 
 /**
+ * The identifiers a binding declares, into `into`.
+ *
+ * `export const { a, b } = obj` / `export const [first] = pair` declare real exports, and the
+ * old `if (!ts.isIdentifier(declaration.name)) continue` skipped every one of them: a module
+ * whose whole public surface was a destructured export was summarised as having none. A
+ * destructuring pattern binds its *leaves*, so the walk recurses through nested patterns, and a
+ * rename (`{ a: renamed }`) is reported under the name it binds rather than the property name.
+ */
+function bindingNames(name: ts.BindingName, into: string[]): void {
+  if (ts.isIdentifier(name)) {
+    into.push(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    bindingNames(element.name, into);
+  }
+}
+
+/**
  * Extracts a structural summary from a JS/TS source file.
  *
  * The traversal is an explicit stack, not recursion: a generated file with a
@@ -221,24 +241,26 @@ export function summarizeTypeScriptSource(
     if (ts.isVariableStatement(node)) {
       const exported = isExported(node);
       for (const declaration of node.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name)) continue;
-        const name = declaration.name.text;
-        summary.variables.push(name);
-        if (exported) {
-          summary.exports.push(name);
-          // Route handlers are only handlers when exported, matching the rule
-          // applied to function declarations.
-          if (ROUTE_HANDLER_NAMES.has(name)) summary.routeHandlers.push(name);
-        }
-        if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
-        // Arrow/function components and `memo`/`forwardRef` wrappers render JSX
-        // in their initializer; a plain `const Config = {...}` does not.
-        if (
-          /^[A-Z]/.test(name) &&
-          declaration.initializer !== undefined &&
-          rendersJsx(declaration.initializer)
-        ) {
-          summary.reactComponents.push(name);
+        const bound: string[] = [];
+        bindingNames(declaration.name, bound);
+        for (const name of bound) {
+          summary.variables.push(name);
+          if (exported) {
+            summary.exports.push(name);
+            // Route handlers are only handlers when exported, matching the rule
+            // applied to function declarations.
+            if (ROUTE_HANDLER_NAMES.has(name)) summary.routeHandlers.push(name);
+          }
+          if (/^use[A-Z0-9]/.test(name)) summary.hooks.push(name);
+          // Arrow/function components and `memo`/`forwardRef` wrappers render JSX
+          // in their initializer; a plain `const Config = {...}` does not.
+          if (
+            /^[A-Z]/.test(name) &&
+            declaration.initializer !== undefined &&
+            rendersJsx(declaration.initializer)
+          ) {
+            summary.reactComponents.push(name);
+          }
         }
       }
     }

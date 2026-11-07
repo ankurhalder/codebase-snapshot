@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "description": "Pack a codebase for an LLM into budgeted Markdown parts, with a manifest of every file and skip, and validate to prove the snapshot is current.",
   "keywords": [
     "codebase",
@@ -103,7 +103,7 @@
     "test": "node --test tests/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
     "prepublishOnly": "npm run build",
-    "publish:create": "npm publish packages/create --access public",
+    "publish:create": "npm publish ./packages/create --access public",
     "prepack": "npm run sync-docs && npm run build",
     "pack-check": "node scripts/pack-check.mjs",
     "sync-docs": "node scripts/sync-docs.mjs",

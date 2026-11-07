@@ -23,6 +23,162 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.11
+
+A second audit, run against 0.9.10's own output, found that several defects the previous release
+believed it had fixed were still reachable, that the changed-files scope was applied one layer too
+late, and that this repository's documentation had been quietly corrupted. Every item below is
+fixed with a test that fails without it.
+
+### The redactor was still editing the program
+
+`credential-assignment-unquoted` exists for `.env`, YAML and compose files, where everything after
+`NAME=` is a literal. In a source file the same shape is an **expression**. The bug is visible in
+the 0.9.10 snapshot itself, in `parts/part-005.md`:
+
+```
+const SINGLE_TOKEN = [REDACTED: potential secret-like value omitted from snapshot][^\sA-Za-z0-9_]/g;
+```
+
+The regex literal's opening `/` was a legal match for `UNQUOTED_LITERAL`, so the pattern was
+deleted and the line no longer parses — data loss in the artifact whose whole purpose is to
+describe the code. Three changes close the class rather than the instance:
+
+- an unquoted value must **begin** with a word character, so `/`, `+`, `-` and `%` can only
+  continue one;
+- a value followed by `[`, `{` or `(` is refused, because `const accessToken = tokens[0]` is a
+  reference;
+- a value that sits in a **declaration** is never a literal. `const`, `let`, `var`, `readonly`,
+  `private`, `protected`, `static`, `declare`, `export` and `using` are recognised, walking back to
+  the start of the identifier so the tail match (`TOKEN` inside `SINGLE_TOKEN`) is covered too.
+
+The guard is bounded to a 40-character window: an unbounded version made a 236 KB line with 4,000
+assignments cost 2.7 s, which the existing quadratic-scan test caught.
+
+### A changed-files scope was applied after the scan instead of before it
+
+`--changed-since` and `--staged` read, decoded, secret-scanned and TypeScript-parsed every file in
+the repository and then threw all but a handful away. Because every aggregate was bumped inside
+that scan, the snapshot inherited the repository's numbers:
+
+- **`validate` failed on every scoped snapshot.** Unchanged files are recorded in `skipped[]` with
+  reason `unchanged`, and `validate` then asked `wouldNowBeIncluded` about them — a question that
+  only answers "is this text?" — so every unchanged source file was reported as `new file:` and
+  the exit code was 1.
+- **`manifest.layers`, `manifest.kinds`, `counts.largeFileCount`, `totals.redactedLines`** and the
+  encoding/preview/parse warnings all described files the snapshot did not contain. A two-file
+  snapshot reported the layer distribution and the secret count of the whole repository.
+- **`explain` ignored the scope entirely** and answered `included: true` for exactly the files
+  `generate` was skipping.
+
+The scope is now resolved once, before the scan, and applied to the candidate list whenever
+`--with-dependents` is not in play. The dependents case still has to scan first — it needs every
+file's imports — so it narrows afterwards and recomputes the counts, the findings and the warnings
+from what survived.
+
+### `--with-dependents` walked the import graph transitively
+
+The closure tested `keep.has(resolved)` while adding to `keep`, so `a.ts` changed pulled in
+`b.ts` (which imports it) and then `c.ts` (which imports `b.ts`). Whether a two-hop file was
+included depended on whether its name sorted after `b.ts`: the same repository produced different
+snapshots depending on file names. The test is now made against the changed set, which makes the
+closure exactly one hop.
+
+### Root-anchored `.gitignore` rules never matched in `walk` mode
+
+`readGitignoreRules` keeps the leading `/`, and the matcher it was handed compares against a path
+with no leading slash — so `/build` could not equal `build`, could not prefix `build/x`, and could
+not appear between two slashes. `/secret-notes.txt` silently kept its file in the snapshot.
+
+The same delegation made the opposite mistake one segment down: gitignore(5) anchors a pattern
+containing a non-trailing `/` to the directory holding the `.gitignore`, so `doc/frotz` ignores the
+top-level one only, while `matchesExclude` matched `a/doc/frotz` as well. Both are fixed by using
+the gitignore matcher (which already implemented `anchored || body.includes("/")`) for every rule
+rather than only for rules containing a backslash. `matchesExclude` is left to configuration
+excludes, where "match at any depth" is the documented behaviour.
+
+### Spreading a resolved config with a new `maxPartBytes` changed nothing
+
+`{ ...resolved, maxPartBytes: 64 * 1024 }` still satisfies `isResolvedConfig`, and
+`normalizeResolvedConfig` kept the **old** `budgets` object. The partitioner reads
+`budgets.default`, so the run produced 300 KB parts and the manifest recorded the 64 KB that was
+ignored. `normalizeResolvedConfig` now normalises `budgets` against `maxPartBytes`, capping
+per-layer budgets rather than replacing them.
+
+A related inconsistency is fixed too: a config that sets only `budgets: { default: "100k" }`
+recorded `maxPartBytes: 300k`, so one snapshot described two different budgets.
+
+### Smaller fixes
+
+- **The MCP worker URL was built with string interpolation.** `file://${path}` turns a Windows path
+  into `file://C:/…` whose *host* is the drive letter, reads a `#` as a fragment and a `%` as an
+  escape. It uses `pathToFileURL` now, through an exported `workerEntry()`.
+- **`--sarif` and the monolith disagreed.** The log was rendered in the write phase, so
+  `full-codebase.json` embedded a manifest with no `artifacts.sarif` while `manifest.json` had one.
+  The log is rendered before the monolith is serialised.
+- **`validate` never checked `reports/audit.sarif`** against its recorded digest. It does now: a
+  security report uploaded to a third party is exactly the artifact that must be verified.
+- **`--sarif` was missing from `configDigest`**, so two runs that write different directories
+  compared equal.
+- **`--skip-artifacts … --sarif` claimed nothing was written** while writing `reports/audit.sarif`.
+- **SARIF rule ids were positional.** They were handed out by position in the sorted set of rule
+  names a run happened to use, so adding one custom rule that sorts before the built-ins
+  (`acme-key` does) shifted every built-in id by one and re-pointed every open alert. Built-in
+  rules now take a fixed id from their declaration order and custom rules get an id hashed from
+  their own name. This renumbers the built-ins once, relative to 0.9.10, and never again.
+- **`generate --watch` generated twice on startup** — `runCommand` generated, then the loop
+  generated again before any file changed.
+- **`--watch` froze `outDir`/`tmpDir` at startup.** After the config moved them, the watcher saw
+  its own output as user content and regenerated without end.
+- **The pre-commit hook hardcoded `snapshot/`**, so a project with `outDir: ".context"` got a hook
+  that printed "no snapshot found, skipping" and exited 0 on every commit — a gate that never ran.
+  The directory is baked in at install time, and the guard tests `manifest.json` rather than the
+  directory (a directory left by a failed run exists but holds no snapshot).
+- **`--max-part-tokens 200` was silently raised** to the 1024-token floor. It is a usage error
+  now, and the message talks about tokens rather than bytes.
+- **The MCP line cap was bypassed** by an oversized line that arrived complete with its terminator,
+  because the guard required the buffer to hold no `\n` at all. The cap now applies to every
+  complete line.
+- **`snapshot_locate` searched only half the summary.** `variables` (where a `const`, a Python
+  constant, a Go `var`, a Rust `mod`, a C `#define` and a Terraform `variable` all land),
+  `directives`, `frontmatterKeys` and JSON `keys` are searched too.
+- **`snapshot_read` printed `Lines 1–0 of 1` for an empty file** and returned the *last* line when
+  `fromLine` was past the end. Both are stated instead.
+- **`.TSX` was parsed as `ScriptKind.TS`** — `isSkeletonizable` lowered the name and
+  `skeletonizeTypeScript` did not.
+- **Markdown summaries:** an unclosed `---` at line 0 swallowed every heading, a shorter fence
+  inside a longer one closed it early, and a closing fence with an info string was accepted. All
+  three follow CommonMark now.
+- **Destructured exports were invisible.** `export const { a, b } = obj` and
+  `export const [first] = pair` declare real exports and were dropped by an
+  `isIdentifier` check.
+- **`rehashPart` left `estimatedTokens` at its pre-clip value** after `enforceBudget` cut a part,
+  and the part's own header kept stating the old number. Both are recomputed.
+- **`setup --preset <unknown>` exited 1** where `init` exits 2, because the parse-time check was
+  written for `init` only.
+- **`describe` omitted all seven 0.9.10 flags and six config keys.** `describe` is the contract an
+  agent reads instead of the docs, so this is the failure that matters most: the options simply did
+  not exist as far as a machine consumer was concerned. A test now compares `CLI_OPTIONS` and
+  `CONFIG_KEYS` against the contract in both directions.
+- **`--changed-since` was passed to git as a positional revision.** A ref beginning with `-` is now
+  refused before git sees it, and `--` separates revisions from paths.
+- **`--skeleton --include-monolith` labelled a body-stripped file `inclusionMode: "full"`.** The
+  monolith now keeps the full redacted body, so the label is true.
+
+### Documentation and repository hygiene
+
+- **Three sentences had letters eaten by interpreted escapes**: `\v` in "Validate", `\r` in
+  "reports/", `\a` in "audit.md". A test now fails on any control byte in any tracked text file.
+- **Four documents claimed the MCP server serves seven tools.** It serves eight. The count is now
+  compared against the live tool list.
+- **`publish:create` could not run.** `npm publish packages/create` is parsed by npm as the GitHub
+  shorthand `ssh://git@github.com/packages/create.git` and fails with exit 128; it names
+  `./packages/create`.
+- **`check-site-links` accepted a sibling directory.** `resolved.startsWith(SITE)` is true for
+  `../site-other`; the check requires the path separator.
+
+---
+
 ## 0.9.10
 
 An audit of this codebase, run against its own snapshot, found twenty defects, six performance

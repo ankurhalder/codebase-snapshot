@@ -140,6 +140,15 @@ function symbolsOf(entry: FileEntry): string[] {
     "enums",
     "hooks",
     "headings",
+    // The rest of the same records. `variables` is where a `const`, a Python constant, a Go
+    // `var`, a Rust `mod`, a C `#define` and a Terraform `variable` block all land, so leaving it
+    // out made `snapshot_locate` miss most of what a non-JavaScript file declares; `directives`
+    // carries `"use client"`-style markers, and `frontmatterKeys`/`keys` are the headings and
+    // top-level names of a Markdown or JSON file.
+    "variables",
+    "directives",
+    "frontmatterKeys",
+    "keys",
   ]) {
     collect(record[field]);
   }
@@ -889,13 +898,17 @@ const readTool: McpTool = {
       truncatedByBytes = true;
     }
     const returnedLines = body.length === 0 ? 0 : body.split("\n").length;
-    const moreRemain = window.truncated || truncatedByBytes;
+    const moreRemain = !window.pastEnd && (window.truncated || truncatedByBytes);
 
     const header = [
       `${entry.relativePath} — ${entry.part}, ${entry.layer}/${entry.kind}, ${entry.language}`,
       section.inclusion === "preview"
         ? "Bounded preview: this source file is large, so the snapshot holds only its head and tail."
-        : `Lines ${window.fromLine}\u2013${window.fromLine + returnedLines - 1} of ${window.totalLines}.`,
+        : window.totalLines === 0
+          ? "This file is empty."
+          : window.pastEnd
+            ? `This file has ${window.totalLines} line(s); fromLine=${window.fromLine} is past its end.`
+            : `Lines ${window.fromLine}\u2013${window.fromLine + returnedLines - 1} of ${window.totalLines}.`,
     ];
     const lines = [...header, "", body];
     if (moreRemain) {

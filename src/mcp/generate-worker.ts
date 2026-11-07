@@ -19,7 +19,7 @@
  * formats. Inline code plus the resolved entry path works for either.
  */
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import type { Manifest } from "../types.js";
@@ -46,10 +46,24 @@ export type WorkerResults =
  * undeclared identifier does not throw — so this resolves correctly in both without a build-time
  * substitution.
  */
-function entryPath(): string {
-  const isCjs = typeof __dirname !== "undefined";
-  const directory = isCjs ? __dirname : path.dirname(fileURLToPath(import.meta.url));
-  return path.join(directory, isCjs ? "index.cjs" : "index.js");
+/**
+ * Where the worker finds this package's entry: the path, and the URL the worker imports.
+ *
+ * Exported so the URL can be tested directly. The defect it fixes only shows up for an install
+ * path that contains a `#`, `?` or `%`, or on a Windows drive letter, and no test can move the
+ * package's own `dist/` to such a path.
+ *
+ * `pathToFileURL` rather than `` `file://${path}` ``: the interpolation form turns a Windows path
+ * into `file://C:/…`, whose **host** is the drive letter, reads a `#` as a fragment and a `?` as
+ * a query, and leaves a space unescaped. `config.ts` already carries this note for the same
+ * reason.
+ */
+export function workerEntry(
+  directory: string,
+  isCjs: boolean
+): { path: string; url: string } {
+  const entry = path.join(directory, isCjs ? "index.cjs" : "index.js");
+  return { path: entry, url: pathToFileURL(entry).href };
 }
 
 /**
@@ -113,11 +127,13 @@ export function generateInWorker(
     };
 
     let worker: Worker;
+    const isCjs = typeof __dirname !== "undefined";
+    const directory = isCjs ? __dirname : path.dirname(fileURLToPath(import.meta.url));
     try {
       worker = new Worker(WORKER_SOURCE, {
         eval: true,
         workerData: {
-          entryUrl: new URL(`file://${entryPath().replace(/\\/g, "/")}`).href,
+          entryUrl: workerEntry(directory, isCjs).url,
           cwd,
           cliOptions,
         },

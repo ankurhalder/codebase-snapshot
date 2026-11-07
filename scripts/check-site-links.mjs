@@ -40,7 +40,10 @@ for (const name of files) {
     // is a real file one directory down, and a flat `files.has()` reported every icon on every
     // page as broken the moment the site gained an assets directory.
     const resolved = path.resolve(SITE, target);
-    if (!resolved.startsWith(SITE)) {
+    // The separator matters: without it a sibling directory whose name merely begins with the
+    // site's (`../site-other`) satisfied `startsWith`, so a link escaping the site root was read
+    // as inside it.
+    if (resolved !== SITE && !resolved.startsWith(SITE + path.sep)) {
       problems.push(`${name} -> ${href} (escapes the site root)`);
       continue;
     }

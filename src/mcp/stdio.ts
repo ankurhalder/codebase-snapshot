@@ -86,7 +86,19 @@ export function createLineReader(input: Readable, options: LineReaderOptions): (
     while (index >= 0) {
       const line = buffer.slice(0, index);
       buffer = buffer.slice(index + 1);
-      deliver(line);
+      if (discarding) {
+        // Still draining the tail of a discarded line: this terminator ends it. `deliver` resets
+        // the discard state and drops the fragment.
+        deliver(line);
+      } else if (line.length > MAX_LINE_BYTES) {
+        // The cap exists to bound the work one message costs to parse, so it has to be applied to
+        // a **complete** line too. Checking only "buffer is over the cap and holds no newline"
+        // meant a 33 MB line that arrived with its own terminator in the same chunk had a `\n` in
+        // the buffer, skipped the guard, and went to `JSON.parse` whole.
+        options.onOverflow?.(line.length);
+      } else {
+        deliver(line);
+      }
       index = buffer.indexOf("\n");
     }
   };
@@ -106,14 +118,16 @@ export function createLineReader(input: Readable, options: LineReaderOptions): (
     }
 
     buffer += chunk;
-    if (buffer.length > MAX_LINE_BYTES && buffer.indexOf("\n") < 0) {
+    drain();
+    // Whatever is left has no terminator yet. If it is already past the cap the line will be
+    // discarded as it arrives rather than accumulated in memory first.
+    if (buffer.length > MAX_LINE_BYTES) {
       discarding = true;
       discardedBytes = buffer.length;
       buffer = "";
       options.onOverflow?.(discardedBytes);
       return;
     }
-    drain();
   };
 
   const onEnd = (): void => {

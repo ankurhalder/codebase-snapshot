@@ -34,8 +34,22 @@ function hasCollapsibleBody(node: ts.Node): node is ts.Node & { body: ts.Block }
  * Spans are collected and then applied from the end of the file backwards so that an earlier
  * replacement never invalidates a later span's offsets.
  */
+/**
+ * True when a filename is TypeScript-with-JSX, in any letter case.
+ *
+ * One function for one question, because two spellings of it is exactly how `.TSX` came to be
+ * eligible for a skeleton and then parsed as plain TypeScript, where JSX is a syntax error.
+ * Exported so the decision itself can be tested: collapsing a body is span-based and produces the
+ * same text under either script kind for simple files, so an output comparison cannot prove which
+ * parser ran.
+ */
+export function isTsxFileName(fileName: string): boolean {
+  return fileName.toLowerCase().endsWith(".tsx");
+}
+
 export function skeletonizeTypeScript(source: string, fileName = "file.ts"): SkeletonResult {
-  const scriptKind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  // Case-insensitive, through the same helper `isSkeletonizable` uses.
+  const scriptKind = isTsxFileName(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(
     fileName,
     source,

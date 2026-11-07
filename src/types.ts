@@ -310,7 +310,7 @@ export interface ManifestConfigSnapshot {
   withDependents?: boolean;
   /** True when bodies were replaced by signatures. */
   skeleton?: boolean;
-  /** True when eports/audit.sarif was written. */
+  /** True when `reports/audit.sarif` was written. */
   sarif?: boolean;
   artifacts: ResolvedArtifacts;
   include: string[];
@@ -541,7 +541,7 @@ export interface ResolvedSnapshotConfig {
   /** Emit signatures instead of bodies for TypeScript and TSX files. */
   skeleton?: boolean;
   /**
-   * Also write eports/audit.sarif, the findings in SARIF 2.1.0.
+   * Also write `reports/audit.sarif`, the findings in SARIF 2.1.0.
    *
    * For a CI security gate: GitHub Code Scanning reads SARIF, and a markdown report it cannot
    * ingest is a finding nobody's build can act on.

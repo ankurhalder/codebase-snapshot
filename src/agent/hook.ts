@@ -31,7 +31,27 @@ export const HOOK_MARKER = `# ${GENERATOR_NAME}: pre-commit snapshot check`;
  * the tree, and it counts anything unexpected as a failure to check rather than a pass: a
  * gate that fails open is not a gate.
  */
-const HOOK_SCRIPT = `#!/bin/sh
+/** Escapes a value for use inside a POSIX double-quoted shell word. */
+function shellQuote(value: string): string {
+  return value.replace(/[\\"`$]/g, (character) => `\\${character}`);
+}
+
+/**
+ * The hook body, with the configured output directory baked in.
+ *
+ * The directory used to be hardcoded to `snapshot`. A project configured with `outDir:
+ * ".context"` got a hook whose guard never matched, so it printed "no snapshot found, skipping
+ * the staleness check" and exited 0 on every commit — a gate that silently never ran, which is
+ * the one failure mode a commit gate must not have. The path is fixed here because the hook is
+ * a shell script and has no way to read the config.
+ *
+ * The guard tests the **manifest**, not the directory: a directory left behind by a failed run
+ * exists but holds no snapshot, and `[ ! -d … ]` was false for it, so the hook went on to run
+ * `validate` on nothing.
+ */
+function hookScript(outDir: string): string {
+  const dir = shellQuote(outDir.replace(/\\/g, "/"));
+  return `#!/bin/sh
 ${HOOK_MARKER}
 #
 # Refuse the commit when the snapshot is out of date with the tree.
@@ -41,8 +61,10 @@ ${HOOK_MARKER}
 # to restore the body below.
 set -e
 
-if [ ! -d snapshot ] && [ ! -f snapshot/manifest.json ]; then
-  echo "${GENERATOR_NAME}: no snapshot found, skipping the staleness check." >&2
+SNAPSHOT_DIR="${dir}"
+
+if [ ! -f "$SNAPSHOT_DIR/manifest.json" ]; then
+  echo "${GENERATOR_NAME}: no snapshot in $SNAPSHOT_DIR, skipping the staleness check." >&2
   echo "  Run \\"npx ${GENERATOR_NAME} generate\\" to create one." >&2
   exit 0
 fi
@@ -54,6 +76,7 @@ if ! npx --no-install ${GENERATOR_NAME} validate >/dev/null 2>&1; then
   exit 1
 fi
 `;
+}
 
 export interface HookInstallResult {
   /** Absolute path of the hook file, or `null` when there was nowhere to write it. */
@@ -100,7 +123,7 @@ function gitDirectory(cwd: string): string | null {
  * Idempotent: a hook carrying {@link HOOK_MARKER} is replaced with the current body, so an
  * upgrade of this package updates the check. Anyone else's hook is untouched.
  */
-export function installPreCommitHook(cwd: string): HookInstallResult {
+export function installPreCommitHook(cwd: string, outDir = "snapshot"): HookInstallResult {
   const gitDir = gitDirectory(cwd);
   if (gitDir === null) {
     return {
@@ -146,7 +169,7 @@ export function installPreCommitHook(cwd: string): HookInstallResult {
   }
 
   try {
-    fs.writeFileSync(hookPath, HOOK_SCRIPT, "utf8");
+    fs.writeFileSync(hookPath, hookScript(outDir), "utf8");
     // git refuses to run a hook that is not executable, and on Windows the bit is ignored —
     // so this is best-effort with a note rather than a failure.
     fs.chmodSync(hookPath, 0o755);

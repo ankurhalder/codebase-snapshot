@@ -171,6 +171,23 @@ function bump(counts: LayerOrKindCounts, key: string): void {
 }
 
 /**
+ * Drops every item `keep` rejects, in place, preserving order.
+ *
+ * The changed-scope filter runs after several arrays have been filled; rebuilding each one at
+ * the call site meant five near-identical `filter` assignments and five chances to forget one.
+ */
+function retain<T>(items: T[], keep: (item: T) => boolean): void {
+  let write = 0;
+  for (const item of items) {
+    if (keep(item)) {
+      items[write] = item;
+      write += 1;
+    }
+  }
+  items.length = write;
+}
+
+/**
  * A previewed file is not parsed for a structural summary.
  *
  * Its body in the snapshot is head/tail only, so a whole-file summary describes
@@ -1243,7 +1260,7 @@ function sleepSync(milliseconds: number): void {
  * legitimate choice, but a disabled manifest silently breaks `validate`/`report`,
  * and navigation links into parts that were never written.
  */
-function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
+function artifactWarnings(artifacts: ResolvedArtifacts, sarif: boolean): string[] {
   const messages: string[] = [];
   if (!artifacts.manifest) {
     messages.push("manifest.json is disabled: `validate` and `report` cannot inspect this snapshot.");
@@ -1253,7 +1270,11 @@ function artifactWarnings(artifacts: ResolvedArtifacts): string[] {
       "parts are disabled but navigation.md is enabled: its links point at part files that were not written."
     );
   }
-  if (ARTIFACT_NAMES.every((name) => artifacts[name] === false)) {
+  // `sarif` is deliberately not an entry in `artifacts` (it is a second rendering of the audit,
+  // not a fourth report), so the "nothing was written" claim has to ask about it separately.
+  // `--skip-artifacts readme,manifest,parts,navigation,projectTree,audit --sarif` wrote
+  // `reports/audit.sarif` and then told the reader it had written only the marker.
+  if (!sarif && ARTIFACT_NAMES.every((name) => artifacts[name] === false)) {
     messages.push(
       "every artifact is disabled: only the .codebase-snapshot ownership marker will be written."
     );
@@ -1411,6 +1432,41 @@ export function generateSnapshot(
       .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
   });
 
+  /**
+   * The changed-files scope, resolved once, or `null` when the run is not scoped.
+   *
+   * Resolved *before* the scan rather than after it. The old code narrowed `files` once every
+   * candidate had been read, decoded, secret-scanned and TypeScript-parsed, which cost a full
+   * repository scan to keep a handful of files — and, because every aggregate was bumped inside
+   * that scan, left `manifest.layers`, `manifest.kinds`, `counts.largeFileCount`, the redaction
+   * findings and the encoding/preview warnings describing the repository instead of the
+   * snapshot. A snapshot of five files that reports the layer counts of ten thousand is a
+   * document that lies about itself.
+   */
+  const changedScope =
+    config.changedSince !== undefined || config.staged === true
+      ? resolveChangedScope(config.cwd, {
+          ...(config.changedSince === undefined ? {} : { changedSince: config.changedSince }),
+          ...(config.staged === true ? { staged: true } : {}),
+        })
+      : null;
+  const changedPaths = changedScope === null ? null : new Set(changedScope.paths);
+
+  /** Paths the scope removed before the scan; recorded in `skipped[]` after the loop. */
+  const unchangedPaths: string[] = [];
+
+  // Without `--with-dependents` the scope is a plain path set, so it is applied to the candidate
+  // list and the dropped files are never opened. `--with-dependents` cannot be answered from a
+  // path — the closure needs each file's imports — so that case still scans and narrows below.
+  const candidateFiles =
+    changedPaths !== null && config.withDependents !== true
+      ? collection.files.filter((relativePath) => {
+          if (changedPaths.has(relativePath)) return true;
+          unchangedPaths.push(relativePath);
+          return false;
+        })
+      : collection.files;
+
   const files: FileEntry[] = [];
   /** Full redacted bodies of large files, kept for the monolith only. */
   const monolithBodies = new Map<string, string>();
@@ -1429,6 +1485,13 @@ export function generateSnapshot(
   };
   /** Files that were not plain UTF-8, grouped into one warning after the scan. */
   const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
+  /**
+   * Warnings produced while scanning one file, held until the changed-scope filter has run.
+   *
+   * They carry their path so a file the scope drops takes its warning with it — the message has
+   * the path masked, so the list cannot be filtered by string after the fact.
+   */
+  const fileWarnings: { path: string; message: string }[] = [];
   /** Files too large to parse for a structural summary, grouped into one warning after the scan. */
   const oversizeSummaryPaths: string[] = [];
   /**
@@ -1448,7 +1511,7 @@ export function generateSnapshot(
   let totalSizeBytes = 0;
   let largeFileCount = 0;
 
-  for (const relativePath of collection.files) {
+  for (const relativePath of candidateFiles) {
     const absolutePath = path.join(config.cwd, relativePath);
 
     let stats: fs.Stats;
@@ -1603,11 +1666,15 @@ export function generateSnapshot(
       inclusionMode = isPreviewTruncated ? "preview" : "full";
     }
 
-    // `file.content` is deliberately the head/tail preview, but the monolith is
-    // documented as the whole repository. Keep the full *redacted* body here so
-    // `full-codebase.*` cannot inherit the preview; only pay that memory cost
-    // when a monolith was actually requested.
-    if (config.includeMonolith && isPreviewTruncated) {
+    // `file.content` is deliberately whatever the parts carry, but the monolith is documented as
+    // the whole repository. Keep the full *redacted* body here so `full-codebase.*` cannot inherit
+    // a head/tail preview **or a skeleton** — only pay that memory cost when a monolith was
+    // actually requested.
+    //
+    // The skeleton case is the one that used to lie: `--skeleton --include-monolith` wrote a body
+    // without any function bodies into `full-codebase.json` and labelled it
+    // `inclusionMode: "full"`, so the monolith claimed to contain code it had deleted.
+    if (config.includeMonolith && (isPreviewTruncated || inclusionMode === "signatures")) {
       monolithBodies.set(relativePath, redacted);
     }
 
@@ -1642,15 +1709,21 @@ export function generateSnapshot(
           : undefined;
         summaryQuality = outcome?.quality;
         if (isSourceSummary(summary) && summary.parseErrors) {
-          warnings.push(
-            `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`
-          );
+          fileWarnings.push({
+            path: relativePath,
+            message: `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`,
+          });
         }
       } catch (err) {
         // A single pathological file used to abort the whole run.
-        warnings.push(
-          `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(/\s+/g, " ")
-        );
+        fileWarnings.push({
+          path: relativePath,
+          message:
+            `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(
+              /\s+/g,
+              " "
+            ),
+        });
       }
     }
 
@@ -1676,53 +1749,82 @@ export function generateSnapshot(
     });
   }
 
-  // A changed-files scope narrows the snapshot to what a review is actually about.
-  //
-  // The filter runs here, after summaries exist, because `--with-dependents` needs the import
-  // graph: "the files that reference this one" cannot be answered from a candidate path. Every
-  // removed file is recorded with reason `unchanged`, which is a different statement from
-  // `excluded` — the file is includable and simply did not move.
-  if (config.changedSince !== undefined || config.staged === true) {
-    const scope = resolveChangedScope(config.cwd, {
-      ...(config.changedSince === undefined ? {} : { changedSince: config.changedSince }),
-      ...(config.staged === true ? { staged: true } : {}),
-    });
+  // `--with-dependents` can only be decided once every import has been parsed, so its filter
+  // stays after the scan — and everything the scan accumulated for a dropped file is undone
+  // with it. Totals were recomputed here already; the layer and kind counts, the large-file
+  // count, the redaction findings and the warning lists were not, so a two-file snapshot
+  // reported the layer distribution and the secret count of the whole repository.
+  if (changedScope !== null && changedPaths !== null && config.withDependents === true) {
+    const keep = new Set(changedPaths);
+    const resolver = buildImportResolver(files);
+    // One hop, and only one hop. The test is against the **changed set**, never against `keep`:
+    // adding to `keep` while testing it walked the import graph transitively, so a changed
+    // `a.ts` pulled in `b.ts` (which imports it) and then `c.ts` (which imports `b.ts`), and
+    // whether the two-hop file was included depended on whether its name happened to sort after
+    // `b.ts`. The same repository produced different snapshots depending on file names.
+    for (const file of files) {
+      if (!isSourceSummary(file.summary)) continue;
+      const importsChanged = file.summary.imports.some((specifier) => {
+        const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
+        return resolved !== null && changedPaths.has(resolved);
+      });
+      if (importsChanged) keep.add(file.relativePath);
+    }
 
-    const keep = new Set(scope.paths);
-    if (config.withDependents === true) {
-      const resolver = buildImportResolver(files);
-      for (const file of files) {
-        if (!isSourceSummary(file.summary)) continue;
-        const importsChanged = file.summary.imports.some((specifier) => {
-          const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
-          return resolved !== null && keep.has(resolved);
-        });
-        if (importsChanged) keep.add(file.relativePath);
-      }
+    for (const file of files) {
+      if (!keep.has(file.relativePath)) unchangedPaths.push(file.relativePath);
     }
 
     const kept = files.filter((file) => keep.has(file.relativePath));
-    for (const file of files) {
-      if (keep.has(file.relativePath)) continue;
-      skipped.push({
-        path: file.relativePath,
-        reason: "unchanged",
-        detail: `not ${scope.detail}`,
-      });
-    }
     files.length = 0;
     files.push(...kept);
-    // The totals describe the snapshot, not the scan, so they are recomputed from what
-    // survived rather than from what was read.
+
+    // The totals describe the snapshot, not the scan, so they are recomputed from what survived.
     totalLines = files.reduce((total, file) => total + file.lines, 0);
     totalSizeBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
-
-    if (files.length === 0) {
-      warnings.push(
-        `No file is ${scope.detail}, so the snapshot is empty. ` +
-          "Check the ref, or run without --changed-since to scan the whole repository."
-      );
+    largeFileCount = 0;
+    for (const key of Object.keys(layerCounts)) delete layerCounts[key];
+    for (const key of Object.keys(kindCounts)) delete kindCounts[key];
+    for (const file of files) {
+      bump(layerCounts, file.layer);
+      bump(kindCounts, file.kind);
+      if (file.isLarge) largeFileCount += 1;
     }
+    retain(
+      secretFindings,
+      (finding) => finding.path === undefined || keep.has(finding.path)
+    );
+    retain(encodingNotes, (note) => keep.has(note.path));
+    retain(oversizeSummaryPaths, (path) => keep.has(path));
+    retain(previewSummaryPaths, (path) => keep.has(path));
+    retain(fileWarnings, (warning) => keep.has(warning.path));
+    for (const path of [...monolithBodies.keys()]) {
+      if (!keep.has(path)) monolithBodies.delete(path);
+    }
+  }
+
+  // Files the scope removed are recorded the same way whether they were filtered before the scan
+  // or after it. `unchanged` is deliberately a different statement from `excluded`: the file is
+  // includable and simply did not move.
+  if (changedScope !== null) {
+    for (const relativePath of unchangedPaths) {
+      skipped.push({
+        path: relativePath,
+        reason: "unchanged",
+        detail: `not ${changedScope.detail}`,
+      });
+    }
+  }
+
+  // Per-file warnings are held back until the scope has finished dropping files, so a warning
+  // about a file the snapshot does not contain never reaches the manifest.
+  for (const warning of fileWarnings) warnings.push(warning.message);
+
+  if (changedScope !== null && files.length === 0) {
+    warnings.push(
+      `No file is ${changedScope.detail}, so the snapshot is empty. ` +
+        "Check the ref, or run without --changed-since to scan the whole repository."
+    );
   }
 
   // One warning per encoding class, not per file: a repository with 400 Latin-1 files must not
@@ -1931,7 +2033,9 @@ export function generateSnapshot(
     manifest.totals.warningCount = manifest.warnings.length;
   }
 
-  for (const message of artifactWarnings(config.artifacts)) manifest.warnings.push(message);
+  for (const message of artifactWarnings(config.artifacts, config.sarif === true)) {
+    manifest.warnings.push(message);
+  }
   manifest.totals.warningCount = manifest.warnings.length;
 
   // The project tree is depth-capped (src/generator/tree.ts). When the cap bit, the
@@ -1949,6 +2053,22 @@ export function generateSnapshot(
       );
       manifest.totals.warningCount = manifest.warnings.length;
     }
+  }
+
+  // The SARIF log is rendered here — before the monolith embeds this manifest — and written
+  // later, once staging exists. It used to be built in the write phase, so with
+  // `--include-monolith --sarif` the manifest inside `full-codebase.json` had no
+  // `artifacts.sarif` while the shipped `manifest.json` did: two copies of one document that
+  // disagreed about what the run produced.
+  const sarifText =
+    config.sarif === true
+      ? generateSarifReport(manifest, secretFindings, config.secretRules, GENERATOR_VERSION)
+      : null;
+  if (sarifText !== null) {
+    manifest.artifacts.sarif = {
+      byteSize: Buffer.byteLength(sarifText, "utf8"),
+      sha256: sha256Hex(sarifText),
+    };
   }
 
   // Monolith artefacts are serialised LAST, after every warning they have to
@@ -2085,15 +2205,10 @@ export function generateSnapshot(
         "utf8"
       );
     }
-    if (config.sarif === true) {
-      // Written beside udit.md rather than instead of it: a human reads one and a CI gate
+    if (sarifText !== null) {
+      // Written beside audit.md rather than instead of it: a human reads one and a CI gate
       // reads the other, and asking which one you want is a false choice.
-      const sarif = generateSarifReport(manifest, secretFindings, config.secretRules, GENERATOR_VERSION);
-      fs.writeFileSync(path.join(reportsDir, "audit.sarif"), sarif, "utf8");
-      manifest.artifacts.sarif = {
-        byteSize: Buffer.byteLength(sarif, "utf8"),
-        sha256: sha256Hex(sarif),
-      };
+      fs.writeFileSync(path.join(reportsDir, "audit.sarif"), sarifText, "utf8");
     }
     if (artifacts.readme) {
       fs.writeFileSync(path.join(stagingDir, "README.md"), generateReadme(manifest, artifacts), "utf8");
@@ -2235,7 +2350,7 @@ export {
 export { PRESETS } from "./presets/index.js";
 export { LANGUAGE_PROFILES, profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
 export type { HeuristicResult, LanguageProfile } from "./ast/profiles/index.js";
-export { renumberParts, displayPath } from "./partitioner/chunker.js";
+export { enforceBudget, renumberParts, displayPath } from "./partitioner/chunker.js";
 export {
   collectFiles,
   findSecretInPath,
@@ -2256,6 +2371,8 @@ export {
   markResolvedConfig,
   isResolvedConfig,
   MIN_MAX_PART_BYTES,
+  MIN_MAX_PART_TOKENS,
+  CONFIG_KEYS,
   normalizeResolvedConfig,
   assertUsableConfigInput,
 } from "./config.js";
@@ -2264,8 +2381,9 @@ export { estimateTokens, bytesForTokens, formatTokens } from "./tokenize.js";
 export { HOOK_MARKER, installPreCommitHook } from "./agent/hook.js";
 export type { HookInstallResult } from "./agent/hook.js";
 export { resolveChangedScope } from "./scanner/changed.js";
-export { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
+export { isSkeletonizable, isTsxFileName, skeletonizeTypeScript } from "./ast/skeleton.js";
 export { generateSarifReport } from "./generator/sarif.js";
+export { workerEntry } from "./mcp/generate-worker.js";
 export type { ChangedScope, ChangedScopeRequest } from "./scanner/changed.js";
 export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 

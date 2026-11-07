@@ -26,7 +26,7 @@ export interface Workspace {
   root: string;
   config: ResolvedSnapshotConfig;
   /**
-   * The options esolveConfig was called with.
+   * The options `resolveConfig` was called with.
    *
    * Kept because a worker thread cannot receive a resolved config: layers[].match may be a
    * function and hooks.afterGenerate is one, so neither survives structured cloning. The

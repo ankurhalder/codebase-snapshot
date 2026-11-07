@@ -121,7 +121,7 @@ const DESCRIPTIONS = {
     "Every message the tool prints and the one-line fix: refusals, config errors, drift, " +
     "sensitive-file skips and non-interactive first runs.",
   mcp:
-    "Serve a repository to Claude, Cursor or any MCP client: seven tools and snapshot:// " +
+    "Serve a repository to Claude, Cursor or any MCP client: eight tools and snapshot:// " +
     "resources, so an agent reads the one part it needs instead of all of them.",
   "how-to-feed-a-repo-to-claude":
     "Hand a whole codebase to ChatGPT, Claude or Cursor: generate a snapshot locally, pick a " +

@@ -40,6 +40,20 @@ function insertTokenLine(markdown: string, tokens: number): string {
   );
 }
 
+/**
+ * Rewrites the headline token estimate in place, or inserts it when the header has none.
+ *
+ * `insertTokenLine` only ever inserts, so calling it on a part that already carries the line
+ * would emit two of them.
+ */
+function replaceTokenLine(markdown: string, tokens: number): string {
+  const line = `- Estimated Tokens: ~${formatTokens(tokens)}`;
+  if (/^- Estimated Tokens: .*$/m.test(markdown)) {
+    return markdown.replace(/^- Estimated Tokens: .*$/m, line);
+  }
+  return insertTokenLine(markdown, tokens);
+}
+
 /** Recognises a marker already appended, so a second shrink does not cut it in half. */
 const BUDGET_MARKER_SUFFIX = /\n\.\.\. \[\d+ lines omitted: part budget \d+ B\] \.\.\.$/;
 
@@ -152,9 +166,20 @@ export function partitionFiles(
 }
 
 /** Hard-clips any part that is still above `budget`, re-hashing what it wrote. */
-function enforceBudget(parts: PartitionedPart[], budget: number): PartitionedPart[] {
+/**
+ * Hard-clips any part that is still above `budget`, re-hashing what it wrote.
+ *
+ * Exported so the clip path can be tested at all: the partitioner splits oversized sections
+ * rather than clipping them, so no ordinary fixture reaches this branch, and the stale token
+ * count it used to leave behind was therefore invisible to every end-to-end test.
+ */
+export function enforceBudget(parts: PartitionedPart[], budget: number): PartitionedPart[] {
   const marker = "\n... [part truncated: cannot fit budget] ...\n";
-  const target = Math.max(0, budget - Buffer.byteLength(marker, "utf8"));
+  // The token line is rewritten with the post-clip estimate, and the new number is not always
+  // the same width as the old one (`~99` grew to `~100`). Holding back a few bytes keeps the
+  // header rewrite from pushing the part back over the budget it was clipped to meet.
+  const TOKEN_LINE_SLACK = 32;
+  const target = Math.max(0, budget - Buffer.byteLength(marker, "utf8") - TOKEN_LINE_SLACK);
 
   return parts.map((part) => {
     if (part.metadata.byteSize <= budget) return part;
@@ -356,14 +381,21 @@ function applyTruncatedContent(file: FileEntry, content: string): void {
 
 /** Rebuilds a part's recorded digest/size after its markdown was altered. */
 function rehashPart(part: PartitionedPart, markdown: string): PartitionedPart {
+  // The estimate describes the text it sits above, and clipping changed that text. Leaving the
+  // pre-clip number made a part's own header, its metadata and the report that sums metadata
+  // all disagree with the bytes underneath — and `metadata.estimatedTokens` is the field every
+  // reader trusts.
+  const estimatedTokens = estimateTokens(markdown);
+  const redistributed = replaceTokenLine(markdown, estimatedTokens);
   return {
     filename: part.filename,
-    markdown,
+    markdown: redistributed,
     metadata: {
       ...part.metadata,
-      byteSize: Buffer.byteLength(markdown, "utf8"),
-      sha256: crypto.createHash("sha256").update(markdown).digest("hex"),
-      lines: countLines(markdown),
+      byteSize: Buffer.byteLength(redistributed, "utf8"),
+      sha256: crypto.createHash("sha256").update(redistributed).digest("hex"),
+      lines: countLines(redistributed),
+      estimatedTokens,
     },
   };
 }
