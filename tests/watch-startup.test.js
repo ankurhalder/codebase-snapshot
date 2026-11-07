@@ -85,18 +85,33 @@ test("--watch is refused, not crashed, where the runtime cannot watch a tree", (
   assert.equal(watchSupportProblem("win32", "18.0.0"), null, "Windows has always had one");
   assert.equal(watchSupportProblem("darwin", "18.0.0"), null, "and so has macOS");
 
-  // A Node too old to watch must be told so by the CLI itself, with exit 2 and nothing written.
-  if (watchUnavailable === null) {
-    t.skip("this runtime can watch a tree, so it cannot exercise the refusal");
-    return;
-  }
+  // A Node too old to watch must be told so by the CLI itself, with nothing written. Exit 1, not
+  // 2: the command line is valid and this machine cannot honour it, which is the same answer
+  // `--changed-since` gives outside a git repository.
+  //
+  // Forced through a preload rather than skipped, so the branch is exercised on every platform and
+  // not only on the one CI job that happens to be too old to watch. That is how it shipped broken:
+  // the watcher had only ever been run on Windows.
   const dir = tempRepo(t);
-  const refused = spawnSync(process.execPath, [BIN, "generate", "--watch", "--cwd", dir], {
-    cwd: dir,
-    encoding: "utf8",
-  });
-  assert.equal(refused.status, 2);
-  assert.match(refused.stderr, /20\.13/);
+  const refused = spawnSync(
+    process.execPath,
+    [
+      "--require",
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "helpers", "force-old-node.cjs"),
+      BIN,
+      "generate",
+      "--watch",
+      "--cwd",
+      dir,
+      "--format",
+      "json",
+    ],
+    { cwd: dir, encoding: "utf8" }
+  );
+  assert.equal(refused.status, 1, refused.stderr);
+  const payload = JSON.parse(refused.stdout);
+  assert.match(payload.error.message, /20\.13/);
+  assert.equal(payload.error.exitCode, 1);
   assert.equal(
     fs.existsSync(path.join(dir, "snapshot")),
     false,

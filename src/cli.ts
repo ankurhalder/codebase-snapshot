@@ -1528,10 +1528,13 @@ async function runCommand(argv: string[]): Promise<number> {
   }
 
   // `--watch` asks for something the runtime may be unable to do at all, so it is answered before
-  // the run writes anything. See {@link watchSupportProblem}.
+  // the run writes anything. It is a failure rather than a usage error for the reason
+  // `--changed-since` on a non-repository is one: the command line is valid and this machine
+  // cannot honour it. Reported through `fail` so `--format json` still gets one parseable
+  // document.
   if (invocation.watch) {
     const problem = watchSupportProblem();
-    if (problem !== null) throw new UsageError(problem);
+    if (problem !== null) return fail(invocation.format, problem);
   }
 
   const started = performance.now();
