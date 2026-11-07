@@ -676,6 +676,46 @@ export function validateSnapshot(
         `includeSensitiveFiles: manifest ${recorded.includeSensitiveFiles} vs current ${config.includeSensitiveFiles}`
       );
     }
+    // The settings added in 0.9.10–0.9.13 were recorded in the manifest and folded into the digest,
+    // but never joined this list. So a changed `--skeleton` or `--max-part-tokens` produced the
+    // generic "the settings differ" line and nothing else: the digest could say *that* something
+    // changed and only the per-field block could say *what*, and seven settings were invisible to
+    // it. A user reading "run generate" has to know which setting to change back.
+    if ((recorded.maxPartTokens ?? undefined) !== (config.maxPartTokens ?? undefined)) {
+      drift.configMismatches.push(
+        `maxPartTokens: manifest ${String(recorded.maxPartTokens ?? "unset")} vs current ${String(config.maxPartTokens ?? "unset")}`
+      );
+    }
+    if ((recorded.maxMonolithBytes ?? null) !== (config.maxMonolithBytes ?? null)) {
+      drift.configMismatches.push(
+        `maxMonolithBytes: manifest ${String(recorded.maxMonolithBytes ?? null)} vs current ${String(config.maxMonolithBytes ?? null)}`
+      );
+    }
+    if (Boolean(recorded.skeleton) !== Boolean(config.skeleton)) {
+      drift.configMismatches.push(
+        `skeleton: manifest ${Boolean(recorded.skeleton)} vs current ${Boolean(config.skeleton)}`
+      );
+    }
+    if (Boolean(recorded.sarif) !== Boolean(config.sarif)) {
+      drift.configMismatches.push(
+        `sarif: manifest ${Boolean(recorded.sarif)} vs current ${Boolean(config.sarif)}`
+      );
+    }
+    if ((recorded.changedSince ?? undefined) !== (config.changedSince ?? undefined)) {
+      drift.configMismatches.push(
+        `changedSince: manifest ${String(recorded.changedSince ?? "unset")} vs current ${String(config.changedSince ?? "unset")}`
+      );
+    }
+    if (Boolean(recorded.staged) !== Boolean(config.staged)) {
+      drift.configMismatches.push(
+        `staged: manifest ${Boolean(recorded.staged)} vs current ${Boolean(config.staged)}`
+      );
+    }
+    if (Boolean(recorded.withDependents) !== Boolean(config.withDependents)) {
+      drift.configMismatches.push(
+        `withDependents: manifest ${Boolean(recorded.withDependents)} vs current ${Boolean(config.withDependents)}`
+      );
+    }
     const effectiveDiscovery = config.discovery ?? "auto";
     const recordedDiscovery = recorded.discovery;
     if (recordedDiscovery !== undefined && recordedDiscovery !== effectiveDiscovery) {

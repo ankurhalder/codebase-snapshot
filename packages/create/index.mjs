@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
-import { PromptCancelled, runInit } from "codebase-snapshot";
+import { PromptCancelled, runInit, stripJsonComments } from "codebase-snapshot";
 
 /**
  * `npm create codebase-snapshot`
@@ -34,7 +34,13 @@ function hasLocalBinary() {
 /** True when the project's package.json already carries the `snapshot` script. */
 function hasSnapshotScript() {
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
+    // Through `stripJsonComments`, like every other reader of `package.json` in this tool: a UTF-8
+    // BOM is what a Windows editor writes, and `JSON.parse` refuses it — so a project that already
+    // had the script was told to run `npx codebase-snapshot generate` instead of
+    // `npm run snapshot`, which is the command the rest of this repository's documentation names.
+    const pkg = JSON.parse(
+      stripJsonComments(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"))
+    );
     return typeof pkg?.scripts?.snapshot === "string";
   } catch {
     return false;

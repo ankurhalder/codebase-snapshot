@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { stripJsonComments } from "../ast/structured.js";
 import { ARTIFACT_NAMES, parseByteSize, supportsTypeScriptImports } from "../config.js";
 import { appendGitignoreEntries } from "../gitignore.js";
 import { detectPreset, listPresetNames } from "../presets/index.js";
@@ -108,6 +109,36 @@ const CONFIG_CANDIDATES = [
 ];
 
 /**
+ * Parses `package.json` the way the rest of this tool parses JSON files.
+ *
+ * `JSON.parse` rejects a UTF-8 BOM — `Unexpected token '\uFEFF'` — and `findConfigFile` has read
+ * `package.json` through `stripJsonComments` since 0.9.13, so the two disagreed about whether a
+ * project was configured. Every reader in this file caught the throw and reported the ordinary,
+ * wrong answer: an existing `"snapshot"` block was invisible, `"type": "module"` was invisible (so
+ * `init` chose `.mjs` for a project that could have had `.ts`), and the scripts and devDependency
+ * were skipped with a note.
+ *
+ * A BOM is what a Windows editor writes when it saves a file as UTF-8; it is not a malformed
+ * package.
+ */
+function parsePackageJson(raw: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(stripJsonComments(raw));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("package.json is not a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Reads and parses `package.json`, or returns null when there is nothing usable to read. */
+function readPackageJson(cwd: string): Record<string, unknown> | null {
+  try {
+    return parsePackageJson(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Picks the config filename this project can actually load.
  *
  * A `.ts` config is only usable when Node can strip types *and* the package is an
@@ -118,15 +149,8 @@ const CONFIG_CANDIDATES = [
  */
 export function chooseConfigFileName(cwd: string): string {
   if (!supportsTypeScriptImports()) return "snapshot.config.mjs";
-
-  const pkgPath = path.join(cwd, "package.json");
-  if (!fs.existsSync(pkgPath)) return "snapshot.config.mjs";
-  try {
-    const parsed = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { type?: unknown };
-    return parsed.type === "module" ? "snapshot.config.ts" : "snapshot.config.mjs";
-  } catch {
-    return "snapshot.config.mjs";
-  }
+  const parsed = readPackageJson(cwd);
+  return parsed?.type === "module" ? "snapshot.config.ts" : "snapshot.config.mjs";
 }
 
 const SIZE_CHOICES: Array<{ value: string; label: string; hint: string }> = [
@@ -143,15 +167,14 @@ const SIZE_CHOICES: Array<{ value: string; label: string; hint: string }> = [
  * changing the effective settings of a repository that was already configured.
  */
 function packageJsonHasConfig(cwd: string): boolean {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
-      snapshot?: unknown;
-    };
-    // `typeof [] === "object"`: an array is a wrong type like a string or a number, not a config.
-    return typeof parsed.snapshot === "object" && parsed.snapshot !== null && !Array.isArray(parsed.snapshot);
-  } catch {
-    return false;
-  }
+  const parsed = readPackageJson(cwd);
+  if (parsed === null) return false;
+  // `typeof [] === "object"`: an array is a wrong type like a string or a number, not a config.
+  return (
+    typeof parsed.snapshot === "object" &&
+    parsed.snapshot !== null &&
+    !Array.isArray(parsed.snapshot)
+  );
 }
 
 function artifactAnswers(options: InitOptions): Required<ArtifactSelection> {
@@ -222,14 +245,7 @@ function writeFileOrExplain(target: string, content: string): void {
 function canWriteModuleConfig(name: string, cwd: string): boolean {
   if (name.endsWith(".mjs") || name.endsWith(".ts")) return true;
   if (!name.endsWith(".js")) return false;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
-      type?: unknown;
-    };
-    return parsed.type === "module";
-  } catch {
-    return false;
-  }
+  return readPackageJson(cwd)?.type === "module";
 }
 
 function configFormatLabel(name: string): string {
@@ -275,7 +291,10 @@ function serializePackageJson(raw: string, value: unknown): string {
   const crlf = raw.includes("\r\n");
   const body = JSON.stringify(value, null, spacing);
   const text = crlf ? body.replace(/\n/g, "\r\n") : body;
-  return `${text}${raw.endsWith("\n") ? (crlf ? "\r\n" : "\n") : ""}`;
+  // Keep a byte-order mark the file already had: dropping it is a change nobody asked for, and the
+  // editor that wrote it will put it back on the next save — two diffs for one edit.
+  const bom = raw.startsWith("\uFEFF") ? "\uFEFF" : "";
+  return `${bom}${text}${raw.endsWith("\n") ? (crlf ? "\r\n" : "\n") : ""}`;
 }
 
 /**
@@ -303,7 +322,7 @@ function updatePackageJson(cwd: string, notes: string[]): PackageJsonUpdate {
   let parsed: Record<string, unknown>;
   try {
     raw = fs.readFileSync(packagePath, "utf8");
-    parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed = parsePackageJson(raw);
   } catch {
     notes.push("Could not parse package.json; npm scripts and the devDependency were not added.");
     return unchanged;

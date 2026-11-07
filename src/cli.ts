@@ -35,6 +35,7 @@ import { getPreset, unknownPresetMessage } from "./presets/index.js";
 import { isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
 import { buildAgentContract, renderContractText } from "./agent/contract.js";
 import { runWithStdoutCapture } from "./stdout.js";
+import { stripJsonComments } from "./ast/structured.js";
 
 // Exported so the contract-completeness test can hold `describe` to the parser. A test that
 // re-states the option list by hand cannot notice a flag the parser gained and the contract
@@ -779,9 +780,13 @@ function nextStepHint(cwd: string, scriptsAddedNow: boolean): string {
   let hasScript = scriptsAddedNow;
   if (!hasScript) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
+      // `stripJsonComments` first: a UTF-8 BOM is what a Windows editor writes, and `JSON.parse`
+      // refuses it — so a project whose `package.json` begins with one was told to run
+      // `npx codebase-snapshot generate`, which resolves the *published* package instead of the
+      // one this very run had just put in `node_modules`.
+      const parsed = JSON.parse(
+        stripJsonComments(fs.readFileSync(path.join(cwd, "package.json"), "utf8"))
+      ) as { scripts?: Record<string, unknown> };
       hasScript = typeof parsed.scripts?.snapshot === "string";
     } catch {
       hasScript = false;
