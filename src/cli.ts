@@ -34,6 +34,7 @@ import {
 import { getPreset, unknownPresetMessage } from "./presets/index.js";
 import { isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
 import { buildAgentContract, renderContractText } from "./agent/contract.js";
+import { runWithStdoutCapture } from "./stdout.js";
 
 // Exported so the contract-completeness test can hold `describe` to the parser. A test that
 // re-states the option list by hand cannot notice a flag the parser gained and the contract
@@ -956,20 +957,16 @@ function installDependencies(cwd: string): InstallOutcome {
  * `setup` generates through the normal `generate` command so every guard, summary line and JSON
  * document is byte-for-byte what a plain generate produces; capturing lets it merge that document
  * into the one `setup` owes a machine consumer instead of printing two.
+ *
+ * The capture is an `AsyncLocalStorage` scope consulted by the one router in `stdout.ts`, not a
+ * replacement of `process.stdout.write` held for a time window. The replacement approach broke
+ * both ways round when the nested generate ran an async `hooks.afterGenerate`: the hook's write
+ * escaped to the real stdout (corrupting this document) and this function's restore overwrote the
+ * hook's diversion, leaving a dead closure as `process.stdout.write` for the rest of the process.
  */
 async function captureStdout(fn: () => Promise<number>): Promise<{ code: number; text: string }> {
-  const original = process.stdout.write.bind(process.stdout);
-  let text = "";
-  process.stdout.write = ((chunk: unknown): boolean => {
-    text += typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString("utf8");
-    return true;
-  }) as typeof process.stdout.write;
-  try {
-    const code = await fn();
-    return { code, text };
-  } finally {
-    process.stdout.write = original;
-  }
+  const { value, text } = await runWithStdoutCapture(fn);
+  return { code: value, text };
 }
 
 /**
@@ -1121,31 +1118,40 @@ async function runSetupCommand(
 
     if (invocation.format === "json") {
       const generated = await captureStdout(() => main(generateArgs));
-      let manifest: unknown = null;
+      let parsed: Record<string, unknown> | null = null;
       try {
-        manifest = JSON.parse(generated.text);
+        parsed = JSON.parse(generated.text) as Record<string, unknown>;
       } catch {
-        manifest = null;
+        parsed = null;
+      }
+      const setup = {
+        configPath: init.configPath,
+        configReused: init.reused,
+        preset: init.preset,
+        scripts: init.scripts,
+        dependency: init.dependency,
+        gitignoreEntries: init.gitignoreEntries,
+        install,
+        notes: init.notes,
+        hook,
+      };
+      // A nested `generate` that failed puts its failure in its own document — and this used to
+      // merge that document in as `manifest`, so `{ setup, manifest: { error: … } }` came out with
+      // exit code 1 and no top-level `error` key. A machine consumer reads the top level: every
+      // JSON-mode invocation returns exactly one document, `{ error: { message, exitCode } }` on
+      // failure, and "the payload has an error field somewhere in it" is not that contract.
+      if (generated.code !== 0) {
+        const inner =
+          parsed && typeof parsed.error === "object" && parsed.error !== null
+            ? parsed.error
+            : { message: "Snapshot generation failed during setup.", exitCode: generated.code };
+        process.stdout.write(
+          `${JSON.stringify({ error: inner, setup, manifest: null }, null, 2)}\n`
+        );
+        return generated.code;
       }
       process.stdout.write(
-        `${JSON.stringify(
-          {
-            setup: {
-              configPath: init.configPath,
-              configReused: init.reused,
-              preset: init.preset,
-              scripts: init.scripts,
-              dependency: init.dependency,
-              gitignoreEntries: init.gitignoreEntries,
-              install,
-              notes: init.notes,
-              hook,
-            },
-            manifest,
-          },
-          null,
-          2
-        )}\n`
+        `${JSON.stringify({ setup, manifest: parsed }, null, 2)}\n`
       );
       return generated.code;
     }

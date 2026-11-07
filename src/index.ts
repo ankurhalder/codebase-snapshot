@@ -1,5 +1,5 @@
 import * as crypto from "node:crypto";
-import { AsyncLocalStorage } from "node:async_hooks";
+import { hookStdoutScope, installStdoutRouter } from "./stdout.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -980,10 +980,7 @@ function acquireRunLock(stagingRoot: string): () => void {
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      if (attempt === 0 && lockOwnerIsGone(lockPath)) {
-        fs.rmSync(lockPath, { force: true });
-        continue;
-      }
+      if (attempt === 0 && reclaimStaleLock(lockPath)) continue;
       throw new Error(
         `Another generate run is already using the staging directory ${stagingRoot}. Wait for ` +
           `it to finish, or delete ${lockPath} if no other run is active.`
@@ -997,18 +994,49 @@ function acquireRunLock(stagingRoot: string): () => void {
 /**
  * Stable lock-file key for a staging root.
  *
- * The real path is used when the root exists so `Snapshot.Tmp` and
- * `snapshot.tmp` cannot take different locks on a case-insensitive filesystem.
+ * The real path is used so `Snapshot.Tmp` and `snapshot.tmp` cannot take different locks on a
+ * case-insensitive filesystem, and so a symlinked checkout cannot take one lock through the link
+ * and another through the target.
+ *
+ * Resolving the root itself was not enough, because the root frequently does not exist yet when
+ * the lock is taken — the run creates it afterwards. `realpathSync` then threw, the unresolved
+ * path was hashed instead, and the two processes disagreed:
+ *
+ * - process 1 takes the lock before creating `tmpDir`, hashing `/var/folders/…/snapshot.tmp`;
+ * - process 1 creates `tmpDir`;
+ * - process 2 takes the lock while process 1 is still writing, `realpathSync` now succeeds and
+ *   resolves `/var` to `/private/var` (macOS), so it hashes a different string;
+ * - the two locks are different files, mutual exclusion does not exist, and both write.
+ *
+ * Resolving the nearest *existing* ancestor and re-joining the missing segments gives the same
+ * answer before and after the directory exists.
  */
 function lockKeyFor(stagingRoot: string): string {
-  let key = stagingRoot;
-  try {
-    key = fs.realpathSync(stagingRoot);
-  } catch {
-    // Not created yet: the resolved absolute path is already stable per checkout.
-  }
+  let key = canonicalLockTarget(stagingRoot);
   if (process.platform === "win32" || process.platform === "darwin") key = key.toLowerCase();
   return sha256Hex(key).slice(0, 16);
+}
+
+/**
+ * The path with every existing ancestor's real path resolved.
+ *
+ * `realpathSync` on a path that does not exist throws, so the walk stops at the first ancestor that
+ * does and the unresolved remainder is appended to its real path.
+ */
+function canonicalLockTarget(targetPath: string): string {
+  const resolved = path.resolve(targetPath);
+  let existing = resolved;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(existing), ...tail);
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return resolved;
+      tail.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
 }
 
 /**
@@ -1048,6 +1076,43 @@ function lockOwnerIsGone(lockPath: string): boolean {
   } catch (err) {
     // EPERM means the process exists but belongs to someone else.
     return (err as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+/**
+ * Removes a lock whose owner is certainly dead, and only that lock.
+ *
+ * `lockOwnerIsGone` answers a question and removing the file acts on the answer, and between the
+ * two another process can replace the stale lock with its own. Two runs that both find the same
+ * dead lock both delete it, the slower one deletes the lock the faster one has just created, and
+ * both proceed — the mutual exclusion the lock exists for, silently absent.
+ *
+ * There is no portable "unlink only this inode", so the identity is re-checked as late as
+ * possible: the file's inode and creation time are compared immediately before the delete. That
+ * narrows the window from "read, parse, probe the pid, unlink" to "stat, unlink", and a lock that
+ * changed hands in between is left alone — the caller reports "another run is active", which is
+ * true and safe, rather than deleting a live lock.
+ */
+function reclaimStaleLock(lockPath: string): boolean {
+  let before: fs.Stats;
+  try {
+    before = fs.statSync(lockPath);
+  } catch {
+    // It vanished on its own; the caller may try to create it again.
+    return true;
+  }
+  if (!lockOwnerIsGone(lockPath)) return false;
+  try {
+    const current = fs.statSync(lockPath);
+    const sameFile =
+      current.ino === before.ino &&
+      current.birthtimeMs === before.birthtimeMs &&
+      current.mtimeMs === before.mtimeMs;
+    if (!sameFile) return false;
+    fs.rmSync(lockPath, { force: true });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1145,7 +1210,6 @@ function swapOnce(stagingDir: string, outDir: string): void {
         throw copyErr;
       }
     }
-    if (hadPrevious) fs.rmSync(backupDir, { recursive: true, force: true });
   } catch (err) {
     // Roll back so the previous snapshot survives a failed swap.
     if (hadPrevious && fs.existsSync(backupDir)) {
@@ -1153,6 +1217,24 @@ function swapOnce(stagingDir: string, outDir: string): void {
       fs.renameSync(backupDir, outDir);
     }
     throw err;
+  }
+
+  // Removing the backup is **not** part of the transaction, and running it inside the `try` was a
+  // destructive bug: `rmSync` can throw EPERM or EBUSY on Windows and network filesystems when an
+  // indexer, an antivirus or an editor is holding a handle inside the old snapshot — and the catch
+  // block that exists to restore the previous snapshot would then delete the new one that is
+  // already fully in place, restore the old one, and rethrow. `swapIntoPlace` retries on EPERM and
+  // the staging directory no longer exists, so the retry fails with ENOENT and the user is told
+  // the run failed with the snapshot they just generated deleted.
+  //
+  // Once `outDir` holds the new snapshot the swap has succeeded. A leftover backup is a directory
+  // to clean up later (the scanner ignores `<outDir>.backup-*`); losing the run is not.
+  if (hadPrevious) {
+    try {
+      fs.rmSync(backupDir, { recursive: true, force: true });
+    } catch {
+      // Deliberately swallowed: see above.
+    }
   }
 }
 
@@ -1214,42 +1296,13 @@ function artifactWarnings(artifacts: ResolvedArtifacts, sarif: boolean): string[
 /**
  * The stdout diversion used by `hooks.afterGenerate`.
  *
- * One `AsyncLocalStorage` for the whole process, installed at most once and released by
- * reference counting. The previous implementation created a scope and a patched `write` per
- * `runAfterGenerate` call and restored it only if `process.stdout.write` was still that call's
- * own wrapper. With two overlapping async hooks that condition is false for whichever finishes
- * first, so its restore was skipped — and the second, restoring its own *captured* value, put the
- * first call's wrapper back permanently. `process.stdout.write` stayed wrapped for the life of the
- * process, holding both scopes alive.
+ * The scope and the router live in `stdout.ts`, because `setup --format json` borrows stdout too
+ * and the two used to patch `process.stdout.write` independently — with the result that whichever
+ * finished second restored a function belonging to the one that had already finished. See that
+ * module for the whole account.
  */
-const hookStdoutScope = new AsyncLocalStorage<true>();
-let activeHookRedirects = 0;
-let originalStdoutWrite: typeof process.stdout.write | null = null;
-
-/** Routes writes made inside a hook's async context to stderr; returns the release. */
 function installHookStdoutRedirect(): () => void {
-  if (activeHookRedirects === 0) {
-    originalStdoutWrite = process.stdout.write;
-    const realStdout = originalStdoutWrite.bind(process.stdout) as (...args: unknown[]) => boolean;
-    const realStderr = process.stderr.write.bind(process.stderr) as (...args: unknown[]) => boolean;
-    process.stdout.write = ((...args: unknown[]): boolean =>
-      hookStdoutScope.getStore() === true
-        ? realStderr(...args)
-        : realStdout(...args)) as typeof process.stdout.write;
-  }
-  activeHookRedirects += 1;
-
-  let released = false;
-  return (): void => {
-    // A caller that releases twice must not decrement somebody else's reference.
-    if (released) return;
-    released = true;
-    activeHookRedirects -= 1;
-    if (activeHookRedirects === 0 && originalStdoutWrite !== null) {
-      process.stdout.write = originalStdoutWrite;
-      originalStdoutWrite = null;
-    }
-  };
+  return installStdoutRouter();
 }
 
 function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): Promise<unknown> | null {

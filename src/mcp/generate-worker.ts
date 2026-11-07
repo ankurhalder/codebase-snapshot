@@ -73,6 +73,14 @@ export function workerEntry(
  * It loads the package entry by URL, resolves exactly as the calling thread did, generates, and
  * posts back the summary. Anything thrown becomes a `{ ok: false }` message rather than an
  * `error` event, so the caller gets the same text a synchronous call would have produced.
+ *
+ * `hooks` are stripped from the loaded config, and that is a documented contract rather than an
+ * optimisation: `docs/mcp.md` tells the reader that `hooks.afterGenerate` does not run for a
+ * generation started from MCP. It did. The worker called `generateSnapshot` with the config file's
+ * hooks intact, so shell commands and scripts the user attached to a *CLI* run executed from inside
+ * an MCP tool call — and a hook that was still running when the worker posted its result kept the
+ * thread alive, or was cut off before it could finish re-shipping the marker it was written to
+ * re-ship.
  */
 const WORKER_SOURCE = `
 const { parentPort, workerData } = require("node:worker_threads");
@@ -85,7 +93,10 @@ const { parentPort, workerData } = require("node:worker_threads");
       parentPort.postMessage({ ok: false, message: loaded.errors.join("; ") });
       return;
     }
-    const config = mod.resolveConfig(loaded.config, workerData.cliOptions, workerData.cwd);
+    // \`hooks: {}\` is a value, not an absence: the config is applied with the hook list emptied,
+    // so the run is the documented MCP run rather than the CLI run with one setting removed.
+    const base = loaded.config ? { ...loaded.config, hooks: {} } : null;
+    const config = mod.resolveConfig(base, workerData.cliOptions, workerData.cwd);
     const manifest = mod.generateSnapshot(config);
     parentPort.postMessage({
       ok: true,
@@ -121,13 +132,18 @@ export function generateInWorker(
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
     let settled = false;
+    let worker: Worker | null = null;
     const finish = (result: WorkerResults): void => {
       if (settled) return;
       settled = true;
+      // The snapshot is on disk by the time a message arrives, so nothing of value is lost by
+      // ending the thread here — and leaving it alive is the cost: a config module that opened a
+      // socket, started an interval or kept a file handle would hold the thread (and this process's
+      // event loop, through the listener below) for as long as the MCP server runs.
+      if (worker !== null) void worker.terminate();
       resolve(result);
     };
 
-    let worker: Worker;
     const isCjs = typeof __dirname !== "undefined";
     const directory = isCjs ? __dirname : path.dirname(fileURLToPath(import.meta.url));
     try {
