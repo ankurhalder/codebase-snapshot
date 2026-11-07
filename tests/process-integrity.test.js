@@ -172,17 +172,6 @@ test("a backup directory that cannot be removed does not roll the swap back", (t
   // the new snapshot is already in place — which is exactly the EPERM an indexer or an antivirus
   // produces on Windows.
   fs.chmodSync(path.join(dir, "snapshot"), 0o555);
-  t.after(() => {
-    for (const entry of fs.readdirSync(dir)) {
-      if (entry.startsWith("snapshot")) {
-        try {
-          fs.chmodSync(path.join(dir, entry), 0o755);
-        } catch {
-          // Best effort: the directory is already gone.
-        }
-      }
-    }
-  });
 
   const second = generateSnapshot(config());
   // The backup this test deliberately leaves behind is read-only, by construction. Put the modes
