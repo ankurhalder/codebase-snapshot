@@ -6,7 +6,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { generateSnapshot, resolveConfig, runInit, validateSnapshot } from "../dist/index.js";
+import { generateSnapshot, resolveConfig, runInit, supportsTypeScriptImports, validateSnapshot } from "../dist/index.js";
 
 /**
  * 0.9.14 — the two places a *record* disagreed with reality.
@@ -91,11 +91,22 @@ test("init reads a package.json that starts with a byte-order mark", async (t) =
 
   const result = await runInit({ cwd: dir, yes: true });
 
-  assert.equal(
-    result.configPath.endsWith("snapshot.config.ts"),
-    true,
-    `a "type": "module" project gets the .ts config, not ${result.configPath}`
-  );
+  // The config filename depends on the runtime, not on the BOM: a `.ts` config needs Node's type
+  // stripping and a `"type": "module"` package, and the release matrix includes versions without
+  // stripping. What must not depend on the runtime is that the `"type"` field was *read* at all.
+  if (supportsTypeScriptImports()) {
+    assert.equal(
+      result.configPath.endsWith("snapshot.config.ts"),
+      true,
+      `a "type": "module" project gets the .ts config, not ${result.configPath}`
+    );
+  } else {
+    assert.equal(
+      result.configPath.endsWith("snapshot.config.mjs"),
+      true,
+      `a runtime without type stripping gets .mjs, not ${result.configPath}`
+    );
+  }
   assert.ok(result.scripts.includes("snapshot"), "the npm script is added");
   assert.equal(
     result.notes.some((note) => /could not parse package\.json/i.test(note)),

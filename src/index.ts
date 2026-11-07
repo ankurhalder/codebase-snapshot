@@ -1436,12 +1436,17 @@ function swapOnce(stagingDir: string, outDir: string): void {
   // the run failed with the snapshot they just generated deleted.
   //
   // Once `outDir` holds the new snapshot the swap has succeeded. A leftover backup is a directory
-  // to clean up later (the scanner ignores `<outDir>.backup-*`); losing the run is not.
+  // to clean up later (the scanner ignores `<outDir>.backup-*`); losing the run is not. It is
+  // reported rather than hidden, because a read-only output directory leaves one on **every** run
+  // and a silent pile of them is its own problem.
   if (hadPrevious) {
     try {
       fs.rmSync(backupDir, { recursive: true, force: true });
-    } catch {
-      // Deliberately swallowed: see above.
+    } catch (err) {
+      process.stderr.write(
+        `⚠ The previous snapshot could not be removed from ${backupDir} (${(err as Error).message}). ` +
+          `The new snapshot is in place; delete that directory by hand when convenient.\n`
+      );
     }
   }
 }

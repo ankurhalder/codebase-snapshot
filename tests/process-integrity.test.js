@@ -146,6 +146,28 @@ test("a backup directory that cannot be removed does not roll the swap back", (t
   const firstHash = first.files.find((file) => file.relativePath === "src/a.ts").hashSha256;
 
   fs.writeFileSync(path.join(dir, "src", "a.ts"), "export const second = 2;\n", "utf8");
+
+  // Prove the trigger before relying on it. A host that does not enforce directory permissions —
+  // root in a container, or a filesystem that ignores the mode — would let the backup be removed,
+  // and the test would then pass while proving nothing. The probe lives outside the snapshot
+  // directory: the ownership guard refuses a snapshot holding an entry its inventory does not
+  // mention, so a probe left inside by an EACCES would change the thing under test.
+  const probeDir = path.join(dir, "permission-probe");
+  fs.mkdirSync(probeDir);
+  fs.writeFileSync(path.join(probeDir, "x"), "x");
+  fs.chmodSync(probeDir, 0o555);
+  try {
+    fs.rmSync(path.join(probeDir, "x"), { force: true });
+    fs.chmodSync(probeDir, 0o755);
+    fs.rmSync(probeDir, { recursive: true, force: true });
+    t.skip("this host does not enforce directory permissions");
+    return;
+  } catch {
+    // Expected: unlink inside a 0555 directory is EACCES.
+  }
+  fs.chmodSync(probeDir, 0o755);
+  fs.rmSync(probeDir, { recursive: true, force: true });
+
   // A read-only directory cannot have its children unlinked, so removing the *backup* fails after
   // the new snapshot is already in place — which is exactly the EPERM an indexer or an antivirus
   // produces on Windows.
@@ -161,19 +183,6 @@ test("a backup directory that cannot be removed does not roll the swap back", (t
       }
     }
   });
-
-  // Prove the trigger before relying on it. A host that does not enforce directory permissions —
-  // root in a container, or a filesystem that ignores the mode — would let the backup be removed and
-  // the test would then pass while proving nothing.
-  const probe = path.join(dir, "snapshot", ".permission-probe");
-  fs.writeFileSync(probe, "x");
-  try {
-    fs.rmSync(probe, { force: true });
-    t.skip("this host does not enforce directory permissions");
-    return;
-  } catch {
-    // Expected: unlink inside a 0555 directory is EACCES.
-  }
 
   const second = generateSnapshot(config());
   const secondHash = second.files.find((file) => file.relativePath === "src/a.ts").hashSha256;

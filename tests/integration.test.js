@@ -838,20 +838,34 @@ test("the all-artifacts-disabled warning names what is actually written", () => 
 
 // `fs.chmod` cannot revoke write access on Windows, so this one is POSIX-only.
 test(
-  "a read-only output directory fails with a clear message",
+  "a read-only output directory is replaced, and the backup it leaves is reported",
   { skip: process.platform === "win32" },
   () => {
+    // What this used to assert — exit 1 and "permission denied" — was the *rollback* talking: the
+    // old snapshot was restored and the run failed, because removing the backup happened inside the
+    // swap transaction. A directory this tool owns can be renamed regardless of its own mode, so the
+    // new snapshot does get installed; what cannot happen is deleting the old one. The run
+    // therefore succeeds, says which directory it could not remove, and the new snapshot is the one
+    // on disk.
     const dir = makeRepo("pol-l7-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
     assert.equal(runCli(["generate", "--cwd", dir]).code, 0);
+    const first = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
     fs.writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
     fs.chmodSync(path.join(dir, "snapshot"), 0o500);
+    const leftovers = () =>
+      fs.readdirSync(dir).filter((entry) => entry.startsWith("snapshot.backup-"));
     try {
       const result = runCli(["generate", "--cwd", dir]);
-      assert.equal(result.code, 1);
-      assert.match(result.stderr, /permission denied/);
-      assert.ok(fs.existsSync(path.join(dir, "snapshot", "manifest.json")), "previous snapshot survives");
+      assert.equal(result.code, 0, `the new snapshot is installed\n${result.stderr}`);
+      assert.match(result.stderr, /could not be removed/, "and the leftover is named");
+      const second = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+      assert.notEqual(second.fingerprint, first.fingerprint, "the snapshot on disk is the new one");
+      assert.equal(leftovers().length, 1, "exactly one backup could not be removed");
     } finally {
       fs.chmodSync(path.join(dir, "snapshot"), 0o700);
+      for (const name of [path.join(dir, "snapshot"), ...leftovers().map((entry) => path.join(dir, entry))]) {
+        fs.chmodSync(name, 0o700);
+      }
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }

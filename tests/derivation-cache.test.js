@@ -123,13 +123,17 @@ test("a changed setting invalidates the derivation", (t) => {
   assert.ok(file.includedBytes < file.sizeBytes);
 });
 
-test("a warm run is much faster than a cold one", (t) => {
-  // The point of the cache, and the fixture is chosen so the *ratio* does not depend on how loaded
-  // the machine is. Twenty files of 4 000 lines each: almost all of the cold cost is per line — the
-  // masking pass runs 31 rules over every line, and the parser builds an AST for the whole file —
-  // while almost all of the warm cost is per byte, which is reading, hashing and partitioning. A
-  // fixture of many *small* files would spend most of both runs in per-file open/stat/write, and the
-  // ratio would then be at the mercy of the filesystem.
+test("a warm run does a fraction of a cold run's work", (t) => {
+  // The point of the cache, measured in **CPU time** rather than wall clock. Twenty files of 4 000
+  // lines each: almost all of the cold cost is per line — the masking pass runs 31 rules over every
+  // line, and the parser builds an AST for the whole file — while almost all of the warm cost is
+  // per byte, which is reading, hashing and partitioning.
+  //
+  // Wall clock is the number a user sees, and it is also the number this suite cannot measure: the
+  // warm run's remaining wall time is mostly I/O, so a suite running files in parallel moves it by
+  // an order of magnitude while leaving the ratio of work done alone. CPU time counts only this
+  // process's own execution, which is what the cache actually removes. Measured 1 046 ms against
+  // 48 ms — 21x — with a 3x assertion, so the margin is not a tolerance.
   const dir = makeRepo(t, 20, (index) => {
     const body = Array.from(
       { length: 4000 },
@@ -140,17 +144,21 @@ test("a warm run is much faster than a cold one", (t) => {
   });
   fs.writeFileSync(path.join(dir, "src", "helpers.ts"), "export const compute = (n: number) => n;\n");
 
-  const clock = () => performance.now();
-  const cold = clock();
-  generateSnapshot(configFor(dir));
-  const coldMs = clock() - cold;
+  const cpuSince = (start) => {
+    const used = process.cpuUsage(start);
+    return (used.user + used.system) / 1000;
+  };
 
-  const warm = clock();
+  const coldStart = process.cpuUsage();
   generateSnapshot(configFor(dir));
-  const warmMs = clock() - warm;
+  const coldMs = cpuSince(coldStart);
+
+  const warmStart = process.cpuUsage();
+  generateSnapshot(configFor(dir));
+  const warmMs = cpuSince(warmStart);
 
   assert.ok(
-    warmMs < coldMs / 3,
-    `a warm run should be at least 3x faster (cold ${coldMs.toFixed(0)} ms, warm ${warmMs.toFixed(0)} ms)`
+    warmMs * 3 < coldMs,
+    `a warm run should do less than a third of the work (cold ${coldMs.toFixed(0)} ms CPU, warm ${warmMs.toFixed(0)} ms CPU)`
   );
 });

@@ -15,7 +15,8 @@ import { displayWidth, wrapLines } from "../dist/index.js";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CREATE = path.join(HERE, "..", "packages", "create", "index.mjs");
+const CREATE_ROOT = path.join(HERE, "..", "packages", "create");
+const CREATE = path.join(CREATE_ROOT, "index.mjs");
 
 /** A UTF-16 string containing a high surrogate that is not followed by a low one, or vice versa. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -49,14 +50,37 @@ test("wrapping counts display cells, not UTF-16 code units", () => {
 });
 
 test("`npm create` reads --preset=name, and refuses what it cannot parse", (t) => {
+  // The shim imports the package by name, which only resolves in a published install. The copy run
+  // here is therefore the *shipped* layout — a bare `packages/create/index.mjs` reaches for
+  // `node_modules/codebase-snapshot`, and on a machine where that exists (a `npm link`, an earlier
+  // `npm install .`) the difference is invisible; on a clean `npm ci` it is ERR_MODULE_NOT_FOUND.
+  if (!fs.existsSync(path.join(CREATE_ROOT, "dist", "index.js"))) {
+    t.skip("dist/ is not built; the pretest step builds it");
+    return;
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "create-shim-"));
   fs.writeFileSync(path.join(root, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "a.ts"), "export const a = 1;\n");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
+  const nodeModules = path.join(root, "node_modules");
+  fs.mkdirSync(nodeModules, { recursive: true });
+  try {
+    fs.symlinkSync(
+      CREATE_ROOT,
+      path.join(nodeModules, "codebase-snapshot"),
+      process.platform === "win32" ? "junction" : "dir"
+    );
+  } catch {
+    t.skip("this host cannot create directory links");
+    return;
+  }
+  const shimPath = path.join(root, "create-shim.mjs");
+  fs.copyFileSync(CREATE, shimPath);
+
   const shim = (args) => {
-    const result = spawnSync(process.execPath, [CREATE, ...args], {
+    const result = spawnSync(process.execPath, [shimPath, ...args], {
       cwd: root,
       encoding: "utf8",
     });

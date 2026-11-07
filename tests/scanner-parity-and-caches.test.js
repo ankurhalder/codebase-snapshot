@@ -50,6 +50,16 @@ function canSymlink(root) {
   }
 }
 
+/**
+ * Creates a link whose target does not exist, without needing a privilege on Windows.
+ *
+ * A junction needs no privilege there and may point at a path that does not exist; `realpathSync`
+ * fails on it exactly as it does on a broken POSIX symlink, which is the case being classified.
+ */
+function makeBrokenLink(target, linkPath) {
+  fs.symlinkSync(target, linkPath, process.platform === "win32" ? "junction" : "dir");
+}
+
 const gitConfig = (root) =>
   resolveConfig({ cwd: root, outDir: "snapshot", tmpDir: "snapshot.tmp", discovery: "git" }, {}, root);
 const walkConfig = (root) =>
@@ -113,6 +123,35 @@ test(
     assert.equal(viaWalk.reasons.get("src/broken.ts"), "outside-root");
   }
 );
+
+test("walk mode tells a broken link inside the root from one that points outside it", (t) => {
+  // The walker answered `read-error` for every unresolvable link, while `dropLinkedDirectories`
+  // asked where the raw target pointed — so the same repository reported the same entry two ways
+  // depending on `--discovery`. Both now answer through one function, and this pins both sides of
+  // it on a platform-independent fixture: a junction to a missing directory needs no privilege on
+  // Windows, and is a broken symlink everywhere else.
+  const root = makeRepo(t, { "package.json": '{"name":"fixture","version":"1.0.0"}\n' });
+  try {
+    makeBrokenLink(path.join(root, "gone", "nothing.ts"), path.join(root, "broken-inside"));
+    makeBrokenLink(path.join(root, "..", "gone", "nothing.ts"), path.join(root, "broken-outside"));
+  } catch (err) {
+    t.skip(`this host cannot create links: ${err.message}`);
+    return;
+  }
+
+  const { skipped } = collectFiles(root, {
+    discovery: "walk",
+    toolOwnedPaths: ["snapshot", "snapshot.tmp"],
+  });
+  const reasons = new Map(skipped.map((record) => [record.path, record.reason]));
+
+  assert.equal(reasons.get("broken-inside"), "read-error", "a target inside the root is just broken");
+  assert.equal(
+    reasons.get("broken-outside"),
+    "outside-root",
+    "a target outside the root is the security-relevant answer"
+  );
+});
 
 test("leftovers of a custom outDir are never scanned back in", (t) => {
   // `defaultIgnoreReason` and the walker both hardcoded `snapshot.backup-`, and

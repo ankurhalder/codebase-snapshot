@@ -209,7 +209,9 @@ says so with `lang="tsx"`.
   cached and reused when the content hash and a settings digest both match. Validity is the **content
   hash**, not `mtime`: a formatter or a `git checkout` can rewrite a file within the same timestamp
   tick at the same length. Measured on a synthetic 250-file TypeScript repository: cold 520 ms, warm
-  196 ms (2.65x); the remainder is reading, hashing, partitioning and writing.
+  196 ms of wall clock (2.65x) — the remainder is reading, hashing, partitioning and writing, which
+  a per-file cache cannot remove. The suite asserts the *work* instead, in CPU time on a denser
+  fixture: 1 046 ms against 48 ms, 21x, against a 3x floor.
 
 ### What has no test, and why
 
@@ -217,7 +219,7 @@ The last two are structural. The regex cache and the `fullContents` change have 
 signal — the output is byte-identical by construction — so they are covered by the existing suite
 and by the reasoning above rather than by a new test. The `--watch` cache is different: four of its
 five tests are correctness guards that pass on the previous build (that is the requirement — the
-cache must be invisible), and the fifth measures the cold/warm ratio and fails without it.
+cache must be invisible), and the fifth measures the CPU time the cache saves and fails without it.
 
 ---
 

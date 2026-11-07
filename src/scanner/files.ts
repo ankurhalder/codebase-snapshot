@@ -81,6 +81,34 @@ function readLinkTarget(linkPath: string, fallback: string): string {
   }
 }
 
+/**
+ * How a symlink whose target cannot be resolved is reported.
+ *
+ * "Broken" and "points outside the repository" are both true for a link to a path that does not
+ * exist outside it, and the security-relevant one wins: a link aimed out of the tree is worth
+ * naming even when there is nothing there yet.
+ *
+ * One function for both modes. The walker answered "broken symlink" here while
+ * `dropLinkedDirectories` answered "outside-root" for the same entry, so one repository produced
+ * two different `skipped[]` records depending on `--discovery` — the exact class of disagreement
+ * that function exists to end.
+ */
+function brokenLinkRecord(
+  linkPath: string,
+  relativePath: string,
+  rootReal: string
+): SkipRecord {
+  const rawTarget = readLinkTarget(linkPath, linkPath);
+  const resolvedFallback = path.resolve(path.dirname(linkPath), rawTarget);
+  return isInside(rootReal, resolvedFallback)
+    ? { path: relativePath, reason: "read-error", detail: "broken symlink" }
+    : {
+        path: relativePath,
+        reason: "outside-root",
+        detail: `link target resolves outside the scanned root (target: ${rawTarget}); not followed`,
+      };
+}
+
 /** Absolute path containment, used to refuse links that leave the root. */
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -1051,20 +1079,8 @@ function dropLinkedDirectories(
     }
 
     if (targetReal === null) {
-      // A link whose target does not exist cannot be resolved, so containment is decided on the
-      // target as it is written — the same question `walkDirectory` answers by having thrown out
-      // of `realpathSync` and then reporting `read-error`.
-      const resolvedFallback = path.resolve(path.dirname(absolute), rawTarget);
-      report(
-        linkedPath,
-        isInside(rootReal, resolvedFallback)
-          ? { path: linkedPath, reason: "read-error", detail: "broken symlink" }
-          : {
-              path: linkedPath,
-              reason: "outside-root",
-              detail: `link target resolves outside the scanned root (target: ${rawTarget}); not followed`,
-            }
-      );
+      // The same record `walkDirectory` writes for the same entry — see `brokenLinkRecord`.
+      report(linkedPath, brokenLinkRecord(absolute, linkedPath, rootReal));
       continue;
     }
 
@@ -1474,7 +1490,7 @@ function walkDirectory(
       try {
         targetReal = fs.realpathSync(fullPath);
       } catch {
-        results.skipped.push({ path: relPath, reason: "read-error", detail: "broken symlink" });
+        results.skipped.push(brokenLinkRecord(fullPath, relPath, rootReal));
         continue;
       }
 
