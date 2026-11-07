@@ -74,10 +74,12 @@ export {
   checkForUpdate,
   fetchLatestVersion,
   formatUpdateNotice,
+  installKind,
   isNewer,
   shouldCheck,
+  updateCommand,
 } from "./update-check.js";
-export type { UpdateCheckOptions, UpdateNotice } from "./update-check.js";
+export type { InstallKind, UpdateCheckOptions, UpdateNotice } from "./update-check.js";
 
 /**
  * Files whose UTF-8 body is larger than this are not parsed for a structural summary.

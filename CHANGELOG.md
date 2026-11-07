@@ -21,6 +21,48 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.9
+
+### `snapshot -version` now answers the question it was asked
+
+Reported from a real terminal, by someone trying to find out which version they had:
+
+```
+> snapshot -version
+❌ Unknown option '-e'. To specify a positional argument starting with a '-', place it at the
+   end of the command after '--', as in '-- "-e"'
+```
+
+That message came from `node:util.parseArgs`, which reads `-version` as the short-flag cluster
+`-v -e -r -s -i -o -n` and objects to the third character. It names something the caller never
+typed, and it buries the actual mistake — one dash where two belong — which is exactly the
+information a usage error exists to give.
+
+Every token of that shape is now caught before the parser sees it and answered as a spelling
+problem:
+
+```
+❌ Unknown option '-version'. Options start with two dashes — did you mean '--version'?
+```
+
+`-cwd`, `-help`, `-format` and `-dry-run` get the same treatment with their own long form
+suggested. A token that is not an option at all (`-frobnicate`) is told to go after `--` instead of
+being pointed at a `--frobnicate` that does not exist, and a cluster of short flags that *are* real
+(`-vh`) still works.
+
+### The update notice suggests the command that fits this copy
+
+It said `npm install -g codebase-snapshot` to everybody, which is wrong for two of the three ways
+people run this. `setup` deliberately adds the package as a **devDependency**, where `-g` installs a
+second global copy that shadows the pinned one; an `npx` invocation is a cache entry that the next
+`@latest` run replaces by itself.
+
+The suggested command is now derived from the path Node is running: `-g` for a global install,
+`npm install codebase-snapshot@latest` for a dependency of the project being worked in (npm rewrites
+the entry where it already is, so a devDependency stays one), and `npx -y codebase-snapshot@latest`
+for npx. The classification is `_npx` in the path for the cache, and `node_modules` under the
+working directory for a local dependency — evidence rather than a guess.
+
 ## 0.9.8
 
 ### A wrapped menu no longer changes height under the cursor

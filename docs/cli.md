@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.8
+   Added devDependency: codebase-snapshot ^0.9.9
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.8
+   Added devDependency: codebase-snapshot ^0.9.9
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -491,9 +491,14 @@ Once a day, after a command finishes, `snapshot` asks the npm registry whether a
 published and prints two lines on stderr if there is one:
 
 ```
-↑ codebase-snapshot 0.9.6 is available — you have 0.9.5.
+↑ codebase-snapshot 0.9.8 is available — you have 0.9.7.
   npm install -g codebase-snapshot
 ```
+
+The second line names the command that would actually replace *this* copy: `-g` for a global
+install, a plain `npm install codebase-snapshot@latest` when the package is a dependency of the
+project being worked in, and `npx -y codebase-snapshot@latest` when it was reached through `npx` —
+a global install would leave a second copy shadowing the pinned one.
 
 The request goes to `registry.npmjs.org/codebase-snapshot/latest`, carries no identifier of any
 kind, and its answer is remembered for 24 hours — one request per machine per day at most. It is

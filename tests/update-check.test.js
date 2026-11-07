@@ -16,6 +16,7 @@ import {
   cacheFilePath,
   checkForUpdate,
   formatUpdateNotice,
+  installKind,
   isNewer,
   shouldCheck,
 } from "../dist/index.js";
@@ -235,11 +236,44 @@ test("the cache decides whether the network is touched", async (t) => {
 });
 
 test("the notice names both versions and the command to run", () => {
-  const text = formatUpdateNotice({ current: "0.9.5", latest: "0.9.6" });
+  const text = formatUpdateNotice({ current: "0.9.5", latest: "0.9.6" }, "global");
   assert.match(text, /0\.9\.6 is available/);
   assert.match(text, /you have 0\.9\.5/);
   assert.match(text, /npm install -g codebase-snapshot/);
   assert.equal(text.split("\n").length, 2, "two lines, not a paragraph");
+});
+
+test("the command it suggests matches how the tool was reached", () => {
+  const notice = { current: "0.9.5", latest: "0.9.6" };
+  // A global install is replaced by a global install.
+  assert.match(formatUpdateNotice(notice, "global"), /^ {2}npm install -g codebase-snapshot$/m);
+  // A devDependency keeps its place: `-g` would install a second copy that shadows the pinned one.
+  assert.match(formatUpdateNotice(notice, "local"), /^ {2}npm install codebase-snapshot@latest$/m);
+  // An npx invocation is a cache entry; the documented way to move it is the next run.
+  assert.match(formatUpdateNotice(notice, "npx"), /^ {2}npx -y codebase-snapshot@latest$/m);
+});
+
+test("installKind reads the script path, not a guess", () => {
+  const project = path.join("C:", "work", "app");
+  assert.equal(
+    installKind(path.join(project, "node_modules", "codebase-snapshot", "dist", "bin.js"), project),
+    "local"
+  );
+  assert.equal(
+    installKind(
+      "C:\\Users\\me\\AppData\\Local\\npm-cache\\_npx\\abc123\\node_modules\\codebase-snapshot\\dist\\bin.js",
+      project
+    ),
+    "npx"
+  );
+  assert.equal(
+    installKind("C:\\nvm4w\\nodejs\\node_modules\\codebase-snapshot\\dist\\bin.js", project),
+    "global"
+  );
+  // A global install whose own path happens to sit under the working directory is not a dependency
+  // of it; the `node_modules` segment is what makes that distinction.
+  assert.equal(installKind(path.join(project, "dist", "bin.js"), project), "global");
+  assert.equal(installKind("", project), "global");
 });
 
 test("the cache lives under the platform's cache directory", () => {

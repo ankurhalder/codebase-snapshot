@@ -43,6 +43,47 @@ export interface UpdateNotice {
   latest: string;
 }
 
+/** How the running copy of the tool was reached, which decides how to replace it. */
+export type InstallKind = "global" | "local" | "npx";
+
+/**
+ * Classifies the script path Node is running.
+ *
+ * The notice used to tell everybody to run `npm install -g codebase-snapshot`, and that is wrong
+ * for two of the three ways people run this. A repository that added it as a devDependency —
+ * which is exactly what `setup` does — does not want a second global copy shadowing its pinned
+ * one, and an `npx` invocation is a cache entry that the next `@latest` run replaces by itself.
+ *
+ * The path is the evidence, because it is available without asking npm anything: `_npx` is npm's
+ * own cache directory name, and a local dependency lives under the project's `node_modules`.
+ */
+export function installKind(
+  scriptPath: string = process.argv[1] ?? "",
+  cwd: string = process.cwd()
+): InstallKind {
+  const normalise = (value: string): string => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const script = normalise(scriptPath);
+  if (script === "") return "global";
+  // Windows paths are case-insensitive, so the comparison is too.
+  const scriptKey = script.toLowerCase();
+  if (scriptKey.includes("/_npx/")) return "npx";
+  const root = normalise(cwd).toLowerCase();
+  // `node_modules` under the working directory is a dependency of the project being worked in;
+  // the same folder somewhere else is the global prefix's own storage, which is not.
+  if (scriptKey.includes("/node_modules/") && root !== "" && scriptKey.startsWith(`${root}/`)) {
+    return "local";
+  }
+  return "global";
+}
+
+/** The command that replaces this copy with the published latest. */
+export function updateCommand(kind: InstallKind): string {
+  if (kind === "npx") return "npx -y codebase-snapshot@latest";
+  // npm rewrites the entry where it already is, so a devDependency stays a devDependency.
+  if (kind === "local") return "npm install codebase-snapshot@latest";
+  return "npm install -g codebase-snapshot";
+}
+
 export interface UpdateCheckOptions {
   current: string;
   /** Absolute path to the cache file. */
@@ -255,9 +296,9 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
 }
 
 /** The two lines a user sees, or an empty string when there is nothing to say. */
-export function formatUpdateNotice(notice: UpdateNotice): string {
+export function formatUpdateNotice(notice: UpdateNotice, kind: InstallKind): string {
   return (
     `↑ codebase-snapshot ${notice.latest} is available — you have ${notice.current}.\n` +
-    "  npm install -g codebase-snapshot"
+    `  ${updateCommand(kind)}`
   );
 }

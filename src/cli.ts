@@ -32,7 +32,13 @@ import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
-import { cacheFilePath, checkForUpdate, formatUpdateNotice, shouldCheck } from "./update-check.js";
+import {
+  cacheFilePath,
+  checkForUpdate,
+  formatUpdateNotice,
+  installKind,
+  shouldCheck,
+} from "./update-check.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
@@ -298,6 +304,35 @@ function parseArtifactList(raw: string, flag: string): string[] {
   return names;
 }
 
+/** Short flags this CLI actually has, e.g. `-v` and `-h`. */
+const SHORT_FLAGS: ReadonlySet<string> = new Set(
+  Object.values(CLI_OPTIONS)
+    .map((spec) => (spec as { short?: string }).short)
+    .filter((short): short is string => typeof short === "string")
+    .map((short) => `-${short}`)
+);
+
+/**
+ * The first token that writes a long option with one dash, e.g. `-version`.
+ *
+ * `parseArgs` reads that as the short-flag cluster `-v -e -r -s -i -o -n` and reports
+ * `Unknown option '-e'` — naming a character the caller never typed, and burying the real mistake.
+ * A developer who types `-version` is trying to ask for the version; that deserves to be answered
+ * rather than parsed.
+ *
+ * A cluster of short flags that do exist (`-vh`) is legitimate and returns null.
+ */
+function misdashedLongOption(argv: readonly string[]): string | null {
+  for (const token of argv) {
+    if (token === "--") break;
+    // `-v` is two characters and fine; this needs a dash, a letter and at least one more character.
+    if (!/^-[A-Za-z][A-Za-z0-9-]+$/.test(token)) continue;
+    if ([...token.slice(1)].every((character) => SHORT_FLAGS.has(`-${character}`))) continue;
+    return token;
+  }
+  return null;
+}
+
 /**
  * Parses argv.
  *
@@ -306,6 +341,18 @@ function parseArtifactList(raw: string, flag: string): string[] {
  * through to the writable `generate` command.
  */
 export function parseCliArgs(argv: string[]): ParsedInvocation {
+  const misdashed = misdashedLongOption(argv);
+  if (misdashed !== null) {
+    const long = `--${misdashed.slice(1)}`;
+    const known = Object.prototype.hasOwnProperty.call(CLI_OPTIONS, misdashed.slice(1));
+    throw new UsageError(
+      known
+        ? `Unknown option '${misdashed}'. Options start with two dashes — did you mean '${long}'?`
+        : `Unknown option '${misdashed}'. Options start with two dashes; if '${misdashed}' is a ` +
+            `path or an argument, put it after '--'.`
+    );
+  }
+
   let parsed: ReturnType<typeof parseArgs>;
   try {
     // Repeated value options follow Node parseArgs' last-wins rule; repeated boolean flags are
@@ -1127,7 +1174,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   if (pending) {
     const notice = await pending;
-    if (notice) process.stderr.write(`\n${formatUpdateNotice(notice)}\n`);
+    if (notice) process.stderr.write(`\n${formatUpdateNotice(notice, installKind())}\n`);
   }
   return code;
 }
