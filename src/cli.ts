@@ -1430,24 +1430,13 @@ async function runCommand(argv: string[]): Promise<number> {
   );
 
   if (invocation.command === "validate") {
+    // `validateSnapshot` already shape-checks the manifest — `describeManifestShapeProblem` runs
+    // before any drift is computed, and a manifest that fails it comes back `valid: false` with
+    // that reason as its only error. The CLI read and re-parsed `manifest.json` here to run the
+    // same check again for a result that claimed to be valid, which on a large repository meant
+    // parsing a multi-megabyte document a second time to re-answer a question that had already
+    // been answered.
     const result = validateSnapshot(resolved);
-    // A manifest can parse, carry every array the validator needs, and still be nonsense in the
-    // fields it treats as opaque: `fingerprint: "12345"` passed as "valid and up to date". The
-    // shape check runs only for a result that claims to be valid, so an invalid result keeps the
-    // more specific answer it already has.
-    if (result.valid) {
-      const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
-      let manifest: unknown;
-      try {
-        manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-      } catch {
-        manifest = undefined; // unreadable or unparseable: `validateSnapshot` already said so
-      }
-      const shapeError = manifest === undefined ? null : describeManifestShapeProblem(manifest);
-      if (shapeError) {
-        return fail(invocation.format, `${manifestPath} is not a snapshot manifest: ${shapeError}`);
-      }
-    }
     emit(invocation.format, result, () => renderValidateText(result));
     return result.valid ? 0 : 1;
   }

@@ -1206,32 +1206,61 @@ function artifactWarnings(artifacts: ResolvedArtifacts, sarif: boolean): string[
  *    pending I/O are alive, so a hook that schedules an hour of work delays the command by an hour.
  *    That is a property of the event loop, not of this function, and the docs say so.
  */
+/**
+ * The stdout diversion used by `hooks.afterGenerate`.
+ *
+ * One `AsyncLocalStorage` for the whole process, installed at most once and released by
+ * reference counting. The previous implementation created a scope and a patched `write` per
+ * `runAfterGenerate` call and restored it only if `process.stdout.write` was still that call's
+ * own wrapper. With two overlapping async hooks that condition is false for whichever finishes
+ * first, so its restore was skipped — and the second, restoring its own *captured* value, put the
+ * first call's wrapper back permanently. `process.stdout.write` stayed wrapped for the life of the
+ * process, holding both scopes alive.
+ */
+const hookStdoutScope = new AsyncLocalStorage<true>();
+let activeHookRedirects = 0;
+let originalStdoutWrite: typeof process.stdout.write | null = null;
+
+/** Routes writes made inside a hook's async context to stderr; returns the release. */
+function installHookStdoutRedirect(): () => void {
+  if (activeHookRedirects === 0) {
+    originalStdoutWrite = process.stdout.write;
+    const realStdout = originalStdoutWrite.bind(process.stdout) as (...args: unknown[]) => boolean;
+    const realStderr = process.stderr.write.bind(process.stderr) as (...args: unknown[]) => boolean;
+    process.stdout.write = ((...args: unknown[]): boolean =>
+      hookStdoutScope.getStore() === true
+        ? realStderr(...args)
+        : realStdout(...args)) as typeof process.stdout.write;
+  }
+  activeHookRedirects += 1;
+
+  let released = false;
+  return (): void => {
+    // A caller that releases twice must not decrement somebody else's reference.
+    if (released) return;
+    released = true;
+    activeHookRedirects -= 1;
+    if (activeHookRedirects === 0 && originalStdoutWrite !== null) {
+      process.stdout.write = originalStdoutWrite;
+      originalStdoutWrite = null;
+    }
+  };
+}
+
 function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): Promise<unknown> | null {
   const hook = config.hooks.afterGenerate;
   if (!hook) return null;
 
-  const stdoutWrite = process.stdout.write.bind(process.stdout) as (
-    ...args: unknown[]
-  ) => boolean;
-  const stderrWrite = process.stderr.write.bind(process.stderr) as (
-    ...args: unknown[]
-  ) => boolean;
   // AsyncLocalStorage tells the hook's writes apart from the caller's without a
   // time window: a continuation after an `await` is still inside `hookScope`,
   // while the payload the CLI prints right after this call is not.
-  const hookScope = new AsyncLocalStorage<true>();
-  const patchedWrite = ((...args: unknown[]): boolean =>
-    hookScope.getStore() === true ? stderrWrite(...args) : stdoutWrite(...args)) as typeof process.stdout.write;
-  const restoreStdout = (): void => {
-    if (process.stdout.write === patchedWrite) process.stdout.write = stdoutWrite as typeof process.stdout.write;
-  };
+  const releaseRedirect = installHookStdoutRedirect();
   let returned: unknown;
 
   try {
-    process.stdout.write = patchedWrite;
-    returned = hookScope.run(true, () => hook(manifest));
+    returned = hookStdoutScope.run(true, () => hook(manifest));
   } catch (err) {
-    restoreStdout();
+    releaseRedirect();
     // The message is user code and can quote a credential (an error string from an
     // HTTP client carries the URL, a key reference carries the key). It is the one
     // repo-adjacent string that used to reach the manifest unmasked.
@@ -1243,12 +1272,12 @@ function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): P
 
   const thenable = returned as { then?: unknown } | null | undefined;
   if (!thenable || typeof thenable.then !== "function") {
-    restoreStdout();
+    releaseRedirect();
     return null;
   }
-  // The patched write stays installed until the hook settles; only writes made in
+  // The redirection stays installed until the hook settles; only writes made in
   // the hook's context are diverted, so the caller's payload is unaffected.
-  return Promise.resolve(returned).finally(restoreStdout);
+  return Promise.resolve(returned).finally(releaseRedirect);
 }
 
 /**
@@ -2159,33 +2188,41 @@ export function generateSnapshot(
       // - **Failure**: record it as a warning and re-ship, so a rejection never becomes an
       //   unhandled rejection that kills the process after "Snapshot generated … Integrity:
       //   passed" has already been printed.
-      pendingHook.then(
-        () => {
-          try {
-            shipHookState();
-          } catch {
-            // The snapshot is already written and correct; a bookkeeping rewrite that fails must
-            // not turn a successful run into a crash. The next run re-creates the marker.
+      const tracked = pendingHook
+        .then(
+          () => {
+            try {
+              shipHookState();
+            } catch {
+              // The snapshot is already written and correct; a bookkeeping rewrite that fails must
+              // not turn a successful run into a crash. The next run re-creates the marker.
+            }
+          },
+          (err: unknown) => {
+            // Hook messages are user code and can quote a credential; mask before it
+            // becomes a warning in the manifest and on stdout.
+            const message = maskPathText(
+              err instanceof Error ? err.message : String(err),
+              config.secretRules
+            );
+            manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
+            manifest.totals.warningCount = manifest.warnings.length;
+            try {
+              shipHookState();
+            } catch {
+              // The run already succeeded and the failure is recorded in memory; a write error here
+              // must not turn a warning into a crash.
+            }
           }
-        },
-        (err: unknown) => {
-          // Hook messages are user code and can quote a credential; mask before it
-          // becomes a warning in the manifest and on stdout.
-          const message = maskPathText(
-            err instanceof Error ? err.message : String(err),
-            config.secretRules
-          );
-          manifest.warnings.push(`hooks.afterGenerate failed: ${message}`);
-          manifest.totals.warningCount = manifest.warnings.length;
-          try {
-            shipHookState();
-          } catch {
-            // The run already succeeded and the failure is recorded in memory; a write error here
-            // must not turn a warning into a crash.
-          }
-        }
-      );
-      pendingHooks.set(outDir, pendingHook);
+        )
+        // Removed when it settles, not only when `generateSnapshotAsync` consumes it: a synchronous
+        // caller never consumes it, so this map kept one settled promise per output directory for
+        // the life of the process. The identity check keeps a newer run's entry from being dropped
+        // by an older run that settles later.
+        .finally(() => {
+          if (pendingHooks.get(outDir) === tracked) pendingHooks.delete(outDir);
+        });
+      pendingHooks.set(outDir, tracked);
     }
 
     return manifest;
@@ -2215,6 +2252,18 @@ export function generateSnapshot(
  * should: a caller that awaited the async form used to get control back while the hook was still
  * writing files into the snapshot it had just been told was finished.
  */
+/**
+ * `hooks.afterGenerate` promises still running, keyed by the output directory they write into.
+ *
+ * `generateSnapshot` is synchronous and cannot await them; `generateSnapshotAsync` can, and
+ * should: a caller that awaited the async form used to get control back while the hook was still
+ * writing files into the snapshot it had just been told was finished.
+ *
+ * The entry is removed when the hook settles, not only when `generateSnapshotAsync` consumes it. A
+ * synchronous caller never consumed it, so a long-lived process kept one settled promise per output
+ * directory forever. The guard on the delete keeps a newer run's entry from being removed by an
+ * older run that happened to settle later.
+ */
 const pendingHooks = new Map<string, Promise<unknown>>();
 
 /** Promise-returning wrapper for consumers that prefer an async call site. */
@@ -2222,14 +2271,18 @@ export async function generateSnapshotAsync(
   configInput?: SnapshotConfig | ResolvedSnapshotConfig | null,
   options?: GenerateOptions
 ): Promise<Manifest> {
-  const manifest = generateSnapshot(configInput, options);
+  // Resolved once, and the resolved object is what `generateSnapshot` generates from. The previous
+  // form resolved the input a second time after generating, purely to learn `outDir` — two full
+  // preset detections and config normalisations per call, and a second chance for the two
+  // answers to differ.
+  assertUsableConfigInput(configInput);
   const config = isResolvedConfig(configInput)
     ? normalizeResolvedConfig(configInput)
     : resolveConfig((configInput as SnapshotConfig | null | undefined) ?? null);
+  const manifest = generateSnapshot(config, options);
   const { outDir } = resolveSafeOutputDirs(config);
   const pending = pendingHooks.get(outDir);
   if (pending !== undefined) {
-    pendingHooks.delete(outDir);
     // A rejection is not rethrown: the snapshot is written, and the failure is recorded in
     // `manifest.warnings` exactly as it is for the synchronous caller. Throwing here would make
     // a *successful* generation look like a failed one.

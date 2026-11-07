@@ -17,6 +17,7 @@
  * overlaps entirely and adds no wall time.
  */
 import * as fs from "node:fs";
+import * as http from "node:http";
 import * as https from "node:https";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -100,25 +101,44 @@ interface CacheEntry {
   latest: string | null;
 }
 
-/** Splits `1.2.3-beta.1` into `[1, 2, 3]`. A prerelease compares equal to its release. */
-function versionParts(value: string): number[] {
-  const core = value.trim().replace(/^v/i, "").split("-")[0];
-  return core.split(".").map((part) => {
+/**
+ * A version split into its numeric core and its prerelease tag.
+ *
+ * `0.9.13-alpha.1` sorts *below* `0.9.13`, which is what semver says and what the update notice has
+ * to say too: stripping the tag made the check recommend an unstable prerelease to everyone on a
+ * stable release, and hid a stable release from anyone running a beta.
+ */
+function parseSemver(value: string): { core: number[]; prerelease: string | null } {
+  const cleaned = value.trim().replace(/^v/i, "").split("+")[0] ?? "";
+  const dash = cleaned.indexOf("-");
+  const corePart = dash === -1 ? cleaned : cleaned.slice(0, dash);
+  const prerelease = dash === -1 ? null : cleaned.slice(dash + 1);
+  const core = corePart.split(".").map((part) => {
     const parsed = Number(part);
     return Number.isFinite(parsed) ? parsed : 0;
   });
+  return { core, prerelease };
 }
 
-/** True when `candidate` is a strictly higher release than `current`. */
+/**
+ * True when `candidate` is a version worth telling somebody about.
+ *
+ * A prerelease is never announced — being offered `1.0.0-rc.1` while running `0.9.12` is not an
+ * upgrade, and a check that says so is wrong every time it fires. A stable release *is* newer than
+ * the prerelease of itself, so somebody on `0.9.12-beta.1` is told about `0.9.12`.
+ */
 export function isNewer(candidate: string, current: string): boolean {
-  const left = versionParts(candidate);
-  const right = versionParts(current);
-  const length = Math.max(left.length, right.length);
+  const left = parseSemver(candidate);
+  const right = parseSemver(current);
+  if (left.prerelease !== null && right.prerelease === null) return false;
+  const length = Math.max(left.core.length, right.core.length);
   for (let index = 0; index < length; index += 1) {
-    const a = left[index] ?? 0;
-    const b = right[index] ?? 0;
+    const a = left.core[index] ?? 0;
+    const b = right.core[index] ?? 0;
     if (a !== b) return a > b;
   }
+  if (left.prerelease === null && right.prerelease !== null) return true;
+  // Two prereleases of the same core are not ordered here: the notice exists to point at releases.
   return false;
 }
 
@@ -212,20 +232,43 @@ function writeCache(file: string, entry: CacheEntry): void {
   }
 }
 
-/** One HTTPS GET with a hard timeout. Resolves null for every failure. */
+/**
+ * One GET with a hard deadline. Resolves null for every failure.
+ *
+ * The deadline is a **wall clock**, not an idle-socket timeout. `request.setTimeout` only fires
+ * when the socket goes quiet, so a slow or trickling proxy — one that sends a byte every second —
+ * kept the CLI process alive long past `REQUEST_TIMEOUT_MS`. The timer below is absolute: when it
+ * fires the request is destroyed and the answer is "could not determine", which is what the notice
+ * already treats as "say nothing".
+ *
+ * The scheme picks the transport so the deadline can be exercised against a local server; the
+ * default URL is https either way.
+ */
 export function fetchLatestVersion(
   url: string = PACKAGE_LATEST_URL,
   timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     let settled = false;
+    let request: ReturnType<typeof https.get> | null = null;
+
     const finish = (value: string | null): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       resolve(value);
     };
 
-    const request = https.get(
+    // `unref` so a pending update check never keeps the process alive on its own; the socket it is
+    // waiting on keeps the loop alive for as long as there is one.
+    const deadline = setTimeout(() => {
+      request?.destroy();
+      finish(null);
+    }, timeoutMs);
+    deadline.unref();
+
+    const transport = url.startsWith("http:") ? http : https;
+    request = transport.get(
       url,
       {
         headers: {
@@ -244,7 +287,7 @@ export function fetchLatestVersion(
         response.on("data", (chunk: string) => {
           body += chunk;
           if (body.length > 64 * 1024) {
-            request.destroy();
+            request?.destroy();
             finish(null);
           }
         });
@@ -260,10 +303,6 @@ export function fetchLatestVersion(
     );
 
     request.on("error", () => finish(null));
-    request.setTimeout(timeoutMs, () => {
-      request.destroy();
-      finish(null);
-    });
   });
 }
 
