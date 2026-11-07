@@ -1415,6 +1415,10 @@ async function runCommand(argv: string[]): Promise<number> {
       largeFileBytes: invocation.largeFileBytes,
       maxMonolithBytes: invocation.maxMonolithBytes,
       skipArtifacts: invocation.skipArtifacts,
+      // `--only-artifacts` is forwarded as itself, not only as the derived suppression list:
+      // suppression cannot switch an artifact *on*, so a config that had turned one of the
+      // requested artifacts off left the run with nothing to write.
+      onlyArtifacts: invocation.onlyArtifacts,
       discovery: invocation.discovery,
       changedSince: invocation.changedSince,
       staged: invocation.staged,
@@ -1911,6 +1915,7 @@ async function runWatchLoop(
           largeFileBytes: invocation.largeFileBytes,
           maxMonolithBytes: invocation.maxMonolithBytes,
           skipArtifacts: invocation.skipArtifacts,
+          onlyArtifacts: invocation.onlyArtifacts,
           discovery: invocation.discovery,
           changedSince: invocation.changedSince,
           staged: invocation.staged,

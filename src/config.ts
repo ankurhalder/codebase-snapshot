@@ -55,8 +55,21 @@ export function findConfigFile(cwd: string): string | null {
   const pkgJsonPath = path.join(cwd, "package.json");
   if (!fs.existsSync(pkgJsonPath)) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) as { snapshot?: unknown };
-    return parsed.snapshot === undefined ? null : pkgJsonPath;
+    // The same JSONC-tolerant reader `loadConfigFileDetailed` uses. Bare `JSON.parse` here meant a
+    // `package.json` with a BOM — or a trailing comma, which plenty of editors write — answered
+    // "no configuration" while the loader below would have read it happily, so the two disagreed
+    // about whether this project is configured at all.
+    const parsed = JSON.parse(stripJsonComments(fs.readFileSync(pkgJsonPath, "utf8"))) as {
+      snapshot?: unknown;
+    };
+    // `snapshot` is this tool's key only when it is an object. `typeof [] === "object"`, so
+    // `"snapshot": []` and `"snapshot": "other-tool"` used to count as a configuration: the first
+    // run then skipped the setup question and generated with defaults nobody chose, while
+    // `loadConfigFileDetailed` warned and ignored the same value.
+    const snapshot = parsed?.snapshot;
+    return typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot)
+      ? pkgJsonPath
+      : null;
   } catch {
     // An unparseable package.json is not a configuration. Say "no config" here and let
     // the setup path explain the real problem when it tries to edit the file.
@@ -198,15 +211,26 @@ export function normalizeResolvedConfig(
     ? config.discovery
     : "auto";
 
+  // `includeMonolith` and `artifacts.monolith` are one setting with two spellings, and a spread
+  // override can move either one of them. Resolving `artifacts` with `includeMonolith` as the
+  // *default* left the two disagreeing — `{ ...resolved, includeMonolith: true }` produced a config
+  // claiming `includeMonolith: true` beside `artifacts.monolith: false`, and `generate` reads the
+  // artifact map, so the monolith silently was not written. Either spelling asking for it is a
+  // request; the reconciled answer goes back into both fields.
+  const monolithWanted = config.includeMonolith === true || config.artifacts?.monolith === true;
+  const artifacts = resolveArtifacts(
+    config.artifacts,
+    undefined,
+    monolithWanted,
+    monolithWanted
+  );
+
   return markResolvedConfig({
     ...config,
     discovery,
+    includeMonolith: artifacts.monolith,
     secretRules: compileSecretRules(config.secretRules),
-    artifacts: resolveArtifacts(
-      config.artifacts,
-      undefined,
-      config.includeMonolith === true
-    ),
+    artifacts,
     include: resolveInclude(config.include),
     preset: typeof config.preset === "string" ? config.preset : "generic",
     presetExclude: [
@@ -545,6 +569,26 @@ async function importConfigModule(
  * empty `catch`: a syntax error in a user's config used to be indistinguishable
  * from having no config at all.
  */
+/**
+ * Remembers the directory a config was loaded from, so `resolveConfig` can use it.
+ *
+ * Attached here rather than in `loadConfigFile`, because `loadConfigFileDetailed` is the loader
+ * the MCP server and the first-run probes use, and it is on the public API. A caller doing
+ * `resolveConfig((await loadConfigFileDetailed(dir)).config)` used to get a config with no
+ * directory affinity, and `resolveConfig` fell back to `process.cwd()` — scanning the process's
+ * working directory instead of the one the configuration came from.
+ */
+function attachConfigDir(config: SnapshotConfig, filePath: string): SnapshotConfig {
+  if (typeof config === "object" && config !== null) {
+    Object.defineProperty(config, CONFIG_DIR_SYMBOL, {
+      value: path.dirname(filePath),
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  return config;
+}
+
 export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -564,7 +608,7 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
           );
         }
         assertKnownConfigKeys(config as Record<string, unknown>, fullPath);
-        return { config, file: fullPath, warnings, errors };
+        return { config: attachConfigDir(config, fullPath), file: fullPath, warnings, errors };
       } catch (err) {
         // A read failure (an `EISDIR` from a config that is a directory, a permission error) comes
         // from `readFileSync` and carries no filename, so a repository with several config files
@@ -596,7 +640,7 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       // export" from "the default export is null".
       const hasDefault = Object.prototype.hasOwnProperty.call(imported, "default");
       const config = readConfigExport(hasDefault ? imported.default : imported, fullPath);
-      return { config, file: fullPath, warnings, errors };
+      return { config: attachConfigDir(config, fullPath), file: fullPath, warnings, errors };
     } catch (err) {
       const message = `Could not load ${fullPath}: ${(err as Error).message}`;
       warnings.push(message);
@@ -623,7 +667,12 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
           snapshotKey as Record<string, unknown>,
           `${pkgJsonPath} (the "snapshot" key)`
         );
-        return { config: snapshotKey as SnapshotConfig, file: pkgJsonPath, warnings, errors };
+        return {
+          config: attachConfigDir(snapshotKey as SnapshotConfig, pkgJsonPath),
+          file: pkgJsonPath,
+          warnings,
+          errors,
+        };
       }
       // A wrong-typed key is a mistake but not proof of intent — plenty of other
       // tools use a "snapshot" key — so warn rather than fail the run. Silently
@@ -646,15 +695,9 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
 
 export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null> {
   const loaded = await loadConfigFileDetailed(cwd);
-  // Remember where the config came from. `resolveConfig(await loadConfigFile(dir))` is the
-  // documented flow, and without this it generated into process.cwd() instead of that dir.
-  if (loaded.config && loaded.file && typeof loaded.config === "object") {
-    Object.defineProperty(loaded.config, CONFIG_DIR_SYMBOL, {
-      value: path.dirname(loaded.file),
-      enumerable: false,
-      configurable: true,
-    });
-  }
+  // The directory affinity is attached by `loadConfigFileDetailed`, which every loader uses:
+  // `resolveConfig(await loadConfigFile(dir))` is the documented flow, and without it the run
+  // generated into `process.cwd()` instead of that directory.
   // A config that exists but cannot be read is an error, not "no config": returning
   // null here made `resolveConfig(await loadConfigFile(cwd))` silently generate on
   // defaults while every setting the caller wrote was ignored.
@@ -712,12 +755,19 @@ function isArtifactName(value: string): value is ArtifactName {
  * Unknown keys are rejected rather than ignored: a typo here silently produces
  * an artifact the developer believed they had switched off, or leaves one they
  * believed they had removed.
+ *
+ * `only` is `--only-artifacts`. It is applied *after* the config and the flags and it wins
+ * outright: "write only these" is a statement about the whole selection, not an addition to it.
+ * That is the one thing the CLI could not express before — it forwarded the complement as
+ * `skipped`, and a config that had turned one of the requested artifacts off therefore left the
+ * run with every artifact disabled and nothing written.
  */
 function resolveArtifacts(
   requested: SnapshotConfig["artifacts"] | undefined,
   skipped: string[] | undefined,
   includeMonolith: boolean,
-  monolithOverride?: boolean
+  monolithOverride?: boolean,
+  only?: readonly string[]
 ): ResolvedArtifacts {
   const artifacts: ResolvedArtifacts = {
     ...DEFAULT_ARTIFACTS,
@@ -748,6 +798,22 @@ function resolveArtifacts(
   // for both is a contradiction the user can see in the summary.
   if (monolithOverride !== undefined) {
     artifacts.monolith = monolithOverride;
+  }
+
+  if (only !== undefined && only.length > 0) {
+    const keep = new Set<string>();
+    for (const name of only) {
+      if (!isArtifactName(name)) {
+        throw new Error(
+          `Unknown artifact "${name}". Expected one of: ${ARTIFACT_NAMES.join(", ")}.`
+        );
+      }
+      keep.add(name);
+    }
+    for (const name of ARTIFACT_NAMES) {
+      artifacts[name] = keep.has(name);
+    }
+    return artifacts;
   }
 
   for (const name of skipped ?? []) {
@@ -1244,7 +1310,8 @@ export function resolveConfig(
     userConfig?.artifacts,
     cliOptions?.skipArtifacts,
     includeMonolith,
-    cliMonolith
+    cliMonolith,
+    cliOptions?.onlyArtifacts
   );
 
   // Precedence: CLI `--max-part-bytes` > config `maxPartBytes` > `budgets.default`
@@ -1513,7 +1580,18 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     excludePatterns: config.excludePatterns,
     preset: config.preset,
     layersMode: config.layersMode,
-    budgets: config.budgets,
+    // `budgets.byLayer` is a plain object, and `JSON.stringify` preserves insertion order — so
+    // `{ docs, api }` and `{ api, docs }` hashed differently despite being the same settings, and
+    // `validate` reported configuration drift for a snapshot nobody had changed. The keys are
+    // canonicalised here; nothing else about the object is order-dependent.
+    budgets: {
+      default: config.budgets.default,
+      byLayer: Object.fromEntries(
+        Object.entries(config.budgets.byLayer).sort(([left], [right]) =>
+          left < right ? -1 : left > right ? 1 : 0
+        )
+      ),
+    },
     // The matcher is what makes a layer a layer. Hashing only the names meant that
     // moving `{ name: "api", match: "src/api/**" }` to `"src/v2/**"` produced the same
     // digest, so `validate` reported "valid and up to date" for a snapshot whose files

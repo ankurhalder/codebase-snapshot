@@ -575,9 +575,24 @@ export interface CliOptions {
   includeSensitiveFiles?: boolean;
   maxMonolithBytes?: number | null;
   maxPartBytes?: number;
+  maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;
   /** Artifact names to suppress for this invocation (`--skip-artifacts`). */
   skipArtifacts?: string[];
+  /**
+   * Artifact names to keep, with everything else off (`--only-artifacts`).
+   *
+   * Separate from the derived `skipArtifacts` because the two are not interchangeable: "only
+   * these" is a statement about the whole selection, and the suppression list cannot express it
+   * when the configuration has already turned one of the named artifacts off.
+   */
+  onlyArtifacts?: string[];
+  discovery?: DiscoveryMode;
+  changedSince?: string;
+  staged?: boolean;
+  withDependents?: boolean;
+  skeleton?: boolean;
+  sarif?: boolean;
 }
 
 export interface ValidationDrift {
