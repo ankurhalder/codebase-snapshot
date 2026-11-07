@@ -121,6 +121,7 @@ const CLI_OPTIONS = {
   "changed-since": { type: "string" },
   "with-dependents": { type: "boolean" },
   staged: { type: "boolean" },
+  skeleton: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -167,6 +168,7 @@ Options:
   --changed-since <ref>         Only files changed since this git ref, plus untracked ones
   --staged                      Only files staged for the next commit
   --with-dependents             With the two above: also include their importers
+  --skeleton                    Emit TypeScript signatures instead of bodies
   --include-sensitive-files     Emit .env / *.pem / .npmrc / credential files
   --skip-artifacts <names>      Comma-separated artifacts to omit
                                 (readme, manifest, parts, navigation,
@@ -278,6 +280,8 @@ interface ParsedInvocation {
   staged?: boolean;
   /** With the two above: also include the files that import a changed one. */
   withDependents?: boolean;
+  /** Emit signatures instead of bodies for TypeScript and TSX. */
+  skeleton?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -661,6 +665,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     changedSince: values["changed-since"] === undefined ? undefined : String(values["changed-since"]),
     staged: values.staged === true,
     withDependents: values["with-dependents"] === true,
+    skeleton: values.skeleton === true,
   };
 }
 
@@ -1361,6 +1366,7 @@ async function runCommand(argv: string[]): Promise<number> {
       changedSince: invocation.changedSince,
       staged: invocation.staged,
       withDependents: invocation.withDependents,
+      skeleton: invocation.skeleton,
     } as Partial<CliOptions> & { discovery?: DiscoveryMode },
     invocation.cwd
   );
@@ -1788,6 +1794,7 @@ async function runWatchLoop(
           changedSince: invocation.changedSince,
           staged: invocation.staged,
           withDependents: invocation.withDependents,
+          skeleton: invocation.skeleton,
         } as Partial<CliOptions> & { discovery?: DiscoveryMode; maxPartTokens?: number },
         invocation.cwd
       );

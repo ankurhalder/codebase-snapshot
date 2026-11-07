@@ -402,6 +402,7 @@ const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "previewTailLines",
   "secretRules",
   "secrets",
+  "skeleton",
   "tmpDir",
   "withDependents",
 ]);
@@ -1250,6 +1251,14 @@ export function resolveConfig(
     );
   }
   const withDependents = rawWithDependents === true;
+
+  const rawSkeleton =
+    (cliOptions as { skeleton?: unknown } | undefined)?.skeleton ??
+    (userConfig as { skeleton?: unknown } | null | undefined)?.skeleton;
+  if (rawSkeleton !== undefined && typeof rawSkeleton !== "boolean") {
+    throw new Error(`\`skeleton\` must be a boolean (received ${describeValue(rawSkeleton)}).`);
+  }
+  const skeleton = rawSkeleton === true;
   if (withDependents && changedSince === undefined && !staged) {
     throw new Error(
       "`withDependents` widens a changed-files scope, so it needs `changedSince` or `staged` " +
@@ -1296,6 +1305,7 @@ export function resolveConfig(
     ...(changedSince === undefined ? {} : { changedSince }),
     ...(staged ? { staged } : {}),
     ...(withDependents ? { withDependents } : {}),
+    ...(skeleton ? { skeleton } : {}),
     include: resolveInclude(userConfig?.include),
     preset: preset.presetName,
     presetExclude,
@@ -1386,7 +1396,13 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     // recording the token number means changing 32k to 64k moves the digest even in the
     // corner where both round to the same byte budget.
     maxPartTokens: config.maxPartTokens ?? null,
-    // A changed-files scope decides which files are in the snapshot at all, so a snapshot\n    // taken over a different scope is a different snapshot.\n    changedSince: config.changedSince ?? null,\n    staged: config.staged === true,\n    withDependents: config.withDependents === true,
+    // A changed-files scope decides which files are in the snapshot at all, so a snapshot
+    // taken over a different scope is a different snapshot.
+    changedSince: config.changedSince ?? null,
+    staged: config.staged === true,
+    withDependents: config.withDependents === true,
+    // Signature compression changes the emitted bytes of every TypeScript file it touches.
+    skeleton: config.skeleton === true,
     largeFileBytes: config.largeFileBytes,
     previewHeadLines: config.previewHeadLines,
     previewTailLines: config.previewTailLines,

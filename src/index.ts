@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
 import { summarizeJson, summarizeMarkdown } from "./ast/structured.js";
+import { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
 import { summarizeTypeScriptSource } from "./ast/ts-parser.js";
 import {
   ARTIFACT_NAMES,
@@ -43,6 +44,7 @@ import { validateSnapshot } from "./validator/validate.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, isOurGeneratorName } from "./version.js";
 import type {
   FileEntry,
+  InclusionMode,
   JsonSummary,
   Manifest,
   ManifestIndexes,
@@ -1573,8 +1575,22 @@ export function generateSnapshot(
     let finalContent = redacted;
     let isPreviewTruncated = false;
     let includedLines = lineCount;
+    let inclusionMode: InclusionMode = "full";
 
-    if (isLarge) {
+    // Signature compression comes before the preview decision: a body-less file is small, so
+    // previewing it afterwards would throw away the structure this mode exists to keep.
+    // The summary is still built from the whole text below, so `exports` and `imports`
+    // describe the real file rather than the compressed one.
+    if (config.skeleton === true && isSkeletonizable(relativePath)) {
+      const skeleton = skeletonizeTypeScript(redacted, relativePath);
+      if (skeleton.collapsed > 0) {
+        finalContent = skeleton.text;
+        inclusionMode = "signatures";
+        includedLines = countLines(skeleton.text);
+      }
+    }
+
+    if (isLarge && inclusionMode !== "signatures") {
       const preview = truncatePreview(
         redacted,
         config.previewHeadLines,
@@ -1583,6 +1599,7 @@ export function generateSnapshot(
       finalContent = preview.content;
       isPreviewTruncated = preview.isTruncated;
       includedLines = preview.includedLines;
+      inclusionMode = isPreviewTruncated ? "preview" : "full";
     }
 
     // `file.content` is deliberately the head/tail preview, but the monolith is
@@ -1645,7 +1662,7 @@ export function generateSnapshot(
       layer,
       kind,
       language,
-      inclusionMode: isPreviewTruncated ? "preview" : "full",
+      inclusionMode,
       isLarge,
       isPreviewTruncated,
       originalLines: lineCount,
@@ -1823,6 +1840,7 @@ export function generateSnapshot(
       ...(config.changedSince === undefined ? {} : { changedSince: config.changedSince }),
       ...(config.staged === true ? { staged: true } : {}),
       ...(config.withDependents === true ? { withDependents: true } : {}),
+      ...(config.skeleton === true ? { skeleton: true } : {}),
       artifacts: { ...config.artifacts },
       include: [...config.include].map(maskName),
       preset: config.preset,
@@ -2234,6 +2252,7 @@ export { estimateTokens, bytesForTokens, formatTokens } from "./tokenize.js";
 export { HOOK_MARKER, installPreCommitHook } from "./agent/hook.js";
 export type { HookInstallResult } from "./agent/hook.js";
 export { resolveChangedScope } from "./scanner/changed.js";
+export { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
 export type { ChangedScope, ChangedScopeRequest } from "./scanner/changed.js";
 export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 

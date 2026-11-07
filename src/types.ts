@@ -24,7 +24,7 @@ export type TextEncoding = "utf-8" | "utf-8-lossy" | "utf-16le" | "utf-16be";
  * `full`    – the complete file body was emitted.
  * `preview` – the body was truncated (by lines and/or bytes) before emission.
  */
-export type InclusionMode = "full" | "preview";
+export type InclusionMode = "full" | "preview" | "signatures";
 
 export interface SourceSummary {
   directives: string[];
@@ -308,6 +308,8 @@ export interface ManifestConfigSnapshot {
   changedSince?: string;
   staged?: boolean;
   withDependents?: boolean;
+  /** True when bodies were replaced by signatures. */
+  skeleton?: boolean;
   artifacts: ResolvedArtifacts;
   include: string[];
   preset: string;
@@ -467,6 +469,13 @@ export interface SnapshotConfig {
   /** Only include files staged for the next commit. */
   staged?: boolean;
   /**
+   * Emit signatures instead of bodies for TypeScript and TSX files.
+   *
+   * Matches `inclusionMode: "signatures"` on the entries it applies to, so a reader can tell a
+   * compressed file from a whole one without diffing it against the source.
+   */
+  skeleton?: boolean;
+  /**
    * With `changedSince` or `staged`, also include the files that import a changed one.
    *
    * A one-hop closure: the file you changed and the files that reference it are the context
@@ -517,6 +526,8 @@ export interface ResolvedSnapshotConfig {
   changedSince?: string;
   /** Only files staged for the next commit. */
   staged?: boolean;
+  /** Emit signatures instead of bodies for TypeScript and TSX files. */
+  skeleton?: boolean;
   /** Also include the files that import a changed one. */
   withDependents?: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */

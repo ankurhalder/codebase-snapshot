@@ -50,6 +50,7 @@ const VALIDATE_OPTIONS = [
  */
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
+    "skeleton",
     "changed-since",
     "staged",
     "with-dependents",

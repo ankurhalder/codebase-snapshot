@@ -192,6 +192,7 @@ export default {
   // changedSince: "main",      // only files changed since this git ref
   // staged: true,             // only files staged for the next commit
   // withDependents: true,     // ...and the files that import them
+  // skeleton: true,           // TypeScript signatures instead of bodies (--skeleton)
   largeFileBytes: "200k",      // above this a file becomes a head/tail preview
   previewHeadLines: 80,
   previewTailLines: 40,

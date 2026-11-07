@@ -409,6 +409,7 @@ narrowest cases of the same rule.
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
 | `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
 | `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
+| `--skeleton` | flag | off | generate | Emit TypeScript and TSX signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. |
 | `--changed-since <ref>` | git ref | unset | generate | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged`. |
 | `--staged` | flag | off | generate | Include only files staged for the next commit. |
 | `--with-dependents` | flag | off | generate | With either of the two above, also include the files that import a changed one — a one-hop closure. Needs a scope; alone it is a usage error. |
