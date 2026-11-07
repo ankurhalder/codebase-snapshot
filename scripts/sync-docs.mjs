@@ -82,6 +82,53 @@ for (const relative of targets()) {
   }
 }
 
+/**
+ * The version also lives in two manifests that no document references.
+ *
+ * `src/version.ts` is what the CLI reports and what every manifest records as
+ * `generator.version`; `packages/create/package.json` pins the scaffolder to the release it
+ * installs. Bumping `package.json` alone left both behind, and the failure is quiet: the
+ * package publishes, and `create-codebase-snapshot` then installs the *previous* release
+ * while the CLI reports a version it is not. Three files, one source of truth.
+ *
+ * `--check` covers these too, so a release cannot drift by forgetting a step.
+ */
+function syncManifests() {
+  const version = VALUES.version;
+
+  const versionTs = path.join(ROOT, "src", "version.ts");
+  const versionTsBefore = fs.readFileSync(versionTs, "utf8");
+  const versionTsAfter = versionTsBefore.replace(
+    /(export const GENERATOR_VERSION = ")\d+\.\d+\.\d+(")/,
+    `$1${version}$2`
+  );
+  if (versionTsAfter === versionTsBefore && !versionTsBefore.includes(`"${version}"`)) {
+    // A silent no-op here would publish a package that reports the wrong version, which is
+    // exactly the class of lie this project forbids. Fail instead.
+    throw new Error(
+      "sync-docs: src/version.ts no longer declares `export const GENERATOR_VERSION = \"x.y.z\"`"
+    );
+  }
+  if (versionTsAfter !== versionTsBefore) {
+    stale.push("src/version.ts");
+    if (!check) fs.writeFileSync(versionTs, versionTsAfter, "utf8");
+  }
+
+  const createPath = path.join(ROOT, "packages", "create", "package.json");
+  if (!fs.existsSync(createPath)) return;
+  const createBefore = fs.readFileSync(createPath, "utf8");
+  const createJson = JSON.parse(createBefore);
+  createJson.version = version;
+  createJson.dependencies = { ...(createJson.dependencies ?? {}), [pkg.name]: `^${version}` };
+  const createAfter = `${JSON.stringify(createJson, null, 2)}\n`;
+  if (createAfter !== createBefore) {
+    stale.push("packages/create/package.json");
+    if (!check) fs.writeFileSync(createPath, createAfter, "utf8");
+  }
+}
+
+syncManifests();
+
 if (check) {
   if (stale.length > 0) {
     write(`sync-docs: ${stale.length} file(s) out of step with package.json ${pkg.version}:`);

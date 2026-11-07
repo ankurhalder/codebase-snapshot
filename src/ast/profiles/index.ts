@@ -1,12 +1,18 @@
 import { cfamilyProfile } from "./cfamily.js";
+import { dartProfile } from "./dart.js";
 import { dotnetProfile } from "./dotnet.js";
 import { goProfile } from "./go.js";
+import { graphqlProfile } from "./graphql.js";
 import { jvmProfile } from "./jvm.js";
 import { phpProfile } from "./php.js";
+import { protobufProfile } from "./protobuf.js";
 import { pythonProfile } from "./python.js";
 import { rubyProfile } from "./ruby.js";
 import { rustProfile } from "./rust.js";
 import { sfcProfile } from "./sfc.js";
+import { sqlProfile } from "./sql.js";
+import { swiftProfile } from "./swift.js";
+import { terraformProfile } from "./terraform.js";
 import type { HeuristicResult, LanguageProfile } from "./shared.js";
 
 /**
@@ -25,6 +31,12 @@ export const LANGUAGE_PROFILES: readonly LanguageProfile[] = [
   rubyProfile,
   cfamilyProfile,
   sfcProfile,
+  swiftProfile,
+  dartProfile,
+  sqlProfile,
+  graphqlProfile,
+  protobufProfile,
+  terraformProfile,
 ];
 
 const BY_EXTENSION = new Map<string, LanguageProfile>();
@@ -53,5 +65,21 @@ export function summarizeWithProfile(path: string, content: string): HeuristicRe
   return profile ? profile.summarize(path, content) : null;
 }
 
-export { pythonProfile, goProfile, rustProfile, jvmProfile, dotnetProfile, phpProfile, rubyProfile, cfamilyProfile, sfcProfile };
+export {
+  pythonProfile,
+  goProfile,
+  rustProfile,
+  jvmProfile,
+  dotnetProfile,
+  phpProfile,
+  rubyProfile,
+  cfamilyProfile,
+  sfcProfile,
+  swiftProfile,
+  dartProfile,
+  sqlProfile,
+  graphqlProfile,
+  protobufProfile,
+  terraformProfile,
+};
 export type { HeuristicResult, LanguageProfile } from "./shared.js";

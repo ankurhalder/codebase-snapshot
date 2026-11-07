@@ -33,6 +33,8 @@ export const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".java": "java",
   ".rb": "ruby",
   ".php": "php",
+  ".swift": "swift",
+  ".dart": "dart",
   ".toml": "toml",
   ".ini": "ini",
   ".env": "dotenv",
@@ -42,6 +44,7 @@ export const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".gql": "graphql",
   ".proto": "protobuf",
   ".tf": "hcl",
+  ".tfvars": "hcl",
 };
 
 export const LANGUAGE_BY_BASENAME: Record<string, string> = {
