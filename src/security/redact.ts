@@ -182,6 +182,30 @@ const LINE_TERMINATOR = /\r\n|\n|\r/g;
  * - Records `{ rule, line, path }` only. No excerpt of the source is retained,
  *   because that excerpt was being written verbatim into `reports/audit.md`.
  */
+/**
+ * One compiled form per rule, reused across files.
+ *
+ * `toGlobal` builds a new `RegExp` for every rule on every file, and this runs on every file the
+ * repository contains: a 20 000-file scan compiled 31 patterns 20 000 times, 620 000 objects that
+ * are identical by construction. The rules are module-level constants and user-supplied rules are
+ * stable for the life of a run, so a `WeakMap` keyed on the rule is exact — a rule that is
+ * collected takes its compiled form with it.
+ */
+const COMPILED_RULES = new WeakMap<SecretRule, CompiledRule>();
+
+function compiledRuleFor(rule: SecretRule): CompiledRule {
+  let compiled = COMPILED_RULES.get(rule);
+  if (compiled === undefined) {
+    compiled = {
+      rule: rule.rule,
+      pattern: toGlobal(rule),
+      ...(rule.valueGroup === undefined ? {} : { valueGroup: rule.valueGroup }),
+    };
+    COMPILED_RULES.set(rule, compiled);
+  }
+  return compiled;
+}
+
 export function scanAndRedactSecrets(
   content: string,
   rules: SecretRule[],
@@ -223,11 +247,7 @@ export function scanAndRedactSecrets(
   }
 
   // Pass 2 — per-line rules, on segments that exclude the line terminators.
-  const compiled: CompiledRule[] = rules.map((rule) => ({
-    rule: rule.rule,
-    pattern: toGlobal(rule),
-    ...(rule.valueGroup === undefined ? {} : { valueGroup: rule.valueGroup }),
-  }));
+  const compiled: CompiledRule[] = rules.map(compiledRuleFor);
 
   const segments = redacted.split(LINE_BREAK);
   let lineNumber = 1;

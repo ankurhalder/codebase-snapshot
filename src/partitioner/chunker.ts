@@ -168,25 +168,59 @@ export function partitionFilesForBuckets(
   }
   if (groups.length === 0) return [];
 
+  /**
+   * Measured sizes, reused across split passes.
+   *
+   * A part's rendered size depends on its own sections, its index and the *width* of the numbering
+   * — nothing else. The header writes `part-007 of 012`, and while the digits change with the
+   * total, their width does not: every number is zero-padded to the same field, so a group that
+   * was measured at total 40 has exactly the same byte size at total 41. That is what makes the
+   * cache usable across a loop that adds one group per pass.
+   *
+   * Without it, every pass re-rendered, re-hashed and re-token-estimated *all* groups to find the
+   * one that overflowed: fifty parts and a handful of splits re-hashed tens of megabytes for
+   * numbers that had not changed.
+   */
+  const measurements = new Map<RenderGroup, { index: number; width: number; size: number }>();
+  const widthOf = (total: number): number => Math.max(3, String(total).length);
+
+  const measure = (group: RenderGroup, index: number, total: number): number => {
+    const cached = measurements.get(group);
+    const width = widthOf(total);
+    if (cached !== undefined && cached.index === index && cached.width === width) {
+      return cached.size;
+    }
+    const { content } = assembleGroup(group, index, total, contentFingerprint);
+    const size = Buffer.byteLength(content, "utf8");
+    measurements.set(group, { index, width, size });
+    return size;
+  };
+
   for (let pass = 0; pass < MAX_SPLIT_PASSES; pass++) {
-    const rendered = renderGroups(groups, contentFingerprint);
-    const oversized = rendered.findIndex(
-      (part) => part.metadata.byteSize > part.metadata.budgetBytes
-    );
-    if (oversized === -1) return rendered;
+    const total = groups.length;
+    let oversized = -1;
+    for (let index = 0; index < total; index += 1) {
+      const group = groups[index] as RenderGroup;
+      if (measure(group, index, total) > group.budget) {
+        oversized = index;
+        break;
+      }
+    }
+    if (oversized === -1) return renderGroups(groups, contentFingerprint);
 
     const group = groups[oversized] as RenderGroup;
     if (group.sections.length > 1) {
       const moved = group.sections.pop() as PreparedSection;
       groups.splice(oversized + 1, 0, { sections: [moved], budget: group.budget });
+      measurements.delete(group);
       continue;
     }
 
     // A single section still exceeds the budget (its metadata alone is huge):
     // shrink the body until it fits.
     const [section] = group.sections;
-    if (section === undefined) return rendered;
-    const overflow = (rendered[oversized] as PartitionedPart).metadata.byteSize - group.budget;
+    if (section === undefined) return renderGroups(groups, contentFingerprint);
+    const overflow = measure(group, oversized, total) - group.budget;
     const currentContent = section.file.content ?? "";
     const shrinkTo = Math.max(
       0,
@@ -202,6 +236,7 @@ export function partitionFilesForBuckets(
       applyTruncatedContent(section.file, shrunk.content);
       section.text = renderFileSection(section.file);
       section.byteSize = Buffer.byteLength(section.text, "utf8");
+      measurements.delete(group);
       continue;
     }
 
@@ -210,6 +245,7 @@ export function partitionFilesForBuckets(
     // token line {@link rehashPart} rewrites below, so the same room is held back here as in
     // `enforceBudget`. Without it a part clipped exactly to budget came out over it whenever the
     // rewoven estimate was a digit wider.
+    const rendered = renderGroups(groups, contentFingerprint);
     const marker = TRUNCATION_MARKER;
     assertBudgetHoldsMarker(group.budget);
     const target = Math.max(
@@ -611,66 +647,88 @@ function greedyGroups(sections: PreparedSection[], budget: number): PreparedSect
   return groups;
 }
 
+/**
+ * The rendered text of one group at one position, without the hash.
+ *
+ * Rendering is split into assembling and hashing so the split loop can measure a group without
+ * hashing it: the loop only needs the byte size to decide whether a group overflows, and it runs
+ * that decision over every group on every pass. Hashing there was pure cost — the final
+ * `renderGroups` hashes each part exactly once — and the measurement has to agree with the render
+ * to the byte, which it does by construction because both go through this function.
+ */
+function assembleGroup(
+  group: RenderGroup,
+  index: number,
+  total: number,
+  contentFingerprint?: string
+): { filename: string; content: string; estimatedTokens: number } {
+  const width = Math.max(3, String(total).length);
+  const zeroPad = (value: number): string => String(value).padStart(width, "0");
+  const filename = `part-${zeroPad(index + 1)}.md`;
+  const prev = index === 0 ? "none" : `part-${zeroPad(index)}.md`;
+  const next = index === total - 1 ? "none" : `part-${zeroPad(index + 2)}.md`;
+
+  for (const section of group.sections) {
+    section.file.part = filename;
+  }
+
+  const layerCounts: Record<string, number> = {};
+  const kindCounts: Record<string, number> = {};
+  for (const section of group.sections) {
+    layerCounts[section.file.layer] = (layerCounts[section.file.layer] || 0) + 1;
+    kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
+  }
+
+  const pathLines = group.sections.map((s) => displayPath(s.file.relativePath));
+  // A filename can itself contain a backtick run, so the listing fence is
+  // chosen from the listing rather than hardcoded to three backticks.
+  const listFence = fenceForText(pathLines.join("\n"), 3);
+
+  const header = [
+    `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,
+    "",
+    `- Previous: ${prev}`,
+    `- Next: ${next}`,
+    `- Files: ${group.sections.length}`,
+    `- Content Fingerprint: ${contentFingerprint || "none"}`,
+    `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
+    `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
+    "",
+    UNTRUSTED_CONTENT_NOTICE,
+    "",
+    "## Files",
+    "",
+    `${listFence}text`,
+    ...pathLines,
+    listFence,
+    "",
+    "## Contents",
+    "",
+  ].join("\n");
+
+  const assembled = (header + group.sections.map((s) => s.text).join("")).replace(
+    /\r\n|\r/g,
+    "\n"
+  );
+  const estimatedTokens = estimateTokens(assembled);
+  return { filename, content: insertTokenLine(assembled, estimatedTokens), estimatedTokens };
+}
+
 function renderGroups(
   groups: readonly RenderGroup[],
   contentFingerprint?: string
 ): PartitionedPart[] {
   const total = groups.length;
-  const zeroPad = (index: number): string =>
-    String(index).padStart(Math.max(3, String(total).length), "0");
-
   return groups.map((group, index) => {
-    const filename = `part-${zeroPad(index + 1)}.md`;
-    const prev = index === 0 ? "none" : `part-${zeroPad(index)}.md`;
-    const next = index === total - 1 ? "none" : `part-${zeroPad(index + 2)}.md`;
-
-    for (const section of group.sections) {
-      section.file.part = filename;
-    }
-
-    const layersCovered = Array.from(new Set(group.sections.map((s) => s.file.layer))).sort();
-    const layerCounts: Record<string, number> = {};
-    const kindCounts: Record<string, number> = {};
-    for (const section of group.sections) {
-      layerCounts[section.file.layer] = (layerCounts[section.file.layer] || 0) + 1;
-      kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
-    }
-
-    const pathLines = group.sections.map((s) => displayPath(s.file.relativePath));
-    // A filename can itself contain a backtick run, so the listing fence is
-    // chosen from the listing rather than hardcoded to three backticks.
-    const listFence = fenceForText(pathLines.join("\n"), 3);
-
-    const header = [
-      `# Codebase Snapshot Part ${zeroPad(index + 1)} of ${zeroPad(total)}`,
-      "",
-      `- Previous: ${prev}`,
-      `- Next: ${next}`,
-      `- Files: ${group.sections.length}`,
-      `- Content Fingerprint: ${contentFingerprint || "none"}`,
-      `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
-      `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
-      "",
-      UNTRUSTED_CONTENT_NOTICE,
-      "",
-      "## Files",
-      "",
-      `${listFence}text`,
-      ...pathLines,
-      listFence,
-      "",
-      "## Contents",
-      "",
-    ].join("\n");
-
-    const assembled = (header + group.sections.map((s) => s.text).join("")).replace(
-      /\r\n|\r/g,
-      "\n"
+    const { filename, content, estimatedTokens } = assembleGroup(
+      group,
+      index,
+      total,
+      contentFingerprint
     );
-    const estimatedTokens = estimateTokens(assembled);
-    const content = insertTokenLine(assembled, estimatedTokens);
     const byteSize = Buffer.byteLength(content, "utf8");
     const sha256 = crypto.createHash("sha256").update(content).digest("hex");
+    const layersCovered = Array.from(new Set(group.sections.map((s) => s.file.layer))).sort();
 
     const includedFiles: PartFileEntry[] = group.sections.map(({ file }) => ({
       relativePath: file.relativePath,

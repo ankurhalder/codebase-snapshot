@@ -72,7 +72,11 @@ export function skeletonizeTypeScript(source: string, fileName = "file.ts"): Ske
     fileName,
     source,
     ts.ScriptTarget.Latest,
-    true,
+    // `setParentNodes: false`. Nothing here reads `.parent` — the one `getStart` call is given the
+    // source file explicitly, which is the reason that argument exists. Asking for parent pointers
+    // makes the parser run a second full pass over every node in the file to set them, on top of
+    // the summary parse this same file already pays for.
+    false,
     scriptKindFor(fileName)
   );
 
@@ -90,11 +94,15 @@ export function skeletonizeTypeScript(source: string, fileName = "file.ts"): Ske
       hasCollapsibleBody(node)
     ) {
       const body = (node as { body: ts.Block }).body;
-      // `getStart()` skips the leading trivia, so the span begins at `{` and the comments
-      // above the function stay where they were.
-      const start = body.getStart(sourceFile);
-      const end = body.getEnd();
-      if (end > start) spans.push({ start, end });
+      // An empty body has nothing to hide, and replacing `{}` with `{ /* ... */ }` makes the file
+      // *longer* — `function f() {}` grew from two bytes to thirteen.
+      if (body.statements.length > 0) {
+        // `getStart()` skips the leading trivia, so the span begins at `{` and the comments
+        // above the function stay where they were.
+        const start = body.getStart(sourceFile);
+        const end = body.getEnd();
+        if (end > start) spans.push({ start, end });
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -113,13 +121,18 @@ export function skeletonizeTypeScript(source: string, fileName = "file.ts"): Ske
     outermost.push(span);
   }
 
-  let text = source;
-  for (let index = outermost.length - 1; index >= 0; index -= 1) {
-    const span = outermost[index] as { start: number; end: number };
-    text = `${text.slice(0, span.start)}{ /* ... */ }${text.slice(span.end)}`;
+  // Assembled forwards, once. Rewriting `text` in a loop from the last span to the first copied
+  // the whole file for every span it rewrote: a file with 400 functions and 200 KB of source
+  // moved 80 MB of string to save the same bodies.
+  const chunks: string[] = [];
+  let cursor = 0;
+  for (const span of outermost) {
+    chunks.push(source.slice(cursor, span.start), "{ /* ... */ }");
+    cursor = span.end;
   }
+  chunks.push(source.slice(cursor));
 
-  return { text, collapsed: outermost.length };
+  return { text: chunks.join(""), collapsed: outermost.length };
 }
 
 /**

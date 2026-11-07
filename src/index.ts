@@ -105,6 +105,214 @@ export type { InstallKind, UpdateCheckOptions, UpdateNotice } from "./update-che
  */
 const SUMMARY_MAX_SOURCE_BYTES = SUMMARY_MAX_SOURCE_BYTES_SHARED;
 
+/**
+ * What the generator derives from one file's bytes.
+ *
+ * Everything here is a pure function of (bytes, settings, path) except `findings[].path`, which is
+ * the path itself. That is what makes it cacheable: a second run that sees the same hash for the
+ * same path under the same settings must produce the same values, so `--watch` can skip the
+ * redaction pass and the TypeScript parse for every file the last run already read.
+ *
+ * The operations it covers are the expensive ones. On a 3 000-file repository a regeneration
+ * spends nearly all of its wall time in them — masking every line of every file against 31 rules,
+ * and building an AST per source file — and almost none of it reading bytes or writing parts, which
+ * are all that changed when the watcher fired for one file.
+ */
+interface Derivation {
+  redacted: string;
+  findings: SecretFinding[];
+  lineCount: number;
+  finalContent: string;
+  inclusionMode: InclusionMode;
+  isPreviewTruncated: boolean;
+  includedLines: number;
+  isLarge: boolean;
+  summary: FileEntry["summary"];
+  summaryQuality: SummaryQuality | undefined;
+  summarySkip: "oversize" | "preview" | null;
+  summaryWarning: string | null;
+  dependentImports: string[] | null;
+}
+
+/**
+ * Derivations kept between runs, in one process.
+ *
+ * In memory and not on disk, deliberately: `.codebase-snapshot` is the record of what was *written*
+ * and adding a cache to it would make the ownership marker describe state the user did not ask for.
+ * A cache that dies with the process cannot go stale in a way the next run has to detect.
+ *
+ * Validity is the content hash, not `mtime`. A file rewritten with the same length inside the same
+ * timestamp tick — which is exactly what a `git checkout` or a formatter run does — would defeat an
+ * mtime check and produce a snapshot of content that is no longer on disk. The hash is already
+ * computed to record the manifest, so comparing it costs nothing and cannot be wrong.
+ */
+const FILE_DERIVATIONS = new Map<string, Derivation & { hash: string; settings: string; bytes: number }>();
+const FILE_DERIVATION_LIMIT_BYTES = 64 * 1024 * 1024;
+let fileDerivationBytes = 0;
+
+function takeDerivation(path: string, hash: string, settings: string): Derivation | undefined {
+  const cached = FILE_DERIVATIONS.get(path);
+  if (cached === undefined || cached.hash !== hash || cached.settings !== settings) return undefined;
+  return cached;
+}
+
+function rememberDerivation(
+  path: string,
+  hash: string,
+  settings: string,
+  derivation: Derivation
+): void {
+  // The two bodies are frequently the same string object (no skeleton, no preview), and counting
+  // it twice would halve the effective cache.
+  const bodyBytes =
+    derivation.finalContent === derivation.redacted
+      ? derivation.redacted.length
+      : derivation.redacted.length + derivation.finalContent.length;
+  const bytes = bodyBytes * 2 + 512;
+  // One enormous file must not evict the rest of the repository to cache itself.
+  if (bytes > FILE_DERIVATION_LIMIT_BYTES / 4) return;
+
+  while (fileDerivationBytes + bytes > FILE_DERIVATION_LIMIT_BYTES) {
+    const oldest = FILE_DERIVATIONS.keys().next();
+    if (oldest.done === true) break;
+    const evicted = FILE_DERIVATIONS.get(oldest.value);
+    FILE_DERIVATIONS.delete(oldest.value);
+    if (evicted !== undefined) fileDerivationBytes -= evicted.bytes;
+  }
+
+  FILE_DERIVATIONS.set(path, { ...derivation, hash, settings, bytes });
+  fileDerivationBytes += bytes;
+}
+
+/**
+ * A digest of everything that can change a derivation.
+ *
+ * The configuration digest covers the settings a manifest records; the secret rules are appended
+ * because a custom rule set is not part of it, and a rule change alters every redacted body without
+ * altering any recorded setting.
+ */
+function derivationSettings(config: ResolvedSnapshotConfig): string {
+  const rules = config.secretRules
+    .map(
+      (rule) =>
+        `${rule.rule}\u0000${rule.pattern.source}\u0000${rule.pattern.flags}\u0000${rule.valueGroup ?? ""}`
+    )
+    .join("\u0001");
+  return `${GENERATOR_VERSION}\u0002${configDigest(config)}\u0002${sha256Hex(rules)}`;
+}
+
+/**
+ * Everything one file contributes to the snapshot, from its decoded text.
+ *
+ * Extracted from the scan loop so it can be cached whole. The warnings it produces are returned
+ * rather than pushed, because the caller has to be able to drop them again when a changed-files
+ * scope removes the file.
+ */
+function deriveFile(
+  relativePath: string,
+  rawContent: string,
+  sizeBytes: number,
+  config: ResolvedSnapshotConfig
+): Derivation {
+  const lineCount = countLines(rawContent);
+  const { redacted, findings } = scanAndRedactSecrets(rawContent, config.secretRules, relativePath);
+
+  const isLarge = sizeBytes > config.largeFileBytes;
+  let finalContent = redacted;
+  let isPreviewTruncated = false;
+  let includedLines = lineCount;
+  let inclusionMode: InclusionMode = "full";
+
+  // Signature compression comes before the preview decision: a body-less file is small, so
+  // previewing it afterwards would throw away the structure this mode exists to keep.
+  // The summary is still built from the whole text below, so `exports` and `imports`
+  // describe the real file rather than the compressed one.
+  if (config.skeleton === true && isSkeletonizable(relativePath)) {
+    const skeleton = skeletonizeTypeScript(redacted, relativePath);
+    if (skeleton.collapsed > 0) {
+      finalContent = skeleton.text;
+      inclusionMode = "signatures";
+      includedLines = countLines(skeleton.text);
+    }
+  }
+
+  if (isLarge && inclusionMode !== "signatures") {
+    const preview = truncatePreview(redacted, config.previewHeadLines, config.previewTailLines);
+    finalContent = preview.content;
+    isPreviewTruncated = preview.isTruncated;
+    includedLines = preview.includedLines;
+    inclusionMode = isPreviewTruncated ? "preview" : "full";
+  }
+
+  let summary: FileEntry["summary"];
+  let summaryQuality: SummaryQuality | undefined;
+  let summarySkip: "oversize" | "preview" | null = null;
+  let summaryWarning: string | null = null;
+  let dependentImports: string[] | null = null;
+
+  // Size first, then preview: a 3 MB file is both, and "exceeds 2 MB" is the more useful of the
+  // two true statements — it names the ceiling that kept the run bounded. The preview rule then
+  // covers the 200 KB–2 MB band, where the file is small enough to have been parsed before.
+  if (Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES) {
+    // A structural summary of a file this size costs far more memory than the file itself — the
+    // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
+    // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
+    // describe a file the snapshot does not contain. Recorded, never silent.
+    summarySkip = "oversize";
+    // `[]` here, from the same helper and the same ceiling `validate` and `explain` apply.
+    dependentImports = [];
+  } else if (SKIP_PREVIEW_SUMMARIES && isPreviewTruncated && hasStructuralSummary(relativePath)) {
+    // The body in the snapshot is a head/tail preview, so a whole-file summary
+    // would describe lines no artifact carries. Skipping it is also the single
+    // largest cost saving on a big source file: masking tens of thousands of
+    // identifiers for a summary the partitioner discards.
+    summarySkip = "preview";
+    // The *imports* are still needed, and they are the cheap half of the summary: module
+    // specifiers live at the top of the file, which the head of a preview keeps.
+    dependentImports = importsOfText(relativePath, rawContent);
+  } else {
+    try {
+      // Always parse the original source. Masking a credential-shaped identifier such as
+      // `const secret = previousSecrets[i]` produced syntactically invalid code, so the
+      // parser reported parse errors on files that are perfectly valid TypeScript.
+      const outcome = summarizeFile(relativePath, rawContent);
+      // Parse the raw source (masking an identifier can make valid TypeScript
+      // unparsable), but never let a raw string reach the summary: a secret in a
+      // heading, key or export name is emitted into the manifest and the parts.
+      summary = outcome?.summary
+        ? (maskSummaryStrings(outcome.summary, config.secretRules) as FileEntry["summary"])
+        : undefined;
+      summaryQuality = outcome?.quality;
+      if (isSourceSummary(summary) && summary.parseErrors) {
+        summaryWarning = `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`;
+      }
+    } catch (err) {
+      // A single pathological file used to abort the whole run.
+      summaryWarning =
+        `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(
+          /\s+/g,
+          " "
+        );
+    }
+  }
+
+  return {
+    redacted,
+    findings,
+    lineCount,
+    finalContent,
+    inclusionMode,
+    isPreviewTruncated,
+    includedLines,
+    isLarge,
+    summary,
+    summaryQuality,
+    summarySkip,
+    summaryWarning,
+    dependentImports,
+  };
+}
+
 
 function sha256Hex(input: string | Buffer): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -1451,6 +1659,8 @@ export function generateSnapshot(
       : collection.files;
 
   const files: FileEntry[] = [];
+  /** Everything that can change a cached derivation, computed once for the whole run. */
+  const derivationKey = derivationSettings(config);
   /** Full redacted bodies of large files, kept for the monolith only. */
   const monolithBodies = new Map<string, string>();
   const skipped: SkipRecord[] = maskSkipRecords([...collection.skipped], config.secretRules);
@@ -1599,9 +1809,7 @@ export function generateSnapshot(
     // file with invalid UTF-8 no longer produces unfixable phantom drift.
     const hashSha256 = sha256Hex(buffer);
     const rawContent = decoded.text;
-    const lineCount = countLines(rawContent);
 
-    totalLines += lineCount;
     totalSizeBytes += stats.size;
 
     if (decoded.encoding !== "utf-8") {
@@ -1621,44 +1829,29 @@ export function generateSnapshot(
     bump(layerCounts, layer);
     bump(kindCounts, kind);
 
-    const { redacted, findings } = scanAndRedactSecrets(
-      rawContent,
-      config.secretRules,
-      relativePath
-    );
-    secretFindings.push(...findings);
+    // Same bytes, same settings, same path: the derivation is the one from the previous run. This
+    // is what makes `--watch` regenerate in milliseconds instead of re-parsing the repository for
+    // every keystroke.
+    const derivation =
+      takeDerivation(absolutePath, hashSha256, derivationKey) ??
+      (() => {
+        const fresh = deriveFile(relativePath, rawContent, stats.size, config);
+        rememberDerivation(absolutePath, hashSha256, derivationKey, fresh);
+        return fresh;
+      })();
 
-    const isLarge = stats.size > config.largeFileBytes;
-    if (isLarge) largeFileCount += 1;
+    const { lineCount } = derivation;
+    totalLines += lineCount;
+    secretFindings.push(...derivation.findings);
+    if (derivation.isLarge) largeFileCount += 1;
 
-    let finalContent = redacted;
-    let isPreviewTruncated = false;
-    let includedLines = lineCount;
-    let inclusionMode: InclusionMode = "full";
-
-    // Signature compression comes before the preview decision: a body-less file is small, so
-    // previewing it afterwards would throw away the structure this mode exists to keep.
-    // The summary is still built from the whole text below, so `exports` and `imports`
-    // describe the real file rather than the compressed one.
-    if (config.skeleton === true && isSkeletonizable(relativePath)) {
-      const skeleton = skeletonizeTypeScript(redacted, relativePath);
-      if (skeleton.collapsed > 0) {
-        finalContent = skeleton.text;
-        inclusionMode = "signatures";
-        includedLines = countLines(skeleton.text);
-      }
+    if (derivation.summarySkip === "oversize") oversizeSummaryPaths.push(relativePath);
+    else if (derivation.summarySkip === "preview") previewSummaryPaths.push(relativePath);
+    if (derivation.dependentImports !== null) {
+      skippedSummaryImports.set(relativePath, derivation.dependentImports);
     }
-
-    if (isLarge && inclusionMode !== "signatures") {
-      const preview = truncatePreview(
-        redacted,
-        config.previewHeadLines,
-        config.previewTailLines
-      );
-      finalContent = preview.content;
-      isPreviewTruncated = preview.isTruncated;
-      includedLines = preview.includedLines;
-      inclusionMode = isPreviewTruncated ? "preview" : "full";
+    if (derivation.summaryWarning !== null) {
+      fileWarnings.push({ path: relativePath, message: derivation.summaryWarning });
     }
 
     // `file.content` is deliberately whatever the parts carry, but the monolith is documented as
@@ -1669,62 +1862,11 @@ export function generateSnapshot(
     // The skeleton case is the one that used to lie: `--skeleton --include-monolith` wrote a body
     // without any function bodies into `full-codebase.json` and labelled it
     // `inclusionMode: "full"`, so the monolith claimed to contain code it had deleted.
-    if (config.includeMonolith && (isPreviewTruncated || inclusionMode === "signatures")) {
-      monolithBodies.set(relativePath, redacted);
-    }
-
-    let summary: FileEntry["summary"];
-    let summaryQuality: SummaryQuality | undefined;
-    // Size first, then preview: a 3 MB file is both, and "exceeds 2 MB" is the more useful of the
-    // two true statements — it names the ceiling that kept the run bounded. The preview rule then
-    // covers the 200 KB–2 MB band, where the file is small enough to have been parsed before.
-    if (Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES) {
-      // A structural summary of a file this size costs far more memory than the file itself — the
-      // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
-      // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
-      // describe a file the snapshot does not contain. Recorded, never silent.
-      oversizeSummaryPaths.push(relativePath);
-      // `[]` here, from the same helper and the same ceiling `validate` and `explain` apply.
-      skippedSummaryImports.set(relativePath, importsOfText(relativePath, rawContent));
-    } else if (SKIP_PREVIEW_SUMMARIES && isPreviewTruncated && hasStructuralSummary(relativePath)) {
-      // The body in the snapshot is a head/tail preview, so a whole-file summary
-      // would describe lines no artifact carries. Skipping it is also the single
-      // largest cost saving on a big source file: masking tens of thousands of
-      // identifiers for a summary the partitioner discards.
-      previewSummaryPaths.push(relativePath);
-      // The *imports* are still needed, and they are the cheap half of the summary: module
-      // specifiers live at the top of the file, which the head of a preview keeps.
-      skippedSummaryImports.set(relativePath, importsOfText(relativePath, rawContent));
-    } else {
-      try {
-        // Always parse the original source. Masking a credential-shaped identifier such as
-        // `const secret = previousSecrets[i]` produced syntactically invalid code, so the
-        // parser reported parse errors on files that are perfectly valid TypeScript.
-        const outcome = summarizeFile(relativePath, rawContent);
-        // Parse the raw source (masking an identifier can make valid TypeScript
-        // unparsable), but never let a raw string reach the summary: a secret in a
-        // heading, key or export name is emitted into the manifest and the parts.
-        summary = outcome?.summary
-          ? (maskSummaryStrings(outcome.summary, config.secretRules) as FileEntry["summary"])
-          : undefined;
-        summaryQuality = outcome?.quality;
-        if (isSourceSummary(summary) && summary.parseErrors) {
-          fileWarnings.push({
-            path: relativePath,
-            message: `Parse errors in ${maskPathText(relativePath, config.secretRules)} (${summary.parseErrors}); its summary is incomplete.`,
-          });
-        }
-      } catch (err) {
-        // A single pathological file used to abort the whole run.
-        fileWarnings.push({
-          path: relativePath,
-          message:
-            `Summary skipped for ${maskPathText(relativePath, config.secretRules)}: ${(err as Error).message}`.replace(
-              /\s+/g,
-              " "
-            ),
-        });
-      }
+    if (
+      config.includeMonolith &&
+      (derivation.isPreviewTruncated || derivation.inclusionMode === "signatures")
+    ) {
+      monolithBodies.set(relativePath, derivation.redacted);
     }
 
     files.push({
@@ -1736,16 +1878,16 @@ export function generateSnapshot(
       layer,
       kind,
       language,
-      inclusionMode,
-      isLarge,
-      isPreviewTruncated,
+      inclusionMode: derivation.inclusionMode,
+      isLarge: derivation.isLarge,
+      isPreviewTruncated: derivation.isPreviewTruncated,
       originalLines: lineCount,
-      includedLines,
-      includedBytes: Buffer.byteLength(finalContent, "utf8"),
-      summary,
-      summaryQuality,
+      includedLines: derivation.includedLines,
+      includedBytes: Buffer.byteLength(derivation.finalContent, "utf8"),
+      summary: derivation.summary,
+      summaryQuality: derivation.summaryQuality,
       ...(decoded.encoding === "utf-8" ? {} : { encoding: decoded.encoding }),
-      content: finalContent,
+      content: derivation.finalContent,
     });
   }
 
@@ -1888,12 +2030,20 @@ export function generateSnapshot(
   // byte-truncates a section. Large files take their full body from
   // `monolithBodies` — their `content` is the parts preview, and a monolith made
   // of previews was not the codebase it claimed to contain.
+  //
+  // Only when a monolith was asked for. This map held a reference to every file's pre-partition
+  // body on every run, including the 99 % that wrote no monolith: once the partitioner replaced
+  // `file.content` with a truncated string, the multi-megabyte original stayed reachable here and
+  // could not be collected. The two strings are the same object when nothing truncates them, so
+  // the map cost a pointer per file — and pinned the expensive case exactly.
   const fullContents = new Map<string, string>();
-  for (const file of files) {
-    fullContents.set(
-      file.relativePath,
-      monolithBodies.get(file.relativePath) ?? file.content ?? ""
-    );
+  if (config.includeMonolith) {
+    for (const file of files) {
+      fullContents.set(
+        file.relativePath,
+        monolithBodies.get(file.relativePath) ?? file.content ?? ""
+      );
+    }
   }
 
   const parts = partitionByBudget(files, config, fingerprint);
