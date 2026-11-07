@@ -108,6 +108,18 @@ function truncateWithBudgetMarker(
   };
 }
 
+/** One set of files to pack, with the byte budget that applies to it. */
+export interface PartitionBucket {
+  files: FileEntry[];
+  budgetBytes: number;
+}
+
+/** A run of sections that will be rendered as one part, and the budget it must fit. */
+interface RenderGroup {
+  sections: PreparedSection[];
+  budget: number;
+}
+
 /**
  * Partitions rendered file sections into byte-bounded parts.
  *
@@ -121,31 +133,60 @@ export function partitionFiles(
   maxPartBytes: number,
   contentFingerprint?: string
 ): PartitionedPart[] {
-  if (files.length === 0) return [];
+  return partitionFilesForBuckets([{ files, budgetBytes: maxPartBytes }], contentFingerprint);
+}
 
-  const budget = Math.max(MIN_SECTION_BUDGET_BYTES + HEADER_RESERVE_BYTES, maxPartBytes);
-  const sectionBudget = budget - HEADER_RESERVE_BYTES;
-
-  const prepared = files.map((file) => prepareSection(file, sectionBudget));
-
-  let groups = greedyGroups(prepared, budget);
+/**
+ * Partitions several file sets, each under its own budget, as **one** sequence of parts.
+ *
+ * This exists so per-layer budgets can be honoured without re-numbering afterwards. The previous
+ * arrangement ran `partitionFiles` once per budget and then rewrote every part's header to fit the
+ * merged numbering — which meant a part that had already been fitted to its budget grew by up to
+ * fourteen bytes (`- Previous: none` becomes `- Previous: part-001.md`, `- Next: none` becomes
+ * `- Next: part-042.md`), and `renumberParts` re-applied the byte bound to the *rewritten* part.
+ * Whatever that clamp did to a part, it did after the fact: the part's recorded bytes, its file
+ * list and its closing fence had already been decided.
+ *
+ * Numbers and links are only knowable once the whole set is known, so they are decided once, here,
+ * and each part is rendered with what it will actually say. The byte bound then holds because of
+ * how a part is built rather than because something checked it afterwards.
+ */
+export function partitionFilesForBuckets(
+  buckets: readonly PartitionBucket[],
+  contentFingerprint?: string
+): PartitionedPart[] {
+  const groups: RenderGroup[] = [];
+  for (const bucket of buckets) {
+    if (bucket.files.length === 0) continue;
+    const budget = Math.max(
+      MIN_SECTION_BUDGET_BYTES + HEADER_RESERVE_BYTES,
+      bucket.budgetBytes
+    );
+    const sectionBudget = budget - HEADER_RESERVE_BYTES;
+    const prepared = bucket.files.map((file) => prepareSection(file, sectionBudget));
+    for (const sections of greedyGroups(prepared, budget)) groups.push({ sections, budget });
+  }
+  if (groups.length === 0) return [];
 
   for (let pass = 0; pass < MAX_SPLIT_PASSES; pass++) {
-    const rendered = renderGroups(groups, budget, contentFingerprint);
-    const oversized = rendered.findIndex((part) => part.metadata.byteSize > budget);
+    const rendered = renderGroups(groups, contentFingerprint);
+    const oversized = rendered.findIndex(
+      (part) => part.metadata.byteSize > part.metadata.budgetBytes
+    );
     if (oversized === -1) return rendered;
 
-    const group = groups[oversized];
-    if (group.length > 1) {
-      const moved = group.pop() as PreparedSection;
-      groups.splice(oversized + 1, 0, [moved]);
+    const group = groups[oversized] as RenderGroup;
+    if (group.sections.length > 1) {
+      const moved = group.sections.pop() as PreparedSection;
+      groups.splice(oversized + 1, 0, { sections: [moved], budget: group.budget });
       continue;
     }
 
     // A single section still exceeds the budget (its metadata alone is huge):
     // shrink the body until it fits.
-    const [section] = group;
-    const overflow = rendered[oversized].metadata.byteSize - budget;
+    const [section] = group.sections;
+    if (section === undefined) return rendered;
+    const overflow = (rendered[oversized] as PartitionedPart).metadata.byteSize - group.budget;
     const currentContent = section.file.content ?? "";
     const shrinkTo = Math.max(
       0,
@@ -154,7 +195,7 @@ export function partitionFiles(
     const shrunk = truncateWithBudgetMarker(
       currentContent,
       shrinkTo,
-      budget,
+      group.budget,
       section.file.originalLines
     );
     if (shrunk.isTruncated) {
@@ -170,20 +211,26 @@ export function partitionFiles(
     // `enforceBudget`. Without it a part clipped exactly to budget came out over it whenever the
     // rewoven estimate was a digit wider.
     const marker = TRUNCATION_MARKER;
-    assertBudgetHoldsMarker(budget);
+    assertBudgetHoldsMarker(group.budget);
     const target = Math.max(
       0,
-      budget - Buffer.byteLength(marker, "utf8") - TOKEN_LINE_SLACK
+      group.budget - Buffer.byteLength(marker, "utf8") - TOKEN_LINE_SLACK
     );
-    const clipped = truncateToBytes(rendered[oversized].markdown, target);
-    rendered[oversized] = rehashPart(rendered[oversized], clipped.content + marker);
+    const clipped = truncateToBytes((rendered[oversized] as PartitionedPart).markdown, target);
+    rendered[oversized] = rehashPart(
+      rendered[oversized] as PartitionedPart,
+      clipped.content + marker
+    );
     return rendered;
   }
 
   // The split-pass budget is exhausted (or every remaining group is a single
   // section). Clip anything still over budget so the byte bound is a guarantee
-  // rather than a best effort.
-  return enforceBudget(renderGroups(groups, budget, contentFingerprint), budget);
+  // rather than a best effort — against the budget each part was built for, which
+  // with per-layer budgets is not the same for every part.
+  return renderGroups(groups, contentFingerprint).flatMap((part) =>
+    enforceBudget([part], part.metadata.budgetBytes)
+  );
 }
 
 /** Hard-clips any part that is still above `budget`, re-hashing what it wrote. */
@@ -487,8 +534,7 @@ function greedyGroups(sections: PreparedSection[], budget: number): PreparedSect
 }
 
 function renderGroups(
-  groups: PreparedSection[][],
-  budget: number,
+  groups: readonly RenderGroup[],
   contentFingerprint?: string
 ): PartitionedPart[] {
   const total = groups.length;
@@ -500,19 +546,19 @@ function renderGroups(
     const prev = index === 0 ? "none" : `part-${zeroPad(index)}.md`;
     const next = index === total - 1 ? "none" : `part-${zeroPad(index + 2)}.md`;
 
-    for (const section of group) {
+    for (const section of group.sections) {
       section.file.part = filename;
     }
 
-    const layersCovered = Array.from(new Set(group.map((s) => s.file.layer))).sort();
+    const layersCovered = Array.from(new Set(group.sections.map((s) => s.file.layer))).sort();
     const layerCounts: Record<string, number> = {};
     const kindCounts: Record<string, number> = {};
-    for (const section of group) {
+    for (const section of group.sections) {
       layerCounts[section.file.layer] = (layerCounts[section.file.layer] || 0) + 1;
       kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
     }
 
-    const pathLines = group.map((s) => displayPath(s.file.relativePath));
+    const pathLines = group.sections.map((s) => displayPath(s.file.relativePath));
     // A filename can itself contain a backtick run, so the listing fence is
     // chosen from the listing rather than hardcoded to three backticks.
     const listFence = fenceForText(pathLines.join("\n"), 3);
@@ -522,7 +568,7 @@ function renderGroups(
       "",
       `- Previous: ${prev}`,
       `- Next: ${next}`,
-      `- Files: ${group.length}`,
+      `- Files: ${group.sections.length}`,
       `- Content Fingerprint: ${contentFingerprint || "none"}`,
       `- Layers: ${topEntries(layerCounts, 6) || "none"}`,
       `- Kinds: ${topEntries(kindCounts, 8) || "none"}`,
@@ -539,13 +585,16 @@ function renderGroups(
       "",
     ].join("\n");
 
-    const assembled = (header + group.map((s) => s.text).join("")).replace(/\r\n/g, "\n");
+    const assembled = (header + group.sections.map((s) => s.text).join("")).replace(
+      /\r\n/g,
+      "\n"
+    );
     const estimatedTokens = estimateTokens(assembled);
     const content = insertTokenLine(assembled, estimatedTokens);
     const byteSize = Buffer.byteLength(content, "utf8");
     const sha256 = crypto.createHash("sha256").update(content).digest("hex");
 
-    const includedFiles: PartFileEntry[] = group.map(({ file }) => ({
+    const includedFiles: PartFileEntry[] = group.sections.map(({ file }) => ({
       relativePath: file.relativePath,
       sourceBytes: file.sizeBytes,
       includedBytes: file.includedBytes,
@@ -559,10 +608,10 @@ function renderGroups(
       filename,
       byteSize,
       estimatedTokens,
-      budgetBytes: budget,
+      budgetBytes: group.budget,
       sha256,
       lines: countLines(content),
-      fileCount: group.length,
+      fileCount: group.sections.length,
       layersCovered,
       includedFiles,
     };

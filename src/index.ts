@@ -25,7 +25,7 @@ import { generateMonolithJson, generateMonolithMarkdown } from "./generator/mono
 import { generateNavigation } from "./generator/navigation.js";
 import { generateReadme } from "./generator/readme.js";
 import { generateProjectTree } from "./generator/tree.js";
-import { anchorForPath, partitionFiles, renumberParts } from "./partitioner/chunker.js";
+import { anchorForPath, partitionFiles, partitionFilesForBuckets } from "./partitioner/chunker.js";
 import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
@@ -1254,9 +1254,11 @@ function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): P
 /**
  * Partitions files under the configured per-layer budgets.
  *
- * Files sharing an effective budget are packed together. More than one bucket
- * means more than one partition pass, and each pass numbers from `part-001`, so
- * the merged set is re-numbered before it is returned.
+ * Files sharing an effective budget are packed together, and every part is rendered once, against
+ * the numbering the whole run will use. The previous arrangement partitioned each budget
+ * separately and then re-numbered the merged set, which rewrote headers that had already been
+ * fitted to a budget — and then had to re-apply the byte bound to the rewritten text. Deciding the
+ * numbering before rendering removes that whole after-the-fact repair.
  */
 function partitionByBudget(
   files: FileEntry[],
@@ -1274,27 +1276,17 @@ function partitionByBudget(
     else buckets.set(budget, [file]);
   }
 
-  if (buckets.size <= 1) {
-    const only = buckets.size === 1 ? Array.from(buckets.keys())[0] : config.maxPartBytes;
-    return partitionFiles(files, only, fingerprint);
+  if (buckets.size === 0) return [];
+  if (buckets.size === 1) {
+    return partitionFiles(files, Array.from(buckets.keys())[0] as number, fingerprint);
   }
 
-  const parts: PartitionedPart[] = [];
-  for (const budget of Array.from(buckets.keys()).sort((a, b) => a - b)) {
-    parts.push(...partitionFiles(buckets.get(budget) ?? [], budget, fingerprint));
-  }
-
-  const merged = renumberParts(parts, fingerprint);
-
-  // Re-numbering renames the parts, so every file's back-pointer is stale.
-  const byPath = new Map(files.map((file) => [file.relativePath, file]));
-  for (const part of merged) {
-    for (const included of part.metadata.includedFiles) {
-      const file = byPath.get(included.relativePath);
-      if (file) file.part = part.filename;
-    }
-  }
-  return merged;
+  return partitionFilesForBuckets(
+    Array.from(buckets.entries())
+      .sort(([left], [right]) => left - right)
+      .map(([budgetBytes, bucketFiles]) => ({ files: bucketFiles, budgetBytes })),
+    fingerprint
+  );
 }
 
 /**
