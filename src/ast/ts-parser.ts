@@ -170,14 +170,40 @@ export function summarizeTypeScriptSource(
       summary.imports.push(node.moduleSpecifier.text);
     }
 
+    // `import foo = require("./x")`. Only the external form is an import edge; `import A = B.C`
+    // is a type alias and has no module behind it.
+    if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression !== undefined &&
+      ts.isStringLiteral(node.moduleReference.expression)
+    ) {
+      summary.imports.push(node.moduleReference.expression.text);
+    }
+
+    // `require("./x")` and `import("./x")`. Neither is an `ImportDeclaration`, so both were
+    // invisible: a CommonJS project, and any code that lazy-loads with `await import()`, recorded
+    // no import edges at all — which is what `manifest.indexes.imports`, `snapshot_dependents` and
+    // `--with-dependents` are built from. Only a string-literal argument counts: a computed
+    // specifier is an expression, and guessing at which module it names would put a wrong edge in
+    // the graph, which is worse than a missing one.
+    if (ts.isCallExpression(node) && node.arguments.length >= 1) {
+      const firstArgument = node.arguments[0];
+      if (firstArgument !== undefined && ts.isStringLiteral(firstArgument)) {
+        const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+        const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+        if (isDynamicImport || isRequire) summary.imports.push(firstArgument.text);
+      }
+    }
+
     if (ts.isExportDeclaration(node)) {
       if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
         summary.imports.push(node.moduleSpecifier.text);
+        // `export { a } from "./x"` re-exports just as `export * from "./x"` does; only the star
+        // form was recorded, so a barrel file written with named re-exports looked like a leaf.
+        summary.reExports.push(node.moduleSpecifier.text);
         if (node.exportClause && ts.isNamespaceExport(node.exportClause)) {
           summary.exports.push(node.exportClause.name.text);
-        } else if (!node.exportClause) {
-          // `export * from "./x"`
-          summary.reExports.push(node.moduleSpecifier.text);
         }
       }
       if (node.exportClause && ts.isNamedExports(node.exportClause)) {

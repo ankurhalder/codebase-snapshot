@@ -35,7 +35,7 @@ function hasCollapsibleBody(node: ts.Node): node is ts.Node & { body: ts.Block }
  * replacement never invalidates a later span's offsets.
  */
 /**
- * True when a filename is TypeScript-with-JSX, in any letter case.
+ * True when a filename is JavaScript-with-JSX, in any letter case.
  *
  * One function for one question, because two spellings of it is exactly how `.TSX` came to be
  * eligible for a skeleton and then parsed as plain TypeScript, where JSX is a syntax error.
@@ -44,18 +44,36 @@ function hasCollapsibleBody(node: ts.Node): node is ts.Node & { body: ts.Block }
  * parser ran.
  */
 export function isTsxFileName(fileName: string): boolean {
-  return fileName.toLowerCase().endsWith(".tsx");
+  const lower = fileName.toLowerCase();
+  return lower.endsWith(".tsx") || lower.endsWith(".jsx");
+}
+
+/**
+ * The parser dialect a filename implies.
+ *
+ * `ts.createSourceFile` parses `.js`, `.jsx`, `.mjs` and `.cjs` perfectly well — it just has to be
+ * told which dialect they are. Without this the compression mode was limited to the four TypeScript
+ * spellings, so the files most repositories are actually made of were the ones it could not
+ * compress, and a `.jsx` file given the plain-TS kind was parsed as a file with JSX syntax errors in
+ * it.
+ */
+function scriptKindFor(fileName: string): ts.ScriptKind {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (lower.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
 }
 
 export function skeletonizeTypeScript(source: string, fileName = "file.ts"): SkeletonResult {
-  // Case-insensitive, through the same helper `isSkeletonizable` uses.
-  const scriptKind = isTsxFileName(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(
     fileName,
     source,
     ts.ScriptTarget.Latest,
     true,
-    scriptKind
+    scriptKindFor(fileName)
   );
 
   const spans: Array<{ start: number; end: number }> = [];
@@ -104,10 +122,26 @@ export function skeletonizeTypeScript(source: string, fileName = "file.ts"): Ske
   return { text, collapsed: outermost.length };
 }
 
-/** True for a path this module can compress. */
+/**
+ * True for a path this module can compress.
+ *
+ * `.d.ts` and friends are excluded first: they are declarations, so there is nothing to collapse,
+ * and parsing them was pure cost. Everything else the TypeScript parser can read is included —
+ * JavaScript and JSX included, which is most of the code in most repositories.
+ */
 export function isSkeletonizable(filePath: string): boolean {
   const lower = filePath.toLowerCase();
+  if (lower.endsWith(".d.ts") || lower.endsWith(".d.mts") || lower.endsWith(".d.cts")) {
+    return false;
+  }
   return (
-    lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".mts") || lower.endsWith(".cts")
+    lower.endsWith(".ts") ||
+    lower.endsWith(".tsx") ||
+    lower.endsWith(".mts") ||
+    lower.endsWith(".cts") ||
+    lower.endsWith(".js") ||
+    lower.endsWith(".jsx") ||
+    lower.endsWith(".mjs") ||
+    lower.endsWith(".cjs")
   );
 }

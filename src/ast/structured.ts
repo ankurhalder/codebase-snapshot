@@ -1,46 +1,40 @@
 import type { JsonSummary, MarkdownSummary } from "../types.js";
 
 /**
- * Strips `//` and block comments the way JSONC does, without touching anything
- * inside a string literal. `JSON.parse` alone made every `.jsonc` file report
- * `invalid-json`, losing its key shape entirely.
+ * Strips `//` and block comments the way JSONC does, plus trailing commas, without touching
+ * anything inside a string literal.
+ *
+ * `JSON.parse` alone made every `.jsonc` file — and every `tsconfig.json` an editor had
+ * reformatted — report `invalid-json`, losing its key shape entirely. Two things this file's
+ * matcher did that `src/config.ts`'s did not, and both are JSONC, not extensions of it:
+ *
+ * - **Trailing commas.** `{ "a": 1, }` is valid JSONC and invalid JSON.
+ * - **`\r`-only line endings.** A `//` comment ended only at `\n`, so on a CR-delimited file it
+ *   swallowed everything to the end of the document.
+ *
+ * A block comment keeps the line breaks it spans. Dropping them renumbered every line after it,
+ * and the only thing a reader has to place a summary key is the line number.
  */
 export function stripJsonComments(content: string): string {
   const text = content.replace(/^\uFEFF/, "");
+  const withoutComments = stripComments(text);
+  return stripTrailingCommas(withoutComments);
+}
+
+/** Removes `//` and block comments; block comments leave their line terminators behind. */
+function stripComments(text: string): string {
   let out = "";
   let inString = false;
-  let inLineComment = false;
-  let inBlockComment = false;
+  let escaped = false;
 
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const next = text[i + 1];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
 
-    if (inLineComment) {
-      if (char === "\n") {
-        inLineComment = false;
-        out += char;
-      }
-      continue;
-    }
-    if (inBlockComment) {
-      if (char === "*" && next === "/") {
-        inBlockComment = false;
-        i += 1;
-      }
-      continue;
-    }
     if (inString) {
       out += char;
-      if (char === "\\") {
-        // Keep escape pairs intact so `\"` cannot end the string early.
-        if (next !== undefined) {
-          out += next;
-          i += 1;
-        }
-      } else if (char === '"') {
-        inString = false;
-      }
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
       continue;
     }
 
@@ -49,16 +43,58 @@ export function stripJsonComments(content: string): string {
       out += char;
       continue;
     }
-    if (char === "/" && next === "/") {
-      inLineComment = true;
-      i += 1;
+
+    if (char === "/" && text[index + 1] === "/") {
+      while (index < text.length && text[index] !== "\n" && text[index] !== "\r") index += 1;
+      index -= 1; // let the loop emit the terminator
       continue;
     }
-    if (char === "/" && next === "*") {
-      inBlockComment = true;
-      i += 1;
+
+    if (char === "/" && text[index + 1] === "*") {
+      index += 2;
+      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) {
+        if (text[index] === "\n" || text[index] === "\r") out += text[index];
+        index += 1;
+      }
+      index += 1; // skip the closing "/"
       continue;
     }
+
+    out += char;
+  }
+
+  return out;
+}
+
+/** Removes the `,` before `}`/`]` that JSONC allows and `JSON.parse` rejects. */
+function stripTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let next = index + 1;
+      while (next < text.length && /\s/.test(text[next] as string)) next += 1;
+      if (text[next] === "}" || text[next] === "]") continue;
+    }
+
     out += char;
   }
 
@@ -106,10 +142,54 @@ export function summarizeJson(content: string): JsonSummary {
   }
 }
 
+/**
+ * How many opening lines are a YAML front-matter block, or `0` when they are not one.
+ *
+ * Front matter is only front matter if it *closes*, and if what it holds can be YAML. The old test
+ * asked only the first question — it scanned to the end of the file for any `---` line — so a
+ * document that opens with a **horizontal rule** and uses another one as a section divider had
+ * everything between them read as front matter, and every heading in that span disappeared from the
+ * summary. The index then claimed a document with no sections.
+ *
+ * The block is accepted when every line is a YAML mapping entry, a list item, a comment, a blank
+ * line or an indented continuation. A Markdown heading, a code fence or plain prose settles it: this
+ * is not YAML, so the opening `---` is a rule.
+ *
+ * `...` closes a YAML document just as `---` does; both are legal terminators.
+ */
+function frontMatterEnd(lines: readonly string[]): number {
+  if (lines.length < 3 || (lines[0] as string).trim() !== "---") return 0;
+
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    const candidate = line.trim();
+
+    if (candidate === "---" || candidate === "...") {
+      // A block with no content at all is indistinguishable from two rules, and treating it as
+      // front matter would change nothing observable — say "not front matter" either way.
+      return index > 1 ? index : 0;
+    }
+    if (candidate === "") continue;
+    // A YAML comment. `# Heading` is not: CommonMark requires a space after the hashes, and YAML
+    // comments have no such requirement, so the space is what separates them.
+    if (/^#(\s|$)/.test(candidate)) continue;
+    if (/^(`{3,}|~{3,})/.test(candidate)) return 0;
+    if (/^#{1,6}\s+\S/.test(candidate)) return 0;
+
+    const isYamlMapping = /^[A-Za-z0-9_.-]+\s*:(\s|$)/.test(candidate);
+    const isListItem = /^-(?:(\s|$))/.test(candidate);
+    const isIndented = /^[ \t]/.test(line);
+    if (!isYamlMapping && !isListItem && !isIndented) return 0;
+  }
+  return 0;
+}
+
 export function summarizeMarkdown(content: string): MarkdownSummary {
   const headings: string[] = [];
   const frontmatterKeys: string[] = [];
-  const lines = content.replace(/^\uFEFF/, "").split("\n");
+  // Split on every terminator, so a CRLF or CR-only document is read line by line rather than as
+  // one long line whose `---` never equals itself.
+  const lines = content.replace(/^\uFEFF/, "").split(/\r\n|\n|\r/);
 
   let inFrontmatter = false;
   /**
@@ -124,33 +204,24 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
    */
   let fence: { marker: string; length: number } | null = null;
 
-  // Front matter is only front matter if it closes. A document that opens with a `---`
-  // horizontal rule and never repeats it kept `inFrontmatter` true to the end of the file, so
-  // every heading after the rule was dropped from the summary — the index claimed a document
-  // with no sections. Checking for a closing delimiter first is the cheapest correct test.
-  let closesFrontmatter = false;
-  for (let index = 1; index < lines.length; index++) {
-    if ((lines[index] as string).trim() === "---") {
-      closesFrontmatter = true;
-      break;
-    }
-  }
+  const frontMatterEndLine = frontMatterEnd(lines);
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] as string;
 
-    if (index === 0 && line.trim() === "---" && closesFrontmatter) {
+    if (index === 0 && frontMatterEndLine > 0) {
       inFrontmatter = true;
       continue;
     }
 
     if (inFrontmatter) {
-      if (line.trim() === "---") {
+      const trimmedFrontmatter = line.trim();
+      if (trimmedFrontmatter === "---" || trimmedFrontmatter === "...") {
         inFrontmatter = false;
         continue;
       }
-      const match = /^([a-zA-Z0-9_-]+):/.exec(line);
-      if (match) frontmatterKeys.push(match[1]);
+      const match = /^([A-Za-z0-9_.-]+)\s*:/.exec(line);
+      if (match) frontmatterKeys.push(match[1] as string);
       continue;
     }
 
