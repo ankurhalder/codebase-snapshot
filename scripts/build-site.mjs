@@ -43,7 +43,6 @@ const OUT = path.join(ROOT, "site");
 // Pages 301s the github.io URL to it, so this constant can move then without
 // stranding anything.
 const SITE = "https://ankurhalder.github.io/codebase-snapshot";
-const REPO = "https://github.com/ankurhalder/codebase-snapshot";
 /** The author's own site: the entity this project hangs off. */
 const AUTHOR_URL = "https://ankurhalder.com";
 const AUTHOR_NAME = "Ankur Halder";
@@ -51,6 +50,19 @@ const OG_IMAGE = `${SITE}/assets/social-card.png`;
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const write = (...parts) => process.stdout.write(`${parts.join("\n")}\n`);
+
+/**
+ * The repository this site documents, derived rather than repeated.
+ *
+ * The owner and repository name were written twice — once here and once in the
+ * links the site builder recognises — which is how a fork ends up linking its
+ * readers back to a repository it does not own. `package.json` already names the
+ * repository, so that is the one source.
+ */
+export const REPO = String(pkg.repository.url).replace(/\.git$/, "").replace(/\/+$/, "");
+const REPO_SEGMENTS = new URL(REPO).pathname.split("/").filter(Boolean);
+export const REPO_OWNER = REPO_SEGMENTS[0];
+export const REPO_NAME = REPO_SEGMENTS[1];
 
 /**
  * Page titles, written query-first.
@@ -179,12 +191,73 @@ function escapeHtml(text) {
 }
 
 /**
+ * Rewrites a link that points at a published Markdown file into the page that
+ * file becomes.
+ *
+ * Two spellings of the same link reach this site. The docs use relative links
+ * (`docs/foo.md`, `../README.md`), and `README.md` deliberately uses absolute
+ * GitHub URLs so the same text works on npmjs.com. On the site both must resolve
+ * to the local page: a visitor who clicks a guide link on the homepage should
+ * stay on the homepage's site, not be handed back to GitHub.
+ *
+ * Only links that point at *this* repository and at a file the site actually
+ * publishes are rewritten. Everything else — another repository, a file with no
+ * page here such as `LICENSE`, a directory (`tree/…`) — keeps working exactly as
+ * written, because rewriting those would turn a working link into a 404.
+ *
+ * Exported so `tests/site-link-rewriting.test.js` can exercise the rule as a
+ * table instead of grepping the generated HTML.
+ */
+export function createLinkRewriter({ repositoryUrl, publishedSlugs }) {
+  const repository = String(repositoryUrl).replace(/\.git$/, "").replace(/\/+$/, "");
+  const segments = new URL(repository).pathname.split("/").filter(Boolean);
+  const owner = segments[0];
+  const name = segments[1];
+  const published = new Set(publishedSlugs);
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  /** The page for a repository path, or `null` when the site does not publish one. */
+  const pageFor = (repositoryPath) => {
+    if (repositoryPath === "README.md") return "index.html";
+    const match = /^docs\/([a-z0-9-]+)\.md$/.exec(repositoryPath);
+    if (match && published.has(match[1])) return `${match[1]}.html`;
+    return null;
+  };
+
+  const bases = [
+    `https://github\\.com/${escape(owner)}/${escape(name)}/(?:blob|tree)/(?:main|master)/`,
+    `https://raw\\.githubusercontent\\.com/${escape(owner)}/${escape(name)}/(?:main|master)/`,
+  ];
+  const pattern = new RegExp(`(href|src)="(?:${bases.join("|")})([^"#?]*?)(#[^"]*)?"`, "g");
+
+  return (html) =>
+    html.replace(pattern, (whole, attribute, repositoryPath, anchor) => {
+      const page = pageFor(repositoryPath);
+      return page ? `${attribute}="${page}${anchor ?? ""}"` : whole;
+    });
+}
+
+/** Slugs the site publishes: the README as the index, then every `docs/*.md`. */
+const PUBLISHED_SLUGS = [
+  "index",
+  ...fs
+    .readdirSync(DOCS)
+    .filter((entry) => entry.endsWith(".md"))
+    .map((entry) => path.basename(entry, ".md")),
+];
+
+const rewriteAbsoluteLinks = createLinkRewriter({
+  repositoryUrl: pkg.repository.url,
+  publishedSlugs: PUBLISHED_SLUGS,
+});
+
+/**
  * Turns links between Markdown files into links between the pages they become.
  * Done on the rendered HTML rather than the Markdown so code samples that
  * happen to contain `](docs/x.md)` are left exactly as written.
  */
 function rewriteLinks(html) {
-  return html
+  return rewriteAbsoluteLinks(html)
     .replace(/href="\.\.\/README\.md(#[\w-]*)?"/g, 'href="index.html$1"')
     // Anything else one level up is a repository file with no page here — point
     // at the repository rather than at a path above the site root, which 404s.
@@ -390,124 +463,145 @@ ${body}
 `;
 }
 
-fs.rmSync(OUT, { recursive: true, force: true });
-fs.mkdirSync(OUT, { recursive: true });
-
-// The images a page or a social card references have to exist under the site
-// root; a README that points at raw.githubusercontent is fine on GitHub and
-// useless as an `og:image`, which must be fetched from this origin.
-const ASSETS = path.join(DOCS, "assets");
-fs.mkdirSync(path.join(OUT, "assets"), { recursive: true });
-for (const entry of fs.readdirSync(ASSETS).filter((name) => /\.(svg|png|ico)$/.test(name))) {
-  fs.copyFileSync(path.join(ASSETS, entry), path.join(OUT, "assets", entry));
+/**
+ * True when this file is the script node was asked to run, rather than a module
+ * a test imported for its helpers.
+ */
+export function isInvokedDirectly() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return path.resolve(entry) === fileURLToPath(import.meta.url);
 }
 
-const sources = [
-  {
-    slug: "index",
-    file: path.join(ROOT, "README.md"),
-    markdown: fs.readFileSync(path.join(ROOT, "README.md"), "utf8"),
-  },
-];
-for (const entry of fs.readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort()) {
-  const slug = path.basename(entry, ".md");
-  sources.push({ slug, file: path.join(DOCS, entry), markdown: fs.readFileSync(path.join(DOCS, entry), "utf8") });
-}
+/**
+ * Builds site/ from the Markdown.
+ *
+ * This runs only when the file is executed, not when it is imported: the link
+ * rewriter above is exported so a test can exercise the rule directly, and a
+ * test that silently rebuilt the site would be a side effect nobody asked for.
+ */
+function buildSite() {
+  fs.rmSync(OUT, { recursive: true, force: true });
+  fs.mkdirSync(OUT, { recursive: true });
 
-// README images point at raw.githubusercontent so they render on GitHub and on
-// npm; on this site they have a local copy, so rewrite them instead of making
-// every visitor fetch from a second origin.
-const RAW = "https://raw.githubusercontent.com/ankurhalder/codebase-snapshot/main/";
+  // The images a page or a social card references have to exist under the site
+  // root; a README that points at raw.githubusercontent is fine on GitHub and
+  // useless as an `og:image`, which must be fetched from this origin.
+  const ASSETS = path.join(DOCS, "assets");
+  fs.mkdirSync(path.join(OUT, "assets"), { recursive: true });
+  for (const entry of fs.readdirSync(ASSETS).filter((name) => /\.(svg|png|ico)$/.test(name))) {
+    fs.copyFileSync(path.join(ASSETS, entry), path.join(OUT, "assets", entry));
+  }
 
-const urls = [];
-const fullText = [];
-for (const source of sources) {
-  const localised = source.markdown.split(RAW).join("");
-  const html = rewriteLinks(marked.parse(localised));
-  const heading = source.markdown.match(/^#\s+(.+)$/m)?.[1] ?? pkg.name;
-  const title = TITLES[source.slug] ?? (source.slug === "index" ? heading : `${heading} — ${pkg.name}`);
-  const description = DESCRIPTIONS[source.slug] ?? summarise(source.markdown);
+  const sources = [
+    {
+      slug: "index",
+      file: path.join(ROOT, "README.md"),
+      markdown: fs.readFileSync(path.join(ROOT, "README.md"), "utf8"),
+    },
+  ];
+  for (const entry of fs.readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort()) {
+    const slug = path.basename(entry, ".md");
+    sources.push({ slug, file: path.join(DOCS, entry), markdown: fs.readFileSync(path.join(DOCS, entry), "utf8") });
+  }
+
+  // README images point at raw.githubusercontent so they render on GitHub and on
+  // npm; on this site they have a local copy, so rewrite them instead of making
+  // every visitor fetch from a second origin.
+  const RAW = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/`;
+
+  const urls = [];
+  const fullText = [];
+  for (const source of sources) {
+    const localised = source.markdown.split(RAW).join("");
+    const html = rewriteLinks(marked.parse(localised));
+    const heading = source.markdown.match(/^#\s+(.+)$/m)?.[1] ?? pkg.name;
+    const title = TITLES[source.slug] ?? (source.slug === "index" ? heading : `${heading} — ${pkg.name}`);
+    const description = DESCRIPTIONS[source.slug] ?? summarise(source.markdown);
+    fs.writeFileSync(
+      path.join(OUT, `${source.slug}.html`),
+      page({ slug: source.slug, title, description, body: html, markdown: source.markdown }),
+      "utf8"
+    );
+    // The Markdown twin: what llms.txt v2 asks for, and what an agent would rather read.
+    // The sync markers are stripped: they are web-page plumbing, and the rendered
+    // value beside them already stands alone.
+    const twin = source.markdown.replace(/<!--\/?@[A-Za-z]+-->/g, "");
+    fs.writeFileSync(path.join(OUT, `${source.slug}.md`), twin, "utf8");
+    urls.push(source.slug === "index" ? `${SITE}/` : `${SITE}/${source.slug}.html`);
+    fullText.push(`<!-- ${source.slug} -->\n\n${twin}`);
+  }
+
+  /**
+   * `llms-full.txt`: every page in one file.
+   *
+   * `llms.txt` is an index of links, which a crawler has to follow one at a time.
+   * The full corpus in a single response costs one fetch and is what several
+   * answer engines now prefer when they can get it.
+   */
   fs.writeFileSync(
-    path.join(OUT, `${source.slug}.html`),
-    page({ slug: source.slug, title, description, body: html, markdown: source.markdown }),
+    path.join(OUT, "llms-full.txt"),
+    `# ${pkg.name} ${pkg.version} — complete documentation\n\n` +
+      `> ${pkg.description}\n\n` +
+      `Source: ${REPO}\nCanonical site: ${SITE}/\n\n---\n\n` +
+      `${fullText.join("\n\n---\n\n")}\n`,
     "utf8"
   );
-  // The Markdown twin: what llms.txt v2 asks for, and what an agent would rather read.
-  // The sync markers are stripped: they are web-page plumbing, and the rendered
-  // value beside them already stands alone.
-  const twin = source.markdown.replace(/<!--\/?@[A-Za-z]+-->/g, "");
-  fs.writeFileSync(path.join(OUT, `${source.slug}.md`), twin, "utf8");
-  urls.push(source.slug === "index" ? `${SITE}/` : `${SITE}/${source.slug}.html`);
-  fullText.push(`<!-- ${source.slug} -->\n\n${twin}`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  fs.writeFileSync(
+    path.join(OUT, "sitemap.xml"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+  <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  ${urls.map((url) => `  <url><loc>${url}</loc><lastmod>${today}</lastmod></url>`).join("\n")}
+  </urlset>
+  `,
+    "utf8"
+  );
+
+  /**
+   * robots.txt with the AI crawlers named explicitly. GitHub's own robots.txt
+   * already grants them access with a crawl delay, so anything we publish should
+   * be at least as open — being hard to read is not a security posture.
+   */
+  fs.writeFileSync(
+    path.join(OUT, "robots.txt"),
+    `# Everything here is documentation meant to be read, quoted and indexed.
+  User-agent: *
+  Allow: /
+
+  User-agent: GPTBot
+  User-agent: OAI-SearchBot
+  User-agent: ChatGPT-User
+  User-agent: ClaudeBot
+  User-agent: anthropic-ai
+  User-agent: Claude-Web
+  User-agent: PerplexityBot
+  User-agent: Google-Extended
+  User-agent: Applebot-Extended
+  User-agent: CCBot
+  Allow: /
+
+  Sitemap: ${SITE}/sitemap.xml
+  `,
+    "utf8"
+  );
+
+  // The repository's llms.txt, rewired to site URLs — it should point at pages
+  // that resolve, not at the repository that the site was generated from.
+  const llms = fs
+    .readFileSync(path.join(ROOT, "llms.txt"), "utf8")
+    .replace(new RegExp(`${REPO}/blob/main/docs/([a-z0-9-]+)\\.md`, "g"), `${SITE}/$1.html`)
+    .replace(new RegExp(`${REPO}/blob/main/llms\\.txt`, "g"), `${SITE}/llms.txt`);
+  fs.writeFileSync(path.join(OUT, "llms.txt"), llms, "utf8");
+
+  // No CNAME file until the DNS record exists. Under an Actions deploy the custom
+  // domain is set on the Pages configuration, not by a file in the artifact, and
+  // shipping a CNAME for a host that does not resolve only invites confusion.
+  fs.writeFileSync(path.join(OUT, ".nojekyll"), "", "utf8");
+
+  write(`site: ${sources.length} pages, ${urls.length} urls`);
+  write(`site: sitemap.xml, robots.txt, llms.txt, llms-full.txt for ${SITE}`);
 }
 
-/**
- * `llms-full.txt`: every page in one file.
- *
- * `llms.txt` is an index of links, which a crawler has to follow one at a time.
- * The full corpus in a single response costs one fetch and is what several
- * answer engines now prefer when they can get it.
- */
-fs.writeFileSync(
-  path.join(OUT, "llms-full.txt"),
-  `# ${pkg.name} ${pkg.version} — complete documentation\n\n` +
-    `> ${pkg.description}\n\n` +
-    `Source: ${REPO}\nCanonical site: ${SITE}/\n\n---\n\n` +
-    `${fullText.join("\n\n---\n\n")}\n`,
-  "utf8"
-);
-
-const today = new Date().toISOString().slice(0, 10);
-fs.writeFileSync(
-  path.join(OUT, "sitemap.xml"),
-  `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls.map((url) => `  <url><loc>${url}</loc><lastmod>${today}</lastmod></url>`).join("\n")}
-</urlset>
-`,
-  "utf8"
-);
-
-/**
- * robots.txt with the AI crawlers named explicitly. GitHub's own robots.txt
- * already grants them access with a crawl delay, so anything we publish should
- * be at least as open — being hard to read is not a security posture.
- */
-fs.writeFileSync(
-  path.join(OUT, "robots.txt"),
-  `# Everything here is documentation meant to be read, quoted and indexed.
-User-agent: *
-Allow: /
-
-User-agent: GPTBot
-User-agent: OAI-SearchBot
-User-agent: ChatGPT-User
-User-agent: ClaudeBot
-User-agent: anthropic-ai
-User-agent: Claude-Web
-User-agent: PerplexityBot
-User-agent: Google-Extended
-User-agent: Applebot-Extended
-User-agent: CCBot
-Allow: /
-
-Sitemap: ${SITE}/sitemap.xml
-`,
-  "utf8"
-);
-
-// The repository's llms.txt, rewired to site URLs — it should point at pages
-// that resolve, not at the repository that the site was generated from.
-const llms = fs
-  .readFileSync(path.join(ROOT, "llms.txt"), "utf8")
-  .replace(new RegExp(`${REPO}/blob/main/docs/([a-z0-9-]+)\\.md`, "g"), `${SITE}/$1.html`)
-  .replace(new RegExp(`${REPO}/blob/main/llms\\.txt`, "g"), `${SITE}/llms.txt`);
-fs.writeFileSync(path.join(OUT, "llms.txt"), llms, "utf8");
-
-// No CNAME file until the DNS record exists. Under an Actions deploy the custom
-// domain is set on the Pages configuration, not by a file in the artifact, and
-// shipping a CNAME for a host that does not resolve only invites confusion.
-fs.writeFileSync(path.join(OUT, ".nojekyll"), "", "utf8");
-
-write(`site: ${sources.length} pages, ${urls.length} urls`);
-write(`site: sitemap.xml, robots.txt, llms.txt, llms-full.txt for ${SITE}`);
+if (isInvokedDirectly()) buildSite();

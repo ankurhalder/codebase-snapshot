@@ -23,6 +23,14 @@ const REQUIRED = [
   "dist/cli.js",
   "dist/cli.cjs",
   "dist/cli.d.ts",
+  "dist/cli.d.cts",
+  // The MCP entry point is a separate export and a separate bin target. A tarball
+  // missing it installs without complaint and then breaks every MCP client, which
+  // is precisely the failure this script exists to catch before a version is spent.
+  "dist/mcp.js",
+  "dist/mcp.cjs",
+  "dist/mcp.d.ts",
+  "dist/mcp.d.cts",
   "dist/bin.js",
   "README.md",
   "LICENSE",
