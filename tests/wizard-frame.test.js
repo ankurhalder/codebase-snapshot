@@ -12,12 +12,11 @@
  * live menu at the bottom. These tests are that terminal.
  */
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { PassThrough } from "node:stream";
 import test from "node:test";
-import { displayWidth, PromptCancelled, runInit, wrapLines } from "../dist/index.js";
+
+import { displayWidth, PromptCancelled, wrapLines } from "../dist/index.js";
+
+import { createWizardProject, driveWizard } from "./helpers/wizard-harness.js";
 
 const ERASE = /\u001b\[(\d+)A\u001b\[0J/g;
 
@@ -27,60 +26,6 @@ function visualRows(payload, columns) {
     .replace(/\n$/, "") // the write's own terminator is not a row of its own
     .split("\n")
     .reduce((total, line) => total + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
-}
-
-function makeProject(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wizard-frame-"));
-  const write = (relative, content) => {
-    const target = path.join(dir, relative);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
-  };
-  write("package.json", '{"name":"app","version":"1.0.0"}\n');
-  write("next.config.ts", "export default {};\n");
-  write("src/a.ts", "export const a = 1;\n");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
-
-/**
- * Runs the wizard at a given width, pressing one key per redrawn prompt.
- *
- * The last key is Ctrl+C, so the run stops on the setup menu instead of walking to the end —
- * that keeps every byte after the first prompt a frame payload and nothing else.
- */
-async function driveNarrow(dir, columns, keys) {
-  const pending = [...keys];
-  const chunks = [];
-
-  const output = new PassThrough();
-  output.isTTY = true;
-  output.columns = columns;
-  output.on("data", (chunk) => {
-    const text = chunk.toString();
-    chunks.push(text);
-    if (!text.includes("◆") || pending.length === 0) return;
-    const key = pending.shift();
-    queueMicrotask(() => input.emit("keypress", "", key));
-  });
-
-  const input = new PassThrough();
-  input.isTTY = true;
-  input.isRaw = false;
-  input.setRawMode = () => {};
-
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`the wizard stalled with ${pending.length} key(s) left`)), 5000)
-  );
-  const run = runInit({ cwd: dir, io: { input, output } });
-  run.catch(() => {});
-  let error = null;
-  try {
-    await Promise.race([run, timeout]);
-  } catch (caught) {
-    error = caught;
-  }
-  return { error, raw: chunks.join("") };
 }
 
 test("displayWidth counts cells, not code units", () => {
@@ -113,7 +58,7 @@ test("wrapLines breaks a single token that is longer than the width", () => {
 });
 
 test("every frame is erased by exactly the number of rows it drew", async (t) => {
-  const dir = makeProject(t);
+  const dir = createWizardProject(t, { prefix: "wizard-frame-" });
   // 48 columns is narrow enough that the recommended answer wraps, and narrow enough that it used
   // to wrap *differently* once the cursor left it — which made the menu change height as you moved.
   const columns = 48;
@@ -124,7 +69,7 @@ test("every frame is erased by exactly the number of rows it drew", async (t) =>
     { name: "down" },
     { name: "c", ctrl: true },
   ];
-  const { error, raw } = await driveNarrow(dir, columns, keys);
+  const { error, raw } = await driveWizard(dir, keys, { columns, captureError: true, assertAllKeys: false });
   assert.ok(error instanceof PromptCancelled, "the run ended on Ctrl+C at the menu");
 
   // Everything from the first prompt on is frame payloads separated by erases.
@@ -217,7 +162,7 @@ function simulate(raw, columns) {
 }
 
 test("the screen shows one question, not one per keypress", async (t) => {
-  const dir = makeProject(t);
+  const dir = createWizardProject(t, { prefix: "wizard-frame-" });
   const columns = 70;
   const keys = [
     { name: "down" },
@@ -227,7 +172,7 @@ test("the screen shows one question, not one per keypress", async (t) => {
     { name: "down" },
     { name: "c", ctrl: true },
   ];
-  const { error, raw } = await driveNarrow(dir, columns, keys);
+  const { error, raw } = await driveWizard(dir, keys, { columns, captureError: true, assertAllKeys: false });
   assert.ok(error instanceof PromptCancelled, "the run ended on Ctrl+C at the menu");
 
   const screen = simulate(raw, columns);
@@ -252,7 +197,7 @@ test("the screen shows one question, not one per keypress", async (t) => {
 });
 
 test("a narrow terminal still finishes the walk", async (t) => {
-  const dir = makeProject(t);
+  const dir = createWizardProject(t, { prefix: "wizard-frame-" });
   const columns = 50;
   const keys = [
     { name: "down" }, // walk
@@ -264,30 +209,15 @@ test("a narrow terminal still finishes the walk", async (t) => {
     { name: "return" }, // review
   ];
 
-  const pending = [...keys];
-  const chunks = [];
-  const output = new PassThrough();
-  output.isTTY = true;
-  output.columns = columns;
-  output.on("data", (chunk) => {
-    const text = chunk.toString();
-    chunks.push(text);
-    if (!text.includes("◆") || pending.length === 0) return;
-    const key = pending.shift();
-    queueMicrotask(() => input.emit("keypress", "", key));
+  const { result, raw: screen } = await driveWizard(dir, keys, {
+    columns,
+    assertAllKeys: false,
   });
-  const input = new PassThrough();
-  input.isTTY = true;
-  input.isRaw = false;
-  input.setRawMode = () => {};
-
-  const result = await runInit({ cwd: dir, io: { input, output } });
   assert.equal(result.written, true, "a 50-column terminal is still usable");
 
   // Only the frame payloads have to fit: the header and the review summary are written once and
   // never erased, so a long line there is the terminal's to wrap and nobody's problem. Everything
   // from the first prompt to the review block is a repainted frame, and those must fit.
-  const screen = chunks.join("");
   const start = screen.indexOf("◆");
   const review = screen.indexOf("\n  Review\n");
   assert.ok(start >= 0 && review > start, "the walk reached the review step");

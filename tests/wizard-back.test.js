@@ -7,78 +7,23 @@
  * of the wizard suite uses, because the behaviour under test *is* the key handling.
  */
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { PassThrough } from "node:stream";
 import test from "node:test";
-import { runInit } from "../dist/index.js";
 
-const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
-
-function makeProject(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wizard-back-"));
-  const write = (relative, content) => {
-    const target = path.join(dir, relative);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
-  };
-  write("package.json", '{"name":"app","version":"1.0.0"}\n');
-  write("next.config.ts", "export default {};\n");
-  write("src/a.ts", "export const a = 1;\n");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
-
-/** Runs the wizard, pressing one key per redrawn prompt, and returns what it wrote. */
-async function drive(dir, keys) {
-  const pending = [...keys];
-  const written = [];
-
-  const output = new PassThrough();
-  output.isTTY = true;
-  output.columns = 120;
-  output.on("data", (chunk) => {
-    const text = chunk.toString();
-    written.push(text);
-    if (!text.includes("◆")) return;
-    if (pending.length === 0) return;
-    const name = pending.shift();
-    queueMicrotask(() => input.emit("keypress", "", { name }));
-  });
-
-  const input = new PassThrough();
-  input.isTTY = true;
-  input.isRaw = false;
-  input.setRawMode = () => {};
-
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`the wizard stalled with ${pending.length} key(s) left`)), 5000)
-  );
-  const run = runInit({ cwd: dir, io: { input, output } });
-  run.catch(() => {});
-
-  const result = await Promise.race([run, timeout]);
-  assert.deepEqual(pending, [], "every programmed key was consumed");
-  return { result, screen: written.join("").replace(ANSI, "") };
-}
-
-const configName = (dir) =>
-  fs.readdirSync(dir).find((name) => /^snapshot\.config\.(ts|mjs|cjs|js|json)$/.test(name));
+import { createWizardProject, driveWizard, findConfigName } from "./helpers/wizard-harness.js";
 
 const countOf = (haystack, needle) => haystack.split(needle).length - 1;
 
 test("the walk advertises the back key", async (t) => {
-  const dir = makeProject(t);
+  const dir = createWizardProject(t, { prefix: "wizard-back-" });
   // pace → walk, then answer the scope question so the size prompt is the one on screen.
-  const run = await drive(dir, ["down", "return", "return", "return", "return", "return", "return"]);
+  const run = await driveWizard(dir, ["down", "return", "return", "return", "return", "return", "return"]);
   assert.match(run.screen, /← back/, "a reversible question says so in its footer");
   assert.equal(run.result.written, true);
 });
 
 test("back from the part size returns to the scope question and keeps the run alive", async (t) => {
-  const dir = makeProject(t);
-  const run = await drive(dir, [
+  const dir = createWizardProject(t, { prefix: "wizard-back-" });
+  const run = await driveWizard(dir, [
     "down", // pace → "go through each setting"
     "return", // select walk
     "return", // scope: everything
@@ -96,12 +41,12 @@ test("back from the part size returns to the scope question and keeps the run al
     "the scope question is asked again after backing out of the size question"
   );
   assert.equal(run.result.written, true);
-  assert.ok(configName(dir), "the config was written after the detour");
+  assert.ok(findConfigName(dir), "the config was written after the detour");
 });
 
 test("answering No at the review steps back instead of cancelling", async (t) => {
-  const dir = makeProject(t);
-  const run = await drive(dir, [
+  const dir = createWizardProject(t, { prefix: "wizard-back-" });
+  const run = await driveWizard(dir, [
     "down",
     "return", // walk
     "return", // scope
@@ -116,12 +61,12 @@ test("answering No at the review steps back instead of cancelling", async (t) =>
 
   assert.equal(run.result.written, true, "the run survives the No");
   assert.equal(countOf(run.screen, "Include credential files"), 2, "it returns to the previous question");
-  assert.ok(configName(dir));
+  assert.ok(findConfigName(dir));
 });
 
 test("back from the first walk question returns to the setup menu", async (t) => {
-  const dir = makeProject(t);
-  const run = await drive(dir, [
+  const dir = createWizardProject(t, { prefix: "wizard-back-" });
+  const run = await driveWizard(dir, [
     "down", // pace → walk
     "return", // select walk
     "left", // back out of the first step
