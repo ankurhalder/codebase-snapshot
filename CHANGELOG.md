@@ -192,11 +192,25 @@ feature — a printer normalises quotes, blank lines and comment positions, so a
 differ from its source everywhere instead of only where bodies were removed. Affected entries
 carry `inclusionMode: "signatures"`, and the structural summary still describes the whole file.
 
+### `--sarif`: the findings a CI gate can read
+
+`reports/audit.md` tells a human what was masked, and nothing could *gate* on it: a CI job that
+wanted to fail a build over a leaked key had to scrape markdown. `--sarif` writes
+`reports/audit.sarif` in SARIF 2.1.0, which is what GitHub Code Scanning reads.
+
+The artefact is deliberately austere: path, line, level and rule — and **never the value**,
+because it is meant to be uploaded to a third party and a second copy of a secret in someone
+else's retention policy is a new problem rather than a report on the old one. Rule ids are
+stable across runs so an alert is not orphaned, and each result carries a
+`partialFingerprint` so Code Scanning keeps an alert open instead of closing and reopening it
+on every run.
+
 ### Still open
 
-Two items from the audit are not in this release, and this entry names them rather than leaving
-them to be discovered: SARIF export for CI security gates, and offloading `snapshot_generate` to
-a worker thread so the MCP event loop stays responsive while a large repository is written.
+One item from the audit is not in this release, and this entry names it rather than leaving it to
+be discovered: offloading `snapshot_generate` to a worker thread so the MCP server keeps
+answering `ping` while a large repository is written. The synchronous call is correct and
+bounded; what it costs is event-loop latency during that write, not correctness.
 
 ---
 
