@@ -136,13 +136,38 @@ files the site does not publish are left alone.
 - `scripts/pack-check.mjs` requires the MCP build outputs, and the three wizard test files share one
   fake-TTY harness.
 
+### `snapshot_dependents`: the import graph, in both directions
+
+`manifest.indexes.imports` already held enough to answer "what uses this file" —
+`byFile` records every specifier, `centralFiles` ranks the most-imported files — but nothing
+an agent could ask. So the one question that decides what to read next, *what breaks if I
+change this?*, was answered by reading parts until the picture appeared.
+
+The eighth MCP tool takes a path and a direction and returns both edge sets with the part each
+neighbour lives in, plus the specifiers that resolve to nothing inside the snapshot
+(`node:fs`, a package name) rather than silently dropping them. Resolution runs through the
+generator's own `buildImportResolver`, so the tool and `centralFiles` cannot describe different
+graphs — a test asserts the counts agree.
+
+### `--install-hook` gates commits on `validate`
+
+`docs/stale-context-is-your-bug.md` argues a snapshot is only trustworthy when something gates
+on it, and `validate` is that gate — but wiring it into `.git/hooks` was thirty seconds of
+manual work, which is the step a project skips. `init --install-hook` and `setup --install-hook`
+write `.git/hooks/pre-commit`, which refuses a commit whose snapshot is stale and never installs
+anything while doing it.
+
+A `pre-commit` this tool did not write is left byte-for-byte alone, and the output names the line
+to add instead: there is deliberately no flag to force the overwrite. A `.git` that is a *file*
+(a worktree or submodule) is followed to the real git directory rather than failing with
+`ENOTDIR`.
+
 ### Still open
 
-Four capabilities from the audit are not in this release, and this entry names them rather than
-leaving them to be discovered: `--changed-since`/`--staged` (diff-scoped snapshots),
-`--skeleton` signature compression, an MCP tool for the import graph, the pre-commit hook
-installer, and SARIF export for CI security gates. Offloading `snapshot_generate` to a worker
-thread is also outstanding.
+Four items from the audit are not in this release, and this entry names them rather than leaving
+them to be discovered: `--changed-since`/`--staged` (diff-scoped snapshots), `--skeleton`
+signature compression, SARIF export for CI security gates, and offloading `snapshot_generate` to
+a worker thread so the MCP event loop stays responsive.
 
 ---
 
