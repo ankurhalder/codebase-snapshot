@@ -122,6 +122,46 @@ export function displayWidth(line: string): number {
  */
 const GUTTER_PATTERN = /^[ \t]*(?:[❯◆◻◼▏✖][ \t]+)*/;
 
+/**
+ * Splits `text` into the longest head that fits in `maxCells` **display cells**.
+ *
+ * `room` is measured in cells but `String.prototype.slice` counts UTF-16 code units, and the two
+ * agree only for ASCII. With CJK text (one code unit, two cells) `rest.slice(0, room)` produced a
+ * row up to twice as wide as the frame believed, so the terminal wrapped it behind the renderer's
+ * back and `Frame.erase` moved up one row too few — the menu grew a duplicate header on every
+ * keypress. With a surrogate pair (two code units, two cells) the same slice could cut the pair in
+ * half and emit a lone surrogate.
+ *
+ * Iterating code points and accumulating width per character makes the cut land on a cell boundary
+ * and never inside a surrogate pair.
+ */
+function sliceByDisplayWidth(
+  text: string,
+  maxCells: number
+): { head: string; tail: string } {
+  let cells = 0;
+  let lastSpace = -1;
+  let index = 0;
+
+  for (const character of text) {
+    const width = isWideCodePoint(character.codePointAt(0) ?? 0) ? 2 : 1;
+    if (cells + width > maxCells) break;
+    if (character === " ") lastSpace = index;
+    cells += width;
+    index += character.length;
+  }
+
+  if (index >= text.length) return { head: text, tail: "" };
+  // Break at the last space inside the room, so a wrapped list item breaks at a word.
+  if (lastSpace > 0) {
+    return { head: text.slice(0, lastSpace), tail: text.slice(lastSpace + 1).trimStart() };
+  }
+  // A single character wider than the room still has to go somewhere — take the whole code point
+  // rather than a code unit of it.
+  const safeIndex = index > 0 ? index : (Array.from(text)[0]?.length ?? 1);
+  return { head: text.slice(0, safeIndex), tail: text.slice(safeIndex).trimStart() };
+}
+
 function wrapOneLine(line: string, limit: number): string[] {
   if (displayWidth(line) <= limit) return [line];
   const gutter = GUTTER_PATTERN.exec(line)?.[0] ?? "";
@@ -140,15 +180,11 @@ function wrapOneLine(line: string, limit: number): string[] {
       rows.push(prefix + rest);
       break;
     }
-    // Break at the last space inside the room, or mid-token when a single word is too long.
-    // The window is counted in code units, so a double-width character only ever makes it
-    // shorter — which wraps a little early and never past the edge.
-    let cut = room;
-    const space = rest.slice(0, room).lastIndexOf(" ");
-    if (space > 0) cut = space;
-    const taken = rest.slice(0, cut).trimEnd();
-    rows.push(`${prefix}${taken.length > 0 ? taken : rest.slice(0, cut)}`);
-    rest = rest.slice(cut).trimStart();
+    const { head, tail } = sliceByDisplayWidth(rest, room);
+    rows.push(
+      `${prefix}${head.length > 0 ? head : rest.slice(0, 1)}`
+    );
+    rest = tail;
     prefix = continuation;
   }
   return rows;

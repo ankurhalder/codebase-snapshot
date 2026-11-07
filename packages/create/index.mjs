@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseArgs } from "node:util";
 import { PromptCancelled, runInit } from "codebase-snapshot";
 
 /**
@@ -57,41 +58,73 @@ function nextStep() {
   return hasLocalBinary() ? "npm run snapshot" : "npm install && npm run snapshot";
 }
 
-const argv = process.argv.slice(2);
+const HELP_TEXT = [
+  "create-codebase-snapshot",
+  "",
+  "  Sets up codebase-snapshot in the current directory.",
+  "",
+  "  Usage:",
+  "    npm create codebase-snapshot",
+  "",
+  "  Options:",
+  "    --preset <name>   Force a project preset instead of detecting one",
+  "    --yes             Accept every default without prompting",
+  "    --force           Overwrite an existing config",
+  "",
+].join("\n");
 
-if (argv.includes("--help") || argv.includes("-h")) {
-  process.stderr.write(
-    [
-      "create-codebase-snapshot",
-      "",
-      "  Sets up codebase-snapshot in the current directory.",
-      "",
-      "  Usage:",
-      "    npm create codebase-snapshot",
-      "",
-      "  Options:",
-      "    --preset <name>   Force a project preset instead of detecting one",
-      "    --yes             Accept every default without prompting",
-      "    --force           Overwrite an existing config",
-      "",
-    ].join("\n")
-  );
+/**
+ * Arguments, parsed by the platform rather than by hand.
+ *
+ * The hand-rolled version used `argv.indexOf(flag)`, which has three silent failures that all
+ * matter here, and rule 1 of this repository says none of them may be silent:
+ *
+ * - `--preset=nextjs` — the form `npm create x -- --flag=value` makes natural — was never found,
+ *   so the requested preset was ignored and auto-detection ran instead.
+ * - `--preset` with no value was accepted and treated as "no preset", with the same result.
+ * - an unknown flag, including a typo for a real one (`--forse`), was ignored outright. A user who
+ *   typed `--forse` believed the overwrite had been forced.
+ *
+ * `parseArgs` with `strict: true` rejects all three by name, before any wizard code runs.
+ */
+let parsed;
+try {
+  parsed = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      preset: { type: "string" },
+      yes: { type: "boolean" },
+      force: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+    allowPositionals: false,
+    strict: true,
+  });
+} catch (error) {
+  process.stderr.write(`\n❌ ${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`\n${HELP_TEXT}\n`);
+  process.exit(2);
+}
+
+if (parsed.values.help) {
+  process.stderr.write(HELP_TEXT);
   process.exit(0);
 }
 
-const takeValue = (flag) => {
-  const index = argv.indexOf(flag);
-  if (index === -1) return undefined;
-  const value = argv[index + 1];
-  return value && !value.startsWith("-") ? value : undefined;
-};
+const preset = parsed.values.preset;
+// `--preset=` parses as an empty string, which is not "no preset": somebody asked for a preset and
+// named nothing.
+if (preset !== undefined && preset.trim() === "") {
+  process.stderr.write("\n❌ --preset requires a name (it received an empty string).\n");
+  process.exit(2);
+}
 
 try {
   const result = await runInit({
     cwd: process.cwd(),
-    preset: takeValue("--preset"),
-    yes: argv.includes("--yes"),
-    force: argv.includes("--force"),
+    preset: preset?.trim(),
+    yes: parsed.values.yes === true,
+    force: parsed.values.force === true,
   });
 
   if (!result.written) {
