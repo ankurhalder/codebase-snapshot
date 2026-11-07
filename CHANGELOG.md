@@ -21,6 +21,131 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+---
+
+## 0.9.10
+
+An audit of this codebase, run against its own snapshot, found twenty defects, six performance
+problems and seven missing capabilities. This release is all of them that are in the tree; the
+items still open are listed at the end of this entry, because a changelog that stops at the good
+news is the same lie as a warning nobody prints.
+
+### Redaction was corrupting the code it exists to preserve
+
+The worst defects were in the secret scanner, and the evidence was in this repository's own
+snapshot. Four false-positive classes rewrote valid statements:
+
+- `[:=]` matched the first `=` of `===`, and the unquoted-value rules then read the remaining `==`
+  as a credential. `clause.token === ts.SyntaxKind…` shipped as `clause.token =[REDACTED…]`, and so
+  did `if (token === "--")`.
+- `env-secret-assignment` carried `/i`, so an indented reassignment matched: `key =
+  fs.realpathSync(stagingRoot)` was emitted with the call masked.
+- Credential names are matched as a *tail* — that is what catches `dbPassword` — so a name inside a
+  string literal matched, and the string's closing quote was taken as the value's opening quote.
+  `["awsSecret:", "apiKey:"]` came out with two list elements welded together.
+- `progressToken: "progressToken"` was masked as a credential. A camelCase value that spells its
+  own key is a symbol-table entry, not a secret.
+
+Reserved words are no longer credential literals either: `token = await refreshToken(client)` was
+emitted as `token = [REDACTED] refreshToken(client)`.
+
+### Scanning no longer depends on state outside the tree
+
+- A `.gitignore` rule naming a nested directory (`public/build/`) never matched in `walk` mode: the
+  candidate was reduced to its first path segment, which cannot equal a two-segment rule. The same
+  bug dropped a regular *file* named `build` for a `build/` rule.
+- How files are enumerated was held in a module-level variable written by `resolveConfig`, so two
+  scans in one process could disagree, and the second inherited the first one's mode.
+- `validate` did not exclude the tool's own output directory, so it counted `snapshot/` as files
+  missing from the snapshot and reported a correct snapshot as drifting.
+- `findSecretInPath` compiled thirty-plus `RegExp` objects per call, and it runs on every path and
+  every string in every summary.
+- `getGitInfo` spawns one `git status` instead of three `git` processes.
+
+### The config digest now covers what decides a snapshot
+
+Layer and kind *names* were hashed, not their matchers, so moving a layer from `src/api/**` to
+`src/v2/**` produced an identical digest and `validate` said "valid and up to date" for a snapshot
+whose files had all been reclassified. A rule's `flags` and `valueGroup` were missing too, and so
+was `discovery`. `package.json`'s `"snapshot"` object now gets the unknown-key guard every other
+config file already had, and `secretRules` is accepted in a config file as it already was in code.
+
+### `setup` stops dropping the flags it was given
+
+`setup` builds the inner `generate` command line by hand, and five settings were never copied into
+it, so the run reported one configuration and generated with another. It also refused
+`--discovery`, `--large-file-bytes`, `--max-monolith-bytes` and `--include-monolith` outright.
+`--only-artifacts monolith` enabled *nothing*: it turns the six default artifacts off and relied on
+the monolith switch to turn the seventh on, and neither `init` nor `setup` passed that switch along.
+
+### Part budgets say what they enforce
+
+- Every part records the budget it was built for. With per-layer budgets, verification compared
+  each part with the *largest* budget in the run, so a part twice over its own layer budget passed.
+- `renumberParts` rewrites headers, so the byte bound is re-applied after renumbering.
+- A body cut twice reported only the second cut: a 1,000-line file reduced to a preview and then to
+  ten lines said "11 lines omitted", because the count came from the preview instead of the file.
+- Every part states its size in **tokens**, and `--max-part-tokens 32k` sets a ceiling a context
+  window can be measured against. The estimate's method is documented, not hidden.
+
+### Crash-proof locks, byte-accurate reads
+
+- A run killed between creating its lock file and writing its pid leaves a zero-byte lock that
+  named nobody, so `lockOwnerIsGone` answered "not gone" forever and every later run refused to
+  start until the file was deleted by hand. Age is now the fallback evidence.
+- `snapshot_read` truncated to its byte limit by slicing UTF-16 code units, returning up to three
+  times the limit for multibyte text and able to split a surrogate pair.
+- `snapshot_locate` could not find a symbol a file does not export — most of the code in most files
+  — and could not find a Markdown heading at all. Layer and kind matched by exact equality while
+  every other category used a substring.
+- `findSection` compared a heading with the manifest's raw path, which differ once the heading has
+  been capped or escaped; such a file became unreadable whenever another file shared its content.
+- A watch loop had no `error` listener on `fs.watch`, so an `EPERM` or an inotify limit killed the
+  process instead of being reported.
+- The update check skipped itself when any argument contained "json", so `explain package.json`
+  never asked.
+
+### Fewer syscalls
+
+`generate` read every included file twice — a chunked NUL scan, then a full read and a second scan
+of the same bytes. Below the 8 MB scan cap the decode is the complete check on bytes that had to be
+read anyway, so the pre-scan is kept only above it. `explain` and `validate` had the same double
+read.
+
+### New structure for six more languages
+
+Swift, Dart, SQL, GraphQL, Protobuf and Terraform now have profiles. `src/scanner/language.ts`
+already knew four of those extensions by name and no profile claimed them, so a repository in one of
+those languages got a list of files and no idea what was inside them.
+
+### The site keeps its own links
+
+`README.md` writes absolute GitHub URLs so the same text works on npmjs.com; the site builder only
+rewrote *relative* links, so a reader on the docs site who clicked a guide link on the homepage was
+handed back to GitHub. In-repo links to published pages are rewritten now; other repositories and
+files the site does not publish are left alone.
+
+### Also
+
+- `configDigest`, `classifyLayer`, `classifyKind`, `displayPath`, `lockPathFor`, `estimateTokens`,
+  `findSecretInPath` and `getGitInfo` are exported.
+- `manifest.config` records `maxMonolithBytes` and `maxPartTokens`.
+- `scripts/sync-docs.mjs` propagates `package.json#version` to `src/version.ts` and
+  `packages/create/package.json`, so a release cannot drift by forgetting a file. `--check` covers
+  them.
+- `scripts/pack-check.mjs` requires the MCP build outputs, and the three wizard test files share one
+  fake-TTY harness.
+
+### Still open
+
+Four capabilities from the audit are not in this release, and this entry names them rather than
+leaving them to be discovered: `--changed-since`/`--staged` (diff-scoped snapshots),
+`--skeleton` signature compression, an MCP tool for the import graph, the pre-commit hook
+installer, and SARIF export for CI security gates. Offloading `snapshot_generate` to a worker
+thread is also outstanding.
+
+---
+
 ## 0.9.9
 
 ### `snapshot -version` now answers the question it was asked

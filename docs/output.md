@@ -73,7 +73,7 @@ diff the manifest only when you need to know that a run happened.
 | `budgets` | The effective byte limits for the run: `{ maxPartBytes, largeFileBytes }`. The per-layer overrides live at `config.budgets`, which is `{ default, byLayer }`. |
 | `config` | The resolved configuration actually used (preset, artifacts, sizing, scoping). |
 | `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount }`. |
-| `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, partCount, warningCount, redactedLines }`. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
+| `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, estimatedTokens, partCount, warningCount, redactedLines }`. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
 | `fingerprint` | Stable hash of the snapshot content. Two runs over unchanged input produce the same value. |
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
 | `artifacts` | The optional monolith files: `{ fullJson, fullMarkdown }`. Each value is `null` when that file was not written, otherwise `{ byteSize, sha256 }`. The object itself is always present. |
@@ -91,6 +91,8 @@ diff the manifest only when you need to know that a run happened.
   "index": 1,
   "filename": "part-001.md",
   "byteSize": 1432,
+  "estimatedTokens": 402,
+  "budgetBytes": 307200,
   "sha256": "3472b9edcd504403f2416606e4222f326ec207d7916bf928ade4ec7de1406d2d",
   "lines": 91,
   "fileCount": 2,
@@ -104,6 +106,17 @@ diff the manifest only when you need to know that a run happened.
 
 `byteSize` and `sha256` are what `validate` checks against the file on disk. Both are full
 values — the hash is the whole 64-character digest, never elided.
+
+`estimatedTokens` is an **estimate**, and the method is stated rather than hidden: a run of word
+characters costs `round(length / 6)` (minimum one), every other non-space character costs one, a
+space costs nothing because it merges into the next token, and a newline costs one. It lands
+within about 10% of a `cl100k_base` count on ordinary source. The same number appears in the
+part's own header as `- Estimated Tokens: ~N`; the estimate is taken on the part before that line
+is added, so the two always agree.
+
+`budgetBytes` is the ceiling this part was partitioned against. With per-layer budgets a snapshot
+has several at once, and "within budget" cannot be answered without knowing which one applied —
+`validate` checks each part against its own.
 
 ### `files[]`
 

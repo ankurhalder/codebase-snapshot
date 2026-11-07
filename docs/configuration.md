@@ -188,6 +188,7 @@ Classification drives per-layer budgets and the `Layers:` breakdown in `report`.
 ```js
 export default {
   maxPartBytes: "300k",        // hard ceiling per part; default 307200, minimum 4096
+  // maxPartTokens: 32000,     // a per-part ceiling in tokens; narrows maxPartBytes (tokens x 4)
   largeFileBytes: "200k",      // above this a file becomes a head/tail preview
   previewHeadLines: 80,
   previewTailLines: 40,

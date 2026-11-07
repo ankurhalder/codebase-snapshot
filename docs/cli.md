@@ -174,7 +174,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.9
+   Added devDependency: codebase-snapshot ^0.9.10
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -211,7 +211,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.9
+   Added devDependency: codebase-snapshot ^0.9.10
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -401,6 +401,7 @@ narrowest cases of the same rule.
 | `--cwd <path>` | path | current directory | generate, validate, report, explain, init, skill | Repository to operate on. Must exist and be a directory. `diff` and `describe` take no `--cwd`. |
 | `--out-dir <path>` | path | `snapshot` | generate, validate, report, explain, init | Where the snapshot is written or read. May be absolute. |
 | `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, report, explain, init | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
+| `--max-part-tokens <n>` | size | unset | generate | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. |
 | `--large-file-bytes <n>` | size | `204800` (200 KB) | generate, validate, report, explain | Above this, a file becomes a head/tail preview. |
 | `--max-monolith-bytes <n>` | size | unset | generate, validate, report, explain | Skip the single-file monolith when it would exceed this. |
 | `--include-monolith` | flag | off | generate, validate, report, explain | Also write `full-codebase.json` and `full-codebase.md`. |

@@ -1191,9 +1191,12 @@ export function resolveConfig(
   // and a second, parallel limit that the partitioner did not know about would be a promise
   // nothing kept. The conversion uses the same ratio the estimate is built on, and the token
   // number the user chose is recorded so the manifest states their unit, not only ours.
-  const requestedMaxPartTokens = (cliOptions as { maxPartTokens?: ByteSize } | undefined)
-    ?.maxPartTokens ?? (userConfig as { maxPartTokens?: ByteSize } | null | undefined)
-    ?.maxPartTokens;
+  const rawMaxPartTokens =
+    (cliOptions as { maxPartTokens?: ByteSize | null } | undefined)?.maxPartTokens ??
+    (userConfig as { maxPartTokens?: ByteSize | null } | null | undefined)?.maxPartTokens;
+  // `null` means "not set", the way `maxMonolithBytes: null` does in a generated config;
+  // passing it on to the byte parser would fail a config that simply spells the default.
+  const requestedMaxPartTokens = rawMaxPartTokens === null ? undefined : rawMaxPartTokens;
   const maxPartTokens =
     requestedMaxPartTokens === undefined
       ? undefined
