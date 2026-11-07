@@ -185,6 +185,13 @@ test("a backup directory that cannot be removed does not roll the swap back", (t
   });
 
   const second = generateSnapshot(config());
+  // The backup this test deliberately leaves behind is read-only, by construction. Put the modes
+  // back *here*, before any assertion and before any cleanup hook can run: `t.after` hooks are not
+  // ordered relative to the one `makeRepo` registered, and a recursive delete that reaches a 0555
+  // directory fails with EACCES and reports the test as failed through the hook.
+  for (const entry of fs.readdirSync(dir)) {
+    if (entry.startsWith("snapshot")) fs.chmodSync(path.join(dir, entry), 0o755);
+  }
   const secondHash = second.files.find((file) => file.relativePath === "src/a.ts").hashSha256;
 
   assert.notEqual(secondHash, firstHash, "the second run generated a new snapshot");
