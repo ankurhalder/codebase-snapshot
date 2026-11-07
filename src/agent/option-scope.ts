@@ -111,6 +111,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   diff: ["format", "mode", "no-config", "no-update-check", "help", "version"],
   describe: ["format", "mode", "help", "version"],
   init: [
+    "install-hook",
     "cwd",
     "out-dir",
     "max-part-bytes",
@@ -138,6 +139,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   // scan, a monolith or a different large-file threshold; the alternative was to run
   // `setup` and then edit the config it had just written.
   setup: [
+    "install-hook",
     "cwd",
     "out-dir",
     "max-part-bytes",

@@ -39,6 +39,7 @@ import {
   installKind,
   shouldCheck,
 } from "./update-check.js";
+import { installPreCommitHook } from "./agent/hook.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
 import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
@@ -116,6 +117,7 @@ const CLI_OPTIONS = {
   "no-install": { type: "boolean" },
   target: { type: "string" },
   "no-update-check": { type: "boolean" },
+  "install-hook": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -157,6 +159,7 @@ Options:
   --max-monolith-bytes <n>      Skip monolith artefacts larger than n bytes
   --max-part-bytes <n>          Maximum byte budget per markdown part (default: 307200).
                                 Accepts units: 120k, 1.5mb
+  --max-part-tokens <n>         Per-part budget in tokens; narrows --max-part-bytes
   --large-file-bytes <n>        Threshold for head/tail truncation (default: 204800)
   --include-sensitive-files     Emit .env / *.pem / .npmrc / credential files
   --skip-artifacts <names>      Comma-separated artifacts to omit
@@ -183,9 +186,12 @@ Options:
   --exclude <globs>             Comma-separated exclude patterns
   --yes                         Accept every default without prompting
   --force                       Overwrite an existing config
+  --install-hook                Write .git/hooks/pre-commit so a stale snapshot cannot be
+                                committed. An existing hook is never replaced.
 
   setup only:
   --no-install                  Skip installing the dependency before generating
+  --install-hook                As for init
   --preset / --include / --exclude / --force   As for init
 
   skill only:
@@ -258,6 +264,8 @@ interface ParsedInvocation {
   discovery?: DiscoveryMode;
   /** The user asked not to be told about newer releases. */
   noUpdateCheck?: boolean;
+  /** `init` and `setup` only: write a pre-commit hook that gates on `validate`. */
+  installHook?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -637,6 +645,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     onlyArtifacts,
     discovery: isDiscoveryMode(rawDiscovery) ? rawDiscovery : undefined,
     noUpdateCheck: values["no-update-check"] === true,
+    installHook: values["install-hook"] === true,
   };
 }
 
@@ -762,13 +771,21 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  
       dryRun: invocation.dryRun,
     });
 
+    // The hook is installed after the config exists: it gates on `validate`, which needs a
+    // config and a snapshot, and `init` writes the config. A separate `hook` command would
+    // have to re-derive everything this run already knows.
+    const hook = invocation.installHook === true ? installPreCommitHook(invocation.cwd) : null;
+
     if (invocation.format === "json") {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify(hook === null ? result : { ...result, hook }, null, 2)}\n`
+      );
       return 0;
     }
 
     if (!result.written) {
       info(result.configText);
+      if (hook) for (const note of hook.notes) info(`   ${note}`);
       return 0;
     }
 
@@ -781,6 +798,7 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  
       info(`   Added to .gitignore: ${result.gitignoreEntries.join(", ")}`);
     }
     for (const note of result.notes) info(`   ⚠ ${note}`);
+    if (hook) for (const note of hook.notes) info(`   ${note}`);
     info("");
     info(`   Next:  ${nextStepHint(invocation.cwd, result.scripts.length > 0)}`);
     return 0;
@@ -934,6 +952,10 @@ async function runSetupCommand(
       dryRun: invocation.dryRun,
     });
 
+    // Installed after the config exists and before the first generate, so the very first
+    // commit of the setup is already gated. A dry run writes nothing, so it is skipped there.
+    const hook = invocation.installHook === true ? installPreCommitHook(invocation.cwd) : null;
+
     if (invocation.dryRun) {
       const manager = invocation.noInstall ? null : detectPackageManager(invocation.cwd).name;
       if (invocation.format === "json") {
@@ -981,6 +1003,7 @@ async function runSetupCommand(
       if (init.gitignoreEntries.length > 0) {
         info(`   Added to .gitignore: ${init.gitignoreEntries.join(", ")}`);
       }
+      if (hook) for (const note of hook.notes) info(`   ${note}`);
     }
 
     let install: InstallOutcome | null = null;
@@ -1043,6 +1066,7 @@ async function runSetupCommand(
               gitignoreEntries: init.gitignoreEntries,
               install,
               notes: init.notes,
+              hook,
             },
             manifest,
           },

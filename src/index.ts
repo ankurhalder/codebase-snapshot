@@ -2176,6 +2176,8 @@ export {
 } from "./config.js";
 export { truncateToBytes } from "./partitioner/preview.js";
 export { estimateTokens, bytesForTokens, formatTokens } from "./tokenize.js";
+export { HOOK_MARKER, installPreCommitHook } from "./agent/hook.js";
+export type { HookInstallResult } from "./agent/hook.js";
 export { fenceForContent, fenceForText } from "./partitioner/chunker.js";
 
 export type * from "./types.js";

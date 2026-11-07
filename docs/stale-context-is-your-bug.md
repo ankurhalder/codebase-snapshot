@@ -111,6 +111,19 @@ The controls start to pay for themselves the moment a snapshot outlives the sess
 it: a checked-in context directory, a scheduled job, a review bot, an agent that runs for days,
 or a team where the person who generated the snapshot is not the person who reads it.
 
+## Making the gate automatic
+
+alidate only helps if it runs. To gate commits on it:
+
+```bash
+npx codebase-snapshot init --install-hook     # or: setup --install-hook
+```
+
+That writes `.git/hooks/pre-commit`, which refuses a commit while the snapshot is out of date
+and tells the person committing what to run. It is deliberately cautious about an existing hook:
+a `pre-commit` this tool did not write is left byte-for-byte alone, and the output says which
+lines to add instead. Remove the file to stop the check.
+
 ## Related
 
 - [Budgeting LLM context](how-to-context-budget.md) — choosing a part size that fits the window

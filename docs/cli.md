@@ -409,6 +409,7 @@ narrowest cases of the same rule.
 | `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
 | `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write only these. Cannot be combined with `--skip-artifacts`. |
 | `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
+| `--install-hook` | flag | off | init, setup | Write `.git/hooks/pre-commit` so a commit is refused while the snapshot is out of date. An existing hook is never replaced; the note says what to add to it instead. |
 | `--dry-run` | flag | off | generate, init, setup | Compute everything, print it, write nothing. |
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. |
 | `--autopilot` | flag | off | generate | Set the project up without asking — config, `.gitignore`, npm scripts, devDependency, install — then generate. Never overwrites an existing config; refuses an empty directory (exit `1`); contradicts `--no-config` (exit `2`). |
