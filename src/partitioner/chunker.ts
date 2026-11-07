@@ -37,18 +37,25 @@ interface PreparedSection {
  * The marker is mandatory (item 8): a body cut by the part budget with no marker reads like a
  * complete file, and an agent counting lines has no way to see the cut. `budget` names the byte
  * budget that forced it, so a reader can tell `largeFileBytes` from `maxPartBytes`.
+ *
+ * `originalLines` is the file's real line count, not the count of what is being cut down
+ * here. A large file arrives already reduced to a head/tail preview, and measuring the
+ * omission against *that* string counted only the second cut — a 5,000-line file reduced
+ * to 120 preview lines and then to 40 told the reader "80 lines omitted" when 4,960 were
+ * missing. The number has to describe the file, because that is the question a reader
+ * asks of it.
  */
 function truncateWithBudgetMarker(
   content: string,
   maxBytes: number,
-  budget: number
+  budget: number,
+  originalLines: number
 ): { content: string; isTruncated: boolean } {
   const base = content.replace(BUDGET_MARKER_SUFFIX, "");
-  const baseLines = countLines(base);
   const truncated = truncateToBytes(base, Math.max(0, maxBytes));
   if (!truncated.isTruncated) return { content: base, isTruncated: false };
   const keptLines = countLines(truncated.content);
-  const omitted = Math.max(1, baseLines - keptLines);
+  const omitted = Math.max(1, Math.max(countLines(base), originalLines) - keptLines);
   return {
     content: `${truncated.content}\n... [${omitted} lines omitted: part budget ${budget} B] ...`,
     isTruncated: true,
@@ -78,7 +85,7 @@ export function partitionFiles(
   let groups = greedyGroups(prepared, budget);
 
   for (let pass = 0; pass < MAX_SPLIT_PASSES; pass++) {
-    const rendered = renderGroups(groups, contentFingerprint);
+    const rendered = renderGroups(groups, budget, contentFingerprint);
     const oversized = rendered.findIndex((part) => part.metadata.byteSize > budget);
     if (oversized === -1) return rendered;
 
@@ -98,7 +105,12 @@ export function partitionFiles(
       0,
       Buffer.byteLength(currentContent, "utf8") - overflow - BUDGET_MARKER_RESERVE
     );
-    const shrunk = truncateWithBudgetMarker(currentContent, shrinkTo, budget);
+    const shrunk = truncateWithBudgetMarker(
+      currentContent,
+      shrinkTo,
+      budget,
+      section.file.originalLines
+    );
     if (shrunk.isTruncated) {
       applyTruncatedContent(section.file, shrunk.content);
       section.text = renderFileSection(section.file);
@@ -118,7 +130,7 @@ export function partitionFiles(
   // The split-pass budget is exhausted (or every remaining group is a single
   // section). Clip anything still over budget so the byte bound is a guarantee
   // rather than a best effort.
-  return enforceBudget(renderGroups(groups, contentFingerprint), budget);
+  return enforceBudget(renderGroups(groups, budget, contentFingerprint), budget);
 }
 
 /** Hard-clips any part that is still above `budget`, re-hashing what it wrote. */
@@ -152,10 +164,9 @@ export function renumberParts(
   const nameFor = (position: number): string => `part-${zeroPad(position)}.md`;
   const marker = "## Contents\n";
 
-  return parts.map((part, index) => {
+  const renumbered = parts.map((part, index) => {
     const markerIndex = part.markdown.indexOf(marker);
-    const body = markerIndex === -1 ? "" : part.markdown.slice(markerIndex + marker.length);
-    const included = part.metadata.includedFiles;
+    const body = markerIndex === -1 ? "" : part.markdown.slice(markerIndex + marker.length);    const included = part.metadata.includedFiles;
     if (markerIndex === -1) {
       throw new Error(`${part.filename} has no "## Contents" section to re-number.`);
     }
@@ -206,6 +217,14 @@ export function renumberParts(
 
     return { filename: metadata.filename, markdown, metadata };
   });
+
+  // Renumbering rewrites the header ("of 3" becomes "of 12") and re-renders the file list,
+  // so a part that fitted its budget when it was partitioned can come out over it. The byte
+  // bound is a guarantee, so it is re-applied here — against the budget each part was built
+  // for, which with per-layer budgets is not the same for every part.
+  return renumbered.map(
+    (part) => enforceBudget([part], part.metadata.budgetBytes)[0] ?? part
+  );
 }
 
 /** Characters reserved for the omission notice appended to a hard-truncated section. */
@@ -265,7 +284,12 @@ function prepareSection(file: FileEntry, sectionBudget: number): PreparedSection
     const overhead = byteSize - Buffer.byteLength(content, "utf8");
     const allowed = sectionBudget - overhead - BUDGET_MARKER_RESERVE;
     if (allowed <= 0) return;
-    const truncated = truncateWithBudgetMarker(content, allowed, sectionBudget);
+    const truncated = truncateWithBudgetMarker(
+      content,
+      allowed,
+      sectionBudget,
+      file.originalLines
+    );
     if (!truncated.isTruncated) return;
     applyTruncatedContent(file, truncated.content);
     text = renderFileSection(file);
@@ -349,6 +373,7 @@ function greedyGroups(sections: PreparedSection[], budget: number): PreparedSect
 
 function renderGroups(
   groups: PreparedSection[][],
+  budget: number,
   contentFingerprint?: string
 ): PartitionedPart[] {
   const total = groups.length;
@@ -416,6 +441,7 @@ function renderGroups(
       index: index + 1,
       filename,
       byteSize,
+      budgetBytes: budget,
       sha256,
       lines: countLines(content),
       fileCount: group.length,

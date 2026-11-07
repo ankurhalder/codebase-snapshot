@@ -7,7 +7,6 @@ import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "
 import {
   globToRegExp,
   isDiscoveryMode,
-  setActiveDiscovery,
   type DiscoveryMode,
 } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
@@ -160,7 +159,6 @@ export function normalizeResolvedConfig(
   const discovery: DiscoveryMode = isDiscoveryMode(config.discovery)
     ? config.discovery
     : "auto";
-  setActiveDiscovery(discovery);
 
   return markResolvedConfig({
     ...config,
@@ -1089,7 +1087,6 @@ export function resolveConfig(
     );
   }
   const discovery: DiscoveryMode = requestedDiscovery ?? "auto";
-  setActiveDiscovery(discovery);
 
   // A forced preset must exist: silently falling back would leave the developer
   // believing their layers are in effect when they are not.

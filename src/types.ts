@@ -159,6 +159,15 @@ export interface PartMetadata {
   filename: string;
   /** Exact UTF-8 byte length of the emitted part file. */
   byteSize: number;
+  /**
+   * The byte budget this part was partitioned against.
+   *
+   * With per-layer budgets a snapshot has several budgets at once, so "within budget"
+   * cannot be answered without knowing which one applied. Verification compared every
+   * part against the *largest* budget in the run, which passed a part that was over its
+   * own.
+   */
+  budgetBytes: number;
   sha256: string;
   lines: number;
   fileCount: number;
@@ -255,6 +264,12 @@ export interface ManifestConfigSnapshot {
   previewHeadLines: number;
   previewTailLines: number;
   includeMonolith: boolean;
+  /**
+   * The ceiling above which the monolith is not written; `null` for no ceiling.
+   *
+   * Optional because a manifest written before this was recorded has no such key.
+   */
+  maxMonolithBytes?: number | null;
   includeSensitiveFiles: boolean;
   /** How files were discovered; `undefined` on manifests written before this was recorded. */
   discovery?: DiscoveryMode;

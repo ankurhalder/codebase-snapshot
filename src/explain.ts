@@ -131,6 +131,9 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
     secretRules: config.secretRules,
+    // `explain` must enumerate files exactly as `generate` would, or it explains a
+    // decision the generator never made.
+    discovery: config.discovery,
     // Same exclusion `generate` applies, so `explain` never says "not-discovered" about a file
     // that is only missing because the walker dropped the tool's own output directory.
     toolOwnedPaths: [config.outDir, config.tmpDir]

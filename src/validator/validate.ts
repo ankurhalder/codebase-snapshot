@@ -342,6 +342,18 @@ export function validateSnapshot(
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
     secretRules: config.secretRules,
+    // Passed explicitly, like `generate` does. Relying on a process-wide "current
+    // discovery mode" meant `validate` could enumerate files one way while the snapshot
+    // had been generated another way, and then blame the difference on drift.
+    discovery: config.discovery,
+    // The same exclusion `generate` applies: without it, `validate` recounted the tool's
+    // own output directory as a set of files missing from the snapshot, so a correct
+    // snapshot was reported as drifting.
+    toolOwnedPaths: [config.outDir, config.tmpDir]
+      .map((directory) =>
+        path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
+      )
+      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
   });
 
   for (const diskFile of collection.files) {
@@ -461,10 +473,19 @@ export function validateSnapshot(
     if (sha256Hex(buffer) !== part.sha256) {
       drift.partIssues.push({ part: part.filename, issue: "sha256 does not match the manifest" });
     }
-    if (buffer.length > maxEffectiveBudget) {
+    // A part records the budget it was built against. Comparing every part with the
+    // *largest* budget in the run meant a part 2× over its own layer budget passed,
+    // because some other layer had a bigger one. Manifests written before
+    // `budgetBytes` existed fall back to the effective maximum.
+    const partBudget =
+      typeof part.budgetBytes === "number" ? part.budgetBytes : maxEffectiveBudget;
+    if (buffer.length > partBudget) {
       drift.partIssues.push({
         part: part.filename,
-        issue: `${buffer.length} B exceeds the effective part budget ${maxEffectiveBudget} B`,
+        issue:
+          typeof part.budgetBytes === "number"
+            ? `${buffer.length} B exceeds its part budget ${partBudget} B`
+            : `${buffer.length} B exceeds the effective part budget ${partBudget} B`,
       });
     }
   }

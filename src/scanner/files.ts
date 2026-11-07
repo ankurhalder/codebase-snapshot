@@ -19,19 +19,6 @@ export function isDiscoveryMode(value: unknown): value is DiscoveryMode {
   return value === "auto" || value === "git" || value === "walk";
 }
 
-/**
- * The mode used when a caller does not pass one.
- *
- * `resolveConfig` registers the resolved value, so `generate`, `validate` and
- * `explain` honour the `discovery` config key without every call site having to
- * thread it; an explicit `options.discovery` always wins.
- */
-let activeDiscovery: DiscoveryMode = "auto";
-
-export function setActiveDiscovery(mode: DiscoveryMode): void {
-  activeDiscovery = mode;
-}
-
 export interface CollectOptions {
   /**
    * When non-empty, only files matching at least one pattern are candidates.
@@ -105,37 +92,50 @@ function isInside(root: string, candidate: string): boolean {
 
 export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
   try {
-    // `--abbrev-ref HEAD` prints the literal string "HEAD" on a detached HEAD,
-    // which is a normal CI state. Recording it as a branch produced misleading
-    // metadata and a permanent "generated on branch HEAD" warning from validate.
-    // A detached HEAD cannot name a branch, which is what the fallback is for.
-    const reported = childProcess
-      .execSync("git rev-parse --abbrev-ref HEAD", {
-        cwd,
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf8",
-      })
-      .trim();
-    const branch = !reported || reported === "HEAD" ? fallbackBranch : reported;
+    // One subprocess, not three.
+    //
+    // This used to spawn `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD` and
+    // `git status --porcelain` in sequence. Process creation is the expensive part —
+    // roughly 40-80 ms per spawn on Windows — and `status --porcelain=v2 --branch`
+    // reports all three answers in its `# branch.*` headers.
+    //
+    // `--abbrev-ref HEAD` printed the literal string "HEAD" on a detached HEAD, which
+    // is a normal CI state; recording it produced misleading metadata and a permanent
+    // "generated on branch HEAD" warning from validate. A detached HEAD cannot name a
+    // branch, so the fallback is used, and `(detached)` is how v2 spells it.
+    //
+    // `-z` disables C-quoting of paths, so a path containing a newline cannot be
+    // mistaken for a header: parsing stops at the first record that is not a header,
+    // and everything from there on is an entry, which is all `isDirty` needs.
+    const output = childProcess.execSync("git status --porcelain=v2 --branch -z", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    });
 
-    const commit =
-      childProcess
-        .execSync("git rev-parse HEAD", {
-          cwd,
-          stdio: ["ignore", "pipe", "ignore"],
-          encoding: "utf8",
-        })
-        .trim() || "unknown";
+    let branch = fallbackBranch;
+    let commit = "unknown";
+    let isDirty = false;
 
-    const status = childProcess
-      .execSync("git status --porcelain", {
-        cwd,
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf8",
-      })
-      .trim();
+    const records = output.split("\0").flatMap((record) => record.split("\n"));
+    for (const record of records) {
+      if (record.length === 0) continue;
+      if (!record.startsWith("# ")) {
+        isDirty = true;
+        break;
+      }
+      const oid = record.match(/^# branch\.oid (.+)$/);
+      if (oid) {
+        commit = oid[1] === "(initial)" ? "unknown" : oid[1];
+        continue;
+      }
+      const head = record.match(/^# branch\.head (.+)$/);
+      if (head) {
+        branch = head[1] === "(detached)" ? fallbackBranch : head[1];
+      }
+    }
 
-    return { branch, commit, isDirty: status.length > 0 };
+    return { branch, commit, isDirty };
   } catch {
     return { branch: fallbackBranch, commit: "unknown", isDirty: false };
   }
@@ -240,9 +240,35 @@ export function isSensitivePath(relativePath: string): boolean {
  */
 
 
+/**
+ * Global copies of the rule patterns, compiled once per rule object.
+ *
+ * `findSecretInPath` runs on every candidate path, every skipped path, every layer and
+ * kind name, and every string in every AST summary. It allocated 30+ new `RegExp`
+ * objects on each call: on a 2,000-file repository with 20 identifiers per file that is
+ * over a million compilations for a single run. A `RegExp` is immutable in everything
+ * but `lastIndex`, so one global copy per rule is safe to share as long as the index is
+ * reset before each scan — which the loop below does.
+ */
+const GLOBAL_PATTERNS = new WeakMap<RegExp, RegExp>();
+
+function globalPattern(pattern: RegExp): RegExp {
+  let compiled = GLOBAL_PATTERNS.get(pattern);
+  if (compiled === undefined) {
+    // A fresh global copy: the shared rule patterns are deliberately stateless
+    // (no `g`), and `exec` on a non-global regex never advances `lastIndex` —
+    // looping it directly returns the same match forever.
+    compiled = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, "")}g`);
+    GLOBAL_PATTERNS.set(pattern, compiled);
+  }
+  return compiled;
+}
+
+const DEFAULT_PATH_RULES: SecretRule[] = [...DEFAULT_SECRET_PATTERNS];
+
 function pathScanRules(extraRules: readonly SecretRule[] | undefined): SecretRule[] {
-  const fallback = extraRules ?? [];
-  return [...DEFAULT_SECRET_PATTERNS, ...fallback];
+  if (extraRules === undefined || extraRules.length === 0) return DEFAULT_PATH_RULES;
+  return [...DEFAULT_SECRET_PATTERNS, ...extraRules];
 }
 
 /**
@@ -265,10 +291,8 @@ export function findSecretInPath(
   const rules: string[] = [];
 
   for (const { rule, pattern } of pathScanRules(extraRules)) {
-    // A fresh global copy: the shared rule patterns are deliberately stateless
-    // (no `g`), and `exec` on a non-global regex never advances `lastIndex` —
-    // looping it directly returns the same match forever.
-    const scan = new RegExp(pattern.source, `${pattern.flags.replace(/[gy]/g, "")}g`);
+    const scan = globalPattern(pattern);
+    scan.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = scan.exec(posixPath)) !== null) {
       if (match[0].length === 0) {
@@ -581,6 +605,32 @@ interface GitignoreLayer {
 }
 
 /**
+ * Whether one rule ignores `scoped`.
+ *
+ * A pattern ending in `/` matches a **directory** and everything below it. The old
+ * code reduced the candidate to its first path segment (`scoped.replace(/\/.*$/, "")`),
+ * so `public/build/app.js` became `public` — a string that can never equal the rule's
+ * `public/build`, which meant a multi-segment directory rule never matched in `walk`
+ * mode and the directory it ignored was scanned back into the snapshot. A directory
+ * rule is now tried against every directory prefix of the candidate, and against the
+ * candidate itself only when the candidate *is* a directory — so `build/` no longer
+ * drops a regular file named `build`.
+ */
+function matchesGitignoreRule(
+  rule: GitignoreRule,
+  scoped: string,
+  isDirectory: boolean
+): boolean {
+  if (!rule.dirOnly) return matchesGitignorePattern(scoped, rule.pattern);
+  const segments = scoped.split("/");
+  const limit = isDirectory ? segments.length : segments.length - 1;
+  for (let depth = 1; depth <= limit; depth += 1) {
+    if (matchesGitignorePattern(segments.slice(0, depth).join("/"), rule.pattern)) return true;
+  }
+  return false;
+}
+
+/**
  * Whether the accumulated `.gitignore` layers ignore `relativePath`, or `null` for no opinion.
  *
  * The deepest layer with an opinion wins, which is git's precedence rule: a pattern in a nested
@@ -588,7 +638,8 @@ interface GitignoreLayer {
  */
 function gitignoreVerdict(
   layers: readonly GitignoreLayer[],
-  relativePath: string
+  relativePath: string,
+  isDirectory: boolean
 ): boolean | null {
   let verdict: boolean | null = null;
 
@@ -605,8 +656,7 @@ function gitignoreVerdict(
 
     let layerVerdict: boolean | null = null;
     for (const rule of layer.rules) {
-      const target = rule.dirOnly ? scoped.replace(/\/.*$/, "") : scoped;
-      if (matchesGitignorePattern(target, rule.pattern)) layerVerdict = !rule.negated;
+      if (matchesGitignoreRule(rule, scoped, isDirectory)) layerVerdict = !rule.negated;
     }
     if (layerVerdict !== null) verdict = layerVerdict;
   }
@@ -670,14 +720,9 @@ function listIgnoredPaths(cwd: string): string[] {
   }
 }
 
-/** Directory names this tool itself writes, plus its crash leftovers. */
-const TOOL_OWNED_DIR_NAMES = new Set(["snapshot", "snapshot.tmp"]);
-
-function isToolOwnedDirName(name: string): boolean {
-  return TOOL_OWNED_DIR_NAMES.has(name) || name.startsWith("snapshot.backup-");
-}
-
-/** True when `target` is a directory carrying this tool's ownership marker. */
+/**
+ * True when `target` is a directory carrying this tool's ownership marker.
+ */
 function hasSnapshotMarker(target: string): boolean {
   try {
     return (
@@ -900,7 +945,11 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
 
   let candidates: string[];
   const skipped: SkipRecord[] = [];
-  const discovery = options.discovery ?? activeDiscovery;
+  // Explicit, never a process-wide default: a module-level "current discovery mode"
+  // meant the mode depended on the last `resolveConfig` that ran in the process, so one
+  // caller could enumerate files differently from another — and a test that scanned two
+  // projects in sequence got the first project's mode in the second.
+  const discovery = options.discovery ?? "auto";
 
   if (discovery === "walk") {
     // The documented escape hatch. The walker reads every `.gitignore` it meets —
@@ -1114,8 +1163,15 @@ function walkDirectory(
     // Without git there is no candidate listing to filter later, so this is the only place an
     // omission can be reported. The exception is the tool's own output directory for this run,
     // which cannot carry a marker before its first run.
-    if (isToolOwnedDirName(entry.name) && reservedPaths.has(relPath)) continue;
-    if (DEFAULT_IGNORED_DIRS.includes(entry.name)) {
+    //
+    // `reservedPaths` already holds exactly the directories this run writes, so the name
+    // check that used to sit beside it only had the effect of *not* skipping a custom
+    // outDir: with `outDir: ".context"`, `isToolOwnedDirName(".context")` is false, the
+    // walker descended into it, and an empty or gitignored `.context` was recorded in
+    // `skipped[]` on the first run and omitted on later ones once it carried a marker —
+    // so two identical runs produced different manifests.
+    if (reservedPaths.has(relPath)) continue;
+    if (entry.isDirectory() && DEFAULT_IGNORED_DIRS.includes(entry.name)) {
       results.skipped.push({
         path: relPath,
         reason: "default-ignore",
@@ -1132,7 +1188,7 @@ function walkDirectory(
       continue;
     }
 
-    if (gitignoreVerdict(frame.gitignoreLayers, relPath) === true) {
+    if (gitignoreVerdict(frame.gitignoreLayers, relPath, entry.isDirectory()) === true) {
       // A gitignored custom output directory is our own bookkeeping, not a
       // user-facing skip (C25).
       if (!hasSnapshotMarker(fullPath)) {

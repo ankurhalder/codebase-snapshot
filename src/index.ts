@@ -356,8 +356,7 @@ function buildIndexes(files: FileEntry[]): ManifestIndexes {
  */
 function verifyInMemory(
   files: FileEntry[],
-  parts: ReturnType<typeof partitionFiles>,
-  maxPartBytes: number
+  parts: ReturnType<typeof partitionFiles>
 ): string[] {
   const errors: string[] = [];
   const partNames = new Set(parts.map((part) => part.filename));
@@ -376,8 +375,14 @@ function verifyInMemory(
     if (actualBytes !== part.metadata.byteSize) {
       errors.push(`${part.filename} byteSize ${part.metadata.byteSize} != actual ${actualBytes}.`);
     }
-    if (actualBytes > maxPartBytes) {
-      errors.push(`${part.filename} (${actualBytes} B) exceeds the part budget of ${maxPartBytes} B.`);
+    // Each part is checked against the budget it was built for. With per-layer budgets
+    // "the part budget" is not one number, and testing every part against the largest of
+    // them passed a part that was twice over its own.
+    const partBudget = part.metadata.budgetBytes;
+    if (actualBytes > partBudget) {
+      errors.push(
+        `${part.filename} (${actualBytes} B) exceeds its part budget of ${partBudget} B.`
+      );
     }
     if (part.metadata.includedFiles.length !== part.metadata.fileCount) {
       errors.push(`${part.filename} fileCount does not match its included files.`);
@@ -1355,6 +1360,7 @@ export function generateSnapshot(
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
     secretRules: config.secretRules,
+    discovery: config.discovery,
     // The output and staging directories this run is about to write, relative to the root. A
     // first run cannot have marked them yet, so the name alone keeps a run from recording its own
     // output — but only at these exact paths, not at every directory that shares the name.
@@ -1668,15 +1674,10 @@ export function generateSnapshot(
   }
 
   const parts = partitionByBudget(files, config, fingerprint);
-  const maxEffectiveBudget = Math.max(
-    config.maxPartBytes,
-    config.budgets.default,
-    ...Object.values(config.budgets.byLayer)
-  );
   // Byte-budget truncation happens inside the partitioner, so preview counts
   // must be derived from the final state of `files`, not from the scan loop.
   const truncatedPreviewCount = files.filter((file) => file.isPreviewTruncated).length;
-  const validationErrors = verifyInMemory(files, parts, maxEffectiveBudget);
+  const validationErrors = verifyInMemory(files, parts);
 
   const totalContentBytes = files.reduce((total, file) => total + file.includedBytes, 0);
 
@@ -1706,6 +1707,10 @@ export function generateSnapshot(
       previewHeadLines: config.previewHeadLines,
       previewTailLines: config.previewTailLines,
       includeMonolith: config.includeMonolith,
+      // A ceiling that decides whether `full-codebase.*` is written at all, so it belongs
+      // in the record of what the run enforced. Omitting it left `--max-monolith-bytes`
+      // invisible in the manifest that is supposed to describe the run.
+      maxMonolithBytes: config.maxMonolithBytes ?? null,
       includeSensitiveFiles: config.includeSensitiveFiles,
       discovery: config.discovery ?? "auto",
       artifacts: { ...config.artifacts },
@@ -2086,7 +2091,14 @@ export { PRESETS } from "./presets/index.js";
 export { LANGUAGE_PROFILES, profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
 export type { HeuristicResult, LanguageProfile } from "./ast/profiles/index.js";
 export { renumberParts } from "./partitioner/chunker.js";
-export { collectFiles, isSensitivePath, matchesExclude, globToRegExp } from "./scanner/files.js";
+export {
+  collectFiles,
+  findSecretInPath,
+  getGitInfo,
+  isSensitivePath,
+  matchesExclude,
+  globToRegExp,
+} from "./scanner/files.js";
 export {
   ARTIFACT_NAMES,
   classifyKind,
