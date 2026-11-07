@@ -162,12 +162,41 @@ to add instead: there is deliberately no flag to force the overwrite. A `.git` t
 (a worktree or submodule) is followed to the real git directory rather than failing with
 `ENOTDIR`.
 
+### `--changed-since` and `--staged`: review packs the diff
+
+Reviewing a pull request with a model is the case this exists for: the diff is small, the
+repository is not, and packing all of it costs a context window to answer a question about four
+files.
+
+`--changed-since <ref>` is the working tree against that ref — committed, staged and unstaged
+changes all count, because all three are what a reviewer is looking at — **plus untracked
+files**, which `git diff` never lists and which are exactly what a new feature starts with.
+`--staged` is the index against `HEAD`, and `--with-dependents` adds the one-hop importers,
+which is the context needed to change a file safely rather than merely the file that moved.
+
+Files outside the scope are recorded in `skipped[]` with a new reason, `unchanged` —
+deliberately not `excluded`, which means the user's own glob rejected the path. Every failure is
+loud: an unknown ref, a directory that is not a git repository, and `--with-dependents` without
+a scope are all errors naming the way out, because a ref typo that produced an empty snapshot
+would read as "this change touched nothing".
+
+### `--skeleton`: signatures instead of bodies
+
+`docs/vs-repomix.md` concedes that a compression mode beats byte budgeting for a repository too
+large to fit at all. This is that mode, built on the compiler that is already the one runtime
+dependency: each function, method, constructor, accessor and arrow body becomes `{ /* ... */ }`
+in place.
+
+The rewrite is span-based rather than a `ts.createPrinter()` re-print, and that is the whole
+feature — a printer normalises quotes, blank lines and comment positions, so a skeleton would
+differ from its source everywhere instead of only where bodies were removed. Affected entries
+carry `inclusionMode: "signatures"`, and the structural summary still describes the whole file.
+
 ### Still open
 
-Four items from the audit are not in this release, and this entry names them rather than leaving
-them to be discovered: `--changed-since`/`--staged` (diff-scoped snapshots), `--skeleton`
-signature compression, SARIF export for CI security gates, and offloading `snapshot_generate` to
-a worker thread so the MCP event loop stays responsive.
+Two items from the audit are not in this release, and this entry names them rather than leaving
+them to be discovered: SARIF export for CI security gates, and offloading `snapshot_generate` to
+a worker thread so the MCP event loop stays responsive while a large repository is written.
 
 ---
 
