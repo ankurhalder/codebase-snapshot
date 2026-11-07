@@ -1746,15 +1746,21 @@ export function isGeneratedWatchPath(candidate: string, paths: WatchPaths): bool
 
   if (isSameOrInside(outDir, absolute) || isSameOrInside(tmpDir, absolute)) return true;
 
-  // The atomic swap renames the previous output to `<outDir>.backup-<pid>-<time>`
-  // before installing the new directory.
-  const parent = path.dirname(absolute);
-  if (
-    parent === path.dirname(outDir) &&
-    path.basename(absolute).startsWith(`${path.basename(outDir)}.backup-`)
-  ) {
-    return true;
-  }
+  // The atomic swap renames the previous output to `<outDir>.backup-<pid>-<time>` before installing
+  // the new directory, and on a cross-device swap it copies the staging tree to
+  // `<outDir>.partial-<pid>-<time>` first. Both are this tool's own writes. Two things were wrong
+  // here: the `.partial-` form was not recognised at all, and the test only looked at the candidate
+  // path itself, so an event for `part-001.md` *inside* the copy was never matched — which is
+  // exactly the event `cpSync` produces. `--watch` saw its own copy being filled, called it a source
+  // edit, and regenerated on every pass. The names come from the resolved output/staging
+  // directories, so a custom `outDir` is covered too.
+  const offsets = [path.basename(outDir), path.basename(tmpDir)].filter((name) => name.length > 0);
+  const leftover = absolute.split(/[\\/]+/).some((segment) =>
+    offsets.some(
+      (name) => segment.startsWith(`${name}.backup-`) || segment.startsWith(`${name}.partial-`)
+    )
+  );
+  if (leftover) return true;
 
   return absolute
     .split(/[\\/]+/)

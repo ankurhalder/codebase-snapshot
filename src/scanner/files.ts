@@ -283,6 +283,32 @@ export function isSensitivePath(relativePath: string): boolean {
  */
 const GLOBAL_PATTERNS = new WeakMap<RegExp, RegExp>();
 
+/**
+ * Compiled globs, keyed by the pattern they were built from.
+ *
+ * The key is the caller's string, not the translated source, so two spellings that normalise to
+ * the same RegExp (`./src/**` and `src/**`) cost one entry each — which is what the caller wrote
+ * and therefore what the error message has to name.
+ */
+const GLOB_REGEX_CACHE = new Map<string, RegExp>();
+/** Compiled `.gitignore` patterns, keyed by the rule's pattern text. */
+const GITIGNORE_REGEX_CACHE = new Map<string, RegExp>();
+
+/**
+ * Ceiling on either cache.
+ *
+ * Entries are pure functions of a short string, so the size is bounded by how many distinct
+ * patterns a repository writes, not by how long the process runs. The cap exists so a process
+ * that is fed generated patterns cannot grow without limit; clearing is always safe.
+ */
+const REGEX_CACHE_LIMIT = 4096;
+
+function rememberCompiled(cache: Map<string, RegExp>, key: string, value: RegExp): void {
+  if (cache.size >= REGEX_CACHE_LIMIT) cache.clear();
+  cache.set(key, value);
+}
+
+
 function globalPattern(pattern: RegExp): RegExp {
   let compiled = GLOBAL_PATTERNS.get(pattern);
   if (compiled === undefined) {
@@ -297,9 +323,22 @@ function globalPattern(pattern: RegExp): RegExp {
 
 const DEFAULT_PATH_RULES: SecretRule[] = [...DEFAULT_SECRET_PATTERNS];
 
-function pathScanRules(extraRules: readonly SecretRule[] | undefined): SecretRule[] {
-  if (extraRules === undefined || extraRules.length === 0) return DEFAULT_PATH_RULES;
-  return [...DEFAULT_SECRET_PATTERNS, ...extraRules];
+/**
+ * The rules a *path* is scanned with.
+ *
+ * `config.secretRules` is already the complete list — the built-ins followed by the custom rules,
+ * or only the custom rules when `secrets.disableDefaultPatterns` is set. Prepending the built-ins
+ * here a second time allocated a fresh 60-element array and ran all 30 built-in patterns twice for
+ * every file path, every skip record and every AST summary string, and it made
+ * `disableDefaultPatterns` a no-op for paths while it worked for content — the same setting
+ * behaving two ways depending on what it was scanning.
+ *
+ * An explicit empty list therefore means exactly that: nothing is masked. Only `undefined` — the
+ * caller did not resolve a rule list at all — falls back to the built-ins.
+ */
+function pathScanRules(extraRules: readonly SecretRule[] | undefined): readonly SecretRule[] {
+  if (extraRules === undefined) return DEFAULT_PATH_RULES;
+  return extraRules;
 }
 
 /**
@@ -392,14 +431,36 @@ export function maskSkipPaths(
  * Brace groups and character classes are supported because they are what people
  * actually write: `*.{ts,tsx}` previously matched nothing at all, since `{` and
  * `}` were escaped as literals.
+ *
+ * Compiled once per distinct pattern. `matchesExclude` calls this for every
+ * (file, include), (file, exclude), (file, layer rule) and (file, kind rule)
+ * pair, so a 20 000-file repository with 55 patterns compiled over a million
+ * identical RegExp objects per run. The result is a pure function of the string,
+ * so the cache cannot change an answer.
  */
 export function globToRegExp(glob: string): RegExp {
+  const cached = GLOB_REGEX_CACHE.get(glob);
+  if (cached !== undefined) return cached;
+
   const normalized = glob.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   const anchored = normalized.startsWith("/");
   const body = anchored ? normalized.slice(1) : normalized;
 
   const prefix = anchored || body.includes("/") ? "^" : "(?:^|.*/)";
-  return new RegExp(`${prefix}${globBodyToRegExp(body, true)}(?:/.*)?$`);
+  let compiled: RegExp;
+  try {
+    compiled = new RegExp(`${prefix}${globBodyToRegExp(body, true)}(?:/.*)?$`);
+  } catch (error) {
+    // A glob this tool cannot compile is a configuration mistake — an out-of-order range such as
+    // `[z-a]` — and silently matching nothing would quietly exclude no files while the developer
+    // believes they excluded some. Rule 1: say so.
+    throw new Error(
+      `"${glob}" is not a valid glob: ${(error as Error).message}. ` +
+        'A character class must be ascending, as in "[a-z]".'
+    );
+  }
+  rememberCompiled(GLOB_REGEX_CACHE, glob, compiled);
+  return compiled;
 }
 
 /** One level of brace nesting, which covers `*.{ts,tsx}` and `src/{app,lib}/**`. */
@@ -594,6 +655,26 @@ function escapeRegExpChar(character: string): string {
  * at any depth" is the documented behaviour.
  */
 function matchGitignorePattern(target: string, pattern: string): boolean {
+  let compiled = GITIGNORE_REGEX_CACHE.get(pattern);
+  if (compiled === undefined) {
+    compiled = compileGitignorePattern(pattern);
+    rememberCompiled(GITIGNORE_REGEX_CACHE, pattern, compiled);
+  }
+  return compiled.test(target);
+}
+
+/**
+ * Compiles one `.gitignore` pattern, once.
+ *
+ * A pattern whose character class is out of order (`[z-a]`) used to throw a raw `SyntaxError` out
+ * of `new RegExp` and kill the whole scan — one stray line in a `.gitignore` and no command that
+ * touches the tree would run. git itself answers "no match" for an invalid bracket expression
+ * (that is what POSIX `fnmatch` does), so a pattern that cannot compile becomes `/ $^ /` — a
+ * RegExp that matches nothing — rather than an error. This is fidelity to the file format, not a
+ * silent fallback: the pattern is a *user's* file this tool reads, and its own tool ignores that
+ * line too.
+ */
+function compileGitignorePattern(pattern: string): RegExp {
   const anchored = pattern.startsWith("/");
   const body = anchored ? pattern.slice(1) : pattern;
   let source = "";
@@ -648,7 +729,11 @@ function matchGitignorePattern(target: string, pattern: string): boolean {
     source += escapeRegExpChar(character);
   }
   const prefix = anchored || body.includes("/") ? "^" : "(?:^|.*/)";
-  return new RegExp(`${prefix}${source}(?:/.*)?$`).test(target);
+  try {
+    return new RegExp(`${prefix}${source}(?:/.*)?$`);
+  } catch {
+    return /$^/;
+  }
 }
 
 /** One `.gitignore` file together with the directory it governs, relative to the scan root. */
@@ -717,6 +802,38 @@ function gitignoreVerdict(
   return verdict;
 }
 
+/** The output-directory name this tool has always used, for callers that name no other. */
+const DEFAULT_TOOL_DIR_NAMES: readonly string[] = ["snapshot"];
+
+/**
+ * The directory names whose crash leftovers belong to this tool.
+ *
+ * The atomic swap leaves `${outDir}.backup-<pid>-<ts>` and, across a device boundary, an
+ * `${outDir}.partial-<pid>-<ts>` copy. Both are previously generated content or a half-finished
+ * copy of it — never the developer's source — and both used to be recognised by the hardcoded
+ * prefix `snapshot.backup-` alone. With `outDir: ".context"` that check never fired, so an
+ * interrupted run left a directory of snapshot parts that the *next* run scanned back in as user
+ * source code. The names come from the resolved configuration now, so they follow the setting.
+ */
+function toolDirNamesFor(toolOwnedPaths: Iterable<string>): string[] {
+  const names = new Set(DEFAULT_TOOL_DIR_NAMES);
+  for (const entry of toolOwnedPaths) {
+    const base = entry.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop();
+    if (base !== undefined && base.length > 0) names.add(base);
+  }
+  return [...names];
+}
+
+/** True when one path segment names a backup or partial-swap directory of this tool. */
+function isToolLeftoverName(name: string, dirNames: readonly string[]): boolean {
+  for (const dirName of dirNames) {
+    if (name.startsWith(`${dirName}.backup-`) || name.startsWith(`${dirName}.partial-`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Explains *why* a path is in the built-in ignore list, or `null` when it is not.
  *
@@ -724,23 +841,34 @@ function gitignoreVerdict(
  * "this file exists but was skipped, and here is the rule" — a directory named
  * `out` or `build` used to drop real source silently and inexplicably. Exported
  * so `explain` can report the real reason instead of `not-discovered`.
+ *
+ * `toolDirNames` is the output/staging directory names the caller resolved, so the
+ * leftover rule follows a custom `outDir` instead of the literal `snapshot`.
  */
-export function defaultIgnoreReason(relativePath: string): string | null {
+export function defaultIgnoreReason(
+  relativePath: string,
+  toolDirNames: readonly string[] = DEFAULT_TOOL_DIR_NAMES
+): string | null {
   const posixPath = relativePath.replace(/\\/g, "/");
   const parts = posixPath.split("/");
   for (let i = 0; i < parts.length - 1; i++) {
     if (DEFAULT_IGNORED_DIRS.includes(parts[i])) {
       return `built-in ignore: directory "${parts[i]}"`;
     }
-    // A crashed atomic swap can leave `snapshot.backup-<pid>-<ts>` behind;
-    // scanning our own leftovers back into the next snapshot is never intended.
-    if (parts[i].startsWith("snapshot.backup-")) {
+    // A crashed atomic swap can leave `<outDir>.backup-<pid>-<ts>` behind; scanning our own
+    // leftovers back into the next snapshot is never intended.
+    if (isToolLeftoverName(parts[i], toolDirNames)) {
       return `built-in ignore: leftover snapshot backup "${parts[i]}"`;
     }
   }
   const base = parts[parts.length - 1];
   if (DEFAULT_IGNORED_FILES.includes(base)) {
     return `built-in ignore: filename "${base}"`;
+  }
+  // A leftover can also be the *last* segment, because a directory that held nothing but its
+  // marker is still an entry of its own.
+  if (isToolLeftoverName(base, toolDirNames)) {
+    return `built-in ignore: leftover snapshot backup "${base}"`;
   }
   return null;
 }
@@ -856,6 +984,21 @@ function makeLinkProbe(): (absolutePath: string) => boolean {
  * (`aaa-link/UNIQUE.ts` and `zzz-target/UNIQUE.ts`) with an empty `skipped[]`.
  * Any candidate below a linked directory is dropped and the link is reported
  * once; a link that leads outside the root is reported as `outside-root`.
+ *
+ * The reason for each link now follows `walkDirectory` exactly, because the two
+ * enumerations have to be interchangeable — the same repository produced two
+ * different snapshots depending on `--discovery`:
+ *
+ * - a link **to a file** that stays inside the root is a file, so it is kept.
+ *   The old loop tested `depth <= parts.length`, which included the candidate
+ *   itself, so every tracked file symlink was dropped as `symlink` here and
+ *   emitted by the walk.
+ * - a **broken** link is `read-error`, not `symlink`, unless its own target
+ *   resolves outside the root — in which case it is `outside-root`, which is
+ *   the accurate and security-relevant reason. `targetReal` used to start at the
+ *   link's own path, so a broken link always compared as "inside".
+ * - a link to a **directory** (or to anything that is neither a file nor a
+ *   directory) is `symlink` and is not followed.
  */
 function dropLinkedDirectories(
   cwd: string,
@@ -873,48 +1016,98 @@ function dropLinkedDirectories(
   const reported = new Set<string>();
   const kept: string[] = [];
 
+  const report = (linkedPath: string, record: SkipRecord): void => {
+    if (reported.has(linkedPath)) return;
+    reported.add(linkedPath);
+    skipped.push(record);
+  };
+
   for (const candidate of candidates) {
     const parts = candidate.split("/");
-    let linkedDir: string | null = null;
+    let linkedPath: string | null = null;
     // `depth <= parts.length` also tests the candidate itself: on a POSIX
     // checkout git records a symbolic link as an entry in its own right, so a
     // link to a directory arrived as a file called `aaa-link` and was emitted.
     for (let depth = 1; depth <= parts.length; depth += 1) {
       const prefix = parts.slice(0, depth).join("/");
       if (isLink(path.join(cwd, prefix))) {
-        linkedDir = prefix;
+        linkedPath = prefix;
         break;
       }
     }
-    if (linkedDir === null) {
+    if (linkedPath === null) {
       kept.push(candidate);
       continue;
     }
-    if (reported.has(linkedDir)) continue;
-    reported.add(linkedDir);
 
-    const absolute = path.join(cwd, linkedDir);
-    let targetReal = absolute;
+    const absolute = path.join(cwd, linkedPath);
+    const rawTarget = readLinkTarget(absolute, absolute);
+
+    let targetReal: string | null = null;
     try {
       targetReal = fs.realpathSync(absolute);
     } catch {
-      /* broken link: reported below */
+      targetReal = null;
     }
-    const target = readLinkTarget(absolute, targetReal);
-    const what = linkedDir === candidate ? "symbolic link" : "directory link";
-    skipped.push(
-      isInside(rootReal, targetReal)
-        ? {
-            path: linkedDir,
-            reason: "symlink",
-            detail: `${what} not followed (target: ${target})`,
-          }
-        : {
-            path: linkedDir,
-            reason: "outside-root",
-            detail: `link target resolves outside the scanned root (target: ${target}); not followed`,
-          }
-    );
+
+    if (targetReal === null) {
+      // A link whose target does not exist cannot be resolved, so containment is decided on the
+      // target as it is written — the same question `walkDirectory` answers by having thrown out
+      // of `realpathSync` and then reporting `read-error`.
+      const resolvedFallback = path.resolve(path.dirname(absolute), rawTarget);
+      report(
+        linkedPath,
+        isInside(rootReal, resolvedFallback)
+          ? { path: linkedPath, reason: "read-error", detail: "broken symlink" }
+          : {
+              path: linkedPath,
+              reason: "outside-root",
+              detail: `link target resolves outside the scanned root (target: ${rawTarget}); not followed`,
+            }
+      );
+      continue;
+    }
+
+    if (!isInside(rootReal, targetReal)) {
+      report(linkedPath, {
+        path: linkedPath,
+        reason: "outside-root",
+        detail: `link target resolves outside the scanned root (target: ${rawTarget}); not followed`,
+      });
+      continue;
+    }
+
+    let stats: fs.Stats | null = null;
+    try {
+      stats = fs.statSync(absolute);
+    } catch {
+      stats = null;
+    }
+    if (stats === null) {
+      report(linkedPath, { path: linkedPath, reason: "read-error", detail: "unreadable symlink" });
+      continue;
+    }
+
+    if (linkedPath !== candidate || stats.isDirectory()) {
+      report(linkedPath, {
+        path: linkedPath,
+        reason: "symlink",
+        detail: `directory link not followed (target: ${rawTarget})`,
+      });
+      continue;
+    }
+
+    if (!stats.isFile()) {
+      report(linkedPath, {
+        path: linkedPath,
+        reason: "symlink",
+        detail: `link to neither a file nor a directory (target: ${rawTarget})`,
+      });
+      continue;
+    }
+
+    // An in-root link to a regular file is a file, exactly as the walker decides.
+    kept.push(candidate);
   }
 
   return kept;
@@ -997,6 +1190,9 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
     (options.toolOwnedPaths ?? []).map((entry) => entry.replace(/\\/g, "/"))
   );
   const isToolOwned = makeToolOwnedDecider(cwd, [...toolOwnedPaths]);
+  // The names whose `.backup-`/`.partial-` leftovers are this tool's own, derived from the
+  // directories this run resolved rather than from a hardcoded `snapshot`.
+  const toolDirNames = toolDirNamesFor(toolOwnedPaths);
 
   let candidates: string[];
   const skipped: SkipRecord[] = [];
@@ -1054,7 +1250,7 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
     .filter((file) => {
       // Our own output is bookkeeping, never a user-facing skip (C25).
       if (isToolOwned(file)) return false;
-      const ignored = defaultIgnoreReason(file);
+      const ignored = defaultIgnoreReason(file, toolDirNames);
       if (ignored) {
         skipped.push({ path: file, reason: "default-ignore", detail: ignored });
         return false;
@@ -1163,6 +1359,10 @@ function walkDirectory(
 ): CollectResult {
   const results: CollectResult = { files: [], skipped: [] };
   const stack: WalkFrame[] = [];
+  // The walk is the only place an omission can be noticed before the candidate list exists, so a
+  // leftover directory is dropped here with one record instead of being descended into and then
+  // filtered file by file.
+  const toolDirNames = toolDirNamesFor(reservedPaths);
 
   const relativeToBase = (target: string): string =>
     path.relative(baseDir, target).replace(/\\/g, "/") || ".";
@@ -1234,11 +1434,13 @@ function walkDirectory(
       });
       continue;
     }
-    if (DEFAULT_IGNORED_FILES.includes(entry.name) || entry.name.startsWith("snapshot.backup-")) {
+    if (DEFAULT_IGNORED_FILES.includes(entry.name) || isToolLeftoverName(entry.name, toolDirNames)) {
       results.skipped.push({
         path: relPath,
         reason: "default-ignore",
-        detail: "built-in ignore: filename",
+        detail: isToolLeftoverName(entry.name, toolDirNames)
+          ? `built-in ignore: leftover snapshot backup "${entry.name}" (not descended)`
+          : "built-in ignore: filename",
       });
       continue;
     }
