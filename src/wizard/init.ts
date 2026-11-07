@@ -311,18 +311,35 @@ function updatePackageJson(cwd: string, notes: string[]): PackageJsonUpdate {
   }
 
   const added: string[] = [];
+  // A package must never depend on itself, and this repository is the one place `init`
+  // runs where that is possible. Declaring the dependency made `npm install` fail with
+  // ETARGET the moment package.json was bumped past the published version — the publish
+  // workflow installs before it publishes — and it made `npx` resolve the *published*
+  // binary instead of the working tree, so the snapshot of this repository was generated
+  // by the previous release. In the tool's own repository the scripts run the build.
+  const isSelfRepository = parsed.name === GENERATOR_NAME;
+  const scriptPrefix = isSelfRepository ? "node ./dist/bin.js" : `npx ${GENERATOR_NAME}`;
+
   if (!scripts.snapshot) {
-    scripts.snapshot = `npx ${GENERATOR_NAME} generate`;
+    scripts.snapshot = `${scriptPrefix} generate`;
     added.push("snapshot");
   }
   if (!scripts["snapshot:validate"]) {
-    scripts["snapshot:validate"] = `npx ${GENERATOR_NAME} validate`;
+    scripts["snapshot:validate"] = `${scriptPrefix} validate`;
     added.push("snapshot:validate");
   }
 
   const declared = declaredRange(parsed);
   let dependency: InitDependency;
-  if (declared !== null) {
+  if (isSelfRepository) {
+    if (declared !== null) {
+      notes.push(
+        `package.json declares ${GENERATOR_NAME} as a dependency of itself. It was left as it is, but a ` +
+          "package cannot depend on itself: remove the entry and run the local build instead."
+      );
+    }
+    dependency = { name: GENERATOR_NAME, range: declared, added: false };
+  } else if (declared !== null) {
     dependency = { name: GENERATOR_NAME, range: declared, added: false };
   } else {
     const range = `^${GENERATOR_VERSION}`;

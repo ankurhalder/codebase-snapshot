@@ -49,9 +49,15 @@ const WEAK_CREDENTIAL_NAME = "(?:pass|id[_-]?token|credentials?)";
  * `process.env` references. Without this, `token: string` in an interface and
  * `password: null` in a config object were masked — over-redaction that makes
  * the snapshot harder to read for no security gain.
+ *
+ * Reserved words are here for the same reason: in `token = await refreshToken(…)`
+ * the first token after the separator is `await`, and masking it emitted
+ * `token = [REDACTED] refreshToken(client)` — a statement that no longer parses.
+ * A keyword is never a credential literal.
  */
 const NOT_A_LITERAL_VALUE =
-  "(?!(?:string|number|boolean|bigint|symbol|unknown|any|never|void|null|undefined|true|false|process\\.env|Buffer|Record|object)\\b)";
+  "(?!(?:string|number|boolean|bigint|symbol|unknown|any|never|void|null|undefined|true|false|" +
+  "await|async|new|this|typeof|delete|yield|function|return|process\\.env|Buffer|Record|object)\\b)";
 
 /**
  * An unquoted value must be a literal, not an expression: `hunter2` is a
@@ -68,6 +74,39 @@ const UNQUOTED_LITERAL =
   "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_+=/%:~-]{1,512})(?![A-Za-z0-9_+=/%:.~-]|\\()";
 const UNQUOTED_AMBIGUOUS_LITERAL =
   "(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_+=/%:~-]{8,512})(?![A-Za-z0-9_+=/%:.~-]|\\()";
+
+/**
+ * The assignment separator, and only the assignment separator.
+ *
+ * `[:=]` alone matches the first `=` of `===`, and the unquoted-value rules then
+ * read the remaining `==` as a credential — the sighting in this repository's own
+ * snapshot was `clause.token === ts.SyntaxKind…` emitted as
+ * `clause.token =[REDACTED…]`, and `if (token === "--")` likewise. The lookbehind
+ * rules out the second character of a comparison operator (`==`, `===`, `!=`,
+ * `<=`, `>=`), the lookahead rules out the first one, so a comparison is never an
+ * assignment.
+ */
+const ASSIGN = String.raw`(?<![=!<>])[:=](?!=)`;
+
+/**
+ * A credential *name* may be the tail of a longer identifier (`dbPassword`,
+ * `awsSecret`), which is why the name itself cannot refuse a preceding word
+ * character. A preceding **quote** is different: in `["awsSecret:", "apiKey:"]`
+ * — a list of key names, not an assignment — the unquoted branch matched
+ * `awsSecret:` and then took the next string's opening quote as this value's
+ * opening quote, masking `, ` and welding two list elements together. A name
+ * that starts immediately after a quote is inside a string literal, never a key,
+ * so the unquoted branches refuse it. The quoted branch (`"dbPassword":`) still
+ * matches at the quote itself.
+ */
+const NOT_AFTER_QUOTE = String.raw`(?<!["'])`;
+
+/**
+ * A reverse-domain identifier (`io.modelcontextprotocol/progressToken`) is a
+ * protocol namespace, not a credential. No real secret starts with
+ * `word(.word)+/`, and the MCP server's own field-name constants do.
+ */
+const NOT_A_NAMESPACED_IDENTIFIER = String.raw`(?![a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+/)`;
 
 /**
  * The value of a quoted assignment, escaped pairs included.
@@ -129,7 +168,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // literal words matched. The value is masked alone, so the key survives.
     rule: "aws-secret-access-key",
     pattern: new RegExp(
-      `${STRONG_CREDENTIAL_NAME}["']?\\s{0,8}[:=]\\s{0,8}["']?([A-Za-z0-9/+=]{40})["']?`,
+      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}["']?([A-Za-z0-9/+=]{40})["']?`,
       "i"
     ),
     valueGroup: 1,
@@ -247,7 +286,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // the key name.
     rule: "credential-assignment",
     pattern: new RegExp(
-      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${STRONG_CREDENTIAL_NAME})\\s{0,8}[:=]\\s{0,8}(["'\`])${QUOTED_VALUE}\\1`,
+      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_NAMESPACED_IDENTIFIER}(["'\`])${QUOTED_VALUE}\\1`,
       "i"
     ),
     valueGroup: 2,
@@ -257,7 +296,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // are accepted only against a quoted value long enough to be a credential.
     rule: "credential-assignment-weak",
     pattern: new RegExp(
-      `(?:["']${WEAK_CREDENTIAL_NAME}["']|${WEAK_CREDENTIAL_NAME})\\s{0,8}[:=]\\s{0,8}(["'\`])${QUOTED_VALUE}\\1`,
+      `(?:["']${WEAK_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${WEAK_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}(["'\`])${QUOTED_VALUE}\\1`,
       "i"
     ),
     valueGroup: 2,
@@ -268,7 +307,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // `POSTGRES_PASSWORD:` in the output.
     rule: "credential-assignment-unquoted",
     pattern: new RegExp(
-      `${UNQUOTED_STRONG_NAME}\\s{0,8}[:=]\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}`,
+      `${NOT_AFTER_QUOTE}${UNQUOTED_STRONG_NAME}\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}`,
       "i"
     ),
     valueGroup: 1,
@@ -279,7 +318,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // `pass: 3` / `credentials: none` readable.
     rule: "credential-assignment-unquoted-weak",
     pattern: new RegExp(
-      `${WEAK_CREDENTIAL_NAME}\\s{0,8}[:=]\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_AMBIGUOUS_LITERAL}`,
+      `${NOT_AFTER_QUOTE}${WEAK_CREDENTIAL_NAME}\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_AMBIGUOUS_LITERAL}`,
       "i"
     ),
     valueGroup: 1,
@@ -302,7 +341,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // value, e.g. `"client_secret": abc123`.
     rule: "generic-secret-assignment",
     pattern:
-      /(?:api[_-]?key|secret[_-]?key|auth[_-]?token|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|password|passwd|pwd)["']?\s*[:=]\s*["']([^"'\s]{8,256})["']/i,
+      /(?<!["'])(?:api[_-]?key|secret[_-]?key|auth[_-]?token|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|password|passwd|pwd)["']?\s*(?<![=!<>])[:=](?!=)\s*["']([^"'\s]{8,256})["']/i,
     valueGroup: 1,
   },
   {
@@ -318,9 +357,18 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // Anchoring the value to end-of-line (`[^\s#]{6,512}$`) meant ANY trailing
     // comment or space disabled the rule, so `TOKEN=secret # rotate` and
     // `TOKEN=secret   ` were emitted in clear; a CRLF file disabled it wholesale.
+    //
+    // The name is now required to be uppercase. With `/i`, a reassignment inside a
+    // function — `  key = fs.realpathSync(stagingRoot)` — matched `key`…`KEY` and
+    // was emitted as `key = [REDACTED](stagingRoot)`, which corrupted this
+    // repository's own `src/index.ts`. Shell and `.env` names are uppercase by
+    // convention and a lowercase `key = …` at an indent is a variable, so the case
+    // of the name is the discriminator that separates the two. The value must end
+    // at end-of-line, whitespace or a comment: that is what stops a call expression
+    // (`NAME=f(x)`) from being read as an assigned literal.
     rule: "env-secret-assignment",
     pattern:
-      /^\s{0,64}(?:export\s{1,8})?[A-Za-z0-9_]{0,96}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Za-z0-9_]{0,96}\s{0,8}=\s{0,8}(?!["'`$<{[\]\s])([^\s#;"'`)]{1,512})/i,
+      /^\s{0,64}(?:export\s{1,8})?(?=[A-Z][A-Z0-9_]{0,191}\s{0,8}=)[A-Z0-9_]{0,96}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]{0,96}\s{0,8}=(?!=)\s{0,8}(?!["'`$<{[\]\s])([^\s#;"'`()]{1,512})(?=$|[\s#;])/,
     valueGroup: 1,
   },
 ];

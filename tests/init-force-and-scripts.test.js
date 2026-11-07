@@ -200,3 +200,42 @@ test("D-5: a read-only directory reports permission denied", async (t) => {
     fs.chmodSync(dir, 0o700);
   }
 });
+
+// ---------------------------------------------------------------- bug 1.5 (0.9.10)
+
+test("init never makes the package depend on itself", async (t) => {
+  const dir = tempDir(t);
+  writeProject(dir, { name: "codebase-snapshot", version: "0.9.10" });
+
+  const result = await runInit({ cwd: dir, yes: true });
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(
+    pkg.devDependencies,
+    undefined,
+    "a package cannot depend on itself: after a version bump npm install fails with ETARGET"
+  );
+  assert.equal(result.dependency.added, false);
+  // `npx codebase-snapshot` would resolve the *published* release, so this repository
+  // would be snapshotted by an older binary than the one being developed.
+  assert.equal(pkg.scripts.snapshot, "node ./dist/bin.js generate");
+  assert.equal(pkg.scripts["snapshot:validate"], "node ./dist/bin.js validate");
+});
+
+test("init reports a self-dependency it finds instead of silently keeping it", async (t) => {
+  const dir = tempDir(t);
+  writeProject(dir, {
+    name: "codebase-snapshot",
+    version: "0.9.10",
+    devDependencies: { "codebase-snapshot": "^0.9.9" },
+  });
+
+  const result = await runInit({ cwd: dir, yes: true });
+
+  assert.ok(
+    result.notes.some((note) => /cannot depend on itself/.test(note)),
+    `the contradiction must be reported: ${JSON.stringify(result.notes)}`
+  );
+  const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(pkg.devDependencies["codebase-snapshot"], "^0.9.9", "the entry is left alone");
+});

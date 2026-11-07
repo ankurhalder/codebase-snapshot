@@ -112,8 +112,8 @@
     "readme-lint": "node scripts/readme-lint.mjs",
     "seo-rank": "node scripts/seo-rank.mjs",
     "verify": "npm run check && npm run sync-docs -- --check && npm run site && npm run audit-site && npm run readme-lint && npm run pack-check",
-    "snapshot": "npx codebase-snapshot generate",
-    "snapshot:validate": "npx codebase-snapshot validate"
+    "snapshot": "node ./dist/bin.js generate",
+    "snapshot:validate": "node ./dist/bin.js validate"
   },
   "dependencies": {
     "typescript": "^5.0.0"
@@ -124,8 +124,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "marked": "^18.1.3",
-    "tsup": "^8.3.0",
-    "codebase-snapshot": "^0.9.9"
+    "tsup": "^8.3.0"
   },
   "engines": {
     "node": ">=18.0.0"

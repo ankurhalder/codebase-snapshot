@@ -237,6 +237,11 @@ export function scanAndRedactSecrets(
             valueGroup === undefined
               ? undefined
               : (match as RegExpExecArray & MatchIndices).indices?.[valueGroup];
+          // A constant whose value spells its own name is a symbol table entry, not a
+          // credential; masking it would rewrite the meaning of the code it documents.
+          if (group && isSelfNamingConstant(line, group[0], group[1])) continue;
+          // A tail-matching key that began inside a string literal is text, not an assignment.
+          if (valueGroup !== undefined && startsInsideStringLiteral(line, match.index)) continue;
           spans.push(
             group
               ? { start: group[0], end: group[1], rule }
@@ -297,6 +302,55 @@ function expandOverToken(line: string, start: number, end: number): { start: num
   }
   while (right < line.length && TOKEN_CHARS_RIGHT.test(line[right])) right += 1;
   return { start: left, end: right };
+}
+
+/**
+ * True when the match started in the middle of an identifier that sits inside a
+ * string literal.
+ *
+ * Credential names are matched as a **tail** (`dbPassword` matches on
+ * `Password`), which is what catches camelCase keys. The same tail matching let
+ * `for (const key of ["awsSecret:", "apiKey:"])` be read as an assignment: the
+ * match began at `Secret`, inside the string `"awsSecret:"`, so the string's
+ * closing quote was taken as the value's opening quote and the next element's
+ * opening quote as its closing quote — the emitted line had two list elements
+ * welded together with a marker between them. A regex lookbehind cannot see back
+ * to the start of the identifier, so the check is made against the line here.
+ *
+ * A properly quoted key (`"dbPassword": "…"`, which is a real assignment) starts
+ * at the quote, so its run begins there and the preceding character is not a
+ * quote; only a match that began *inside* a literal is rejected.
+ */
+function startsInsideStringLiteral(line: string, matchIndex: number): boolean {
+  let runStart = matchIndex;
+  while (runStart > 0 && /[A-Za-z0-9_-]/.test(line[runStart - 1])) runStart -= 1;
+  const before = runStart > 0 ? line[runStart - 1] : "";
+  return before === '"' || before === "'" || before === "`";
+}
+
+/**
+ * True when a quoted "value" is really the **name** it is assigned to.
+ *
+ * MCP's protocol table maps a field name to its own wire string —
+ * `progressToken: "progressToken"` — and this repository's snapshot emitted that
+ * line as `progressToken: "[REDACTED…]"`, corrupting the server's own constants.
+ * The shape generalises to every symbol table (`headerName: "headerName"`), so it
+ * is handled here rather than by enumerating protocol names in a regex.
+ *
+ * The test is made against the **line**, not the match, because the engine tries
+ * every start position: `progressToken` also matches as the bare `Token` tail, and
+ * a match-local check would keep that shorter span alive.
+ *
+ * A lowercase word assigned to itself (`password: "password"`) does not qualify:
+ * it is a weak credential, and masking it is the fail-closed behaviour rule 3 asks
+ * for. Only a camelCase identifier — one with a capital inside the word, which is
+ * how a constant is spelled — is read as a self-reference.
+ */
+function isSelfNamingConstant(line: string, start: number, end: number): boolean {
+  const value = line.slice(start, end);
+  if (!/[a-z][A-Z]/.test(value)) return false;
+  const before = line.slice(0, start).replace(/["'`]?\s*[:=]\s*["'`]$/, "");
+  return before.endsWith(value);
 }
 
 /**
