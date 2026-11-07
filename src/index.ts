@@ -28,6 +28,7 @@ import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { detectPreset, getPreset, listPresetNames } from "./presets/index.js";
 import {
+  BINARY_SCAN_BYTES,
   countInvalidUtf8Bytes,
   decodeText,
   isBinaryBuffer,
@@ -1018,8 +1019,7 @@ function ensureParentDirectory(target: string, label: "outDir" | "tmpDir"): void
  * forever.
  */
 function acquireRunLock(stagingRoot: string): () => void {
-  const key = lockKeyFor(stagingRoot);
-  const lockPath = path.join(os.tmpdir(), `codebase-snapshot-${key}.lock`);
+  const lockPath = lockPathFor(stagingRoot);
   const payload = `${JSON.stringify({
     pid: process.pid,
     stagingRoot,
@@ -1075,7 +1075,18 @@ function lockKeyFor(stagingRoot: string): string {
   return sha256Hex(key).slice(0, 16);
 }
 
-/** True only when the lock names a pid that certainly no longer exists. */
+/**
+ * Where the run lock for a staging root lives.
+ *
+ * Exported because the lock is the one piece of state that can outlive a crashed run and
+ * wedge the next one, and the error the user sees names this path — a diagnostic that
+ * has to be transcribed from a hash by hand is not a diagnostic.
+ */
+export function lockPathFor(stagingRoot: string): string {
+  return path.join(os.tmpdir(), `codebase-snapshot-${lockKeyFor(stagingRoot)}.lock`);
+}
+
+/** True only when the lock names a pid that certainly no longer exists, or is a corpse. */
 function lockOwnerIsGone(lockPath: string): boolean {
   let raw: string;
   try {
@@ -1087,15 +1098,34 @@ function lockOwnerIsGone(lockPath: string): boolean {
   try {
     pid = (JSON.parse(raw) as { pid?: unknown }).pid;
   } catch {
-    return false;
+    // A zero-byte or truncated lock file is the record of a process that died between
+    // `openSync(…, "wx")` and `writeSync` — the file exists, so it was never cleaned up,
+    // and it carries no pid, so nothing could ever prove it dead. The run locked itself
+    // out permanently and only deleting the file by hand recovered it. Age is the
+    // remaining evidence: a lock older than any plausible run is a corpse.
+    return lockFileIsAncient(lockPath);
   }
-  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return lockFileIsAncient(lockPath);
   try {
     process.kill(pid, 0);
     return false;
   } catch (err) {
     // EPERM means the process exists but belongs to someone else.
     return (err as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+/**
+ * True when the lock file is older than {@link STALE_RUN_MS}.
+ *
+ * Used only when the lock's contents cannot name an owner: an unreadable payload is not
+ * proof of a live run, and treating it as one wedged every later run.
+ */
+function lockFileIsAncient(lockPath: string): boolean {
+  try {
+    return Date.now() - fs.statSync(lockPath).mtimeMs > STALE_RUN_MS;
+  } catch {
+    return false;
   }
 }
 
@@ -1438,7 +1468,23 @@ export function generateSnapshot(
       continue;
     }
 
-    if (isBinaryFile(absolutePath)) {
+    // One read, not three.
+    //
+    // This used to call `isBinaryFile(absolutePath)`, which opened a descriptor, allocated a
+    // 64 KB buffer and read the file in chunks looking for a NUL — and then read the *same*
+    // bytes again with `readFileSync`, and then scanned them again with `decodeText`. Every
+    // included file under the 8 MB scan cap was opened twice and read twice.
+    //
+    // A binary extension needs no read at all, and below the cap `decodeText` already answers
+    // the question on the buffer the generator had to hold anyway — it checks for a NUL
+    // anywhere in the buffer, so it is stricter than the head scan it replaces. Above the cap
+    // the chunked scan stays, because that is the case it exists for: the file may be far too
+    // large to load, and a head check is better than reading a gigabyte of noise.
+    if (isBinaryExtension(absolutePath)) {
+      skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${stats.size} B` });
+      continue;
+    }
+    if (stats.size > BINARY_SCAN_BYTES && isBinaryFile(absolutePath)) {
       skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${stats.size} B` });
       continue;
     }
@@ -1896,7 +1942,9 @@ export function generateSnapshot(
   const lockKeys = Array.from(new Set([tmpDir, outDir])).sort();
   const releases = lockKeys.map((key) => acquireRunLock(key));
   const releaseLock = (): void => {
-    for (const release of releases.reverse()) release();
+    // A copy: `reverse()` on the array itself reordered the list of locks this run
+    // holds, which is the kind of state that turns a second `finally` into a bug.
+    for (const release of [...releases].reverse()) release();
   };
   let stagingDir: string | null = null;
 
@@ -2090,7 +2138,7 @@ export {
 export { PRESETS } from "./presets/index.js";
 export { LANGUAGE_PROFILES, profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
 export type { HeuristicResult, LanguageProfile } from "./ast/profiles/index.js";
-export { renumberParts } from "./partitioner/chunker.js";
+export { renumberParts, displayPath } from "./partitioner/chunker.js";
 export {
   collectFiles,
   findSecretInPath,

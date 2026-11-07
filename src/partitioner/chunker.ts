@@ -252,7 +252,14 @@ const capMetadata = (value: string): string => capValue(escapeControls(value), M
  * also keeps the `## Files` fence safe (see {@link fenceForText}). Paths are
  * legal UTF-8, so this is reachable with an ordinary `git mv`.
  */
-const displayPath = (value: string): string =>
+/**
+ * The form of a path that is written into a part.
+ *
+ * Exported because the reader has to compare against it: a section heading holds this
+ * form, not the manifest's `relativePath`, and the two differ for any path with a
+ * control character or one longer than {@link DISPLAY_PATH_MAX}.
+ */
+export const displayPath = (value: string): string =>
   capValue(escapeControls(value), DISPLAY_PATH_MAX);
 
 /** Top-N `Layer (count)` / `Kind (count)` summary used in a part header. */

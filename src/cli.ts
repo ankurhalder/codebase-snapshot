@@ -1774,6 +1774,17 @@ async function runWatchLoop(
     if (decision.action === "schedule") schedule();
   });
 
+  // An `fs.watch` handle emits `error` instead of throwing: EPERM when a watched
+  // directory is removed on Windows, ENOSPC when the Linux inotify watch limit is hit.
+  // With no listener, Node treats that as an unhandled event and kills the process — so
+  // a watch that had been running fine stopped with a stack trace and no snapshot, which
+  // is the one thing a long-running watcher must not do. The loop keeps running and says
+  // what happened; a later event still triggers a regeneration.
+  watcher.on("error", (err: Error) => {
+    info(`⚠ Watch error: ${err.message}`);
+    info("   The watcher may have missed changes. Restart with Ctrl+C if they stop arriving.");
+  });
+
   await new Promise<void>((resolve) => {
     const stop = (): void => {
       stopped = true;

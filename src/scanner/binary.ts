@@ -305,8 +305,12 @@ export function decodeText(buffer: Buffer): DecodedText {
  * multi-gigabyte blob into memory to look for one byte is the right trade. Files that pass the
  * head check are checked again in full on the buffer the generator already read for its content,
  * so the cap no longer decides whether a NUL is found.
+ *
+ * Exported because a caller that is going to read the whole file anyway must *not* ask
+ * `isBinaryFile` first — that is what this cap is for, and below it the answer is already
+ * implied by `decodeText` on the buffer the caller holds.
  */
-const BINARY_SCAN_BYTES = 8 * 1024 * 1024;
+export const BINARY_SCAN_BYTES = 8 * 1024 * 1024;
 const CHUNK = 64 * 1024;
 const SHAPE_SAMPLE_BYTES = 4096;
 

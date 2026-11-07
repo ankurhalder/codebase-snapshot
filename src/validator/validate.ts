@@ -141,22 +141,27 @@ function sha256Hex(buffer: Buffer): string {
  */
 /** A file skipped as binary is not re-read past this size just to confirm it is still binary. */
 const VERIFY_SNIFF_MAX_BYTES = 8 * 1024 * 1024;
-function wouldNowBeIncluded(cwd: string, relativePath: string, reason?: string): boolean {
+/**
+ * True when a file that was skipped at snapshot time would be emitted now.
+ *
+ * The answer is "would `generate` include this file", and `generate` asks exactly one
+ * question — is the content text — so this asks the same one on the same bytes.
+ */
+function wouldNowBeIncluded(cwd: string, relativePath: string): boolean {
   const absolutePath = path.join(cwd, relativePath);
   try {
     const stats = fs.statSync(absolutePath);
     if (!stats.isFile()) return false;
-    if (isBinaryFile(absolutePath)) return false;
-    if (reason !== "binary") return true;
 
-    // `generate` decides "binary" a second time, on the bytes it actually reads: a control-byte
-    // payload, or a NUL past the head scan, is a file the cheap pre-read check above cannot
-    // recognise. Asking only the cheap question made `validate` call a file generate had just
-    // skipped a "new file" — two commands disagreeing about the same tree. A very large skipped
-    // file is not read again: it was skipped as binary, and re-reading a gigabyte to confirm it
-    // would cost more than the answer is worth.
-    if (stats.size > VERIFY_SNIFF_MAX_BYTES) return false;
-    return !decodeText(fs.readFileSync(absolutePath)).binary;
+    // One read for a file small enough to load. `decodeText` inspects every byte, so it
+    // answers the binary question more completely than the head scan that used to run
+    // first — and it used to run on top of a full read, opening the same file twice.
+    // Past the cap the chunked sniff stays, because the whole point is not to load a
+    // gigabyte of noise to find one NUL.
+    if (stats.size <= VERIFY_SNIFF_MAX_BYTES) {
+      return !decodeText(fs.readFileSync(absolutePath)).binary;
+    }
+    return !isBinaryFile(absolutePath);
   } catch {
     return false;
   }
@@ -362,7 +367,7 @@ export function validateSnapshot(
       // A path in `skipped[]` is not permanently exempt: re-evaluate it and
       // report drift when it would now be included.
       const skipReason = skippedReasonOnDisk(diskFile);
-      if (skipReason !== null && !wouldNowBeIncluded(config.cwd, diskFile, skipReason)) continue;
+      if (skipReason !== null && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
     }

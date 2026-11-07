@@ -10,7 +10,11 @@ export { createMcpServer } from "./server.js";
 export type { McpServer, McpServerOptions } from "./server.js";
 
 export { buildTools } from "./tools.js";
-export { buildPrompts } from "./prompts.js";
+// The part reader is part of the contract this module documents: a read is answered from
+// the artifact, so anyone embedding the server needs to be able to locate a section the
+// same way the tool does.
+export { findSection, parsePartSections, windowText } from "./part.js";
+export type { PartSection, Window } from "./part.js";export { buildPrompts } from "./prompts.js";
 export { buildResourceProvider } from "./resources.js";
 
 export { createServer, runStdioServer } from "./run.js";

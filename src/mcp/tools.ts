@@ -19,11 +19,12 @@ import * as path from "node:path";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
 import { generateSnapshot } from "../index.js";
+import { truncateToBytes } from "../partitioner/preview.js";
 import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import type { JsonObject } from "./protocol.js";
-import type { FileEntry, Manifest, SourceSummary, ValidationDrift, ValidationResult } from "../types.js";
+import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolOutcome } from "./types.js";
 import { forgetManifest, manifestPathFor, openWorkspace, readManifest, resolveRoot } from "./workspace.js";
 import type { Workspace, WorkspaceOverrides } from "./workspace.js";
@@ -103,11 +104,46 @@ function toRelativePath(root: string, value: string): string | null {
   return relative.split(path.sep).join("/");
 }
 
+/**
+ * Every named thing the snapshot recorded about a file.
+ *
+ * Only `exports`, `reactComponents` and `routeHandlers` were searched, so
+ * `snapshot_locate` could not find a function, class, interface, type, enum or hook that
+ * the file does not export — which is most of the code in most files — and could not
+ * find a Markdown heading at all. A symbol search that silently covers a third of the
+ * symbols sends an agent to read whole files, which is the cost the tool exists to avoid.
+ */
 function symbolsOf(entry: FileEntry): string[] {
   const summary = entry.summary;
-  if (!summary || typeof summary !== "object" || !("exports" in summary)) return [];
-  const source = summary as SourceSummary;
-  return [...source.exports, ...source.reactComponents, ...source.routeHandlers];
+  if (!summary || typeof summary !== "object") return [];
+  const names: string[] = [];
+
+  const collect = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+      if (typeof item === "string") names.push(item);
+    }
+  };
+
+  // `SourceSummary` and `MarkdownSummary` share no base type, so the fields are read
+  // through a record rather than by widening either one.
+  const record = summary as unknown as Record<string, unknown>;
+  for (const field of [
+    "exports",
+    "reactComponents",
+    "routeHandlers",
+    "functions",
+    "classes",
+    "interfaces",
+    "types",
+    "enums",
+    "hooks",
+    "headings",
+  ]) {
+    collect(record[field]);
+  }
+
+  return names;
 }
 
 /** Reads and validates `root`, then loads the configuration for it. */
@@ -529,13 +565,20 @@ const locateTool: McpTool = {
           continue;
         }
       }
-      if (wants("layer") && entry.layer.toLowerCase() === needle) add(entry, "layer");
-      else if (wants("kind") && entry.kind.toLowerCase() === needle) add(entry, "kind");
+      // Substring, like every other category. Exact equality meant a query had to name a
+      // layer perfectly, so `by: "layer", query: "s"` found nothing while `by: "path"`
+      // with the same query found plenty — the same tool answering the same question two
+      // different ways, which teaches an agent not to trust either.
+      if (wants("layer") && entry.layer.toLowerCase().includes(needle)) add(entry, "layer");
+      else if (wants("kind") && entry.kind.toLowerCase().includes(needle)) add(entry, "kind");
     }
 
     if (wants("route")) {
       for (const route of manifest.indexes.routes) {
-        if (!route.path.toLowerCase().includes(needle)) continue;
+        // A route is matched on its path *or* its method: "which endpoints accept POST"
+        // is the same question as "where is /api/x", and only the path was searchable.
+        const method = route.methods.find((name) => name.toLowerCase().includes(needle));
+        if (!route.path.toLowerCase().includes(needle) && method === undefined) continue;
         if (matches.some((match) => match.path === route.path)) continue;
         matches.push({
           path: route.path,
@@ -682,7 +725,12 @@ const readTool: McpTool = {
     let body = window.text;
     let truncatedByBytes = false;
     if (Buffer.byteLength(body, "utf8") > MAX_RESULT_BYTES) {
-      body = body.slice(0, MAX_RESULT_BYTES);
+      // Bytes, not code units. `String.prototype.slice` counts UTF-16 code units, so a
+      // body of three-byte characters came back up to three times over the limit — and
+      // slicing at an odd index could split a surrogate pair, emitting a lone half that
+      // no JSON parser downstream can accept. `truncateToBytes` walks the boundary.
+      const clipped = truncateToBytes(body, MAX_RESULT_BYTES);
+      body = clipped.content;
       const lastBreak = body.lastIndexOf("\n");
       body = lastBreak > 0 ? body.slice(0, lastBreak) : body;
       truncatedByBytes = true;

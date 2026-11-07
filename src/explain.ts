@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { countLines } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
-import { isBinaryFile, decodeText } from "./scanner/binary.js";
+import { BINARY_SCAN_BYTES, isBinaryFile, decodeText } from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { escapeControls } from "./terminal.js";
@@ -177,7 +177,18 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   // `generate` skips binaries and records `binary` in manifest.skipped[]. The
   // explanation used to answer "included: true" for a file the very next run
   // would drop, which is worse than no answer at all.
-  if (isBinaryFile(absolute)) {
+  //
+  // Only a file too large to load is sniffed *before* it is read. Below the cap the decode
+  // below is the complete check — it looks at every byte, not a head — and it reports why
+  // the file is binary instead of a bare size. Sniffing first opened the file, read it in
+  // chunks and then read it again in full.
+  let sizeOnDisk: number | null = null;
+  try {
+    sizeOnDisk = fs.statSync(absolute).size;
+  } catch {
+    sizeOnDisk = null;
+  }
+  if (sizeOnDisk !== null && sizeOnDisk > BINARY_SCAN_BYTES && isBinaryFile(absolute)) {
     result.included = false;
     result.reason = "binary";
     result.detail = "binary content; generate skips it and records `binary` in manifest.skipped[]";

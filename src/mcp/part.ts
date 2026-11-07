@@ -14,6 +14,8 @@
  * is what makes "the next line equal to this exact fence" an unambiguous terminator.
  */
 
+import { displayPath } from "../partitioner/chunker.js";
+
 export interface PartSection {
   /** The path as rendered in the `### FILE:` heading. */
   path: string;
@@ -92,32 +94,44 @@ export function parsePartSections(partText: string): PartSection[] {
 /**
  * Finds the section for one file.
  *
- * The heading is matched first, because it is exact for every ordinary path. The SHA-256 is the
- * fallback that matters: a path long enough to be capped in the heading, or one containing control
- * characters the renderer escapes, no longer compares equal to the manifest's `relativePath` —
- * and a hash comparison does not care. When several files share content and therefore a hash, an
- * ambiguous hash match is refused rather than guessed, and the path comparison decides.
+ * The heading is matched first, because it is exact for every ordinary path. Two forms
+ * have to be compared: the manifest's `relativePath` and the *rendered* path the heading
+ * actually holds, which differs whenever the name carries a control character (escaped
+ * as `\uXXXX`) or is long enough to be capped. Comparing only the raw form left such a
+ * file unreadable through `snapshot_read` in a snapshot where another file had the same
+ * content — the hash fallback could not disambiguate, and the path comparison always
+ * failed.
+ *
+ * The SHA-256 is the fallback that matters for a path the heading cannot reproduce. When
+ * several files share content and therefore a hash, an ambiguous hash match is refused
+ * rather than guessed, and the path comparison decides.
  */
 export function findSection(
   sections: readonly PartSection[],
   relativePath: string,
   sha256: string | null
 ): PartSection | null {
-  const exact = sections.find((section) => section.path === relativePath);
+  const rendered = displayPath(relativePath);
+  const samePath = (section: PartSection): boolean =>
+    section.path === relativePath || section.path === rendered;
+  const samePathFolded = (section: PartSection): boolean => {
+    const path = section.path.toLowerCase();
+    return path === relativePath.toLowerCase() || path === rendered.toLowerCase();
+  };
+
+  const exact = sections.find(samePath);
   if (exact) return exact;
 
   if (sha256) {
     const byHash = sections.filter((section) => section.sha256 === sha256);
     if (byHash.length === 1) return byHash[0];
     if (byHash.length > 1) {
-      const byPath = byHash.find(
-        (section) => section.path.toLowerCase() === relativePath.toLowerCase()
-      );
+      const byPath = byHash.find(samePathFolded);
       if (byPath) return byPath;
     }
   }
 
-  const folded = sections.filter((section) => section.path.toLowerCase() === relativePath.toLowerCase());
+  const folded = sections.filter(samePathFolded);
   return folded.length === 1 ? folded[0] : null;
 }
 
