@@ -112,9 +112,20 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
   const lines = content.replace(/^\uFEFF/, "").split("\n");
 
   let inFrontmatter = false;
+  /**
+   * The fence character of the code block we are inside, or `null`.
+   *
+   * A `#` at the start of a line inside a fenced block is a comment in shell, Python,
+   * YAML and Dockerfile examples — not a heading. Without tracking the fence, every one
+   * of those became a document heading in the summary: this repository's own
+   * `docs/agent.md` reported "# 1. Read the contract…" and `docs/cli.md` reported
+   * "# The common path", both of which are shell comments in examples. A model reading
+   * the index was told the document had sections it does not have.
+   */
+  let fence: string | null = null;
 
   for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
+    const line = lines[index] as string;
 
     if (index === 0 && line.trim() === "---") {
       inFrontmatter = true;
@@ -131,7 +142,19 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
       continue;
     }
 
-    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line.trim());
+    const trimmed = line.trim();
+    // CommonMark: a fence opens with three or more backticks or tildes and closes with
+    // at least as many of the same character. The character is enough to pair them.
+    const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+    if (fenceMatch) {
+      const marker = (fenceMatch[1] as string)[0] as string;
+      if (fence === null) fence = marker;
+      else if (fence === marker) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
     if (headingMatch) {
       headings.push(`${headingMatch[1]} ${headingMatch[2].trim()}`);
     }

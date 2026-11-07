@@ -241,8 +241,20 @@ interface ParsedInvocation {
   largeFileBytes?: number;
   maxMonolithBytes?: number | null;
   skipArtifacts?: string[];
+  /**
+   * The artifacts named by `--only-artifacts`, kept separately from the derived
+   * `skipArtifacts`.
+   *
+   * `--only-artifacts monolith` means "the six others off, the monolith on", which cannot
+   * be expressed by `skipArtifacts` alone: the monolith is off by default, so turning the
+   * others off left *everything* off and `init`/`setup` wrote a config that generated
+   * nothing. The wizard resolves this list itself.
+   */
+  onlyArtifacts?: string[];
   /** How candidates are discovered; `auto` when unset. */
   discovery?: DiscoveryMode;
+  /** The user asked not to be told about newer releases. */
+  noUpdateCheck?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -491,8 +503,10 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     throw new UsageError("--skip-artifacts and --only-artifacts cannot be combined.");
   }
   let skipArtifacts: string[] | undefined;
+  let onlyArtifacts: string[] | undefined;
   if (rawOnly !== undefined) {
     const keep = parseArtifactList(String(rawOnly), "--only-artifacts");
+    onlyArtifacts = keep;
     // Asking to write only the monolith used to write nothing at all: the artifact was
     // not enabled, so it was skipped like everything else. Naming it enables it.
     onlyNamesMonolith = keep.includes("monolith");
@@ -610,7 +624,9 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       1
     ),
     skipArtifacts,
+    onlyArtifacts,
     discovery: isDiscoveryMode(rawDiscovery) ? rawDiscovery : undefined,
+    noUpdateCheck: values["no-update-check"] === true,
   };
 }
 
@@ -728,6 +744,8 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  
       include: splitList(invocation.include),
       exclude: splitList(invocation.exclude),
       skipArtifacts: invocation.skipArtifacts,
+      onlyArtifacts: invocation.onlyArtifacts,
+      includeMonolith: invocation.includeMonolith,
       includeSensitiveFiles: invocation.includeSensitiveFiles,
       yes: invocation.yes,
       force: invocation.force,
@@ -897,6 +915,8 @@ async function runSetupCommand(
       include: splitList(invocation.include),
       exclude: splitList(invocation.exclude),
       skipArtifacts: invocation.skipArtifacts,
+      onlyArtifacts: invocation.onlyArtifacts,
+      includeMonolith: invocation.includeMonolith,
       includeSensitiveFiles: invocation.includeSensitiveFiles,
       yes: !interactive,
       force: invocation.force,
@@ -975,6 +995,20 @@ async function runSetupCommand(
     if ((invocation.skipArtifacts ?? []).length > 0) {
       generateArgs.push("--skip-artifacts", (invocation.skipArtifacts ?? []).join(","));
     }
+    // Every explicit choice the caller made has to survive the hop into `generate`, or
+    // `setup` silently runs with a different configuration than the one it just wrote and
+    // reported. These five used to be dropped here.
+    if (invocation.includeMonolith === true) generateArgs.push("--include-monolith");
+    if (invocation.discovery !== undefined) generateArgs.push("--discovery", invocation.discovery);
+    if (invocation.largeFileBytes !== undefined) {
+      generateArgs.push("--large-file-bytes", String(invocation.largeFileBytes));
+    }
+    if (invocation.maxMonolithBytes !== undefined && invocation.maxMonolithBytes !== null) {
+      generateArgs.push("--max-monolith-bytes", String(invocation.maxMonolithBytes));
+    }
+    // `main` runs the update check per invocation, so without this the nested `generate`
+    // would ask again after the caller said not to be asked.
+    if (invocation.noUpdateCheck) generateArgs.push("--no-update-check");
     // `--watch` reaches setup only from a first-run `snapshot --watch`, where dropping it would
     // silently downgrade the run to a single generation.
     if (invocation.watch) generateArgs.push("--watch");

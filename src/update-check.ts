@@ -163,8 +163,21 @@ export function shouldCheck(argv: readonly string[], env: NodeJS.ProcessEnv): bo
   for (const skip of ["mcp", "describe", "skill", "--version", "-v", "--help", "-h"]) {
     if (args.includes(skip)) return false;
   }
-  // A JSON payload owns stdout; `json` anywhere in argv means we must not risk it.
-  if (args.some((argument) => argument.includes("json"))) return false;
+  // A JSON payload owns stdout, so the check is skipped when the output *format* is JSON —
+  // and only then. Matching the substring "json" anywhere in argv meant
+  // `snapshot explain package.json` and `snapshot diff a/manifest.json b/manifest.json`
+  // never asked, even though both write plain text.
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index] as string;
+    if (argument === "--format") {
+      if (args[index + 1] === "json") return false;
+      break;
+    }
+    if (argument.startsWith("--format=")) {
+      if (argument.slice("--format=".length) === "json") return false;
+      break;
+    }
+  }
 
   return true;
 }

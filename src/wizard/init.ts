@@ -32,6 +32,8 @@ export interface InitOptions {
   exclude?: string[];
   skipArtifacts?: string[];
   onlyArtifacts?: string[];
+  /** Turn the monolith on without disabling anything else (`--include-monolith`). */
+  includeMonolith?: boolean;
   includeSensitiveFiles?: boolean;
   /** Accept every default without prompting. */
   yes?: boolean;
@@ -147,6 +149,10 @@ function artifactAnswers(options: InitOptions): Required<ArtifactSelection> {
     const keep = new Set(options.onlyArtifacts);
     for (const name of ARTIFACT_NAMES) artifacts[name] = keep.has(name);
   }
+  // `--include-monolith` is the generate spelling. Honouring it here keeps the config
+  // that `setup` writes and the run it performs in agreement: otherwise a dry run would
+  // print a config with `includeMonolith: false` and the real run would include it.
+  if (options.includeMonolith === true) artifacts.monolith = true;
   return artifacts;
 }
 

@@ -54,8 +54,13 @@ export const sfcProfile: LanguageProfile = {
     }
 
     const summary = summarizeTypeScriptSource(`${name}.ts`, script);
+    // `summarizeTypeScriptSource` already sorted and de-duplicated its lists, and the
+    // component name is pushed afterwards — so a component whose script also exported
+    // its own name (the normal `<script setup>` shape) was listed twice, and the index
+    // that consumers search was not in the order it claims. `finalizeSummary` restores
+    // both invariants after the push.
     summary.reactComponents.push(name);
     summary.exports.push(name);
-    return { summary, quality: "ast" };
+    return { summary: finalizeSummary(summary), quality: "ast" };
   },
 };
