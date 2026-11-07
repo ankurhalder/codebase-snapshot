@@ -14,6 +14,10 @@
  * `--check` rewrites nothing and exits 1 when any span is stale, which is what CI
  * runs; without it the script fixes the files in place.
  *
+ * Two shapes cannot hold a marker — a comment inside a fence renders as text — so
+ * they are matched by shape instead: `Added devDependency: codebase-snapshot ^x.y.z`
+ * and any `codebase-snapshot@x.y.z` install pin.
+ *
  * Only the *current* version is synchronised. Changelog history stays a literal:
  * rewriting past entries would be falsifying a record, not maintaining it.
  */
@@ -66,6 +70,12 @@ for (const relative of targets()) {
     /(Added devDependency: codebase-snapshot \^)\d+\.\d+\.\d+/g,
     `$1${VALUES.version}`
   );
+  // An install pin has the same problem in a different costume: an MCP client config is JSON
+  // inside a fence, and `"args": ["-y", "codebase-snapshot@0.9.6", …]` cannot carry a marker
+  // either. A pinned example naming the previous release is worse than a stale sentence —
+  // copying it installs the wrong version — so it is rewritten by shape too. `@latest` does not
+  // match, which is what the guides that do not want a pin use.
+  after = after.replace(/(codebase-snapshot@)\d+\.\d+\.\d+/g, `$1${VALUES.version}`);
   if (after !== before) {
     stale.push(relative);
     if (!check) fs.writeFileSync(absolute, after, "utf8");

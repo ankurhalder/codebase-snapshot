@@ -21,6 +21,40 @@ Two versions exist on the registry that are not releases, and both are deprecate
 Deleting them requires account-level rights that the release pipeline does not have, so they are
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
+## 0.9.7
+
+### The setup menu stops eating its own screen
+
+Reported with a screenshot from a terminal about 70 columns wide: every keypress on `snapshot`'s
+first question added another `◆ How should I set this up?` line, until 28 of them were piled above
+the live menu.
+
+The wizard repaints a prompt in place by moving the cursor up by the height of the last frame it
+drew — and it counted that height in *lines*, while a terminal lays out *rows*. The recommended
+answer carries the hint `node-lib · config · npm scripts · install · generate`, which makes that
+line 83 cells wide. In a narrow terminal the terminal wrapped it into two rows itself, so the frame
+was one row taller than the erase believed, and moving up one row short left the top of the old
+frame behind. Every keypress. Notice that the leftover was always exactly one line: the question.
+
+Frames are now wrapped to the visible width before they are drawn, so the height that is counted is
+the height that is shown. Continuation lines keep their indent, a token longer than the line breaks
+rather than overflowing it, and the width is re-read on every draw so a window that changed size is
+measured as it is now rather than as it was. Two cells of slack are left for `◆ ❯ ◻ ←`, which some
+fonts draw double-width.
+
+No existing test could have caught this: every one of them pinned `columns` to 120, where nothing
+wraps and the two counts agree. `tests/wizard-frame.test.js` drives the real wizard at 70, 60 and 50
+columns, replays the escape sequences through a small terminal simulator, and asserts that the
+screen shows one question rather than one per keypress. Putting the old arithmetic back turns three
+of its seven tests red.
+
+### Install pins in the docs are now maintained, not remembered
+
+`docs/mcp.md` told clients to run `codebase-snapshot@0.9.6` in four places that have to change at
+every release, and a comment marker cannot live inside a JSON fence. `sync-docs` now rewrites any
+`codebase-snapshot@x.y.z` pin and the `Added devDependency:` examples by shape, so the next release
+cannot leave a copy-pasteable snippet pointing at an old version. `@latest` is untouched.
+
 ## 0.9.6
 
 ### It tells you when it is out of date

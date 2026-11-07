@@ -28,12 +28,23 @@ const REQUIRED = [
   "LICENSE",
 ];
 
+/**
+ * Runs `npm` with these arguments, shelling out on Windows.
+ *
+ * On Windows `npm` is a `.cmd` shim that only runs through a shell, and Node deprecates that
+ * combination when it is given an argument array (DEP0190): the arguments are concatenated, not
+ * escaped. Handing the shell one pre-formed string avoids the deprecated form, and every caller
+ * here passes fixed literals. Elsewhere the command is spawned directly, with no shell at all.
+ */
+function runNpm(args) {
+  const options = { cwd: ROOT, encoding: "utf8" };
+  return process.platform === "win32"
+    ? spawnSync(`npm ${args.join(" ")}`, { ...options, shell: true })
+    : spawnSync("npm", args, options);
+}
+
 function listTarballFiles() {
-  const asJson = spawnSync("npm", ["pack", "--dry-run", "--json"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    shell: process.platform === "win32",
-  });
+  const asJson = runNpm(["pack", "--dry-run", "--json"]);
   const raw = (asJson.stdout ?? "").trim();
   if (asJson.status === 0 && raw.startsWith("[")) {
     try {
@@ -43,11 +54,7 @@ function listTarballFiles() {
     }
   }
 
-  const plain = spawnSync("npm", ["pack", "--dry-run"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    shell: process.platform === "win32",
-  });
+  const plain = runNpm(["pack", "--dry-run"]);
   const text = `${plain.stdout ?? ""}\n${plain.stderr ?? ""}`;
   if (plain.status !== 0) {
     console.error(`npm pack --dry-run exited with code ${plain.status}`);

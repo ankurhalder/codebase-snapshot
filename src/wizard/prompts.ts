@@ -74,6 +74,85 @@ export function toggleIndex(selected: ReadonlySet<number>, index: number): Set<n
   return next;
 }
 
+/**
+ * True for the ranges a terminal draws two cells wide.
+ *
+ * The glyphs this toolkit uses (`◆ ❯ ◻ ←`) are East-Asian *ambiguous* — one cell in a Western
+ * monospace font, two in a CJK one — so they stay at one here. {@link Frame.width} keeps two
+ * cells of slack for exactly that ambiguity.
+ */
+function isWideCodePoint(code: number): boolean {
+  return (
+    (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+    (code >= 0x2e80 && code <= 0x303e) || // CJK radicals, Kangxi, CJK symbols
+    (code >= 0x3041 && code <= 0x33ff) || // kana through CJK compatibility
+    (code >= 0x3400 && code <= 0x4dbf) || // CJK extension A
+    (code >= 0x4e00 && code <= 0x9fff) || // CJK unified ideographs
+    (code >= 0xa000 && code <= 0xa4cf) || // Yi
+    (code >= 0xac00 && code <= 0xd7a3) || // Hangul syllables
+    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+    (code >= 0xfe30 && code <= 0xfe6f) || // CJK compatibility forms
+    (code >= 0xff00 && code <= 0xff60) || // fullwidth forms
+    (code >= 0xffe0 && code <= 0xffe6) ||
+    (code >= 0x1f300 && code <= 0x1f9ff) || // emoji and pictographs
+    (code >= 0x20000 && code <= 0x3fffd) // CJK extensions B and beyond
+  );
+}
+
+const ANSI_PATTERN = /\u001b\[[0-9;?]*[A-Za-z]/g;
+
+/** Cells a line occupies on screen. Escape sequences occupy none. */
+export function displayWidth(line: string): number {
+  let width = 0;
+  for (const character of line.replace(ANSI_PATTERN, "")) {
+    width += isWideCodePoint(character.codePointAt(0) ?? 0) ? 2 : 1;
+  }
+  return width;
+}
+
+function wrapOneLine(line: string, limit: number): string[] {
+  if (displayWidth(line) <= limit) return [line];
+  const indent = /^[ \t]*/.exec(line)?.[0] ?? "";
+  const continuation = `${indent}  `;
+  const rows: string[] = [];
+  let prefix = indent;
+  let rest = line.slice(indent.length).trimEnd();
+
+  while (rest.length > 0) {
+    const room = limit - displayWidth(prefix);
+    if (room <= 0 || displayWidth(rest) <= room) {
+      // A pathological indent leaves nothing to wrap into; emit the remainder rather than spin.
+      rows.push(prefix + rest);
+      break;
+    }
+    // Break at the last space inside the room, or mid-token when a single word is too long.
+    // The window is counted in code units, so a double-width character only ever makes it
+    // shorter — which wraps a little early and never past the edge.
+    let cut = room;
+    const space = rest.slice(0, room).lastIndexOf(" ");
+    if (space > 0) cut = space;
+    const taken = rest.slice(0, cut).trimEnd();
+    rows.push(`${prefix}${taken.length > 0 ? taken : rest.slice(0, cut)}`);
+    rest = rest.slice(cut).trimStart();
+    prefix = continuation;
+  }
+  return rows;
+}
+
+/**
+ * Breaks a block so that no row is wider than `limit` cells.
+ *
+ * A terminal wraps anything wider than itself without saying so, which is the whole reason this
+ * exists: a frame that wraps behind the renderer's back is one row taller than it claims to be.
+ * See {@link Frame}.
+ */
+export function wrapLines(text: string, limit: number): string[] {
+  const width = Math.max(8, Math.floor(limit));
+  const rows: string[] = [];
+  for (const line of text.split("\n")) rows.push(...wrapOneLine(line, width));
+  return rows;
+}
+
 function marker(active: boolean): string {
   return active ? "❯" : " ";
 }
@@ -173,7 +252,17 @@ function keyReader(input: NodeJS.ReadStream): KeyReader {
   };
 }
 
-/** Redraws a block in place, so the terminal shows one screen per prompt. */
+/**
+ * Redraws a block in place, so the terminal shows one screen per prompt.
+ *
+ * The height that has to be counted is *screen rows*, not lines. The terminal wraps anything wider
+ * than itself silently, so a frame with one over-long line is one row taller than this counts —
+ * and moving up one row too few leaves the top of the old frame behind on every keypress. That is
+ * what a stack of identical question lines is: a terminal 70-ish columns wide, a hint line 83 cells
+ * long, and an erase that undershot by exactly one row. Wrapping to the width we can actually see
+ * is what keeps the count true, and the width is re-read on every draw so a window that changed
+ * size is measured as it is now rather than as it was.
+ */
 class Frame {
   private drawn = 0;
 
@@ -181,13 +270,27 @@ class Frame {
 
   draw(text: string): void {
     this.erase();
-    this.output.write(`${text}\n`);
-    this.drawn = text.split("\n").length;
+    const rows = wrapLines(text, this.width());
+    this.output.write(`${rows.join("\n")}\n`);
+    this.drawn = rows.length;
   }
 
   erase(): void {
     if (this.drawn > 0) this.output.write(`\u001b[${this.drawn}A\u001b[0J`);
     this.drawn = 0;
+  }
+
+  /**
+   * The usable width, in cells.
+   *
+   * Two cells of slack: an ambiguous-width glyph (`◆`, `❯`, `←`) renders two cells in some fonts
+   * and one in others, and a row that lands exactly on the last column is the one case a terminal
+   * may or may not wrap. Below that, a line cannot reach the edge to begin with.
+   */
+  private width(): number {
+    const columns = this.output.columns;
+    if (typeof columns !== "number" || !Number.isFinite(columns) || columns <= 0) return 80;
+    return Math.max(8, Math.floor(columns) - 2);
   }
 }
 

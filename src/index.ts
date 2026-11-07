@@ -2073,7 +2073,13 @@ export {
 export type { FirstRunFacts, FirstRunPlan, FirstRunRefusal } from "./wizard/autopilot.js";
 export { DEFAULT_ANSWERS, renderConfig } from "./wizard/config-template.js";
 export type { WizardAnswers } from "./wizard/config-template.js";
-export { PromptCancelled, isInteractive } from "./wizard/prompts.js";
+export {
+  PromptBack,
+  PromptCancelled,
+  displayWidth,
+  isInteractive,
+  wrapLines,
+} from "./wizard/prompts.js";
 export { PRESETS } from "./presets/index.js";
 export { LANGUAGE_PROFILES, profileForPath, summarizeWithProfile } from "./ast/profiles/index.js";
 export type { HeuristicResult, LanguageProfile } from "./ast/profiles/index.js";
