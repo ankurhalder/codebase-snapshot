@@ -53,7 +53,10 @@ test("npm test runs the suite through the scratch-root wrapper", () => {
 
 test("a scratch directory a child test leaves behind dies with the run", async (t) => {
   const project = makeTempDir(t, "cbs-hygiene-");
-  const leaky = path.join(project, "leaky.test.js");
+  // A .mjs name is ESM on every supported Node version. A .js file outside a
+  // package is CommonJS on Node 18, so the child would fail on these imports and
+  // the test would pass for the wrong reason on a newer runtime.
+  const leaky = path.join(project, "leaky.test.mjs");
   fs.writeFileSync(
     leaky,
     [
