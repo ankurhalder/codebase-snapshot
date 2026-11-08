@@ -10,7 +10,7 @@
  * `package.json` carries the same version; `npm run verify` compares the two.
  */
 export const GENERATOR_NAME = "codebase-snapshot";
-export const GENERATOR_VERSION = "0.9.15";
+export const GENERATOR_VERSION = "0.9.16";
 
 /**
  * Names this generator was published under before it moved to `codebase-snapshot`.

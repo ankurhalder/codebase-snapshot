@@ -23,6 +23,44 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.16
+
+A run refused by the lock it did not get could leave a lock of its own behind — one naming a
+**live** pid, so the refusal outlived the run that caused it. The suite that should have noticed
+was itself leaving scratch directories in the host temp directory: five days of runs had left 616
+of them and about 600 MB. Both are fixed, and the second is why the first stayed hidden.
+
+### A refused run kept the lock it took
+
+`generate` locks the staging root and the output directory, in sorted order, before staging is
+touched. The acquisitions came from one `map()`, so when the second lock was refused the first was
+still held — and there was no list of releases to run in the `finally`, because the throw happened
+before the assignment. The file left behind named the current process, so `reclaimStaleLock` read
+it as an active run. An MCP server, watch mode, or a `setup` that retries would be refused for the
+rest of that process's life, with no other run in existence.
+
+Each acquisition is now recorded, and a failure releases the locks already taken. The regression
+test starts a run that a fresh staging lock must refuse and asserts the output-directory lock is
+gone afterwards.
+
+### The test suite stops leaving its scratch directories behind
+
+`npm test` created every fixture in the host temp directory and relied on each test to remove it.
+Two tests never did: `agent-simulation.test.js` made two fixtures per run with no cleanup, and one
+`repo()` argument in `generation-truth.test.js` was never assigned, so its directory had no handle
+to remove. A wrapper now runs the suite with `TEMP`, `TMP` and `TMPDIR` pointed at one scratch root
+that is deleted when the run ends, pass or fail, and reports by name anything a test leaves inside
+it. Tests create scratch trees with `makeTempDir(t, prefix)`, which registers the removal with the
+test, and a hygiene suite fails the build if a test creates a directory it never removes, if the
+npm scripts stop using the wrapper, or if the fixture-heavy generation suite leaves anything behind.
+
+### Verified
+
+`npm run verify` — lint, typecheck, 1032 tests (0 failures, 7 skipped), the docs sync check, the
+site build, the site audit, the readme lint and the tarball check — on the release commit. The same
+gate runs on every pull request and every push to `main`, and the release runs it on Node 18, 20
+and 22; Node 18 caught a portability defect in this release's own new test before it shipped.
+
 ## 0.9.15
 
 A sixth audit, of the promises rather than the code paths the gate already covers. The gate was
