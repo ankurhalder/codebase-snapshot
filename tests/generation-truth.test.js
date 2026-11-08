@@ -556,8 +556,10 @@ test("F1: an unusable manifest is rejected with a reason, never `undefined`", as
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("F1: compareManifests names the malformed side", () => {
-  const good = generate(repo());
+test("F1: compareManifests names the malformed side", (t) => {
+  const dir = repo();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const good = generate(dir);
   const bad = { counts: {}, files: [] };
   assert.throws(() => compareManifests(bad, good), /before/);
   assert.throws(() => compareManifests(good, bad), /after/);

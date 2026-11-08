@@ -80,6 +80,11 @@ npm run check     # lint + typecheck + tests
 npm run build
 ```
 
+`npm test` runs the suite through `scripts/test-run.mjs`: it points `TEMP`/`TMP`/`TMPDIR` at
+one scratch root and deletes that root when the run ends, so a test that forgets its cleanup
+leaves nothing behind. Create scratch trees with `makeTempDir(t, prefix)` from
+`tests/helpers/temp.js` so the test's own `t.after` removes them.
+
 `scripts/lint.mjs` enforces LF endings, no `any` in `src`, console usage only in
 `src/cli.ts`/`src/bin.ts`/`scripts/`, and comment/formatting rules. `npm run verify` is
 lint + typecheck + tests + a tarball check, and is exactly what the publish workflow runs

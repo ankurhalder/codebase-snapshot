@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+import { makeTempDir } from "./helpers/temp.js";
 
 /**
  * The agent path, executed exactly as the bundled skill and the shipped contract
@@ -42,8 +43,8 @@ const DJANGO_FILES = {
   "requirements.txt": "Django==5.0\n",
 };
 
-function makeFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "snap-agent-sim-"));
+function makeFixture(t) {
+  const dir = makeTempDir(t, "snap-agent-sim-");
   for (const [rel, content] of Object.entries(DJANGO_FILES)) {
     const full = path.join(dir, rel);
     fs.mkdirSync(path.dirname(full), { recursive: true });
@@ -52,8 +53,8 @@ function makeFixture() {
   return dir;
 }
 
-test("an agent following describe's own workflow reaches a validated snapshot", () => {
-  const cwd = makeFixture();
+test("an agent following describe's own workflow reaches a validated snapshot", (t) => {
+  const cwd = makeFixture(t);
 
   // ---- Step 1: verify. "prints v<version> on stdout and exits 0".
   const help = runCli(["--help"], { cwd });
@@ -158,8 +159,8 @@ test("an agent following describe's own workflow reaches a validated snapshot", 
   assert.ok(fs.existsSync(path.join(cwd, "snapshot", "reports", "audit.md")));
 });
 
-test("the bundled skill is machine-readable too", () => {
-  const cwd = makeFixture();
+test("the bundled skill is machine-readable too", (t) => {
+  const cwd = makeFixture(t);
   const plain = runCli(["skill"], { cwd });
   assert.equal(plain.code, 0, plain.stderr);
   assert.match(plain.stdout, /codebase-snapshot/);
