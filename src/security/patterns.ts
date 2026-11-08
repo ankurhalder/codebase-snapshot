@@ -26,10 +26,11 @@ import type { SecretRule } from "../types.js";
  * with `[_-]?` so snake_case and kebab-case spellings work, and with no
  * surrounding quantifiers so the scan stays linear on a long identifier.
  * Deliberately absent: bare `key` (`key: "…"` is React's prop), `publicKey`,
- * `maxTokens` (the tail must end at the separator), `id`.
+ * `maxTokens` (the tail must end at the separator), `id`. `accessKey`/`access_key` is present:
+ * it is a credential on its own, unlike the AWS compound form which is already listed.
  */
 const STRONG_CREDENTIAL_NAME =
-  "(?:password|passwd|passphrase|pwd|api[_-]?key|api[_-]?secret|" +
+  "(?:password|passwd|passphrase|pwd|api[_-]?key|api[_-]?secret|access[_-]?key|" +
   "secret[_-]?access[_-]?key|secret[_-]?key|client[_-]?secret[_-]?key|client[_-]?secret|" +
   "private[_-]?key|aws[_-]?secret[_-]?access[_-]?key|access[_-]?token|refresh[_-]?token|" +
   "auth[_-]?token|session[_-]?token|session[_-]?key|secret|token)";
@@ -37,12 +38,18 @@ const STRONG_CREDENTIAL_NAME =
 /**
  * Names that are only a credential when the value is unmistakably a credential.
  *
- * `id-token: write` is a GitHub Actions permission, `{ pass: 3 }` is an object
- * literal and `…not credentials: none of them…` is prose — treating any of those
- * as an unquoted assignment corrupted ordinary code. They stay matched, but only
- * against a quoted value of at least eight characters.
+ * `{ pass: 3 }` is an object literal and `…not credentials: none of them…` is prose —
+ * treating any of those as an unquoted assignment corrupted ordinary code. They stay
+ * matched, but only against a quoted value of at least eight characters.
+ *
+ * `id-token` is deliberately absent: it is a GitHub Actions **permission** name whose value is
+ * `read`/`write`/`none`, and masking `{"id-token": "write"}` destroyed a declaration the
+ * repository needs to keep. A real credential under the key is still caught by the rule for its
+ * shape (JWT, `ghp_…`), and `idToken` — the OIDC camelCase spelling — is still a credential
+ * name because it has no separator before `token`.
+
  */
-const WEAK_CREDENTIAL_NAME = "(?:pass|id[_-]?token|credentials?)";
+const WEAK_CREDENTIAL_NAME = "(?:pass|credentials?)";
 
 /**
  * Values that are not credentials: type annotations, JS literals and
@@ -139,13 +146,13 @@ const UNQUOTED_VALUE_END = String.raw`[A-Za-z0-9_+=/%:.~$!@#^*?-]`;
 const UNQUOTED_VALUE_START = String.raw`[$!@#%^&*~+]`;
 const UNQUOTED_LITERAL =
   String.raw`(` + // one capture, whichever branch matched: valueGroup is 1
-    String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))[A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{${UNQUOTED_MIN_LENGTH - 1},511}(?!${UNQUOTED_VALUE_END}|[({[])` +
-    String.raw`|(?=${UNQUOTED_VALUE_START}[^ \t]{0,62}(?:[0-9]|${UNQUOTED_VALUE_START}))${UNQUOTED_VALUE_START}[${UNQUOTED_VALUE_CHARS}]{2,511}(?!${UNQUOTED_VALUE_END}|[({[])` +
+    String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))[A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{${UNQUOTED_MIN_LENGTH - 1},511}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
+    String.raw`|(?=${UNQUOTED_VALUE_START}[^ \t]{0,62}(?:[0-9]|${UNQUOTED_VALUE_START}))${UNQUOTED_VALUE_START}[${UNQUOTED_VALUE_CHARS}]{2,511}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
     String.raw`|\([^()\s]{1,510}\)|\[[^\[\]\s]{1,510}\]|\{[^{}\s]{1,510}\}` +
     String.raw`)` +
   PROSE_CONTINUATION;
 const UNQUOTED_AMBIGUOUS_LITERAL =
-  String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))([A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{7,511})(?!${UNQUOTED_VALUE_END}|[({[])` +
+  String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))([A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{7,511})(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
   PROSE_CONTINUATION;
 
 /**
@@ -192,7 +199,7 @@ const NOT_A_NAMESPACED_IDENTIFIER = String.raw`(?![a-z][a-z0-9]*(?:\.[a-z][a-z0-
  * characters only and cannot contain a quote, so a list of key *names* (`["awsSecret:", "apiKey:"]`)
  * still does not match: there the quoted string contains the separator and is followed by a comma.
  */
-const QUOTED_CREDENTIAL_KEY = `["'][A-Za-z0-9_$-]{0,64}${STRONG_CREDENTIAL_NAME}["']`;
+const QUOTED_CREDENTIAL_KEY = `["'](?!id[-_]token["'])[A-Za-z0-9_$-]{0,64}${STRONG_CREDENTIAL_NAME}["']`;
 
 /**
  * The value of a quoted assignment, escaped pairs included.
@@ -221,6 +228,14 @@ const QUOTED_VALUE = String.raw`((?:[^"'\\\n]|\\\\["'](?=[A-Za-z0-9_])|\\.){1,51
  * keep working; the lookbehind is exactly three characters wide.)
  */
 const UNQUOTED_STRONG_NAME = `(?<!id[-_])${STRONG_CREDENTIAL_NAME}`;
+
+/**
+ * Does a **key** name a credential? The pattern catalogue matches names as tails
+ * (`dbPassword` contains `password`), and callers that must decide whether a whole
+ * `KEY=value` line is an assignment use the same test, so the rule set and the guards can never
+ * disagree. Case-insensitive: data files spell these lowercase (`password=`, `api_key=`).
+ */
+export const CREDENTIAL_KEY_TAIL = new RegExp(`(?:${STRONG_CREDENTIAL_NAME})$`, "i");
 
 export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
   {
@@ -411,13 +426,13 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // the key name.
     rule: "credential-assignment",
     pattern: new RegExp(
-      `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_NAMESPACED_IDENTIFIER}(["'\`])${QUOTED_VALUE}\\1`,
+      `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}(?<!id[-_])${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_NAMESPACED_IDENTIFIER}(["'\`])${QUOTED_VALUE}\\1`,
       "i"
     ),
     valueGroup: 2,
   },
   {
-    // `pass`, `id-token` and `credentials` are ambiguous on their own, so they
+    // `pass` and `credentials` are ambiguous on their own, so they
     // are accepted only against a quoted value long enough to be a credential.
     rule: "credential-assignment-weak",
     pattern: new RegExp(
@@ -451,9 +466,18 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // lookbehind, so the match is the value alone, and `redact.ts` only applies it to a data or
     // shell file: in source code the same shape is an expression and stays untouched, and an `URL`
     // query string keeps its `&` separators because they are not a colon form.
+    //
+    // The `KEY=value` twin does the same for the `=` form, which INI, .properties and shell files
+    // use: with a credential key the whole value is masked whatever symbols it contains
+    // (`password=pa&ss`, `token=a<b`, `client_secret=x|y`). The value is bounded by whitespace
+    // (end of line, or the space before a `# comment`), not by a symbol class — `envpass!@#$%^&*()` used
+    // to stop before the parenthesis and leave the tail in clear. The lookbehind matches the value
+    // alone and `redact.ts` decides, from the file and from the key, whether the line is an
+    // assignment (it must be a data/shell file, the key must end in a credential name, and a URL
+    // query parameter or `$VARIABLE` reference is not an assignment).
     rule: "credential-assignment-unquoted",
     pattern: new RegExp(
-      `(?:${QUOTED_CREDENTIAL_KEY}|${UNQUOTED_STRONG_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}:[ \t]{1,8})(?![ \t]*["'\`])(?![ \t]*[|>])${NOT_A_LITERAL_VALUE}[^\r\n#]{1,300}`,
+      `(?:${QUOTED_CREDENTIAL_KEY}|${UNQUOTED_STRONG_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}=(?!=)\\s{0,8})(?![\\s#$"'\`])[^\\s]{1,512}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}:[ \t]{1,8})(?![ \t]*["'\`])(?![ \t]*[|>])${NOT_A_LITERAL_VALUE}[^\r\n#]{1,300}`,
       "i"
     ),
     valueGroup: 1,

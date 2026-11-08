@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -152,4 +153,38 @@ test("a file clipped by the part budget still matches its block", (t) => {
     Buffer.byteLength(block.body, "utf8") < entry.sizeBytes,
     "the emitted body really is smaller than the source"
   );
+});
+// ---------------------------------------------- fingerprint: recorded settings
+// The fingerprint used to hash the file list alone, so two runs with different settings shared
+// it while their parts differed. It now folds in `configDigest`, and the manifest records the
+// digest it used, which makes the value reproducible from the manifest itself.
+
+test("the fingerprint is a digest of the file list and the recorded settings digest", (t) => {
+  const dir = tempDir(t);
+  write(dir, "package.json", '{"name":"fixture","version":"1.0.0"}');
+  write(dir, "src/a.ts", "export const a = 1;\n");
+  const manifest = generateSnapshot({ cwd: dir });
+
+  // No file is truncated in this fixture, so manifest.files[].inclusionMode is the value the
+  // pre-partition fingerprint hashed. The trailing settings line names the recorded digest.
+  const recomputed = crypto
+    .createHash("sha256")
+    .update(
+      [
+        ...manifest.files.map(
+          (file) =>
+            `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}:${file.inclusionMode}`
+        ),
+        `settings:${manifest.config.digest}`,
+      ].join("\n")
+    )
+    .digest("hex");
+  assert.equal(manifest.fingerprint, recomputed, "the fingerprint must be reproducible from the manifest");
+  assert.match(manifest.fingerprint, /^[0-9a-f]{64}$/);
+
+  const same = generateSnapshot({ cwd: dir, outDir: "again" });
+  assert.equal(same.fingerprint, manifest.fingerprint, "unchanged input and settings keep it identical");
+
+  const other = generateSnapshot({ cwd: dir, outDir: "other", maxPartBytes: 4096 });
+  assert.notEqual(other.fingerprint, manifest.fingerprint, "a changed setting must move it");
 });

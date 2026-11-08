@@ -280,3 +280,165 @@ test("the fixed-shape rules do not mask ordinary dotted or numeric text", () => 
   assertUntouched("const host = 127.0.0.1;", "app.ts", "an IPv4 address");
   assertUntouched("const pat = process.env.PAT;", "app.ts", "a reference, not a literal");
 });
+
+// ---------------------------------------------------------------------------
+// 2.6 — the 0.9.15 limitation: lowercase KEY=value outside .env-style files
+// ---------------------------------------------------------------------------
+
+test("a lowercase key=value credential in a data file is masked whole", () => {
+  // INI, properties and .conf files use lowercase keys, and the uppercase-only env rule plus the
+  // value alphabet left `pa&ss`-style values in clear (the alphabet stops at the symbol).
+  for (const filePath of ["app.ini", "app.properties", "app.conf"]) {
+    assertMasked("password=pa&ss", "pa&ss", filePath, "a lowercase password");
+    assertMasked("token=a<b", "a<b", filePath, "a value containing an angle bracket");
+    assertMasked("client_secret=x|y", "x|y", filePath, "a value containing a pipe");
+    assertMasked("private_key=abc\\def", "abc\\def", filePath, "a value containing a backslash");
+    assertMasked("db_password=q&r", "q&r", filePath, "a prefixed credential key");
+    assertMasked("apiKey=q&r", "q&r", filePath, "camelCase");
+    assertMasked("access_key=zz&yy", "zz&yy", filePath, "access_key");
+    assertMasked("password=pa&ss # rotate", "pa&ss", filePath, "a trailing comment is kept");
+  }
+});
+
+test("a KEY=value credential on a shell command line is masked", () => {
+  assertMasked("--token=abc&def", "abc&def", "run.sh", "a long option");
+  assertMasked("export API_TOKEN=abc&def", "abc&def", "run.sh", "an exported name");
+  assertMasked(
+    "curl -u admin:SuperSecretPassw0rd https://api.example.com",
+    "SuperSecretPassw0rd",
+    "run.sh",
+    "curl userinfo"
+  );
+});
+
+test("keys that merely contain a credential word survive in data files", () => {
+  for (const line of ["tokenCount=3", "secretary=Jane", "passwordlessEnabled=true"]) {
+    assertUntouched(line, "app.ini", "a non-credential key");
+    assertUntouched(line, "app.properties", "a non-credential key");
+  }
+});
+
+test("the equals form is not extended to source files", () => {
+  // A declared expression is a program; `token=a<b` in TypeScript has no credential meaning at
+  // all, and the whole-value branch must not fire there.
+  assertUntouched("const password = compute(a & b);", "app.ts", "a declared expression");
+  assertUntouched("token=a<b", "app.ts", "no source rule matches this");
+  assertUntouched("client_secret=x|y", "app.ts", "no source rule matches this");
+});
+
+test("a URL query keeps its parameters after the equals-form change", () => {
+  // The key of a query parameter is not an assignment: the value is masked by the rules that
+  // already see it, and the parameters after it survive in a source file and in a data file.
+  for (const filePath of ["app.ts", "app.properties"]) {
+    const line = 'url="https://api.example.test/cb?access_token=abc123&expires=3600"';
+    const { redacted } = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, filePath);
+    assert.ok(redacted.includes("[REDACTED"), `${filePath}: the token is masked: ${redacted}`);
+    assert.ok(redacted.includes("&expires=3600"), `${filePath}: the next parameter survives: ${redacted}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 2.7 — a credential assignment masks the whole value, symbols included
+// ---------------------------------------------------------------------------
+
+test("a credential assignment masks the whole value whatever symbols it contains", () => {
+  // The red team's frozen-build fixture produced `DB_PASSWORD=[REDACTED]&*()`: the env/whole-value
+  // paths stopped at a symbol and left the tail in clear. A mask must cover the value or not fire.
+  const values = [
+    "envpass!@#$%^&*()",
+    "!@#$%^&*()<>|\\",
+    "pa$$w0rd!@#",
+    'env"pass!@#',
+    "abc&def#ghi",
+    "A!@#b$%^c&*(d)",
+  ];
+  const forms = [
+    [".env", (value) => "DB_PASSWORD=" + value, "DB_PASSWORD"],
+    [".envrc", (value) => "export API_KEY=" + value, "export API_KEY"],
+    ["run.sh", (value) => "export DB_PASSWORD=" + value, "export DB_PASSWORD"],
+    ["run.sh", (value) => "--token=" + value, "--token"],
+  ];
+  for (const [filePath, line, key] of forms) {
+    for (const value of values) {
+      const { redacted, findings } = scan(line(value), filePath);
+      assert.ok(findings.length > 0, "a finding is expected: " + filePath + " " + line(value));
+      assert.equal(redacted.includes(value), false, "the value must not survive: " + JSON.stringify(redacted));
+      for (const run of value.match(/[A-Za-z0-9]{2,}/g) ?? []) {
+        assert.equal(
+          redacted.includes(run),
+          false,
+          "fragment " + JSON.stringify(run) + " survived in " + JSON.stringify(redacted)
+        );
+      }
+      assert.ok(redacted.includes("[REDACTED"), "a marker is expected: " + JSON.stringify(redacted));
+      assert.ok(redacted.includes(key.replace(/^export /, "")), "the key is kept: " + JSON.stringify(redacted));
+    }
+  }
+  // The exact fixture: the mask must reach the end of the line, not stop at a prefix.
+  const exact = scan("DB_PASSWORD=envpass!@#$%^&*()", ".env").redacted;
+  assert.equal(exact.includes("envpass"), false, exact);
+  assert.ok(exact.endsWith("snapshot]"), "a punctuation tail survived: " + exact);
+  // A trailing comment is not part of the value.
+  for (const value of values) {
+    const redacted = scan("DB_PASSWORD=" + value + " # rotate", ".env").redacted;
+    assert.equal(redacted.includes(value), false, "comment-case value survived: " + JSON.stringify(redacted));
+    assert.ok(redacted.includes("# rotate"), "the comment must survive: " + JSON.stringify(redacted));
+  }
+});
+
+test("a mask inside a data-file assignment never leaves a tail", () => {
+  // The invariant, not one key: DB_PASSWORD0 / AWS_SECRET_ACCESS_KEY_2 / GITHUB_TOKEN_7 are
+  // credential names with a numeric suffix, so a weaker rule matched the value prefix and the
+  // marker was followed by the rest of the value. In a data or shell file any mask that lands in
+  // an assignment value must run to the end of the whitespace-delimited value.
+  const noTail = /\[REDACTED[^\]]*\](?:\s+#.*)?$/;
+  const cases = [
+    ["DB_PASSWORD0=envpass!@#$%^&*()", ".env"],
+    ["AWS_SECRET_ACCESS_KEY_2=a!b#c", ".env"],
+    ["GITHUB_TOKEN_7=x!y#z", ".env"],
+    ["AWS_SECRET_ACCESS_KEY_2=a!b#c", "run.sh"],
+    ["GITHUB_TOKEN_7=x!y#z", "run.sh"],
+    ["DB_PASSWORD0=envpass!@#$%^&*() # rotate", ".env"],
+    ["DB_PASSWORD=envpass!@#$%^&*()", ".env"],
+    ["API_TOKEN=abc&def#ghi", ".env"],
+    ["CLIENT_SECRET=Secret!Value#123", ".env"],
+  ];
+  for (const [line, filePath] of cases) {
+    const { redacted, findings } = scan(line, filePath);
+    assert.ok(findings.length > 0, "a finding is expected: " + line);
+    assert.match(redacted, noTail, "a tail survived: " + line + " -> " + redacted);
+    assert.ok(redacted.includes(line.slice(0, line.indexOf("=") + 1)), "the key is kept: " + redacted);
+  }
+  for (const filePath of [".env", ".envrc", "run.sh", ".properties", ".ini"]) {
+    for (const key of [
+      "DB_PASSWORD",
+      "DB_PASSWORD0",
+      "AWS_SECRET_ACCESS_KEY_2",
+      "GITHUB_TOKEN_7",
+      "API_TOKEN",
+      "CLIENT_SECRET",
+      "--token",
+    ]) {
+      for (const value of [
+        "envpass!@#$%^&*()",
+        "!@#$%^&*()<>|\\",
+        "pa$$w0rd!@#",
+        'env"pass!@#',
+        "abc&def#ghi",
+      ]) {
+        const { redacted, findings } = scan(key + "=" + value, filePath);
+        if (findings.length === 0) continue;
+        assert.match(redacted, noTail, "tail after mask: " + filePath + " " + key + "=" + value + " -> " + redacted);
+      }
+    }
+  }
+  // Exemptions unchanged: a URL query keeps its parameters, and a source file is not an
+  // assignment file at all.
+  const propertiesUrl = scan('url="https://x.test/cb?access_token=abc&expires=3600"', "app.properties").redacted;
+  assert.ok(propertiesUrl.includes("&expires=3600"), "the properties URL tail must survive: " + propertiesUrl);
+  const sourceUrl = 'url="https://x.test/cb?access_token=abc&expires=3600"';
+  const sourceOut = scan(sourceUrl, "src/a.ts").redacted;
+  assert.ok(sourceOut.includes("&expires=3600"), "the source URL tail must survive: " + sourceOut);
+  const expression = "const password = compute(a & b);";
+  assert.equal(scan(expression, "src/a.ts").redacted, expression, "a source expression is not a value");
+});

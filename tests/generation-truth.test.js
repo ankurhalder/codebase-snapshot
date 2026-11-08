@@ -895,3 +895,116 @@ test("PAR-001: a custom path rule skips the file and keeps it out of every artif
   assert.equal(read(dir, "snapshot/reports/audit.md").includes("CORP-GGGG"), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ------------------------------------------- fingerprint: resolved settings
+// The fingerprint used to hash only `${path}:${hash}:${size}:${inclusionMode}`. Two runs with
+// different part budgets, preview thresholds, layer rules or secret rules therefore shared a
+// fingerprint while their parts differed, and the docs call it a hash of what was included.
+// It now folds in `configDigest`, the canonical digest of every output-affecting setting.
+
+test("fingerprint: unchanged input and settings keep the documented repeatability property", () => {
+  const dir = repo({ "big.txt": "x".repeat(20_000) });
+  const first = generate(dir, { outDir: "first", maxPartBytes: 4096 });
+  const second = generate(dir, { outDir: "second", maxPartBytes: 4096 });
+  assert.equal(second.fingerprint, first.fingerprint, "same input and same settings");
+  assert.ok(
+    first.files.some((file) => file.isPreviewTruncated),
+    "the fixture is truncated, and truncation happens after the fingerprint is computed"
+  );
+  const parts = (outDir) =>
+    fs
+      .readdirSync(path.join(dir, outDir, "parts"))
+      .sort()
+      .map((name) => fs.readFileSync(path.join(dir, outDir, "parts", name)));
+  assert.deepEqual(parts("second"), parts("first"), "the parts are byte-identical too");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("fingerprint: a budget or preview-threshold change moves it, and the parts differ", () => {
+  const dir = repo({
+    "big.txt": "x".repeat(20_000),
+    "lines.txt": "line of text\n".repeat(400),
+  });
+  const wide = generate(dir, { outDir: "wide", maxPartBytes: 8192, largeFileBytes: 204800 });
+  const narrow = generate(dir, { outDir: "narrow", maxPartBytes: 4096, largeFileBytes: 204800 });
+  const tokens = generate(dir, { outDir: "tokens", maxPartTokens: 1024 });
+  const previewed = generate(dir, { outDir: "previewed", maxPartBytes: 8192, largeFileBytes: 1000 });
+  assert.notEqual(narrow.fingerprint, wide.fingerprint, "a different part budget is a different snapshot");
+  assert.notEqual(tokens.fingerprint, wide.fingerprint, "a token budget is a different snapshot");
+  assert.notEqual(previewed.fingerprint, wide.fingerprint, "a different preview threshold is a different snapshot");
+  const parts = (outDir) =>
+    fs
+      .readdirSync(path.join(dir, outDir, "parts"))
+      .sort()
+      .map((name) => fs.readFileSync(path.join(dir, outDir, "parts", name)));
+  assert.notDeepEqual(parts("narrow"), parts("wide"), "the part budget really changes the parts");
+  assert.notDeepEqual(parts("tokens"), parts("wide"), "the token budget really changes the parts");
+  assert.notDeepEqual(parts("previewed"), parts("wide"), "the preview threshold really changes the parts");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("fingerprint: a preset or layer-rule change moves it, and the parts differ", () => {
+  const dir = makeDir({ "package.json": PACKAGE_JSON, "src/a.ts": "export const a = 1;\n" });
+  const base = generate(dir, { outDir: "base", preset: "node-lib" });
+  const generic = generate(dir, { outDir: "generic", preset: "generic" });
+  const layers = generate(dir, {
+    outDir: "layers",
+    preset: "node-lib",
+    layersMode: "replace",
+    layers: [{ name: "app", match: "src/**" }],
+  });
+  assert.notEqual(generic.fingerprint, base.fingerprint, "a different preset is a different snapshot");
+  assert.notEqual(layers.fingerprint, base.fingerprint, "different layer rules are a different snapshot");
+  const parts = (outDir) =>
+    fs
+      .readdirSync(path.join(dir, outDir, "parts"))
+      .sort()
+      .map((name) => fs.readFileSync(path.join(dir, outDir, "parts", name)));
+  assert.notDeepEqual(parts("generic"), parts("base"), "the layer name reaches the part metadata");
+  assert.notDeepEqual(parts("layers"), parts("base"), "the layer rule reaches the part metadata");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("fingerprint: a secret-rule or sensitive-file setting moves it", () => {
+  const dir = makeDir({
+    "package.json": PACKAGE_JSON,
+    "src/a.ts": "export const probe = 'PROBE-1234';\n",
+    ".env": "FEATURE_FLAG=on\n",
+  });
+  const plain = generate(dir, { outDir: "plain" });
+  const redacted = generate(dir, {
+    outDir: "redacted",
+    secrets: { customPatterns: [{ rule: "probe", pattern: /PROBE-[0-9]+/ }] },
+  });
+  assert.notEqual(redacted.fingerprint, plain.fingerprint, "a different redaction rule is a different snapshot");
+  const partText = (outDir) =>
+    fs
+      .readdirSync(path.join(dir, outDir, "parts"))
+      .sort()
+      .map((name) => fs.readFileSync(path.join(dir, outDir, "parts", name), "utf8"))
+      .join("\n");
+  assert.match(partText("plain"), /PROBE-1234/);
+  assert.doesNotMatch(partText("redacted"), /PROBE-1234/, "the custom rule is what changed the bytes");
+
+  const sensitiveOff = generate(dir, { outDir: "sensitive-off", includeSensitiveFiles: false });
+  const sensitiveOn = generate(dir, { outDir: "sensitive-on", includeSensitiveFiles: true });
+  assert.ok(
+    !sensitiveOff.files.some((file) => file.relativePath === ".env"),
+    "the credential file is excluded by default"
+  );
+  assert.ok(
+    sensitiveOn.files.some((file) => file.relativePath === ".env"),
+    "explicitly including sensitive files changes what is in the snapshot"
+  );
+  assert.notEqual(sensitiveOn.fingerprint, sensitiveOff.fingerprint);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("fingerprint: a changed tree moves it", () => {
+  const dir = repo();
+  const before = generate(dir, { outDir: "before" });
+  writeFiles(dir, { "src/a.ts": "export const a = 2;\n" });
+  const after = generate(dir, { outDir: "after" });
+  assert.notEqual(after.fingerprint, before.fingerprint, "a source edit changes the snapshot");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

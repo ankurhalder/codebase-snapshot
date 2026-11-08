@@ -103,7 +103,7 @@ diff the manifest only when you need to know that a run happened.
 | `config` | The resolved configuration actually used (preset, artifacts, sizing, scoping). |
 | `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount }`. |
 | `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, estimatedTokens, partCount, warningCount, redactedLines }`. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
-| `fingerprint` | Stable hash of the snapshot content. Two runs over unchanged input produce the same value. |
+| `fingerprint` | Stable hash of the snapshot content **and** the settings that shaped it. Two runs over unchanged input and unchanged settings produce the same value; changing the budget, a preset, a layer rule or the secret rules moves it, because the parts move too. |
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
 | `artifacts` | The optional monolith files: `{ fullJson, fullMarkdown }`. Each value is `null` when that file was not written, otherwise `{ byteSize, sha256 }`. The object itself is always present. |
 | `layers`, `kinds` | File counts per layer and per kind. |

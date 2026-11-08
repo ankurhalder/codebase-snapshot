@@ -26,9 +26,10 @@ What you need is not more discipline. It is a comparison that can fail.
 
 ### 1. An identity for the copy
 
-Every run writes `manifest.fingerprint`, a hash of what was included, derived from the content
-of every file. Two repositories that differ by one byte have different fingerprints; two runs
-over the same tree on different machines have the same one.
+Every run writes `manifest.fingerprint`, a hash of what was included — derived from the content
+of every file and from the settings that shaped the output. Two repositories that differ by one
+byte have different fingerprints, and so do two runs of the same tree with a different budget;
+two runs over the same tree with the same settings, on different machines, have the same one.
 
 ```bash
 codebase-snapshot report --format json | jq -r .manifest.fingerprint

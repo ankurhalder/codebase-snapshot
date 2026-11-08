@@ -324,10 +324,11 @@ masked whole, running to the end of the line (a trailing `#` comment is kept, an
 capped at 300 characters).
 A value that cannot be bounded is handled by file type: in a data or shell file a colon-form
 assignment still masks the value whole, while in source code the unbounded match is dropped rather
-than emitted as a marker in front of an expression. The `=` form outside `.env`-style files is
-covered by the `.env`/shell rule, which expects the uppercase names those formats use — a
-lowercase `key=value` in an INI or properties file is masked only while its value stays inside
-the rule's alphabet.
+than emitted as a marker in front of an expression. The `=` form follows the same file-type rule:
+in a data or shell file a key ending in a credential word (`password`, `client_secret`, `access_key`,
+`apiKey`, upper or lower case) masks the whole value whatever symbols it contains, while the same
+line in source code is left alone unless it matches an existing source rule. A key that merely
+contains a credential word (`tokenCount`, `secretary`) is not a credential and is untouched.
 
 Findings are summarised in `reports/audit.md` (one row per line, naming every rule that matched
 it), counted in `manifest.totals.redactedLines`, and shown in the `generate` summary as a

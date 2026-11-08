@@ -58,10 +58,11 @@ In a data or shell file a **colon-form** assignment is masked whole even when a 
 the value impossible to bound — it runs to the end of the line (a trailing `#` comment is kept, and
 the match is capped at 300 characters). In source code such a match is dropped instead, so no
 marker is written in front of an expression. The `.env`/shell `NAME=value` rule also masks its
-whole value, comment aside. The `=` form outside those files is the remaining gap: it expects the
-uppercase names `.env`-style formats use, so a lowercase `key=value` in an INI or properties file
-is masked only while its value stays inside the rules' alphabet — one containing `&`, `<`, `>`,
-`|` or a backslash can be left unmasked.
+whole value, comment aside. The `=` form follows the same rule by file type: in a data or shell
+file, a key whose name ends in a credential word — upper or lower case, `password`, `client_secret`,
+`access_key`, `apiKey` — masks the whole value whatever symbols it contains; in source code the
+same line is left alone unless it matches an existing source rule, and a key that merely contains a
+credential word (`tokenCount`, `secretary`) is not a credential.
 
 A clean audit is therefore evidence that the known patterns did not fire — not a guarantee
 that the repository holds no credentials.

@@ -31,14 +31,39 @@ export interface PartSection {
 const FILE_HEADING = "### FILE: ";
 const CONTENT_MARKERS = new Set(["#### Content", "#### Bounded Preview"]);
 const ANCHOR_LINE = /^<a id="([^"]+)"><\/a>$/;
+const META_PREFIX = "- Meta: ";
+const LEGACY_INCLUSION_PREFIX = "- Inclusion: ";
+const LEGACY_INCLUDED_LINES_PREFIX = "- Included Lines: ";
 /**
  * The inclusion modes a part can declare.
  *
- * The metadata line is `layer/kind | language | inclusion | N lines (M B)`, and the first three
- * fields are free-form names a config can set — so the inclusion is found by *value* rather than
- * by position. A layer called `api|v2` must not shift the field the reader is looking for.
+ * The metadata line is `layer/kind | language | inclusion | N lines[ of M lines] (B B)`, and the
+ * first three fields are free-form names a config can set — so the inclusion is found by *value*
+ * rather than by position. A layer called `api|v2` must not shift the field the reader is looking
+ * for. The counts are found the other way round, by position ({@link readIncludedLines}), because
+ * they are the only field with a fixed shape.
  */
 const INCLUSION_MODES = new Set(["full", "preview", "signatures"]);
+
+/**
+ * The included-line count from the last field of a compact `- Meta:` line.
+ *
+ * The writer emits `<N lines>[ of <M lines>] (<B> B)` in the final field, with English plurals —
+ * `1 line (20 B)`, `1 line of 3 lines (48 B)` — so both numbers are optional plurals and a body
+ * that holds one line is a count, not a missing value. The FIRST number is the emitted count the
+ * manifest records as `includedLines`; the second is the file's original size. Reading the counts
+ * from the final field rather than scanning the whole line is what keeps the free-form fields from
+ * being mistaken for counts: a layer called `api|v2` or a kind that reads like a number used to
+ * win the match, and a 1-of-3 skeleton reported 3 — the source size — as the emitted count.
+ */
+const COMPACT_COUNTS = /^(\d+)\s+lines?(?:\s+of\s+\d+\s+lines?)?/;
+
+function readIncludedLines(fields: readonly string[]): number | null {
+  const last = fields[fields.length - 1];
+  if (last === undefined) return null;
+  const counts = COMPACT_COUNTS.exec(last.trim());
+  return counts === null ? null : Number(counts[1]);
+}
 
 /** Splits a part into one section per emitted file. */
 export function parsePartSections(partText: string): PartSection[] {
@@ -66,22 +91,19 @@ export function parsePartSections(partText: string): PartSection[] {
       // A new heading before a content marker means this section was malformed; stop scanning it
       // rather than adopting the next file's metadata.
       if (line.startsWith(FILE_HEADING)) break;
-      if (line.startsWith("- Meta: ")) {
-        for (const field of line.slice("- Meta: ".length).split("|")) {
+      if (line.startsWith(META_PREFIX)) {
+        const fields = line.slice(META_PREFIX.length).split("|");
+        for (const field of fields) {
           const value = field.trim();
           if (INCLUSION_MODES.has(value)) inclusion = value;
         }
-        const counts = /(-?\d+) of (-?\d+) lines|(\d+) lines/.exec(line);
-        if (counts) {
-          const emitted = counts[1] ?? counts[3];
-          includedLines = Number.isFinite(Number(emitted)) ? Number(emitted) : null;
-        }
-      } else if (line.startsWith("- Inclusion: ")) {
+        includedLines = readIncludedLines(fields);
+      } else if (line.startsWith(LEGACY_INCLUSION_PREFIX)) {
         // Snapshots written before 0.9.12 carry a bullet per field; the reader still reads them
         // so an existing snapshot directory does not have to be regenerated to be readable.
-        inclusion = line.slice("- Inclusion: ".length).trim();
-      } else if (line.startsWith("- Included Lines: ")) {
-        const value = Number(line.slice("- Included Lines: ".length).trim());
+        inclusion = line.slice(LEGACY_INCLUSION_PREFIX.length).trim();
+      } else if (line.startsWith(LEGACY_INCLUDED_LINES_PREFIX)) {
+        const value = Number(line.slice(LEGACY_INCLUDED_LINES_PREFIX.length).trim());
         includedLines = Number.isFinite(value) ? value : null;
       }
       cursor += 1;

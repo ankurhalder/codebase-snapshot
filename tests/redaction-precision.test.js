@@ -171,7 +171,7 @@ test("a value the rules cannot bound is left whole, not half-masked", () => {
     assert.equal(redacted, line, "no marker may imply coverage for: " + line);
   }
   // A quoted value IS bounded by its quotes, so it is masked whole.
-  const quoted = scan('password: "abc\\\\def"', "fixture.yaml").redacted;
+  const quoted = scan('password: "abc\\def"', "fixture.yaml").redacted;
   assert.ok(quoted.includes("[REDACTED"), "a quoted value is still masked");
 });
 
@@ -279,5 +279,59 @@ test("a credential containing & is masked whole, and a URL query keeps its separ
   for (const colonForm of ["password: pa&ss", "secret: &&w0rd", "token: a&b&c&d"]) {
     const out = scanAndRedactSecrets(colonForm, DEFAULT_SECRET_PATTERNS, "app.yaml").redacted;
     assert.equal(out.includes(colonForm.slice(colonForm.indexOf(": ") + 2)), false, "the value must not survive: " + out);
+  }
+});
+
+test("the equals form follows the file type, like the colon form", () => {
+  // INI, .properties and .conf files spell credentials lowercase with `=`; the value is one
+  // credential whatever symbols it contains. In source code the same line is a program and the
+  // whole-value branch must not fire.
+  for (const [line, value] of [
+    ["password=pa&ss", "pa&ss"],
+    ["token=a<b", "a<b"],
+    ["client_secret=x|y", "x|y"],
+    ["private_key=abc\\def", "abc\\def"],
+  ]) {
+    for (const filePath of ["app.ini", "app.properties", "app.conf"]) {
+      const data = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, filePath).redacted;
+      assert.equal(data.includes(value), false, "${filePath}: the value must not survive: ${data}");
+      assert.ok(data.includes("="), "${filePath}: the key and separator stay readable: ${data}");
+    }
+  }
+  for (const line of ["token=a<b", "client_secret=x|y"]) {
+    assert.equal(scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, "app.ts").redacted, line);
+  }
+});
+
+test("the id-token permission is not a credential", () => {
+  // `id-token: write` is a GitHub Actions permission declaration; the quoted JSON spelling was
+  // masked and destroyed it. A real credential under the same key is still caught by the rule that
+  // recognises its shape.
+  for (const line of [
+    '{"id-token": "write"}',
+    '{"id-token":"write"}',
+    '{"id-token": "read"}',
+    '{"id-token": "none"}',
+    "id-token: write",
+    'id-token: "write"',
+    "id-token: read",
+  ]) {
+    assert.equal(
+      scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, "config.json").redacted,
+      line,
+      "a permission is not a secret: " + line
+    );
+  }
+  const jwt = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxIn0", "abc"].join(".");
+  for (const [line, secret] of [
+    ['{"id-token": "' + jwt + '"}', jwt],
+    ['{"id-token": "ghp_' + "a".repeat(36) + '"}', "ghp_" + "a".repeat(36)],
+    ['{"token": "hunter2hunter2"}', "hunter2hunter2"],
+    ['{"jwttoken": "opaqueTokenValue123"}', "opaqueTokenValue123"],
+    ['{"idToken": "opaqueTokenValue123"}', "opaqueTokenValue123"],
+  ]) {
+    const { redacted, findings } = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, "config.json");
+    assert.ok(findings.length > 0, "a real credential is still a finding: " + line);
+    assert.equal(redacted.includes(secret), false, "the credential must not survive: " + line);
   }
 });

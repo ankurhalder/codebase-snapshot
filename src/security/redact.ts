@@ -1,5 +1,5 @@
 import type { SecretFinding, SecretRule, SecretRuleInput } from "../types.js";
-import { PEM_BLOCK_PATTERN, PEM_UNTERMINATED_PATTERN } from "./patterns.js";
+import { CREDENTIAL_KEY_TAIL, PEM_BLOCK_PATTERN, PEM_UNTERMINATED_PATTERN } from "./patterns.js";
 
 export const REDACTION_MARKER =
   "[REDACTED: potential secret-like value omitted from snapshot]";
@@ -299,13 +299,22 @@ export function scanAndRedactSecrets(
           ) {
             continue;
           }
-          // The colon-form fallback in \`credential-assignment-unquoted\` matches the rest of the
-          // value with no capture group of its own, so \`group\` is undefined for it. That branch
-          // takes symbols a password may contain but an expression also uses (\`pa&ss\`): only a
-          // data or shell file may be masked that way, because editing an expression edits the
-          // program. A URL query string is untouched by it — that is not a colon form.
-          if (valueGroup !== undefined && group === undefined && !isAssignmentFile(filePath)) {
-            continue;
+          // The whole-value fallbacks in \`credential-assignment-unquoted\` (the colon form and the
+          // lowercase \`KEY=value\` form) match the value alone with no capture group, so \`group\` is
+          // undefined for them. They take symbols a password may contain but an expression also
+          // uses (\`pa&ss\`), so only a data or shell file may be masked this way; a URL query
+          // parameter or a shell \`$VARIABLE\` reference is not an assignment and keeps its tail.
+          if (valueGroup !== undefined && group === undefined) {
+            if (!isAssignmentFile(filePath)) continue;
+            const assignment = assignmentAround(line, match.index);
+            if (
+              assignment.form === "=" &&
+              (assignment.reference ||
+                assignment.key === null ||
+                !CREDENTIAL_KEY_TAIL.test(assignment.key))
+            ) {
+              continue;
+            }
           }
           // An opener-led value is a literal in a data file and an expression in source code.
           // Only the data-file reading is a credential; see OPENER_LED_VALUE.
@@ -323,15 +332,35 @@ export function scanAndRedactSecrets(
           // keep the separator unless this is the colon form — never drop the match, because a
           // dropped match emits the credential in clear (that was the 1.0.0 regression this guard
           // replaces).
-          if (group && isUnquotedValue(line, group[0]) && line[group[1]] === "&") {
-            const valueStart = group[0];
-            const valueEnd =
-              isAssignmentFile(filePath) && isColonFormValue(line, valueStart)
-                ? tokenEnd(line, group[1])
-                : group[1];
-            spans.push({ start: valueStart, end: valueEnd, rule });
-            matchedRules.add(rule);
-            continue;
+          // A generic match sees only part of the value when the rest is symbols its alphabet does
+          // not carry (DB_PASSWORD=envpass!@#$%^&*() matched envpass!@#$%^&* and emitted the tail
+          // &*() beside the marker). In a data-file assignment whose key names a credential, the
+          // value is the whole whitespace-delimited token, so mask that. A URL query parameter or a
+          // $VARIABLE reference is not an assignment and is never extended; a match is never
+          // dropped, because a dropped match emits the credential in clear.
+          if (group && isUnquotedValue(line, group[0])) {
+            const assignment = assignmentAround(line, group[0]);
+            // A mask must never be followed by a tail of the value. In a data or shell file any
+            // mask that lands inside an assignment value (KEY=value or key: value) runs to the end
+            // of the whitespace-delimited value, whatever the key is called — the red team's
+            // DB_PASSWORD0=envpass!@#$%^&*() left #$%^&*() after the marker because a weaker rule
+            // matched the prefix and the key was not a strong name. A URL query parameter, a shell
+            // variable reference and a URL value are not extended: ?access_token=abc&expires=3600
+            // must keep its tail.
+            const wholeValue =
+              isAssignmentFile(filePath) &&
+              assignment.form !== null &&
+              !assignment.reference &&
+              !assignment.urlValue;
+            if (wholeValue) {
+              spans.push({
+                start: group[0],
+                end: Math.max(group[1], tokenEnd(line, group[0])),
+                rule,
+              });
+              matchedRules.add(rule);
+              continue;
+            }
           }
           spans.push(
             group
@@ -546,20 +575,54 @@ function isSelfNamingConstant(line: string, start: number, end: number): boolean
  * `.env`, YAML and compose — the formats the unquoted rules exist for — but an expression in
  * a source file. This only classifies the value; what to do about it is `isDeclaredBinding`.
  */
+
+/** How the value at a match position relates to the text before it. */
+interface ValueAssignment {
+  /** The separator when the value is a right-hand side, `null` otherwise. */
+  form: ":" | "=" | null;
+  /** The key text without leading dashes, for the `=` form. */
+  key: string | null;
+  /** True for a URL query parameter or a shell `$VARIABLE` reference — not an assignment. */
+  reference: boolean;
+  /** First character of the right-hand side, or -1 when there is no separator. */
+  rhsStart: number;
+  /** True when the value is a URL (scheme://…): URLs are exempt from tail extension. */
+  urlValue: boolean;
+}
+
 /**
- * True when the value that starts at \`start\` is the right-hand side of a **colon** assignment.
+ * Classifies the text immediately before a value match.
  *
- * \`&` splits a URL query (\`?access_token=…&scope=read\`), so a value that reaches one is masked up
- * to it and the separator is kept. In a colon-form data-file assignment (\`password: pa&ss`) the
- * `&` is part of the password, and only then is the rest of the token masked with it. Walking back
- * over the key name and the whitespace is what tells the two apart; \`=\` means a query parameter or
- * a shell assignment and is deliberately not treated as colon form.
+ * The whole-value fallbacks in `credential-assignment-unquoted` match the value alone via a
+ * lookbehind, and `redact.ts` decides from this whether the line really is an assignment. The
+ * distinctions that matter: `password=pa&ss` in an INI file is an assignment, the
+ * `access_token` of `?access_token=abc&expires=3600` is a query parameter and must keep the
+ * parameters after it, and `$token=` is a shell reference. Leading dashes are stripped so
+ * `--token=value` on a shell command line is still an assignment key.
+ *
+ * Dots are part of a key here, because properties files spell `db.password=` and a dotted key
+ * still ends in a credential word.
  */
-function isColonFormValue(line: string, start: number): boolean {
-  let index = start;
-  while (index > 0 && /[A-Za-z0-9_$]/.test(line[index - 1] as string)) index -= 1;
+function assignmentAround(line: string, valueStart: number): ValueAssignment {
+  let index = valueStart;
   while (index > 0 && (line[index - 1] === " " || line[index - 1] === "\t")) index -= 1;
-  return index > 0 && line[index - 1] === ":";
+  const separator = index > 0 ? (line[index - 1] as string) : "";
+  if (separator !== ":" && separator !== "=") {
+    return { form: null, key: null, reference: false, rhsStart: -1, urlValue: false };
+  }
+  const separatorIndex = index - 1;
+  index = separatorIndex;
+  while (index > 0 && (line[index - 1] === " " || line[index - 1] === "\t")) index -= 1;
+  const keyEnd = index;
+  while (index > 0 && /[A-Za-z0-9_$.-]/.test(line[index - 1] as string)) index -= 1;
+  const key = line.slice(index, keyEnd).replace(/^-+/, "");
+  const before = index > 0 ? (line[index - 1] as string) : "";
+  const reference =
+    before === "?" || before === "&" || before === "$" || before === '"' || before === "'" || before === "`";
+  let rhsStart = separatorIndex + 1;
+  while (rhsStart < line.length && (line[rhsStart] === " " || line[rhsStart] === "\t")) rhsStart += 1;
+  const urlValue = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(line.slice(rhsStart, tokenEnd(line, rhsStart)));
+  return { form: separator === ":" ? ":" : "=", key, reference, rhsStart, urlValue };
 }
 
 /**
@@ -570,7 +633,7 @@ function isColonFormValue(line: string, start: number): boolean {
  */
 function tokenEnd(line: string, start: number): number {
   let end = start;
-  while (end < line.length && !/[\s#]/.test(line[end] as string)) end += 1;
+  while (end < line.length && !/\s/.test(line[end] as string)) end += 1;
   return end;
 }
 

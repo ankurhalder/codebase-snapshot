@@ -2242,13 +2242,23 @@ export function generateSnapshot(
     }
   }
 
+  // The fingerprint identifies the snapshot a reader is handed, so it hashes the resolved
+  // settings as well as the files. Hashing the files alone made two runs with different part
+  // budgets (or preview thresholds, redaction rules, artifact selection) share a fingerprint
+  // while their bytes differed — the manifest then said "same content" about two different
+  // artifact sets. `configDigest` is the one canonical digest of every setting that changes
+  // what is written (it canonicalises per-layer budget and rule order, so it is stable for
+  // unchanged settings), and folding it in keeps the value a sha256. It is a trailing line so
+  // the file list stays shaped as it was; it also means a truncated part does not move the
+  // fingerprint, because this is still computed before partitioning.
   const fingerprint = sha256Hex(
-    files
-      .map(
+    [
+      ...files.map(
         (file) =>
           `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}:${file.inclusionMode}`
-      )
-      .join("\n")
+      ),
+      `settings:${configDigest(config)}`,
+    ].join("\n")
   );
 
   // Built before partitioning: the partitioner overwrites `file.content` when it

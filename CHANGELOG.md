@@ -124,22 +124,38 @@ already has.
 
 ### Verified
 
-`npm run verify` — lint, typecheck, 1006 tests (0 failures), the docs sync check, the site build,
+`npm run verify` — lint, typecheck, 1027 tests (0 failures), the docs sync check, the site build,
 the site audit, the readme lint and the tarball check — on the release commit. Beyond the suite:
 the published-install path, and real repositories in five languages where every part stays inside
 its budget, repeat runs are byte-identical, `validate` is clean, and a snapshot written by 0.9.14
 is upgraded in place without being refused.
 
-### Known limitations
+An independent red-team pass then ran against the built artifact, trying to reproduce each of the
+seven blockers from the outside. Six were closed outright; the seventh exposed a `.env` value whose
+mask left a punctuation tail, and a quoted `id-token` that was over-redacted. Both were fixed and
+re-tested before this release — which is the argument for a verifier who did not write the fix.
 
-- `parsePartSections` still reports an `includedLines` count that disagrees with the manifest for a
-  file whose body ends in two or more newlines.
-- The manifest fingerprint covers the input and settings, not the post-partition truncation, so two
-  different budgets over the same source can share a fingerprint even though `diff` sees the parts
-  differ.
-- A password containing `&` in an unquoted colon-form assignment is masked whole in data files; a
-  lowercase `key=value` outside `.env`-style files is still masked only while its value fits the
-  rule's alphabet.
+### Three limitations became fixes instead
+
+The first cut of these notes listed three known limitations. All three are fixed here, because a
+release note that documents a leak is still a leak.
+
+- `parsePartSections` reported the wrong count for a one-line file (`null`) and for a section that
+  collapsed to one line — `1 line of 3 lines` was read as 3, the source count. The counts are now
+  read from the metadata field that holds them, singular or plural, and free-form layer and language
+  names can no longer be mistaken for a count.
+- `manifest.fingerprint` covered the input but not the settings, so two runs with different part
+  budgets over the same source shared a fingerprint while their parts differed. The settings digest
+  is folded in, so the fingerprint identifies the artifact set the documentation promises, and
+  `diff` says `packed or configured differently` when only the settings moved.
+- A lowercase `key=value` credential in an INI or properties file was masked only while its value
+  fitted the rules' alphabet. In a data or shell file the whole value is masked now, whatever it
+  contains; the same line in source code is still left alone.
+
+Two deliberate behaviours remain. A YAML value that is really a reference
+(`password: !Ref SomeParam`) is masked, because in a data file the fail-closed choice is the right
+one. And no rule set can promise that every credential shape is recognised — a clean audit is
+evidence that the known patterns did not fire, not a guarantee, which `SECURITY.md` says plainly.
 
 ## 0.9.14
 

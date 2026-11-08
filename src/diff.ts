@@ -215,7 +215,7 @@ function describePayloadDiff(
   if (fingerprintDiffers && (sourceFilesIdentical || configurationDiffers)) {
     reasons.push(
       `content fingerprint ${shortDigest(before.fingerprint)} → ${shortDigest(after.fingerprint)}` +
-        (sourceFilesIdentical ? " (same source files, packed differently)" : "")
+        (sourceFilesIdentical ? " (same source files, packed or configured differently)" : "")
     );
   }
   if (partsDiffer) {
