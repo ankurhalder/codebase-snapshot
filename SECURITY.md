@@ -71,6 +71,35 @@ Reports we want to hear about: a pattern that is *not* detected, a redaction tha
 secret readable elsewhere (a report file, the manifest, a navigation index), or a way to make
 the tool emit a sensitive file without `--include-sensitive-files`.
 
+### Secret scanning of this repository
+
+This repository is a *secret-redaction engine*, so it necessarily contains credential-shaped
+strings: the test suites, the rule definitions in `src/security/patterns.ts` and
+`src/security/redact.ts`, and the documentation all carry synthetic samples. They are the vectors
+the engine is meant to detect, they cannot authenticate against any service, and they exist so
+that detection can be proved. They are **not** credentials.
+
+Secret scanners are therefore configured to skip those surfaces, instead of asking a human to
+dismiss the same alert on every push:
+
+| Surface | Why it is excluded |
+| :--- | :--- |
+| `tests/**` | the fixtures assert that detection fires |
+| `src/security/patterns.ts`, `src/security/redact.ts` | the rule definitions and their worked examples |
+| `**/*.md`, `**/docs/**`, `llms.txt` | documentation explains the shapes by showing them |
+| `package-lock.json` | integrity digests are not credentials |
+
+Both scanner configurations carry that list: `.github/secret_scanning.yml` for GitHub's scanner
+and `.gitguardian.yaml` for ggshield, the GitGuardian CLI and CI scanner. The GitGuardian
+*dashboard* does not read either file — its exclusions live in workspace settings
+(**Secrets detection → Filepath exclusions**) and are applied retroactively, so adding them
+there also clears incidents that already exist.
+
+Anywhere outside those paths, a real credential is handled normally: it is reported and it must
+be revoked. If you add a fixture outside them, use a placeholder no detector matches, or extend
+the exclusion list deliberately in the same commit — do not weaken detection.
+
+
 **Filesystem safety.** The output directory is written to a scratch directory and swapped in
 atomically, and it is only replaced when a previous run wrote it. Ownership is proved by the
 `.codebase-snapshot` marker — a JSON object naming this generator, with a schema version, a

@@ -1,9 +1,25 @@
+# ggshield configuration (the GitGuardian CLI/CI scanner).
+#
+# The v2 schema uses snake_case keys. The previous version of this file used
+# kebab-case ("ignored-paths"), which is not part of the schema and therefore had no
+# effect - the exclusions below are the ones that actually apply.
+#
+# The GitGuardian *dashboard* does not read this file: its exclusions live in workspace
+# settings (Secrets detection -> Filepath exclusions) and are applied retroactively to
+# existing incidents. SECURITY.md lists the shapes and the reasoning; keep the two lists
+# in step.
+#
+# This repository is a secret-redaction engine, so its fixtures, rule definitions and
+# documentation hold synthetic credentials on purpose. They are the vectors the engine
+# detects, not credentials.
 version: 2
-# The suites assert that the redaction engine detects credentials, so they must
-# contain synthetic samples: an AWS example id, a Stripe test key, database URIs
-# with passwords and a JWT. None of them can authenticate against any service and
-# they exist only as detection fixtures, so they are excluded rather than
-# rewritten into shapes the scanner could no longer recognise.
 secret:
-  ignored-paths:
-    - "tests/**"
+  ignored_paths:
+    - "**/tests/**"
+    - "**/docs/**"
+    - "**/*.md"
+    - "llms.txt"
+    - "**/package-lock.json"
+    # Rule definitions and their worked examples: patterns, not credentials.
+    - "**/src/security/patterns.ts"
+    - "**/src/security/redact.ts"
