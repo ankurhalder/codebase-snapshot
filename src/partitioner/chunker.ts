@@ -81,8 +81,11 @@ interface PreparedSection {
  * Truncates to `maxBytes` and appends the omission notice the preview route has always carried.
  *
  * The marker is mandatory (item 8): a body cut by the part budget with no marker reads like a
- * complete file, and an agent counting lines has no way to see the cut. `budget` names the byte
- * budget that forced it, so a reader can tell `largeFileBytes` from `maxPartBytes`.
+ * complete file, and an agent counting lines has no way to see the cut. `budget` is the part
+ * budget the reader was promised — `maxPartBytes` or a per-layer override — never the smaller
+ * allowance left for a body after the fixed header metadata is reserved. Those two numbers used
+ * to be the same parameter, so the marker named an internal allowance (1887 B for a 4096 B part)
+ * the CLI and manifest never print; a reader could not reconcile it with either.
  *
  * `originalLines` is the file's real line count, not the count of what is being cut down
  * here. A large file arrives already reduced to a head/tail preview, and measuring the
@@ -163,7 +166,7 @@ export function partitionFilesForBuckets(
       bucket.budgetBytes
     );
     const sectionBudget = budget - HEADER_RESERVE_BYTES;
-    const prepared = bucket.files.map((file) => prepareSection(file, sectionBudget));
+    const prepared = bucket.files.map((file) => prepareSection(file, sectionBudget, budget));
     for (const sections of greedyGroups(prepared, budget)) groups.push({ sections, budget });
   }
   if (groups.length === 0) return [];
@@ -460,8 +463,16 @@ function topEntries(counts: Record<string, number>, limit: number): string {
  * rendered section hard-truncated. Dropping the summary first and truncating
  * afterwards is what previously collapsed the body to zero bytes while most of
  * the budget was still free.
+ *
+ * `partBudget` is only what the omission marker prints — the budget the reader was promised.
+ * `sectionBudget` is the internal allowance for this section after the header reservation, and
+ * naming it in the marker made the part contradict the manifest and the CLI.
  */
-function prepareSection(file: FileEntry, sectionBudget: number): PreparedSection {
+function prepareSection(
+  file: FileEntry,
+  sectionBudget: number,
+  partBudget: number
+): PreparedSection {
   let text = renderFileSection(file);
   let byteSize = Buffer.byteLength(text, "utf8");
   if (byteSize <= sectionBudget) return { file, text, byteSize };
@@ -474,7 +485,7 @@ function prepareSection(file: FileEntry, sectionBudget: number): PreparedSection
     const truncated = truncateWithBudgetMarker(
       content,
       allowed,
-      sectionBudget,
+      partBudget,
       file.originalLines
     );
     if (!truncated.isTruncated) return;

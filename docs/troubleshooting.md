@@ -40,11 +40,19 @@ problem, and for an option the command does not take it also names the commands 
 
 ```
 ❌ --watch does not apply to `report` and was not applied. It is accepted by: `generate`.
-❌ --cwd does not apply to `describe` and was not applied. It is accepted by: `generate`, `validate`, `report`, `init`, `explain`, `skill`.
+❌ --cwd does not apply to `describe` and was not applied. It is accepted by: `generate`, `validate`, `report`, `explain`, `init`, `setup`, `skill`, `mcp`.
+❌ --max-part-bytes does not apply to `report` and was not applied. It is accepted by: `generate`, `validate`, `explain`, `init`, `setup`.
+❌ Unknown --mode "bogus". Expected one of: generate, validate, check, report, init, setup, explain, diff, describe, skill, mcp.
 ```
 
 Nothing is silently ignored — that is the point of the message. The per-option `Applies to`
 column is in the [CLI reference](cli.md#options).
+
+`report` takes no generation settings: it reads the manifest and prints it, so for example
+`--max-part-bytes`, `--large-file-bytes`, `--max-monolith-bytes`, `--include-monolith`,
+`--include-sensitive-files`, `--skip-artifacts` and `--only-artifacts` are all usage errors
+there, as are `--skeleton`, `--sarif` and `--max-part-tokens`. `--mode` names the same commands from the other side, `mcp` included, and
+`--mode explain <path>` / `--mode diff <a> <b>` take their positionals like the command does.
 
 | Message | Fix |
 | :--- | :--- |
@@ -52,7 +60,9 @@ column is in the [CLI reference](cli.md#options).
 | `No configuration found in … and this session is not interactive, so nothing was generated.` | A first run and no terminal to ask its question. Nothing is wrong with the repository: say which setup you want — `--autopilot` for the full setup, `init --yes` then `generate` for the steps, or `generate` for the documented defaults. See [the first run](cli.md#the-first-run). |
 | `--autopilot sets a project up and writes a config; --no-config ignores config files. Pass one or the other.` | The two flags contradict each other. Drop one. |
 | `--no-install only applies to \`setup\`, or to \`generate --autopilot\`.` | The install only happens during a setup. Drop the flag, or add `--autopilot`. |
-| `--preset does not apply to \`generate\` and was not applied. It is accepted by: \`init\`. To scope a run, set include/excludePatterns/preset in snapshot.config.ts (or run \`codebase-snapshot init\` to generate one).` | `--preset`, `--include`, `--exclude`, `--yes` and `--force` configure `init`, which writes them into the config. Set them at generation time in `snapshot.config.ts` instead. |
+| `--preset does not apply to \`generate\` and was not applied. It is accepted by: \`init\`, \`setup\`. To scope a run, set include/excludePatterns/preset in snapshot.config.ts (or run \`codebase-snapshot init\` to generate one).` | `--preset`, `--include`, `--exclude`, `--yes` and `--force` configure `init` and `setup`, which write them into the config. Set them at generation time in `snapshot.config.ts` instead. |
+| `--skip-artifacts does not apply to \`report\` and was not applied. It is accepted by: \`generate\`, \`validate\`, \`explain\`, \`init\`, \`setup\`.` | `report` reads the manifest and prints it, so the generation settings are rejected there. Run `generate` with the artifact selection you want. |
+| `Unknown --mode "bogus". Expected one of: generate, validate, check, report, init, setup, explain, diff, describe, skill, mcp.` | `--mode` names the command the run uses; `mcp` is one of the accepted names. Pass the command positionally unless a wrapper builds the argument list. |
 | `--install does not apply to \`generate\` and was not applied. It is accepted by: \`skill\`.` | `--install` and `--target` configure `skill` only. |
 | `--cwd directory does not exist: …` / `--cwd is not a directory: …` | Point `--cwd` at an existing repository directory. |
 | `--out-dir requires a value (received an empty string).` | An unset shell variable expanded to nothing. Quote it or drop the flag. Every string option rejects `""` rather than silently using the default. |
@@ -79,8 +89,9 @@ it wrote them. This guard exists because a mistyped `outDir` used to replace the
 `outDir: "src"` deleted source code while reporting success.
 
 Ownership is proved by a `.codebase-snapshot` marker that parses as ours — a JSON object
-naming this generator, carrying a schema version this build understands, a per-snapshot `id`
-and the digest of the manifest it shipped. A file with the right name is not enough:
+naming this generator, carrying a schema version this build understands, a per-snapshot `id`,
+the digest of the manifest it shipped and, in current markers, the size and sha256 of every file
+it wrote. A file with the right name is not enough:
 
 | The directory | What the tool says |
 | :--- | :--- |
@@ -89,10 +100,21 @@ and the digest of the manifest it shipped. A file with the right name is not eno
 | has a marker that is not JSON | `its .codebase-snapshot marker is not valid JSON (found .codebase-snapshot, app.ts)` |
 | was written by 3.0.0 | `its .codebase-snapshot marker carries no snapshot id (found .codebase-snapshot, manifest.json)` |
 | carries our marker but you added files | `it carries this generator's ownership marker, but these entries are not part of the snapshot it recorded: custom.txt. Remove them yourself, or point outDir at a new or empty directory.` |
+| has a marker whose recorded per-file digests no longer match the directory | `its .codebase-snapshot inventory's digest for parts/part-001.md does not match the file (found .codebase-snapshot, manifest.json, parts, reports, README.md)`, or `its .codebase-snapshot inventory records notes.txt as 12 B, but it is 20 B` |
+| is a real snapshot and you edited a part by hand | the same digest refusal: the run stops before writing, so the edited snapshot is **not** overwritten. Delete the directory and generate again. |
+| has a marker that records neither per-file digests nor a manifest digest | `its .codebase-snapshot marker records neither per-file digests nor a manifest digest, so it cannot prove this generator wrote the directory (found .codebase-snapshot, notes.txt)` |
+
+Two evidence shapes are accepted. A marker with a per-file inventory is checked file by file:
+every regular file's byte length and sha256 must match, every recorded path must still exist, and
+every entry in the directory must be one the run recorded. A **legacy** marker (written before
+that inventory existed) is accepted on its `manifestSha256` when `manifest.json` is present and
+the digest matches — the upgrade path, so a snapshot from an earlier release stays replaceable. A
+legacy snapshot generated with the manifest artifact disabled cannot prove itself and is refused
+once; delete it and generate again.
 
 **Fix** — point `--out-dir` somewhere new, or delete the directory yourself. Do not delete
 your source. Accepted without complaint: a missing directory, an empty directory, one holding
-nothing but `.DS_Store`, and a complete snapshot this build wrote.
+nothing but `.DS_Store`, and a complete snapshot whose marker evidence still matches.
 
 `.gitkeep` and `.gitignore` are **not** accepted, even in a directory that holds nothing else.
 Both are files you create — the generator never writes either into an output directory — so a
@@ -100,7 +122,7 @@ directory holding one is somebody's data and is refused rather than replaced. Mo
 or point `--out-dir` somewhere new.
 
 A snapshot written by 3.0.0 or earlier is **not** upgraded in place: its marker has three keys
-and no `id`, so the new build cannot prove it wrote the directory and refuses. Delete the old
+and no `id`, so this build cannot prove it wrote the directory and refuses. Delete the old
 snapshot directory and generate again.
 
 ### `Refusing to write into outDir …: it exists but is not a directory.`
@@ -220,13 +242,15 @@ Exit `1` with one line per class of drift:
 | `- modified: path` | The file changed since the snapshot. |
 | `- deleted: path` | The file is in the snapshot but no longer on disk. |
 | `- new file: path` | The file exists on disk and is not in the snapshot. |
+| `- unreadable: path` | The file exists but this process may not read or stat it — usually a permissions problem. It is not a deleted file. |
 | `- part: part-001.md (missing from snapshot/parts)` | The part file was deleted or renamed. |
 | `- part: … (size mismatch …)` | The part was edited by hand. |
 | `- config: …` | A setting differs from the one recorded in the manifest. |
 | `- counts: …` | The manifest's own bookkeeping disagrees with its contents. |
 
-**Fix** — re-run `generate`. If it persists, the snapshot directory is being modified by
-something else.
+**Fix** — re-run `generate` for drift. For `unreadable`, fix the file's permissions first:
+re-generating cannot read it either. If anything persists, the snapshot directory is being
+modified by something else.
 
 ### `report` exits 1 (only when it cannot read the snapshot)
 

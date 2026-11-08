@@ -29,7 +29,7 @@ If you want to paste a repo into a chat right now: **use gitingest.**
 | Staleness check | `validate` exits non-zero on drift | Not a feature |
 | Reproducible output | Byte-identical parts across runs, with a fingerprint | Not a published guarantee |
 | Excluded-file accounting | Every skipped path recorded with a reason | Ignore rules applied |
-| Secret redaction | 30 default rules, value-span masking, audit table | Relies on ignore rules |
+| Secret redaction | 31 default rules, value-span masking, audit table | Relies on ignore rules |
 | Runtime | Node.js | Python |
 | Repo URL input | No — needs a checkout | **Yes** |
 

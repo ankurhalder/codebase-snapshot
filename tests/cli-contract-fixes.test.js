@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -106,4 +106,84 @@ test("the help sentence matches boolean --option=value behaviour", () => {
   const booleanEquals = run(["generate", "--help=true"], os.tmpdir());
   assert.equal(booleanEquals.status, 2);
   assert.match(booleanEquals.stderr, /does not take an argument/);
+});
+
+/**
+ * `report` reads `manifest.json` and prints what is there; a generation setting cannot change
+ * its answer. It used to accept seven of them and ignore them (identical output, exit 0) while
+ * correctly rejecting `--discovery` — the silent fallback the scope table exists to prevent.
+ * The parser and `describe`'s `appliesTo` read the same table, so both are asserted here.
+ */
+const REPORT_GENERATION_FLAGS = [
+  ["--skip-artifacts", "parts"],
+  ["--only-artifacts", "manifest"],
+  ["--include-monolith"],
+  ["--max-part-bytes", "4096"],
+  ["--large-file-bytes", "1"],
+  ["--include-sensitive-files"],
+];
+
+test("report rejects generation flags instead of accepting silent no-ops", (t) => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
+
+  for (const flag of REPORT_GENERATION_FLAGS) {
+    const result = run(["report", "--cwd", dir, ...flag], os.tmpdir());
+    assert.equal(result.status, 2, `${flag.join(" ")}: report cannot apply it`);
+    assert.match(result.stderr, /does not apply to `report`/, `${flag[0]}: names the command`);
+    assert.match(result.stderr, /accepted by:/, `${flag[0]}: names a command that does accept it`);
+  }
+
+  const contract = JSON.parse(run(["describe", "--format", "json"], os.tmpdir()).stdout);
+  for (const [flag] of REPORT_GENERATION_FLAGS) {
+    const option = contract.options.find((entry) => entry.flag === flag);
+    assert.ok(option, `${flag} is still described`);
+    assert.equal(
+      option.appliesTo.split("/").includes("report"),
+      false,
+      `describe must not advertise ${flag} on report`
+    );
+  }
+  // The settings a manifest reader genuinely needs stay in report's scope.
+  for (const flag of ["--cwd", "--out-dir", "--format", "--no-config"]) {
+    const option = contract.options.find((entry) => entry.flag === flag);
+    assert.ok(option.appliesTo.split("/").includes("report"), `${flag} must still apply to report`);
+  }
+});
+
+test("a consumer that closes stdout early is an early exit, not an EPIPE crash", { timeout: 60_000 }, async (t) => {
+  // A manifest big enough to overflow the OS pipe buffer, so the truncated write really fails:
+  // small payloads fit in the buffer and hid this crash from every existing test.
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"fixture","version":"1.0.0"}\n');
+  fs.writeFileSync(path.join(dir, "snapshot.config.json"), '{"discovery":"walk"}\n');
+  for (let index = 0; index < 600; index += 1) {
+    const name = `f${String(index).padStart(3, "0")}.ts`;
+    fs.writeFileSync(path.join(dir, name), `export const value${index} = "${"x".repeat(120)}";\n`);
+  }
+
+  const child = spawn(process.execPath, [BIN, "generate", "--format", "json", "--cwd", dir], {
+    cwd: dir,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  let closedEarly = false;
+  child.stdout.on("data", () => {
+    if (closedEarly) return;
+    closedEarly = true;
+    // The reader's decision: stop consuming the payload half way through.
+    child.stdout.destroy();
+  });
+  child.stdout.on("error", () => {});
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+
+  const exit = await new Promise((resolve) => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+
+  assert.equal(closedEarly, true, "the payload was large enough to be cut off");
+  assert.equal(exit.code, 0, `a closed reader is not a command failure:\\n${stderr}`);
+  assert.doesNotMatch(stderr, /Unhandled 'error' event|EPIPE/);
 });

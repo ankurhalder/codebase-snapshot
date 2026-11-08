@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.9.14 mcp
+npx -y codebase-snapshot@0.9.15 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.9.14", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.9.15", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.14 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.15 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -60,6 +60,12 @@ All eight take `outDir`, so a snapshot generated into a directory other than the
 still reachable: pass the same value to the read side that you passed to `snapshot_generate`. Before
 that, only `snapshot_generate` honoured it and every other tool looked in the configured directory
 and reported "there is no snapshot manifest here".
+
+An `outDir` **tool argument** must resolve inside the repository the server serves: a prompt cannot
+drop a snapshot tree anywhere the process is able to write. The project's *configured* `outDir` is
+not confined the same way — that is the repository's own decision, and a config may legitimately
+point one directory up. If the argument escapes, the tool refuses and the message says to restart
+the server with `--cwd` pointing at the repository you want to write.
 
 `snapshot_plan`, `snapshot_generate`, `snapshot_validate` and `snapshot_explain` also take the
 **scope and compression** switches `generate` accepts: `maxPartTokens`, `skeleton`, `sarif`,
@@ -97,8 +103,18 @@ Resources are the browse surface; tools are the act surface.
 | `snapshot://contract` | The machine-readable CLI contract |
 | `snapshot://skill` | The agent skill, as one read |
 
+A resource read is **all-or-nothing**. Above the 512 kB single-read limit the read fails with
+JSON-RPC error `-32000` (the implementation-defined server-error range) and
+`data: { uri, bytes, limit }`; the message says what to use instead — `snapshot_locate`,
+`snapshot_read` or `snapshot_status` for a manifest or part, the file on disk for a report, and
+the CLI for the contract or the skill. It never returns a truncated document: half a JSON manifest
+does not parse, and half a part is a fragment that looks complete. The rule applies to every
+resource — `snapshot://manifest`, each `snapshot://parts/{index}`, the three reports,
+`snapshot://contract` and `snapshot://skill`.
+
 Part resources carry their size in the description, so a client choosing between them can see that
-one is 300 kB before attaching it.
+one is 300 kB before attaching it; a part above the limit says in its description that it will be
+refused rather than truncated.
 
 ## Prompts
 
@@ -108,8 +124,11 @@ making changes.
 
 ## What it will not do
 
-- **Read outside its root.** `--cwd` is the only directory that is readable. A `root` argument can
-  name a sub-directory of it and nothing else; symlinks are resolved before the check.
+- **Read outside its root.** `--cwd` is the only directory that is readable, and it is the only
+  knob that changes it — the command has no `--root` option, only the `root` tool argument. A
+  `root` argument may name the served directory or a sub-directory of it; anything else is refused
+  with a message saying to restart the server with `--cwd <directory>`. Symlinks are resolved
+  before the check.
 - **Emit a sensitive file.** `.env`, `*.pem` and the rest stay out, and `includeSensitiveFiles` is
   not a tool argument — a prompt cannot ask for it. Reads come from the emitted snapshot, so
   redaction applies to everything the client sees.
@@ -170,6 +189,11 @@ version in the client arguments.
 
 **`Unknown resource` for a part.** Resources are computed from the manifest, so nothing but the
 static set exists before the first generate. Call `snapshot_status`, then `snapshot_generate`.
+
+**A resource read fails with `-32000`.** The resource is larger than the 512 kB single-read limit;
+it was refused rather than truncated. `data.uri`, `data.bytes` and `data.limit` say which resource
+and by how much. Use `snapshot_locate` then `snapshot_read` for a part, or read the file straight
+from the snapshot directory for the manifest or a report.
 
 **A file is missing from `snapshot_locate`.** It is excluded, and `snapshot_explain` will name the
 reason — an ignore rule, the preset, a sensitive-file pattern, or your own config.

@@ -667,12 +667,40 @@ interface OwnershipMarker {
   manifestSha256?: string;
   /** Every entry the snapshot wrote, POSIX-relative, including hook artifacts. */
   entries?: string[];
+  /**
+   * sha256 and byte length of every regular file written, POSIX-relative.
+   *
+   * This is what turns the marker from a filename into evidence. A hand-written marker can
+   * list any entries it likes; matching these digests means the bytes on disk are the bytes
+   * a completed run recorded, so a marker copied from somewhere else (or written by hand)
+   * cannot authorise deleting whatever happens to be in the directory.
+   *
+   * Optional for **legacy** markers: snapshots written before this field existed are accepted
+   * on their manifest digest instead (present, matching, and naming this generator), so an
+   * upgrade never refuses the output directory a user already has. A marker that carries the
+   * field is verified file by file — see {@link verifyMarkerInventory}. Markers written from
+   * now on always carry it.
+   */
+  files?: MarkerFileDigest[];
+}
+
+/** One file the marker recorded, with what the next run can verify it against. */
+interface MarkerFileDigest {
+  /** POSIX-relative path inside the snapshot directory. */
+  path: string;
+  /** Byte length this file had when the marker was written. */
+  bytes: number;
+  /** sha256 of those bytes. */
+  sha256: string;
 }
 
 /** Schema versions whose ownership evidence this build understands. */
 const SUPPORTED_MARKER_SCHEMAS = new Set([SCHEMA_VERSION]);
 
 const SNAPSHOT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The digest shape recorded for one file in the marker's inventory. */
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Lists every entry under `dir` as sorted, POSIX-relative paths. */
 function listEntries(dir: string): string[] {
@@ -696,6 +724,42 @@ function listEntries(dir: string): string[] {
   return entries.sort();
 }
 
+/**
+ * Lists everything in `dir` and digests every regular file.
+ *
+ * The digest pass is what the ownership check verifies on the next run. It reads each file
+ * once, immediately after this run wrote those same bytes, so it costs a sequential read of
+ * the snapshot rather than anything proportional to the repository.
+ */
+function markerInventory(dir: string): { entries: string[]; files: MarkerFileDigest[] } {
+  const entries = listEntries(dir);
+  const files: MarkerFileDigest[] = [];
+  for (const entry of entries) {
+    // The marker cannot record its own digest: writing the record would change it.
+    if (entry === OWNERSHIP_MARKER) continue;
+    // Finder noise is tolerated by the ownership check and is not part of the record.
+    if (IGNORABLE_ENTRIES.has(entry.slice(entry.lastIndexOf("/") + 1))) continue;
+    const full = path.join(dir, ...entry.split("/"));
+    let stats: fs.Stats;
+    try {
+      stats = fs.lstatSync(full);
+    } catch {
+      // The entry keeps its name in `entries` but gets no digest; the next ownership
+      // check then refuses rather than deleting something it cannot account for.
+      continue;
+    }
+    if (!stats.isFile()) continue;
+    let digest: string;
+    try {
+      digest = sha256Hex(fs.readFileSync(full));
+    } catch {
+      continue;
+    }
+    files.push({ path: entry, bytes: stats.size, sha256: digest });
+  }
+  return { entries, files };
+}
+
 /** Builds the marker payload for `dir` as it stands right now. */
 function markerPayload(
   dir: string,
@@ -703,6 +767,7 @@ function markerPayload(
   id: string,
   createdAt: string
 ): OwnershipMarker {
+  const { entries, files } = markerInventory(dir);
   const marker: OwnershipMarker = {
     generator: GENERATOR_NAME,
     version: GENERATOR_VERSION,
@@ -711,7 +776,8 @@ function markerPayload(
     state,
     id,
     pid: process.pid,
-    entries: listEntries(dir),
+    entries,
+    files,
   };
   const manifestPath = path.join(dir, "manifest.json");
   if (fs.existsSync(manifestPath)) {
@@ -795,6 +861,41 @@ function readOwnershipMarker(dir: string): MarkerEvidence {
     return { marker: null, problem: "its .codebase-snapshot marker records no run state" };
   }
 
+  const rawFiles = candidate.files;
+  let files: MarkerFileDigest[] | undefined;
+  if (rawFiles !== undefined) {
+    if (!Array.isArray(rawFiles)) {
+      return {
+        marker: null,
+        problem: "its .codebase-snapshot marker's file inventory is not an array",
+      };
+    }
+    files = [];
+    for (const item of rawFiles) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return {
+          marker: null,
+          problem: "its .codebase-snapshot marker's file inventory holds an entry that is not an object",
+        };
+      }
+      const record = item as Record<string, unknown>;
+      if (
+        typeof record.path !== "string" ||
+        typeof record.bytes !== "number" ||
+        !Number.isInteger(record.bytes) ||
+        record.bytes < 0 ||
+        typeof record.sha256 !== "string" ||
+        !SHA256_HEX_PATTERN.test(record.sha256)
+      ) {
+        return {
+          marker: null,
+          problem: "its .codebase-snapshot marker's file inventory holds an entry this build cannot read",
+        };
+      }
+      files.push({ path: record.path, bytes: record.bytes, sha256: record.sha256 });
+    }
+  }
+
   return {
     marker: {
       generator: GENERATOR_NAME,
@@ -811,6 +912,7 @@ function readOwnershipMarker(dir: string): MarkerEvidence {
         candidate.entries.every((entry) => typeof entry === "string")
           ? (candidate.entries as string[])
           : undefined,
+      files,
     },
     problem: null,
   };
@@ -838,12 +940,104 @@ interface DirectoryVerdict {
 }
 
 /**
+ * Checks the marker's per-file digests against the bytes that are on disk now.
+ *
+ * A marker filename proves nothing; this is the part that makes ownership *evidence*. Every
+ * regular file in the directory must be recorded in the marker with the sha256 and byte
+ * length a completed run wrote, and both must still match. So a hand-written marker (or one
+ * copied out of another snapshot) cannot authorise deleting whatever happens to be in the
+ * directory: to pass, it has to enumerate every user file and carry digests that match those
+ * files exactly. Directories and links are recorded by name only — a link is never followed,
+ * and an empty directory holds nothing to lose. `.DS_Store` is ignored because Finder
+ * rewrites it and it carries no user intent.
+ *
+ * A residual hole is unavoidable on a local filesystem: a program with write access to the
+ * directory can compute real digests too. This raises the bar from "write one JSON file" to
+ * "reproduce the exact evidence of a completed run"; it cannot prove who ran it.
+ *
+ * Only called for markers that carry the inventory. A legacy marker (no `files`) is accepted
+ * on its manifest digest instead, which keeps an upgraded user's existing output replaceable;
+ * see {@link assessSnapshotDirectory}.
+ */
+function verifyMarkerInventory(
+  dir: string,
+  entries: readonly string[],
+  files: readonly MarkerFileDigest[]
+): string | null {
+  const diskEntries = new Set(entries);
+  const recorded = new Map<string, MarkerFileDigest>();
+  for (const record of files) {
+    if (recorded.has(record.path)) {
+      return `its .codebase-snapshot inventory records ${record.path} twice`;
+    }
+    if (!diskEntries.has(record.path)) {
+      return `its .codebase-snapshot inventory records ${record.path}, which is missing from the directory`;
+    }
+    recorded.set(record.path, record);
+  }
+
+  for (const entry of entries) {
+    // The marker cannot record its own digest, and Finder noise is not user data.
+    if (entry === OWNERSHIP_MARKER) continue;
+    if (IGNORABLE_ENTRIES.has(entry.slice(entry.lastIndexOf("/") + 1))) continue;
+    const full = path.join(dir, ...entry.split("/"));
+    let stats: fs.Stats;
+    try {
+      stats = fs.lstatSync(full);
+    } catch {
+      return `its .codebase-snapshot inventory lists ${entry}, which cannot be read`;
+    }
+    if (stats.isDirectory()) {
+      if (recorded.has(entry)) {
+        return `its .codebase-snapshot inventory records the directory ${entry} as a file`;
+      }
+      continue;
+    }
+    if (!stats.isFile()) {
+      // A link or special file is recorded by name; it is never followed, so there is no
+      // digest to compare — and replacing the directory moves or deletes the link itself.
+      if (recorded.has(entry)) {
+        return `its .codebase-snapshot inventory records ${entry} as a regular file, but it is not one`;
+      }
+      continue;
+    }
+    const record = recorded.get(entry);
+    if (record === undefined) {
+      return `its .codebase-snapshot inventory does not record the file ${entry}`;
+    }
+    if (record.bytes !== stats.size) {
+      return `its .codebase-snapshot inventory records ${entry} as ${record.bytes} B, but it is ${stats.size} B`;
+    }
+    let digest: string;
+    try {
+      digest = sha256Hex(fs.readFileSync(full));
+    } catch {
+      return `its .codebase-snapshot inventory cannot verify ${entry}: the file could not be read`;
+    }
+    if (digest !== record.sha256) {
+      return `its .codebase-snapshot inventory's digest for ${entry} does not match the file`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Decides whether `dir` is a snapshot this generator wrote and may replace.
  *
  * Ownership needs *consistent* evidence: a marker that parses and names this
- * generator, a run that completed, a manifest whose digest matches the marker,
- * and no entry the recorded inventory does not account for. Any unknown entry
- * means the directory holds something we did not write, whatever the marker says.
+ * generator, a run that completed, no entry the recorded inventory does not account
+ * for, and bytes that match what was recorded. Two evidence shapes are accepted:
+ *
+ *  - a marker with a per-file digest inventory (every run from this release on) must
+ *    match every regular file's byte length and sha256;
+ *  - a legacy marker without that inventory (snapshots written before it existed) must
+ *    carry a manifest digest that is present and matches the `manifest.json` beside it.
+ *    That keeps an upgraded user's existing output replaceable while still refusing the
+ *    hand-written marker with no manifest — the case the inventory was added for.
+ *
+ * Any unknown entry means the directory holds something we did not write, whatever the
+ * marker says.
  */
 function assessSnapshotDirectory(dir: string): DirectoryVerdict {
   const { marker, problem } = readOwnershipMarker(dir);
@@ -859,7 +1053,8 @@ function assessSnapshotDirectory(dir: string): DirectoryVerdict {
   }
 
   const manifestPath = path.join(dir, "manifest.json");
-  if (fs.existsSync(manifestPath)) {
+  const hasManifest = fs.existsSync(manifestPath);
+  if (hasManifest) {
     let raw: string;
     try {
       raw = fs.readFileSync(manifestPath, "utf8");
@@ -917,6 +1112,24 @@ function assessSnapshotDirectory(dir: string): DirectoryVerdict {
     };
   }
 
+  // Legacy evidence. Markers written before the per-file inventory existed carry no `files`,
+  // so the only proof they can offer is the manifest digest checked above. Requiring it keeps
+  // the forged marker with no manifest — the case this hardening exists for — refused, while a
+  // genuine snapshot from an earlier release, which always ships a manifest and its digest in
+  // the marker, stays replaceable after an upgrade. A legacy snapshot generated with
+  // `artifacts.manifest` disabled cannot prove itself and is refused, like any other
+  // unverifiable directory: the documented recovery is to remove it once.
+  if (marker.files === undefined && !hasManifest) {
+    return {
+      owned: false,
+      problem:
+        "its .codebase-snapshot marker records neither per-file digests nor a manifest digest, " +
+        "so it cannot prove this generator wrote the directory",
+      foreignEntries: [],
+      marker,
+    };
+  }
+
   const recorded = new Set(marker.entries ?? []);
   if (recorded.size === 0) {
     return {
@@ -927,13 +1140,20 @@ function assessSnapshotDirectory(dir: string): DirectoryVerdict {
     };
   }
 
-  const foreignEntries = listEntries(dir).filter(
+  const entries = listEntries(dir);
+  const foreignEntries = entries.filter(
     (entry) => !recorded.has(entry) && !IGNORABLE_ENTRIES.has(entry)
   );
+  if (foreignEntries.length > 0) {
+    // Named separately so the refusal can list exactly what stops it.
+    return { owned: false, problem: null, foreignEntries, marker };
+  }
+  const inventoryProblem =
+    marker.files === undefined ? null : verifyMarkerInventory(dir, entries, marker.files);
   return {
-    owned: foreignEntries.length === 0,
-    problem: null,
-    foreignEntries,
+    owned: inventoryProblem === null,
+    problem: inventoryProblem,
+    foreignEntries: [],
     marker,
   };
 }
@@ -2408,7 +2628,10 @@ export function generateSnapshot(
       }
       writeOwnershipMarker(outDir, markerPayload(outDir, "complete", snapshotId, createdAt));
     };
-    shipHookState();
+    // With no hook, nothing after the swap can add a file or a warning, and the staging
+    // marker already records this directory's exact inventory — skip a second full digest
+    // pass over the snapshot.
+    if (config.hooks.afterGenerate) shipHookState();
 
     if (pendingHook) {
       // An async hook is still running when this function returns. Two things have to happen when

@@ -14,7 +14,7 @@ import { resolveChangedScope } from "../scanner/changed.js";
 import { buildImportResolver, importsChangedFile } from "../scanner/dependents.js";
 import type { ImportResolver } from "../scanner/dependents.js";
 import { importsOfFile } from "../ast/imports.js";
-import { decodeText, isBinaryFile } from "../scanner/binary.js";
+import { BINARY_SCAN_BYTES, decodeText, isBinaryExtension, isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
   ResolvedSnapshotConfig,
@@ -137,19 +137,20 @@ function sha256Hex(buffer: Buffer): string {
 /**
  * True when a path that was skipped at snapshot time would now be emitted.
  *
- * `collectFiles` has already applied the ignore/exclude/sensitive rules, so the
- * only decision left is the binary check that `generate` performs per file. A
- * skip is a record of that decision, not a permanent exemption: `data.bin` that
- * held NUL bytes then and is plain text now must surface as drift, otherwise
- * `generate` silently adds a file `validate` said was absent.
- */
-/** A file skipped as binary is not re-read past this size just to confirm it is still binary. */
-const VERIFY_SNIFF_MAX_BYTES = 8 * 1024 * 1024;
-/**
- * True when a file that was skipped at snapshot time would be emitted now.
+ * `collectFiles` has already applied the ignore/exclude/sensitive rules, so the only
+ * decision left is the one `generate` performs per file. A skip is a record of that
+ * decision, not a permanent exemption: `data.bin` that held NUL bytes then and is plain
+ * text now must surface as drift, otherwise `generate` silently adds a file `validate`
+ * said was absent.
  *
- * The answer is "would `generate` include this file", and `generate` asks exactly one
- * question — is the content text — so this asks the same one on the same bytes.
+ * The answer is "would `generate` include this file", so this asks generate's questions in
+ * generate's order (`src/index.ts`): a binary extension is skipped without reading, a file
+ * past the read cap is sniffed before it is read, and below the cap `decodeText` on the
+ * buffer is the complete check. Asking content alone disagreed for a text-content file with
+ * a binary extension — an `assets/logo.png` holding a Git-LFS pointer, or a placeholder —
+ * which `generate` records as `binary` and never includes. That disagreement made
+ * `validate` report the file as "new" forever: regenerating could not clear the drift,
+ * because generating never includes it.
  */
 function wouldNowBeIncluded(cwd: string, relativePath: string): boolean {
   const absolutePath = path.join(cwd, relativePath);
@@ -157,15 +158,14 @@ function wouldNowBeIncluded(cwd: string, relativePath: string): boolean {
     const stats = fs.statSync(absolutePath);
     if (!stats.isFile()) return false;
 
-    // One read for a file small enough to load. `decodeText` inspects every byte, so it
-    // answers the binary question more completely than the head scan that used to run
-    // first — and it used to run on top of a full read, opening the same file twice.
-    // Past the cap the chunked sniff stays, because the whole point is not to load a
-    // gigabyte of noise to find one NUL.
-    if (stats.size <= VERIFY_SNIFF_MAX_BYTES) {
-      return !decodeText(fs.readFileSync(absolutePath)).binary;
-    }
-    return !isBinaryFile(absolutePath);
+    // Same first question as `generate`: an extension that only ever holds binary data needs
+    // no read at all, whatever the bytes happen to be (a Git-LFS pointer is text).
+    if (isBinaryExtension(absolutePath)) return false;
+    // Same second question: past the cap the chunked sniff decides before the whole file is
+    // pulled into memory, because the point is not to load a gigabyte of noise to find one NUL.
+    if (stats.size > BINARY_SCAN_BYTES && isBinaryFile(absolutePath)) return false;
+    // Below the cap the decode is the complete answer `generate` used, on the same bytes.
+    return !decodeText(fs.readFileSync(absolutePath)).binary;
   } catch {
     return false;
   }

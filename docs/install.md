@@ -124,9 +124,10 @@ contract. To put the skill there, print it and paste it —
 
 ## Verified clients
 
-Every client below installs the published package and runs it successfully; the release check
-enforces this on every pull request, so a change that breaks one fails the build rather than
-a user's terminal.
+Every client below installs the published package and runs it successfully. The automated gate
+does not reinstall the package under any of these runners — it runs the test suite with npm on
+Node 18, 20 and 22 — so a break specific to yarn, pnpm or bun can reach a release. The table
+records what has been verified, not a CI result.
 
 | Client | Run installed binary with |
 | :--- | :--- |

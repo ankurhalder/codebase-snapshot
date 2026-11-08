@@ -1,14 +1,19 @@
 name: Publish to NPM
 
-# The only workflow in the repository, on purpose.
+# The release half of the gate.
+#
+# `.github/workflows/pr.yml` runs this same verify on every pull request and every push to main, so
+# a release normally re-proves what the branch already passed. It runs again on the tag because a tag
+# can point at a commit that never went through a pull request, and the publish job must never upload
+# a commit that was never verified.
 #
 # The owner pays for GitHub Actions minutes out of a shared allowance across several projects, so
-# Actions runs on release events (and manual dispatch) and nothing else. `npm run verify` is the
+# this workflow stays release-only (`pr.yml` carries the per-push cost). `npm run verify` is the
 # whole gate — lint, typecheck, the full suite, the tarball check — so a green local verify is the
 # same code path the release takes.
 #
 # Since 4.3.0 that gate runs on **every supported Node version**, not just the developer's: the
-# package says `engines: >=18` and until this release no run had ever executed on 18 or 20. Three
+# package says `engines: >=18` and until that release no run had ever executed on 18 or 20. Three
 # jobs of about two minutes per release is the price of that claim being true; the publish job
 # cannot start until all three pass.
 on:
@@ -77,6 +82,29 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # A release tag is the maintainer's statement of what is being shipped. A tag that disagrees
+      # with the manifest would either publish a version nobody named (`v1.0.0` tag, `0.9.14`
+      # manifest) or, when that manifest version is already on the registry, take the idempotent
+      # "already published" exit below and release nothing at all. Both are worse than failing
+      # loudly, so a mismatch stops the job before any publish step runs.
+      - name: The release tag agrees with the manifest version
+        if: github.event_name == 'release'
+        env:
+          # Through the environment, never through an expression inside a run body: the tag is
+          # untrusted input as far as this shell is concerned, and an expression expansion happens
+          # before bash parses the script (see the note in deprecate.yml).
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="$(npm pkg get version | tr -d '"')"
+          # Tags are cut as vX.Y.Z; accept that convention and the bare version.
+          TAG_VERSION="${RELEASE_TAG#v}"
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::error::release tag '$RELEASE_TAG' does not match package.json version '$VERSION'; refusing to publish"
+            exit 1
+          fi
+          echo "release tag $RELEASE_TAG matches package.json version $VERSION"
 
       # The verify matrix above already ran the full gate on 18, 20 and 22 for this exact commit
       # — that is what `needs: verify` guarantees — so uploading is all that is left.

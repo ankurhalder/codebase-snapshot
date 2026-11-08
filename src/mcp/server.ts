@@ -25,9 +25,11 @@ import {
 import type { JsonObject, JsonRpcId, JsonRpcResponse } from "./protocol.js";
 import { classifyRequest, createSession, negotiateLegacyVersion } from "./era.js";
 import type { SessionState } from "./era.js";
+import { ResourceTooLargeError } from "./resources.js";
 import { applyDefaults, coerceNumericStrings, validateArguments } from "./schema.js";
 import type {
   McpPrompt,
+  McpResourceContents,
   McpServerInfo,
   McpTool,
   PromptMessage,
@@ -222,7 +224,26 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     if (typeof uri !== "string") {
       return errorResponse(id, ERROR_CODES.invalidParams, 'resources/read requires a "uri" string.');
     }
-    const contents = await options.resources.read(uri, options.context);
+    let contents: McpResourceContents | null;
+    try {
+      contents = await options.resources.read(uri, options.context);
+    } catch (error) {
+      // A resource that exists but cannot be returned whole is an error the client can act on.
+      // Truncating it instead would hand a model half a JSON document or half a part, which is
+      // worse than a refusal because nothing downstream can tell the difference.
+      if (error instanceof ResourceTooLargeError) {
+        options.context.log(
+          `mcp: refused ${error.uri} (${error.bytes} bytes, limit ${error.limit}); ` +
+            "returning it would truncate it"
+        );
+        return errorResponse(id, ERROR_CODES.resourceTooLarge, error.message, {
+          uri: error.uri,
+          bytes: error.bytes,
+          limit: error.limit,
+        });
+      }
+      throw error;
+    }
     if (!contents) {
       return errorResponse(id, ERROR_CODES.invalidParams, `Unknown resource "${uri}".`);
     }
@@ -326,7 +347,17 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   async function dispatch(message: unknown): Promise<JsonRpcResponse | null> {
     if (!isJsonObject(message)) {
-      return errorResponse(null, ERROR_CODES.parseError, "Message is not a JSON object.");
+      // A parsed value that is not an object is a valid JSON value, so it is not a *parse* error:
+      // -32700 belongs to the transport, which rejects text that is not JSON before this runs. An
+      // array is a batch, and none of the revisions this server speaks define batching (it was
+      // removed before the oldest supported revision, 2025-06-18); anything else is not a request.
+      return errorResponse(
+        null,
+        ERROR_CODES.invalidRequest,
+        Array.isArray(message)
+          ? "Batch requests are not supported: send one JSON-RPC message per line."
+          : "Message is not a JSON object."
+      );
     }
     const isRequest = Object.prototype.hasOwnProperty.call(message, "id");
     const method = message.method;

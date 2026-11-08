@@ -30,7 +30,7 @@ If the prompt format is the thing you care about: **use code2prompt.**
 | Distribution | Node.js, npm | Single Rust binary, no runtime |
 | Machine index | `manifest.json` with hashes and skip reasons | Template output only |
 | Language awareness | 25 presets, AST/structural/heuristic summaries | Template access to file contents |
-| Secret handling | 30 defaults, value-span masking, audit table | Ignore rules |
+| Secret handling | 31 defaults, value-span masking, audit table | Ignore rules |
 
 ## Where code2prompt is the better choice
 

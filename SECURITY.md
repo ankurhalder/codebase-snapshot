@@ -40,11 +40,28 @@ secret deliberately split across two string literals, joined with a backslash li
 continuation, or assembled by template-literal concatenation can be missed, because the
 pattern never sees the whole value on one line.
 
-In YAML and similar `key: value` files, an **unquoted** value that reads like an expression is
-treated as code rather than as a literal and is not masked: `password: opts.db.password` and
-`password: my.secret.value` are emitted as written, and so is a value that starts with
-punctuation, such as `token: !hunter2hunter2`. Quote the value — `password: "…"` — to have it
-redacted; a plain unquoted value with no dots or leading punctuation is masked.
+In YAML and similar `key: value` files, the file type decides how an **unquoted** value is read.
+A strong credential name in colon form — `password:`, `token:`, `api_key:` — makes the rest of
+the line a value, and in a data or shell file that value is masked whole whatever symbols it
+holds: `password: pa&ss` and `password: getPassword() & 0xff` are masked in a `.yaml`, while the
+same lines in a `.ts` are left as written, because there they are expressions and the tool does
+not edit expressions. In a source file a value that reads like a reference —
+`password: opts.db.password` — is emitted as written; an unquoted value in a declaration is an
+initializer, not a credential.
+
+A punctuation-led value is masked when the token also carries a digit or a second punctuation
+character — `token: !hunter2hunter2` is masked, while YAML tags such as `!Ref` and prose words such
+as `!important` stay readable. Quote the value — `password: "…"` — when you need certainty: a
+quoted value under a credential-shaped name is masked whatever it contains.
+
+In a data or shell file a **colon-form** assignment is masked whole even when a symbol would make
+the value impossible to bound — it runs to the end of the line (a trailing `#` comment is kept, and
+the match is capped at 300 characters). In source code such a match is dropped instead, so no
+marker is written in front of an expression. The `.env`/shell `NAME=value` rule also masks its
+whole value, comment aside. The `=` form outside those files is the remaining gap: it expects the
+uppercase names `.env`-style formats use, so a lowercase `key=value` in an INI or properties file
+is masked only while its value stays inside the rules' alphabet — one containing `&`, `<`, `>`,
+`|` or a backslash can be left unmasked.
 
 A clean audit is therefore evidence that the known patterns did not fire — not a guarantee
 that the repository holds no credentials.

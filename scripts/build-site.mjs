@@ -20,8 +20,9 @@
  * typed JSON-LD node so an answer engine can attribute the page to a person.
  *
  * Output:
- *   index.html + docs/*.html       rendered pages, with canonical, JSON-LD and
- *                                 a `text/markdown` twin link per llms.txt v2
+ *   index.html + docs/*.html       rendered pages, with canonical, JSON-LD,
+ *                                 GitHub-compatible heading ids and a
+ *                                 `text/markdown` twin link per llms.txt v2
  *   *.md                           the raw Markdown twin for each page
  *   assets/*                       the images the pages and social cards use
  *   sitemap.xml, robots.txt        crawl instructions
@@ -191,6 +192,67 @@ function escapeHtml(text) {
 }
 
 /**
+ * GitHub's heading-anchor rules, as a function.
+ *
+ * The same Markdown is read on GitHub and npm as well as here, and both derive a heading's id
+ * from its text: lowercase it, keep letters, numbers, marks, connector punctuation, spaces and
+ * hyphens, remove everything else, then turn spaces into hyphens. The site has to mint the same
+ * ids or a link that works in the repository is dead on the published page — which is exactly
+ * how this site shipped: every table-of-contents link pointed at a heading carrying no id.
+ *
+ * No trimming after the spaces become hyphens: GitHub does not trim either, so a heading ending
+ * in an ellipsis keeps the trailing hyphen its readers have been linking to.
+ */
+const SLUG_STRIP = /[^\p{L}\p{N}\p{M}\p{Pc} -]/gu;
+
+export function headingSlug(text) {
+  return String(text).toLowerCase().replace(SLUG_STRIP, "").replace(/ /g, "-");
+}
+
+/** The named entities a heading can contain; numeric ones are decoded in `headingText`. */
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+
+/** The text a reader sees, which is what GitHub slugs and what `textContent` returns. */
+function headingText(html) {
+  return html.replace(/<[^>]*>/g, "").replace(/&(#x?[0-9a-f]+|[a-z][a-z0-9]*);/gi, (whole, body) => {
+    if (body.startsWith("#")) {
+      const code =
+        body[1].toLowerCase() === "x" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+    }
+    const name = body.toLowerCase();
+    return Object.hasOwn(ENTITIES, name) ? ENTITIES[name] : whole;
+  });
+}
+
+/**
+ * Puts a stable, GitHub-compatible id on every heading.
+ *
+ * Done on the rendered HTML, not in a Markdown token hook, because the slug has to come from the
+ * *rendered* text: the heading whose text is `validate / check` slugifies to `validate--check`,
+ * because the slash is stripped and both neighbouring spaces become hyphens. An explicit `id`
+ * written as raw HTML is kept as-is, and generated ids are de-duplicated with the `-1`, `-2`
+ * suffixes GitHub uses.
+ */
+export function addHeadingIds(html) {
+  const used = new Set();
+  for (const match of html.matchAll(/\bid="([^"]+)"/g)) used.add(match[1]);
+  return html.replace(/<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/g, (whole, depth, attributes, inner) => {
+    if (/\bid="/.test(attributes)) return whole;
+    const base = headingSlug(headingText(inner)) || "section";
+    let id = base;
+    for (let suffix = 1; used.has(id); suffix += 1) id = `${base}-${suffix}`;
+    used.add(id);
+    return `<h${depth}${attributes} id="${id}">${inner}</h${depth}>`;
+  });
+}
+
+/** One page body: Markdown rendered to HTML, with GitHub-compatible ids on its headings. */
+export function renderMarkdown(markdown) {
+  return addHeadingIds(marked.parse(markdown));
+}
+
+/**
  * Rewrites a link that points at a published Markdown file into the page that
  * file becomes.
  *
@@ -264,6 +326,46 @@ function rewriteLinks(html) {
     .replace(/href="\.\.\/([A-Za-z0-9_.\-]+?)(#[\w-]*)?"/g, `href="${REPO}/blob/main/$1$2"`)
     .replace(/href="docs\/([a-z0-9-]+)\.md(#[\w-]*)?"/g, 'href="$1.html$2"')
     .replace(/href="([a-z0-9-]+)\.md(#[\w-]*)?"/g, 'href="$1.html$2"');
+}
+
+/**
+ * README images point at raw.githubusercontent so they render on GitHub and on
+ * npm; on this site they have a local copy, so rewrite them instead of making
+ * every visitor fetch from a second origin.
+ */
+const RAW = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/`;
+
+/** The Markdown sources in publish order: README.md as the index, then every `docs/*.md`. */
+function readSources() {
+  const sources = [
+    { slug: "index", markdown: fs.readFileSync(path.join(ROOT, "README.md"), "utf8") },
+  ];
+  for (const entry of fs.readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort()) {
+    sources.push({
+      slug: path.basename(entry, ".md"),
+      markdown: fs.readFileSync(path.join(DOCS, entry), "utf8"),
+    });
+  }
+  return sources;
+}
+
+/**
+ * Every page rendered from the Markdown, in publish order.
+ *
+ * Exported for `tests/site-anchors.test.js`, which checks that every in-page and
+ * cross-page `#fragment` resolves against the ids this renderer produced. Rendering in
+ * memory means the test needs no built `site/`, and it exercises the same pipeline the
+ * site build uses instead of a second copy of it.
+ */
+export function renderPages() {
+  return readSources().map((source) => {
+    const localised = source.markdown.split(RAW).join("");
+    return {
+      slug: source.slug,
+      markdown: source.markdown,
+      html: rewriteLinks(renderMarkdown(localised)),
+    };
+  });
 }
 
 /** First real paragraph, for a fallback description when none is written. */
@@ -477,8 +579,9 @@ export function isInvokedDirectly() {
  * Builds site/ from the Markdown.
  *
  * This runs only when the file is executed, not when it is imported: the link
- * rewriter above is exported so a test can exercise the rule directly, and a
- * test that silently rebuilt the site would be a side effect nobody asked for.
+ * rewriter and the page renderer above are exported so tests can exercise them
+ * directly, and a test that silently rebuilt the site would be a side effect
+ * nobody asked for.
  */
 function buildSite() {
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -493,34 +596,17 @@ function buildSite() {
     fs.copyFileSync(path.join(ASSETS, entry), path.join(OUT, "assets", entry));
   }
 
-  const sources = [
-    {
-      slug: "index",
-      file: path.join(ROOT, "README.md"),
-      markdown: fs.readFileSync(path.join(ROOT, "README.md"), "utf8"),
-    },
-  ];
-  for (const entry of fs.readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort()) {
-    const slug = path.basename(entry, ".md");
-    sources.push({ slug, file: path.join(DOCS, entry), markdown: fs.readFileSync(path.join(DOCS, entry), "utf8") });
-  }
-
-  // README images point at raw.githubusercontent so they render on GitHub and on
-  // npm; on this site they have a local copy, so rewrite them instead of making
-  // every visitor fetch from a second origin.
-  const RAW = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/`;
+  const rendered = renderPages();
 
   const urls = [];
   const fullText = [];
-  for (const source of sources) {
-    const localised = source.markdown.split(RAW).join("");
-    const html = rewriteLinks(marked.parse(localised));
+  for (const source of rendered) {
     const heading = source.markdown.match(/^#\s+(.+)$/m)?.[1] ?? pkg.name;
     const title = TITLES[source.slug] ?? (source.slug === "index" ? heading : `${heading} — ${pkg.name}`);
     const description = DESCRIPTIONS[source.slug] ?? summarise(source.markdown);
     fs.writeFileSync(
       path.join(OUT, `${source.slug}.html`),
-      page({ slug: source.slug, title, description, body: html, markdown: source.markdown }),
+      page({ slug: source.slug, title, description, body: source.html, markdown: source.markdown }),
       "utf8"
     );
     // The Markdown twin: what llms.txt v2 asks for, and what an agent would rather read.
@@ -600,7 +686,7 @@ function buildSite() {
   // shipping a CNAME for a host that does not resolve only invites confusion.
   fs.writeFileSync(path.join(OUT, ".nojekyll"), "", "utf8");
 
-  write(`site: ${sources.length} pages, ${urls.length} urls`);
+  write(`site: ${rendered.length} pages, ${urls.length} urls`);
   write(`site: sitemap.xml, robots.txt, llms.txt, llms-full.txt for ${SITE}`);
 }
 

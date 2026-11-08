@@ -210,3 +210,73 @@ test("ordinary messages are still delivered", async () => {
     '{"jsonrpc":"2.0","id":3,"method":"ping"}',
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// 2.5 — the 1.0.0 audit's remaining miss-shapes, all proven leaks
+// ---------------------------------------------------------------------------
+
+test("URL userinfo with an empty user part is masked", () => {
+  // Redis, SMTP, AMQP and FTP omit the username routinely, and every scheme-listed rule
+  // required at least one character before the colon, so the password was emitted in clear.
+  assertMasked("redis://:redisHunter2@redis.example.net:6379/0", "redisHunter2", "urls.yaml", "redis");
+  assertMasked("  url: smtp://:commaHunter2@smtp.example.net:587", "commaHunter2", "urls.yaml", "smtp");
+  assertMasked("  url: amqp://:amqpHunter2@broker.example.net:5672", "amqpHunter2", "urls.yaml", "amqp");
+});
+
+test("command-line userinfo is masked, and ordinary flags are not", () => {
+  // `curl -u user:password` sends the same userinfo as a URL without a scheme; no rule saw it.
+  assertMasked("curl -u admin:SuperSecretPassw0rd https://api.example.com", "SuperSecretPassw0rd", "deploy.sh", "curl -u");
+  assertMasked("curl --user admin:SuperSecretPassw0rd https://api.example.com", "SuperSecretPassw0rd", "deploy.sh", "curl --user");
+  assertMasked("curl --user=admin:SuperSecretPassw0rd https://api.example.com", "SuperSecretPassw0rd", "deploy.sh", "curl --user=");
+  assertUntouched("grep -u root file.txt", "deploy.sh", "a flag with no credential");
+  assertUntouched("docker run -u root myimage", "deploy.sh", "a user with no password");
+  assertUntouched("curl --fail https://api.example.com", "deploy.sh", "a curl flag without -u");
+});
+
+test("a short Basic credential with no digit and no padding is masked", () => {
+  // The base64 of `user:pass` is 12 characters with no digit and no padding, so the three
+  // earlier tests all declined it and the credential reached the parts in clear.
+  assertMasked("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz", "notes.txt", "short Basic");
+  // The prose the old heuristics protected stays readable.
+  assertUntouched("Basic authentication is supported.", "notes.ts", "Basic prose");
+  assertUntouched("Bearer authentication", "notes.ts", "Bearer prose");
+});
+
+test("vendor service tokens with a fixed shape are masked", () => {
+  assertMasked(
+    "Telegram bot: 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawX",
+    "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawX",
+    "README.md",
+    "Telegram bot token"
+  );
+  assertMasked(
+    "Discord: MTk4NjIyNDgzNDcxOTI1MjQ4.Cl2FMQ.ZnCjm1XVW7vRze4b7Cq4se7kKWs",
+    "ZnCjm1XVW7vRze4b7Cq4se7kKWs",
+    "README.md",
+    "Discord bot token"
+  );
+  assertMasked(
+    "Shopify admin: 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",
+    "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",
+    "README.md",
+    "Shopify admin token"
+  );
+  // Exactly 52 alphanumerics that mix case and digits.
+  const adoPat = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6";
+  assert.equal(adoPat.length, 52, "the Azure DevOps fixture is exactly 52 characters");
+  assertMasked("Azure DevOps PAT: " + adoPat, adoPat, "README.md", "Azure DevOps PAT");
+  assertMasked(
+    "# SAS: ?sv=2022-11-02&ss=b&srt=sco&sp=rwdlac&sig=abcdefghijklmnopqrstuvwxyz0123456789ABCDEF",
+    "abcdefghijklmnopqrstuvwxyz0123456789ABCDEF",
+    "main.tf",
+    "Azure SAS signature"
+  );
+});
+
+test("the fixed-shape rules do not mask ordinary dotted or numeric text", () => {
+  assertUntouched("Telegram: hello world", "notes.md", "a bare vendor name");
+  assertUntouched("const time = 12:30;", "app.ts", "a clock time");
+  assertUntouched("const version = 1.2.3;", "app.ts", "a semver string");
+  assertUntouched("const host = 127.0.0.1;", "app.ts", "an IPv4 address");
+  assertUntouched("const pat = process.env.PAT;", "app.ts", "a reference, not a literal");
+});

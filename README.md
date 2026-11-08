@@ -31,7 +31,7 @@ with a manifest and a validator](https://raw.githubusercontent.com/ankurhalder/c
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#built-to-be-trusted">Trust</a> ·
+  <a href="#built-to-be-trusted-with-a-whole-repository">Trust</a> ·
   <a href="#for-ai-agents">AI agents</a> ·
   <a href="#documentation">Docs</a> ·
   <a href="https://ankurhalder.github.io/codebase-snapshot/">Site</a>
@@ -200,7 +200,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.9.14 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.9.15 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

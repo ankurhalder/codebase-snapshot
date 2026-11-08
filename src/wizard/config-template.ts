@@ -135,7 +135,8 @@ export function renderConfig(answers: WizardAnswers): string {
   // matched value is never included — only the path, the line and the rule.
   sarif: ${answers.sarif},
   // Snapshot only the files that differ from a git ref (for example "main"),
-  // plus untracked ones. null and false both mean "snapshot everything".
+  // plus untracked ones. null means "snapshot everything"; any other value must
+  // be a git ref string, and anything else is a configuration error.
   changedSince: null,
   // Snapshot only what is staged in the index: the pre-commit counterpart.
   staged: false,

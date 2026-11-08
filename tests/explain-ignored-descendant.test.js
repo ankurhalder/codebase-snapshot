@@ -309,3 +309,83 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
     "--format applies to every command that renders a payload; mcp is excluded because its stdout carries JSON-RPC"
   );
 });
+
+// ------------------------------------------------- (h) explain agrees with generate
+// E1: the inclusion answer asked only whether the content was text, so a .png holding a
+// Git-LFS pointer or a placeholder was explained as included while generate skipped it by
+// extension. And classification ran before the binary check, so a genuinely binary file came
+// back with included:false carrying layer/kind/language — keys docs/cli.md says a skipped path
+// does not have.
+
+test("E1: explain agrees with generate when a binary extension holds text", (t) => {
+  const dir = makeRepo(t);
+  fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "assets", "logo.png"), "not a png at all\n");
+
+  const manifest = generateSnapshot(configFor(dir));
+  assert.equal(
+    manifest.skipped.find((entry) => entry.path === "assets/logo.png")?.reason,
+    "binary",
+    "generate decides by extension"
+  );
+
+  const result = explainPath(configFor(dir), "assets/logo.png");
+
+  assert.equal(result.included, false, "generate skips it, so explain must not call it included");
+  assert.equal(result.reason, "binary");
+  assert.match(String(result.detail), /binary extension/, "the answer names the decision");
+  assert.equal(result.layer, undefined, "a skipped path is not classified");
+  assert.equal(result.kind, undefined, "a skipped path is not classified");
+  assert.equal(result.language, undefined, "a skipped path is not classified");
+  assert.equal(result.layerMatch, undefined, "a skipped path is not classified");
+});
+
+test("E1: a binary path's JSON answer is exactly the documented skip shape", (t) => {
+  const dir = makeRepo(t);
+  fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "assets", "real.png"),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01])
+  );
+  generateSnapshot(configFor(dir));
+
+  const result = explainPath(configFor(dir), "assets/real.png");
+
+  assert.equal(result.included, false, "a NUL-bearing png is skipped");
+  assert.equal(result.reason, "binary");
+  // docs/cli.md: when included is false the object stops after path, exists, included, reason
+  // and detail.
+  assert.deepEqual(Object.keys(result).sort(), [
+    "detail",
+    "exists",
+    "included",
+    "path",
+    "reason",
+  ]);
+});
+
+test("E1: a content-binary file with an ordinary extension is an unclassified skip", (t) => {
+  const dir = makeRepo(t);
+  // Valid UTF-8, no NUL, more than 1% control bytes: generate skips it as binary by content.
+  fs.writeFileSync(path.join(dir, "src", "blob.dat"), Buffer.alloc(4096, 0x07));
+  generateSnapshot(configFor(dir));
+
+  const result = explainPath(configFor(dir), "src/blob.dat");
+
+  assert.equal(result.included, false);
+  assert.equal(result.reason, "binary");
+  assert.match(String(result.detail), /control byte/, "the answer says why the bytes are not text");
+  assert.equal(result.layer, undefined, "a skipped path is not classified");
+  assert.equal(result.kind, undefined, "a skipped path is not classified");
+  assert.equal(result.language, undefined, "a skipped path is not classified");
+});
+
+test("E1: explain still classifies a file it includes", (t) => {
+  const dir = makeRepo(t);
+  const result = explainPath(configFor(dir), "src/a.ts");
+
+  assert.equal(result.included, true);
+  assert.equal(typeof result.layer, "string", "an included file keeps its classification");
+  assert.equal(typeof result.kind, "string");
+  assert.equal(result.language, "typescript");
+});

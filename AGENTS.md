@@ -65,8 +65,8 @@ dependency is `typescript`; keep it that way — the zero-dependency property is
 2. **Never destroy user data.** The output directory is only replaceable when this tool wrote
    it, and the proof is evidence rather than a filename: `.codebase-snapshot` is a JSON record
    (generator, schema version, run id, state, manifest digest, inventory of every file written)
-   and the directory may contain nothing outside that inventory. A marker file alone, a bare
-   manifest or a hand-written marker is not evidence.
+   and the directory may contain nothing outside that inventory. A hand-written marker whose
+   recorded digests do not match the directory is not evidence.
 3. **Never leak secrets.** Sensitive files stay out unless explicitly requested; redaction masks
    only the matched span and no excerpt of a matched line reaches an artifact.
 4. **Progress to stderr, payload to stdout.** `--format json` must keep stdout parseable.

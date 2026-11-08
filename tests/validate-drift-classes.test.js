@@ -167,3 +167,87 @@ test("a file generate skipped as binary is not reported as a new file", (t) => {
   );
   assert.equal(result.valid, true, "generate then validate is clean for the same tree");
 });
+
+// ------------------------------------------------- B4: binary extensions
+// generate decides by extension before it reads a byte, but validate used to ask only
+// "is the content text?". A text-content file with a binary extension — a Git-LFS pointer, an
+// empty placeholder, a fixture that is not really a PNG — was recorded as skipped and then
+// reported as a new file forever: regenerating could not clear it because generating never
+// includes it. validate must apply generate's decision order, so these are clean at every step.
+
+test("B4: a text file with a binary extension is not drift, before or after regenerating", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  write(dir, "assets/logo.png", "not a png at all\n");
+
+  const first = generateSnapshot({ cwd: dir });
+  const skipped = first.skipped.find((entry) => entry.path === "assets/logo.png");
+  assert.equal(skipped?.reason, "binary", "generate decides by extension and records the skip");
+  assert.equal(
+    first.files.some((entry) => entry.relativePath === "assets/logo.png"),
+    false,
+    "and does not include it"
+  );
+
+  const before = validateSnapshot({ cwd: dir });
+  assert.deepEqual(
+    before.drift.missingInSnapshot,
+    [],
+    "a file generate skipped must not be reported as a new file"
+  );
+  assert.equal(before.valid, true, "generate then validate is clean for the same tree");
+
+  generateSnapshot({ cwd: dir });
+  const after = validateSnapshot({ cwd: dir });
+  assert.deepEqual(
+    after.drift.missingInSnapshot,
+    [],
+    "regenerating must not leave a permanent new-file drift behind"
+  );
+  assert.equal(after.valid, true, "the second generate/validate cycle is clean too");
+});
+
+test("B4: a Git-LFS pointer in a .png is a skipped file, not drift", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  // The realistic case: a large asset tracked by Git LFS is three lines of text in the work tree.
+  write(
+    dir,
+    "assets/big.png",
+    "version https://git-lfs.github.com/spec/v1\n" +
+      "oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\n" +
+      "size 12345\n"
+  );
+
+  const manifest = generateSnapshot({ cwd: dir });
+  assert.equal(
+    manifest.skipped.find((entry) => entry.path === "assets/big.png")?.reason,
+    "binary",
+    "an LFS pointer carries the binary extension, so generate skips it without reading"
+  );
+
+  const result = validateSnapshot({ cwd: dir });
+  assert.deepEqual(result.drift.missingInSnapshot, []);
+  assert.equal(result.valid, true, "an LFS pointer must not make the snapshot look stale");
+});
+
+test("B4: a genuinely binary .png still validates clean after generate", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "assets", "real.png"),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02])
+  );
+
+  const manifest = generateSnapshot({ cwd: dir });
+  assert.equal(
+    manifest.skipped.find((entry) => entry.path === "assets/real.png")?.reason,
+    "binary",
+    "the mirror case must keep its skip record"
+  );
+
+  const result = validateSnapshot({ cwd: dir });
+  assert.deepEqual(result.drift.missingInSnapshot, []);
+  assert.equal(result.valid, true, "a real binary file is not drift either");
+});

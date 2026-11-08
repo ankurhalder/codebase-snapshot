@@ -422,10 +422,19 @@ test("legacy session", async (t) => {
     assert.equal(response, null);
   });
 
-  await t.test("rejects a non-object message and a wrong jsonrpc field", async () => {
+  await t.test("rejects a non-object message, a batch and a wrong jsonrpc field", async () => {
     const { server } = makeServer();
+    // A parsed scalar is valid JSON but not a request object, so it is -32600. -32700 belongs to
+    // the transport, which rejects text that is not JSON before the dispatcher is reached.
     const notObject = await server.handle(42);
-    assert.equal(notObject.error.code, ERROR_CODES.parseError);
+    assert.equal(notObject.error.code, ERROR_CODES.invalidRequest);
+
+    // Batching was removed before the oldest revision this server speaks, so an array is one
+    // invalid request — not a parse error, because the JSON did parse.
+    const batch = await server.handle([{ jsonrpc: "2.0", id: 17, method: "ping" }]);
+    assert.equal(batch.error.code, ERROR_CODES.invalidRequest);
+    assert.match(batch.error.message, /batch/i);
+    assert.equal(batch.id, null);
 
     const wrongVersion = await server.handle({ jsonrpc: "1.0", id: 16, method: "ping" });
     assert.equal(wrongVersion.error.code, ERROR_CODES.invalidRequest);
@@ -574,4 +583,49 @@ test("argument validation", async (t) => {
     const coerced = coerceNumericStrings(budgetSchema, { maxPartBytes: "307200" });
     assert.equal(coerced.maxPartBytes, "307200", "a byte budget keeps its human spelling");
   });
+});
+
+test("a resource provider failure is an error response, not a dead connection", async () => {
+  // The provider has no answer to give when its read throws. The dispatcher must turn that into a
+  // JSON-RPC error: an uncaught exception would kill the stdio process and the client would report
+  // a mysterious EOF instead of the reason.
+  const logs = [];
+  const server = createMcpServer({
+    info: {
+      name: "codebase-snapshot",
+      title: "codebase-snapshot",
+      version: "0.9.4",
+      websiteUrl: "https://example.test/codebase-snapshot/",
+    },
+    instructions: "test instructions",
+    tools: [],
+    resources: {
+      async list() {
+        return [];
+      },
+      templates() {
+        return [];
+      },
+      async read() {
+        throw new Error("the disk is on fire");
+      },
+    },
+    prompts: [],
+    context: { cwd: process.cwd(), roots: [process.cwd()], log: (line) => logs.push(line) },
+  });
+  await initializeLegacy(server);
+
+  const response = await server.handle({
+    jsonrpc: "2.0",
+    id: 40,
+    method: "resources/read",
+    params: { uri: "snapshot://manifest" },
+  });
+
+  assert.equal(response.error.code, ERROR_CODES.internalError);
+  assert.ok(logs.some((line) => /internal error/.test(line)), logs.join(" | "));
+  assert.ok(
+    !JSON.stringify(response).includes("the disk is on fire"),
+    "an internal failure is not echoed back to the client"
+  );
 });

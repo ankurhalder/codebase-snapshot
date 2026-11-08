@@ -313,6 +313,22 @@ closes between the name and the value.
 the file decides: `readonly api_key=hunter2` in `.envrc`, `.sh`, `.zsh`, a YAML or an INI file is
 masked, while `private readonly apiKey = someValue` in TypeScript is left alone.
 
+The file type decides how an **unquoted** value is read too. In a source file (`.ts`, `.js`, `.tsx`,
+…) a bare value after a credential name is an expression, and expressions are left as written:
+`opts.token: (value)` and `password: getPassword() & 0xff` are untouched. In a data or shell file
+(`.yaml`, `.yml`, `.toml`, `.ini`, `.conf`, `.cfg`, `.properties`, `.tf`, `.tfvars`, `.sh`,
+`.env` and the `.envrc` family) the same line is an assignment: a **strong** credential name in
+colon form (`password:`, `token:`, `api_key:`) masks the value whatever symbols it holds — a
+`password` value such as `pa&ss`, or an expression like `getPassword() & 0xff`, in a `.yaml` is
+masked whole, running to the end of the line (a trailing `#` comment is kept, and the match is
+capped at 300 characters).
+A value that cannot be bounded is handled by file type: in a data or shell file a colon-form
+assignment still masks the value whole, while in source code the unbounded match is dropped rather
+than emitted as a marker in front of an expression. The `=` form outside `.env`-style files is
+covered by the `.env`/shell rule, which expects the uppercase names those formats use — a
+lowercase `key=value` in an INI or properties file is masked only while its value stays inside
+the rule's alphabet.
+
 Findings are summarised in `reports/audit.md` (one row per line, naming every rule that matched
 it), counted in `manifest.totals.redactedLines`, and shown in the `generate` summary as a
 `Redacted:` line separate from `Warnings:`.
@@ -389,15 +405,32 @@ const config = {
 
   // ── Size ─────────────────────────────────────────────────
   maxPartBytes: "300k",
+  maxPartTokens: null,           // the same ceiling in tokens; narrows maxPartBytes
   largeFileBytes: "200k",
   previewHeadLines: 80,
   previewTailLines: 40,
   budgets: { default: "300k", byLayer: {} },
 
-  // ── Scope ────────────────────────────────────────────────
+  // ── Scope and compression ────────────────────────────────
+  skeleton: false,               // replace function bodies with { /* ... */ }
+  sarif: false,                  // also write reports/audit.sarif (SARIF 2.1.0)
+  changedSince: null,            // only files changed since this git ref
+  staged: false,                 // only what is staged in the index
+  withDependents: false,         // with a scope, also include one-hop importers
+
+  // ── What goes in ─────────────────────────────────────────
   include: [],
   excludePatterns: [],
   discovery: "auto",                 // "auto" | "git" | "walk"
+
+  // ── Classification ───────────────────────────────────────
+  layersMode: "merge",
+  layers: [],
+  kinds: [],
+
+  // ── Safety ───────────────────────────────────────────────
+  includeSensitiveFiles: false,
+  secrets: { customPatterns: [], disableDefaultPatterns: false },
 
   // ── Artifacts ────────────────────────────────────────────
   artifacts: {
@@ -409,19 +442,10 @@ const config = {
     audit: true,
     monolith: false,
   },
-
-  // ── Safety ───────────────────────────────────────────────
-  includeSensitiveFiles: false,
-  secrets: { customPatterns: [], disableDefaultPatterns: false },
-
-  // ── Classification ───────────────────────────────────────
-  layersMode: "merge",
-  layers: [],
-  kinds: [],
+  maxMonolithBytes: null,        // skip the monolith above this size
+  includeMonolith: false,        // top-level switch; the artifacts entry wins
 
   // ── Advanced ─────────────────────────────────────────────
-  includeMonolith: false,
-  maxMonolithBytes: null,
   hooks: {},
 };
 

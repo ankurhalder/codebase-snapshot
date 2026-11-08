@@ -30,7 +30,7 @@ If you want the most popular, most integrated tool: **use repomix.**
 | Staleness check | `validate` re-hashes the repository and exits non-zero on drift | Not a feature |
 | Remote repositories | No — operates on a local checkout | **Yes** — packs a GitHub URL directly |
 | MCP server | **Yes** — eight tools over stdio, and it serves the validated snapshot rather than the working tree | **Yes** — packs a repository, including by URL |
-| Secret handling | 30 default rules, value-span masking, per-line audit table | Secretlint integration |
+| Secret handling | 31 default rules, value-span masking, per-line audit table | Secretlint integration |
 | Language awareness | 25 presets, AST or structural summaries labelled by confidence | Tree-sitter parsing with a compression mode |
 | Adoption | New | **Mature** — large user base, many integrations |
 | Runtime | Node.js ≥ 18, one dependency | Node.js, npm package |

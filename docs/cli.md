@@ -132,9 +132,14 @@ says `… and N more in manifest.warnings[]`; nothing is dropped silently.
 codebase-snapshot validate [options]
 ```
 
-Compares the snapshot on disk with the repository. Reports five classes of drift — modified
-files, deleted files, files added since the snapshot, damaged or missing parts, and config
-changes — plus bookkeeping mismatches in the manifest.
+Compares the snapshot on disk with the repository. Reports six classes of drift — modified
+files, deleted files, files added since the snapshot, damaged or missing parts, unreadable
+files, and config changes — plus bookkeeping mismatches in the manifest.
+
+An **unreadable** file is one that exists but that this process may not read or stat, usually a
+filesystem-permission problem. It is a class of its own because the fix is different: filing it
+as "deleted" sent the reader looking for a file that is still there. Text mode lists each path
+as `unreadable: <path>`; `--format json` carries them in `drift.unreadable`.
 
 Exit `0` when the snapshot is current, `1` on any drift. It never writes anything.
 
@@ -149,6 +154,10 @@ It reads `manifest.json` and nothing else, so it is fast on any repository size 
 snapshot reports in about half a second. Requires an existing `manifest.json` (exit `1` if
 missing); exits `0` otherwise. It does **not** check whether the snapshot is still true — that
 is `validate`, which re-reads the repository and exits `1` on drift.
+
+It takes `--cwd`, `--out-dir`, `--no-config`, `--format` and `--no-update-check`. The
+generation settings are rejected, not ignored: `report --max-part-bytes 120k` exits `2` with a
+message naming the commands that do accept it.
 
 ### `setup`
 
@@ -174,7 +183,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.14
+   Added devDependency: codebase-snapshot ^0.9.15
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -186,15 +195,25 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 
 - `--no-install` skips step 4 — CI, an offline machine, or a lockfile you would rather no package
   manager touched.
-- `--dry-run` prints the plan and the config it would write, and writes nothing.
+- `--dry-run` prints the plan and the config it would write, and writes nothing — including the
+  `.git/hooks/pre-commit` that `--install-hook` would otherwise install.
 - `--force` rewrites an existing config; `--preset`, `--include`, `--exclude`, `--out-dir`,
   `--max-part-bytes`, `--include-sensitive-files` and `--skip-artifacts` behave as they do for
-  `generate` and `init`.
+  `generate` and `init`. `--only-artifacts` reaches the generation as itself rather than as a
+  derived suppression list, so it can switch an artifact back on even when the kept config
+  disables it.
+- On a **kept** config, `--preset` cannot be applied: the file belongs to the repository and this
+  run does not rewrite it. The run still exits `0`; text mode prints
+  `⚠ --preset <name> was not applied: the existing config is kept.` and the setup document
+  reports `"preset": null` with the same explanation in `setup.notes[]`. Edit the config, or run
+  `init --force`, to change it.
 - `--format json` emits **one** document:
-  `{ "setup": { configPath, configReused, preset, scripts, dependency, gitignoreEntries, install, notes }, "manifest": { … } }`,
-  where `manifest` is the same object `generate --format json` writes. If that generate fails, the
-  document is `{ "error": { … }, "setup": { … }, "manifest": null }` and the exit code is the
-  generate's: one document per invocation, a payload or an error, never a payload holding an error.
+  `{ "setup": { configPath, configReused, preset, scripts, dependency, gitignoreEntries, install, notes, hook }, "manifest": { … } }`,
+  where `manifest` is the same object `generate --format json` writes. With `--dry-run` the
+  document is the plan instead — `{ "dryRun": true, configPath, configReused, preset, install, configText }` —
+  because nothing was written. If the generate fails, the document is
+  `{ "error": { … }, "setup": { … }, "manifest": null }` and the exit code is the generate's: one
+  document per invocation, a payload or an error, never a payload holding an error.
 - If `outDir` holds files this tool did not write, `setup` still refuses to replace it (exit 1,
   naming the entries) after writing the config — the guard is not weakened by the convenience.
 ### `init`
@@ -213,7 +232,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.14
+   Added devDependency: codebase-snapshot ^0.9.15
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -250,7 +269,7 @@ generated file is a plain object with no imports, so it works even when the pack
 run through `npx` and never installed.
 
 Related options: `--preset`, `--include`, `--exclude`, `--yes` and `--force`
-apply to `init` only. `init` also accepts `--dry-run`, `--max-part-bytes`, `--out-dir`,
+apply to `init` and `setup` only. `init` also accepts `--dry-run`, `--max-part-bytes`, `--out-dir`,
 `--include-sensitive-files`, `--skip-artifacts` and `--only-artifacts`, which it shares with
 the commands that re-read a snapshot, and records their effect in the generated file. The
 `Applies to` column is in the [options table](#options).
@@ -395,22 +414,22 @@ URIs and protocol versions appear in [the MCP server guide](mcp.md) and in
 ## Options
 
 An option a command does not accept is **rejected**, not ignored: exit `2` and a message
-naming the commands that do accept it. Options marked *init only* or *skill only* are the
-narrowest cases of the same rule.
+naming the commands that do accept it. The narrowest scopes say so in the table: *skill only*
+for the two install flags, and the init-and-setup flags list both commands.
 
 | Option | Type | Default | Applies to | Meaning |
 | :--- | :--- | :--- | :--- | :--- |
-| `--cwd <path>` | path | current directory | generate, validate, report, explain, init, skill | Repository to operate on. Must exist and be a directory. `diff` and `describe` take no `--cwd`. |
-| `--out-dir <path>` | path | `snapshot` | generate, validate, report, explain, init | Where the snapshot is written or read. May be absolute. |
-| `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, report, explain, init | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
+| `--cwd <path>` | path | current directory | generate, validate, report, explain, init, setup, skill, mcp | Repository to operate on. Must exist and be a directory. `diff` and `describe` take no `--cwd`; for `mcp` it chooses the one repository the server serves. |
+| `--out-dir <path>` | path | `snapshot` | generate, validate, report, explain, init, setup | Where the snapshot is written or read. May be absolute. |
+| `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, explain, init, setup | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
 | `--max-part-tokens <n>` | size | unset | generate, validate, setup | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. Minimum 1024 — below that it is a usage error, not a value quietly raised to the floor. |
-| `--large-file-bytes <n>` | size | `204800` (200 KB) | generate, validate, report, explain | Above this, a file becomes a head/tail preview. |
-| `--max-monolith-bytes <n>` | size | unset | generate, validate, report, explain | Skip the single-file monolith when it would exceed this. |
-| `--include-monolith` | flag | off | generate, validate, report, explain | Also write `full-codebase.json` and `full-codebase.md`. |
-| `--include-sensitive-files` | flag | off | generate, validate, report, explain, init | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |
-| `--skip-artifacts <names>` | list | unset | generate, validate, report, explain, init | Comma-separated artifacts to omit. |
-| `--only-artifacts <names>` | list | unset | generate, validate, report, explain, init | Write *only* these, and **turn on** any this names: a config with `artifacts: { audit: false }` still gets `reports/audit.md` from `--only-artifacts audit`, because "only these" is a statement about the whole selection rather than a suppression list. Cannot be combined with `--skip-artifacts`. |
-| `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command honours it, and `describe` reports the same nine-command list. |
+| `--large-file-bytes <n>` | size | `204800` (200 KB) | generate, validate, explain, setup | Above this, a file becomes a head/tail preview. |
+| `--max-monolith-bytes <n>` | size | unset | generate, validate, explain, setup | Skip the single-file monolith when it would exceed this. |
+| `--include-monolith` | flag | off | generate, validate, explain, setup | Also write `full-codebase.json` and `full-codebase.md`. |
+| `--include-sensitive-files` | flag | off | generate, validate, explain, init, setup | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |
+| `--skip-artifacts <names>` | list | unset | generate, validate, explain, init, setup | Comma-separated artifacts to omit. |
+| `--only-artifacts <names>` | list | unset | generate, validate, explain, init, setup | Write *only* these, and **turn on** any this names: a config with `artifacts: { audit: false }` still gets `reports/audit.md` from `--only-artifacts audit`, because "only these" is a statement about the whole selection rather than a suppression list. Cannot be combined with `--skip-artifacts`. |
+| `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command except `mcp` honours it — stdout there is the JSON-RPC protocol stream — and `describe` reports the same nine-command list. |
 | `--sarif` | flag | off | generate, validate, setup | Also write `reports/audit.sarif`: the redaction findings as SARIF 2.1.0, for upload to GitHub Code Scanning. The artefact carries the path, the line and the rule — never the value. Works with `--skip-artifacts audit`, because a CI gate does not read markdown. Rule ids are fixed per rule name, so adding a custom rule never re-points an existing alert. |
 | `--skeleton` | flag | off | generate, validate, setup | Emit signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. Covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` and `.cjs`; `.d.ts` files are left alone because they are already declarations. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. `--include-monolith` still writes the whole body, so the monolith's `inclusionMode: "full"` stays true. |
 | `--changed-since <ref>` | git ref | unset | generate, validate, explain | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged` and is never opened. `validate` re-resolves the scope: a skipped file that has changed since is reported as drift, and one that has not is left alone — and with `--with-dependents`, so is a file that now imports one that changed. `explain` answers with the same rule. A ref beginning with `-` is refused. |
@@ -422,22 +441,21 @@ narrowest cases of the same rule.
 | `--autopilot` | flag | off | generate | Set the project up without asking — config, `.gitignore`, npm scripts, devDependency, install — then generate. Never overwrites an existing config; refuses an empty directory (exit `1`); contradicts `--no-config` (exit `2`). |
 | `--no-install` | flag | off | setup, generate `--autopilot` | Skip the dependency install. Anywhere else it is a usage error, because it would change nothing. |
 | `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |
-| `--discovery <mode>` | enum | `auto` | generate, validate, explain | How files are found: `auto` lists through git when git works and refuses when a `.git` directory cannot be listed; `git` requires git; `walk` scans the tree and reads `.gitignore` files directly. The escape hatch for a broken `.git`. |
-| `--preset <name>` | name | detected | *init only* | Force a preset instead of detecting one. |
-| `--include <globs>` | list | unset | *init only* | Allow-list recorded in the generated config. |
-| `--exclude <globs>` | list | unset | *init only* | Exclude globs recorded in the generated config. |
-| `--yes` | flag | off | *init only* | Never prompt; accept every default. |
-| `--force` | flag | off | *init only* | Replace an existing `.ts`/`.js`/`.mjs` config in place. A JSON-family config is refused, naming the file to remove. |
+| `--discovery <mode>` | enum | `auto` | generate, validate, explain, setup | How files are found: `auto` lists through git when git works and refuses when a `.git` directory cannot be listed; `git` requires git; `walk` scans the tree and reads `.gitignore` files directly. The escape hatch for a broken `.git`. |
+| `--preset <name>` | name | detected | init, setup | Force a preset instead of detecting one. |
+| `--include <globs>` | list | unset | init, setup | Allow-list recorded in the generated config. |
+| `--exclude <globs>` | list | unset | init, setup | Exclude globs recorded in the generated config. |
+| `--yes` | flag | off | init, setup | Never prompt; accept every default. |
+| `--force` | flag | off | init, setup | Replace an existing `.ts`/`.js`/`.mjs` config in place. A JSON-family config is refused, naming the file to remove. |
 | `--install` | flag | off | *skill only* | Write the skill into the repository instead of printing it. |
 | `--target <name>` | enum | `all` | *skill only* | `claude`, `cursor` or `all`. |
 | `-h`, `--help` | flag | — | every command | Print usage. |
 | `-v`, `--version` | flag | — | every command | Print the version on stdout: a bare `v`-prefixed semver (for example `v1.2.3`), with no package name. |
 
-The artifact and size options apply to `validate`, `report` and `explain` as well as
-`generate` because those commands re-read the snapshot: pass the selection you generated
-with and the comparison is like for like. `validate --skip-artifacts parts` on a snapshot
-built without parts therefore agrees, while the same flag on a full snapshot reports a
-config mismatch.
+The artifact and size options apply to `validate` and `explain` as well as `generate` because
+those commands re-derive the configuration: pass the selection you generated with and the
+comparison is like for like. `validate --skip-artifacts parts` on a snapshot built without parts
+therefore agrees, while the same flag on a full snapshot reports a config mismatch.
 
 The same rule applies to the compression and scope options. `--skeleton`, `--sarif` and
 `--max-part-tokens` are recorded in `manifest.config.digest`, so `validate` accepts them too —
@@ -446,9 +464,11 @@ the flag to `validate` was rejected as a flag that "does not apply to validate".
 `--staged` and `--with-dependents` are accepted by `validate` and `explain` because they decide
 which recorded `unchanged` skips are re-checked and what `explain` answers about one file.
 
-`report` does not take any of them: it reads the manifest and prints what is there, so a
-generation setting would change nothing. A flag that parses and does nothing is the silent
-fallback this table exists to prevent.
+`report` takes none of the generation settings: it reads the manifest and prints what is there,
+so a generation setting would change nothing — which is why it no longer accepts them as silent
+no-ops. `report --max-part-bytes 120k` exits `2` with a message naming the commands that do
+accept it. A flag that parses and does nothing is the silent fallback this table exists to
+prevent.
 
 Every option also accepts the `--option=value` form. That form is required for negative
 numbers, which otherwise look like flags.
@@ -457,16 +477,21 @@ numbers, which otherwise look like flags.
 
 `--mode <command>` names the command instead of passing it positionally, which is handy when
 a wrapper builds the argument list. `--mode validate` and `codebase-snapshot validate` are the
-same run. It accepts the nine command names, and it is deliberately strict: asking for two
-different commands is an error rather than a silent winner.
+same run. With `--mode`, the remaining positionals are that command's arguments, so
+`--mode explain src/server.ts` and `--mode diff old-snapshot snapshot` work the same way the
+positional form does.
+
+It accepts the ten commands plus the `check` alias — the eleven names the error lists — and it is
+deliberately strict: asking for two different commands is an error rather than a silent winner.
 
 ```
 ❌ --mode validate contradicts the command "generate". Pass one or the other.
-❌ Unknown --mode "bogus". Expected one of: generate, validate, check, report, init, explain, diff, describe, skill.
+❌ Unknown --mode "bogus". Expected one of: generate, validate, check, report, init, setup, explain, diff, describe, skill, mcp.
 ```
 
-`--mode` is not listed in `describe`'s option table or `--help`, on purpose: an agent has no
-reason to use it, and the positional form is the documented one.
+`describe` does list `--mode` in its option table (`appliesTo` names the ten canonical commands),
+but `--help` does not: the positional form is the documented one for people, and the flag exists
+for wrappers and for the contract.
 
 ## Exit codes
 
@@ -485,11 +510,12 @@ wrong and retrying it unchanged will fail the same way.
 - **stdout** carries the payload. With `--format json` it is pure JSON, safe to pipe into
   `jq` or `JSON.parse`.
 - **stderr** carries progress, the human summary, warnings and errors.
-- **In text mode the human result is on stderr, and stdout is empty.** That holds for every
-  command: `report`, `explain`, `diff` and `validate` print their answer — tables, verdicts,
-  drift lines — to stderr, and `generate` prints its summary there too. Redirecting
-  `command > file.txt` therefore writes an empty file in text mode; use `--format json` when
-  you want the output on stdout.
+- **In text mode the human result is on stderr, and stdout is empty** — for every command
+  except `skill`. `report`, `explain`, `diff`, `validate`, `describe`, `setup` and
+  `generate` print their answer and progress to stderr, so redirecting `command > file.txt`
+  writes an empty file in text mode; use `--format json` when you want the output on stdout.
+  `skill` without `--install` prints the skill to stdout so it can be redirected, and the
+  `--help` / `--version` print paths do the same. `mcp` uses stdout for the JSON-RPC protocol.
 
 A failing invocation still writes one JSON document to stdout, so an agent never has to parse an
 empty string:

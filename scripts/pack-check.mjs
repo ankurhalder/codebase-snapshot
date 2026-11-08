@@ -116,6 +116,25 @@ if (createDependency !== `^${packageJson.version}`) {
 }
 
 /**
+ * The scaffolder declares MIT, and its tarball must carry the licence it declares.
+ *
+ * npm only includes a licence in a tarball when the file exists, and a `files` entry that names a
+ * missing file is silently ignored — so the scaffolder shipped `"license": "MIT"` with no licence
+ * text at all (the main package always had one). Both the entry and the file are checked, and the
+ * text is compared with the root licence so the two copies cannot drift apart.
+ */
+const rootLicensePath = path.join(ROOT, "LICENSE");
+const createLicensePath = path.join(ROOT, "packages", "create", "LICENSE");
+if (!(createJson.files ?? []).includes("LICENSE")) {
+  problems.push('packages/create#files must list "LICENSE" so the scaffolder ships its licence');
+}
+if (!fs.existsSync(createLicensePath)) {
+  problems.push("packages/create/LICENSE is missing; create-codebase-snapshot declares MIT");
+} else if (fs.readFileSync(createLicensePath, "utf8") !== fs.readFileSync(rootLicensePath, "utf8")) {
+  problems.push("packages/create/LICENSE must match the root LICENSE text");
+}
+
+/**
  * The lockfile is committed, and its root entry repeats the package's own version and bin map.
  *
  * Neither is part of the published tarball, which is exactly why they rot unnoticed: a lockfile

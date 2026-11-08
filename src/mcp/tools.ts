@@ -69,7 +69,8 @@ const ROOT_PROPERTY = {
 const OUT_DIR_PROPERTY = {
   type: "string" as const,
   description:
-    "Snapshot directory, relative to the root. Defaults to the project configuration's outDir.",
+    "Snapshot directory, relative to the root, and it must resolve inside the served repository. " +
+    "Defaults to the project configuration's outDir.",
 };
 
 /** The override every tool takes from `args.outDir`, so the two cannot drift apart. */
@@ -249,7 +250,9 @@ async function prepare(
 ): Promise<{ ok: true; workspace: Workspace } | { ok: false; outcome: ToolOutcome }> {
   const rootOutcome = resolveRoot(args.root, context);
   if (!rootOutcome.ok) return { ok: false, outcome: failure(rootOutcome.message) };
-  const opened = await openWorkspace(rootOutcome.root, overrides);
+  // The outDir override is confined to the same directories a root may name: one comes from a
+  // prompt, the other from the server's launch directory, and a tool argument may not widen either.
+  const opened = await openWorkspace(rootOutcome.root, overrides, context.roots);
   if (!opened.ok) return { ok: false, outcome: failure(opened.message) };
   return { ok: true, workspace: opened.workspace };
 }

@@ -6,6 +6,9 @@
  * `twitter:card=summary_large_image` with no `og:image` at all, so every share rendered as a
  * blank card; there was no favicon; and titles spent their first 40 characters on a brand
  * nobody was searching for. None of that breaks a build, which is exactly why it survived.
+ * The first build also carried 49 `#anchor` links pointing at headings that had no ids at all,
+ * so every table of contents was a list of links to nowhere; that rule lives in
+ * check-site-links.mjs, and this audit applies it here so `npm run verify` sees it too.
  *
  * Runs against `site/`, so run `npm run site` first. Exits 1 on any violation — this is wired
  * into `npm run verify`, not offered as advice.
@@ -13,6 +16,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { findAnchorProblems } from "./check-site-links.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "site");
@@ -59,10 +64,13 @@ const SITE = siteRoot.replace(/\/$/, "");
 
 const pages = fs.readdirSync(OUT).filter((name) => name.endsWith(".html"));
 const seenCanonicals = new Set();
+/** Every page's HTML, kept so the anchor rule can resolve cross-page fragments. */
+const pageHtml = new Map();
 
 for (const file of pages.sort()) {
   const slug = path.basename(file, ".html");
   const html = read(path.join(OUT, file));
+  pageHtml.set(file, html);
   const expected = slug === "index" ? siteRoot : `${SITE}/${slug}.html`;
 
   const title = match(html, /<title>([^<]*)<\/title>/);
@@ -152,6 +160,13 @@ for (const file of pages.sort()) {
   if (!locs.includes(expected)) fail(file, "page is missing from sitemap.xml");
 }
 
+// The anchor rule lives in check-site-links.mjs, which the deploy workflow runs directly;
+// applying it here as well means `npm run verify` catches a dead table-of-contents link on the
+// pull request. The problem text names the page, the href and the missing id, because "a heading
+// id is missing" is not actionable without knowing which link broke.
+const anchors = findAnchorProblems(pageHtml);
+for (const problem of anchors.problems) problems.push(`anchors: ${problem}`);
+
 for (const loc of locs) {
   if (!seenCanonicals.has(loc)) fail("sitemap.xml", `lists ${loc}, which no page claims`);
 }
@@ -163,7 +178,10 @@ for (const required of ["llms.txt", "llms-full.txt", "robots.txt", "sitemap.xml"
 const ogCount = pages.filter((file) =>
   /<meta property="og:image" content="[^"]+"/.test(read(path.join(OUT, file)))
 ).length;
-notes.push(`${pages.length} pages, ${ogCount} with a social card, ${locs.length} sitemap urls`);
+notes.push(
+  `${pages.length} pages, ${ogCount} with a social card, ${locs.length} sitemap urls, ` +
+    `${anchors.checked} anchors`
+);
 notes.push(`canonical base ${SITE}`);
 
 for (const note of notes) console.log(`audit-site: ${note}`);

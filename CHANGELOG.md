@@ -23,6 +23,124 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.15
+
+A sixth audit, of the promises rather than the code paths the gate already covers. The gate was
+green before this release and is green after it; every defect below lived somewhere the test suite
+did not look. Two put credentials in the artifact, one broke the repeatability guarantee, and one
+made `validate` fail on a snapshot it had just written.
+
+### Two credential shapes were left in clear text
+
+**A quoted camelCase key in JSON or YAML was never redacted.** `{"dbPassword": "hunter2"}`,
+`"discordToken"`, `"awsSecret"`, `"botToken"`, `"jwtSecret"` and `"sessionKey"` were emitted
+verbatim, while the same names unquoted — and the short names `"password"` and `"apiKey"` — were
+masked. The quoted rule wanted the whole key between quotes; the bare-tail rule was suppressed
+after a quote. Every JSON configuration file has that shape.
+
+**A mask could print `[REDACTED]` and keep most of the value.** Unquoted values stopped at `$`,
+`!` and `@`, so `db_password: [REDACTED]$$w0rdSecr3t` shipped twelve characters of a seventeen
+character password while looking redacted. A value that begins with punctuation was not matched at
+all, so `!en$value` went out whole, and one containing `&` was masked as a prefix. A mask now
+covers the whole value or nothing is emitted: a match that cannot be bounded is dropped in source
+code and masked whole in a data file, never half-written.
+
+The same pass closed narrower leaks: URL userinfo with an empty user part (`redis://:pass@host`),
+`curl -u user:pass`, short unpadded Basic credentials, and fixed shapes for Discord, Telegram,
+Azure DevOps, Shopify and Azure SAS tokens. The rule count stays 31 — the coverage folded into
+existing rules rather than adding new ones.
+
+### The second run could change the preset, and drop a file
+
+Preset detection counts markdown to decide whether a repository is `docs`. It excluded the output
+directory only when that directory was literally named `snapshot`. With `--out-dir snap` on a
+repository with no root `package.json`, run one detected `generic` and included `site/page.md`;
+run two counted its own output, detected `docs`, applied that preset's `site/` exclusion, and
+**silently dropped a source file** — with a different fingerprint, and in one variant with the same
+fingerprint and different parts. The walk now skips any directory carrying an ownership marker,
+whatever it is called, which is the same evidence the scanner already uses.
+
+### validate failed on a snapshot it had just generated
+
+A text file with a binary extension — a Git-LFS pointer is the common case, three lines of plain
+text ending in `.png` — was skipped by `generate` as binary and then reported by `validate` as
+`new file`, exit 1, forever. Regenerating could not clear it, because the two commands asked
+different questions. `validate` now applies `generate`'s decision order exactly, so they agree by
+construction, and `explain` agrees with both: it no longer says `included: true` for a file the
+snapshot skipped, and a skipped path no longer carries layer, kind or language.
+
+### A JSON consumer received nothing when the config was broken
+
+`--format json` with an unparseable config, an unknown key, an invalid value or a bad preset exited
+1 with **zero bytes on stdout**, contradicting the documented error document and the contract in
+`describe`. Every config failure now goes through the same writer as every other failure.
+
+### snapshot://manifest was not JSON on an ordinary repository
+
+Above roughly 350 files the resource was cut at 512 kB with a truncation marker injected mid-document,
+advertised as `application/json`. Resource reads are now all-or-nothing: a document that does not
+fit one read fails with `-32000`, its size, the limit and the tool to use instead. The same rule
+covers parts and reports.
+
+### Ownership evidence was a shape, not evidence
+
+A hand-written `.codebase-snapshot` listing the directory's own files was accepted as proof that
+this tool wrote the directory, and the next `generate` deleted those files. Markers now record the
+sha256 and byte length of every file written, and replacement verifies them. A marker that cannot
+prove a completed run is refused and nothing is deleted. Snapshots written by earlier releases are
+still accepted on their manifest digest, so an upgrade does not strand the output directory a user
+already has.
+
+### The rest
+
+- **`setup`** honoured neither `--only-artifacts` over a reused config that disabled the artifact,
+  nor the config it actually kept: it reported a filename that did not exist and a preset it had not
+  applied. `--install-hook` baked `snapshot` as the output directory whatever the config said, and
+  `--dry-run --install-hook` wrote the hook anyway.
+- **`--mode explain <path>`** and **`--mode diff <a> <b>`** could not work: the positional arguments
+  were parsed as the command word. Both forms now run.
+- **`report`** accepted seven generation flags as silent no-ops while rejecting `--discovery`. It
+  rejects all of them now, and `describe` agrees.
+- **A closed pipe** (`generate --format json | head`) was an uncaught `EPIPE` stack trace and exit 1;
+  it is now a quiet early exit.
+- **The omission marker** named an internal section allowance (1887 B for a 4096 B part) instead of
+  the part budget the manifest and the CLI report.
+- **The docs site** had heading elements with no `id` while carrying 49 anchor links: every table of
+  contents on all fifteen published pages was dead. The site generator emits GitHub-compatible ids
+  and the link checker now validates fragments, so the gate can see it.
+- **`docs/install.md`** claimed the release check enforces the verified-client list "on every pull
+  request". There was no pull-request workflow and no client install test; the claim is gone.
+- **The CLI reference** carried stale rows: `setup` missing from ten options, `report` advertised
+  with flags it rejects, `--mode` listing nine command names where there are eleven, "text-mode
+  stdout is empty" false for `skill`, and `validate` documented with five drift classes where there
+  are six. All corrected against the source.
+- **`docs/configuration.md`**'s "complete example" omitted six settings that `init` writes.
+- **The redaction section of `SECURITY.md`** described the old, narrower behaviour; it now states
+  what the rules do, including the shapes that are still not covered.
+- **A pull-request workflow** now runs the same verify gate as a release, on Node 18, 20 and 22.
+  Until now that matrix ran only at release time, which is why 0.9.14 needed four publish attempts.
+- **Publishing** asserts that the release tag agrees with `package.json`, ships the LICENSE the
+  `create` package declares, and no longer builds `dist` twice for one publish.
+
+### Verified
+
+`npm run verify` — lint, typecheck, 1006 tests (0 failures), the docs sync check, the site build,
+the site audit, the readme lint and the tarball check — on the release commit. Beyond the suite:
+the published-install path, and real repositories in five languages where every part stays inside
+its budget, repeat runs are byte-identical, `validate` is clean, and a snapshot written by 0.9.14
+is upgraded in place without being refused.
+
+### Known limitations
+
+- `parsePartSections` still reports an `includedLines` count that disagrees with the manifest for a
+  file whose body ends in two or more newlines.
+- The manifest fingerprint covers the input and settings, not the post-partition truncation, so two
+  different budgets over the same source can share a fingerprint even though `diff` sees the parts
+  differ.
+- A password containing `&` in an unquoted colon-form assignment is masked whole in data files; a
+  lowercase `key=value` outside `.env`-style files is still masked only while its value fits the
+  rule's alphabet.
+
 ## 0.9.14
 
 A fifth audit, of what the tool does to text it did not write. Three of the defects below were

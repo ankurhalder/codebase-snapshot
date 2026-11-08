@@ -451,6 +451,39 @@ test("C17: a dry run still succeeds where the real run would", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ------------------------------------------------------------------ B2: marker budget
+// A body cut by the part budget printed an internal section allowance in its omission
+// marker: with --max-part-bytes 4096 the marker said "part budget 1887 B" while the CLI
+// and manifest both said 4096 (1887 is the part budget minus the fixed header reservation).
+// The marker must name the budget the reader was promised.
+
+test("B2: an omission marker names the part budget, not the section allowance", () => {
+  for (const budget of [4096, 8192]) {
+    const dir = makeDir({ "package.json": PACKAGE_JSON, "big.txt": "x".repeat(20_000) });
+    const manifest = generate(dir, { maxPartBytes: budget });
+    assert.equal(manifest.budgets.maxPartBytes, budget);
+    const parts = manifest.parts.map((part) => ({
+      part,
+      text: read(dir, path.join("snapshot", "parts", part.filename)),
+    }));
+    const clipped = parts.filter(({ text }) => text.includes("lines omitted: part budget"));
+    assert.ok(clipped.length > 0, "the file must actually be cut by the part budget");
+    for (const { part, text } of clipped) {
+      assert.equal(part.budgetBytes, budget);
+      assert.match(
+        text,
+        new RegExp("lines omitted: part budget " + budget + " B"),
+        "the marker must name the " + budget + " B part budget, not the internal section allowance"
+      );
+      assert.ok(
+        Buffer.byteLength(text, "utf8") <= budget,
+        "the part still fits the budget it names"
+      );
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ----------------------------------------------------------------- F6: staging
 // A failed run must not leave a staging directory behind.
 

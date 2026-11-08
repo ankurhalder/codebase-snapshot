@@ -186,3 +186,107 @@ test("setup installs with a clean environment, even when npm exec poisoned it", 
   );
   assert.match(result.stderr ?? "", /Installed dependencies/);
 });
+
+test("setup --only-artifacts honours a reused config that disables the named artifact", (t) => {
+  // `setup` forwarded only the derived `--skip-artifacts` complement into the generation it runs,
+  // so a config saying `artifacts: { audit: false }` plus `--only-artifacts audit` left every
+  // artifact off: exit 0 and a snapshot directory holding nothing but the ownership marker. The
+  // same flags on `generate` write reports/audit.md, and the docs promise both commands agree.
+  const dir = makeRepo(t, {
+    "snapshot.config.json": JSON.stringify({
+      outDir: "ctx",
+      tmpDir: "ctx.tmp",
+      discovery: "walk",
+      artifacts: { audit: false },
+    }),
+  });
+
+  const result = run(dir, ["--only-artifacts", "audit"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    fs.existsSync(path.join(dir, "ctx", "reports", "audit.md")),
+    "the named artifact is written even though the config turned it off"
+  );
+  assert.equal(fs.existsSync(path.join(dir, "ctx", "parts")), false, "and only the named one");
+});
+
+test("setup on a kept .json config reports that file, not the name it would have written", (t) => {
+  const dir = makeRepo(t, {
+    "snapshot.config.json": JSON.stringify({ outDir: "ctx", tmpDir: "ctx.tmp", discovery: "walk" }),
+  });
+  const before = fs.readFileSync(path.join(dir, "snapshot.config.json"), "utf8");
+
+  const result = run(dir);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stderr, /Keeping snapshot\.config\.json/);
+  assert.doesNotMatch(result.stderr, /snapshot\.config\.mjs/);
+  assert.equal(
+    fs.readFileSync(path.join(dir, "snapshot.config.json"), "utf8"),
+    before,
+    "the repository's config is kept byte for byte"
+  );
+  assert.equal(fs.existsSync(path.join(dir, "snapshot.config.mjs")), false);
+
+  const json = run(dir, ["--format", "json"]);
+  assert.equal(json.code, 0, json.stderr);
+  const payload = JSON.parse(json.stdout);
+  assert.equal(path.basename(payload.setup.configPath), "snapshot.config.json");
+  assert.equal(payload.setup.configReused, true);
+  assert.equal(payload.setup.preset, null, "no preset was written by this run");
+});
+
+test("setup --preset on a kept config does not claim a preset it did not apply", (t) => {
+  const dir = makeRepo(t, {
+    "snapshot.config.json": JSON.stringify({
+      outDir: "ctx",
+      tmpDir: "ctx.tmp",
+      discovery: "walk",
+      preset: "generic",
+    }),
+  });
+
+  const text = run(dir, ["--preset", "node-express"]);
+  assert.equal(text.code, 0, text.stderr);
+  assert.doesNotMatch(text.stderr, /preset: node-express/, "the kept config did not get that preset");
+  assert.match(text.stderr, /--preset node-express was not applied/);
+
+  const json = run(dir, ["--preset", "node-express", "--format", "json"]);
+  assert.equal(json.code, 0, json.stderr);
+  const payload = JSON.parse(json.stdout);
+  assert.equal(payload.setup.preset, null);
+  assert.equal(payload.manifest.config.preset, "generic", "the generation used the kept config's preset");
+  assert.ok(
+    payload.setup.notes.some((note) => /not applied/.test(note)),
+    "the report says the flag was dropped"
+  );
+});
+
+test("setup --install-hook bakes the output directory the config names", (t) => {
+  const dir = makeRepo(t, {
+    "snapshot.config.json": JSON.stringify({ outDir: "ctx", tmpDir: "ctx.tmp", discovery: "walk" }),
+  });
+  fs.mkdirSync(path.join(dir, ".git", "hooks"), { recursive: true });
+
+  const result = run(dir, ["--install-hook"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  const hook = fs.readFileSync(path.join(dir, ".git", "hooks", "pre-commit"), "utf8");
+  assert.match(hook, /SNAPSHOT_DIR="ctx"/, "the hook guards the directory the generation wrote");
+  assert.ok(fs.existsSync(path.join(dir, "ctx", "manifest.json")), "and that directory exists");
+});
+
+test("setup --dry-run --install-hook writes no hook", (t) => {
+  const dir = makeRepo(t, {});
+  fs.mkdirSync(path.join(dir, ".git", "hooks"), { recursive: true });
+
+  const result = run(dir, ["--dry-run", "--install-hook"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(
+    fs.existsSync(path.join(dir, ".git", "hooks", "pre-commit")),
+    false,
+    "a dry run writes nothing, and that includes the hook"
+  );
+});

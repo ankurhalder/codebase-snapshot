@@ -258,10 +258,41 @@ function scanWorkspacePackages(cwd: string, patterns: readonly string[]): Worksp
 }
 
 /**
+ * The ownership marker this generator writes into every directory it owns.
+ *
+ * The same filename is read by the scanner (`makeToolOwnedDecider`) and written by
+ * `generateSnapshot`; preset detection needs it too, because "this directory is the
+ * tool's own output" cannot be decided from a name.
+ */
+const SNAPSHOT_MARKER = ".codebase-snapshot";
+
+/**
+ * True when `dir` carries this generator's ownership marker.
+ *
+ * The markdown walk used to skip only the literal names `snapshot`/`snapshot.tmp` (and a
+ * handful of build-directory literals). With a custom `outDir`, the second run counted its
+ * own previous output — `README.md` plus the parts and reports — towards the `docs`
+ * preset's "three or more markdown files, no `package.json`" rule. A repository that
+ * detected as `generic` on run 1 detected as `docs` on run 2: layers and kinds changed,
+ * the `docs` preset's `site/` exclusion silently dropped source files, and parts stopped
+ * being byte-identical across runs. Ownership does not depend on the directory's name, so
+ * neither does this skip: a directory carrying the marker is this generator's output
+ * whatever it is called, at any depth and for a relative or absolute `outDir`.
+ */
+function isToolOwnedDirectory(dir: string): boolean {
+  try {
+    return fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, SNAPSHOT_MARKER));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Markdown files at the root and up to two directories down.
  *
- * Bounded by directory and file counts. `node_modules`, VCS metadata and build
- * output are skipped: a generated `README.md` in `dist/` is not documentation.
+ * Bounded by directory and file counts. `node_modules`, VCS metadata, build output and
+ * this generator's own snapshot directories are skipped: a generated `README.md` in
+ * `dist/` or in `outDir` is not documentation.
  */
 function countMarkdownFiles(cwd: string): number {
   let count = 0;
@@ -284,7 +315,11 @@ function countMarkdownFiles(cwd: string): number {
       }
       if (!entry.isDirectory() || current.depth >= 2) continue;
       if (entry.name.startsWith(".") || SKIPPED_WALK_DIRS.has(entry.name)) continue;
-      queue.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
+      const child = path.join(current.dir, entry.name);
+      // The output directory is only known after configuration resolution; the marker is
+      // this walk's evidence for "the tool wrote this", which is true for any outDir name.
+      if (isToolOwnedDirectory(child)) continue;
+      queue.push({ dir: child, depth: current.depth + 1 });
     }
   }
   return count;

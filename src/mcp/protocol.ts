@@ -86,6 +86,16 @@ export const ERROR_CODES = {
   methodNotFound: -32601,
   invalidParams: -32602,
   internalError: -32603,
+  /**
+   * A resource whose complete text is larger than one read may return.
+   *
+   * `-32000` is JSON-RPC's range for implementation-defined server errors, which is what this is:
+   * there is no standard code for "the document is too large", and answering with -32602 would tell
+   * a client its request was malformed when it was not. The message names the size, the limit and
+   * the tool to use instead, because a resource read that cannot return the whole resource must not
+   * invent a partial one.
+   */
+  resourceTooLarge: -32000,
   unsupportedProtocolVersion: -32022,
 } as const;
 

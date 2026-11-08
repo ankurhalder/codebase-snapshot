@@ -476,7 +476,30 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
   const explicitMode = values.mode ? String(values.mode) : undefined;
   const firstPositional = positionals[0];
 
-  if (firstPositional !== undefined) {
+  // `--mode` names the command, so with it the positionals are that command's arguments rather
+  // than a command word to resolve. Resolving them first made `--mode explain src/a.ts` answer
+  // `Unknown command "src/a.ts"`, which left the documented `--mode` form of the two commands
+  // that take positionals (`explain`, `diff`) unable to run at all. A positional that *is* a
+  // different command is still the contradiction the error below reports; one that aliases the
+  // same command (`--mode validate check`) is accepted.
+  const modeCommand = explicitMode === undefined ? undefined : COMMAND_ALIASES.get(explicitMode);
+  if (explicitMode !== undefined && modeCommand === undefined) {
+    throw new UsageError(
+      `Unknown --mode "${explicitMode}". Expected one of: ${Array.from(COMMAND_ALIASES.keys()).join(", ")}.`
+    );
+  }
+  if (modeCommand !== undefined) {
+    command = modeCommand;
+    if (firstPositional !== undefined) {
+      const named = COMMAND_ALIASES.get(firstPositional);
+      if (named !== undefined && named !== modeCommand) {
+        throw new UsageError(
+          `--mode ${explicitMode} contradicts the command "${firstPositional}". Pass one or the other.`
+        );
+      }
+      args = named !== undefined ? positionals.slice(1) : positionals;
+    }
+  } else if (firstPositional !== undefined) {
     const resolved = COMMAND_ALIASES.get(firstPositional);
     if (!resolved) {
       throw new UsageError(
@@ -485,31 +508,6 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     }
     command = resolved;
     args = positionals.slice(1);
-  } else if (explicitMode !== undefined) {
-    const resolved = COMMAND_ALIASES.get(explicitMode);
-    if (!resolved) {
-      throw new UsageError(
-        `Unknown --mode "${explicitMode}". Expected one of: ${Array.from(COMMAND_ALIASES.keys()).join(", ")}.`
-      );
-    }
-    command = resolved;
-  }
-
-  // `generate --mode validate` used to run generate and ignore the flag; `--mode bogus`
-  // with a command word was accepted too. A mode that contradicts the command is a
-  // usage error, and an unknown mode is an error either way.
-  if (explicitMode !== undefined) {
-    const resolvedMode = COMMAND_ALIASES.get(explicitMode);
-    if (!resolvedMode) {
-      throw new UsageError(
-        `Unknown --mode "${explicitMode}". Expected one of: ${Array.from(COMMAND_ALIASES.keys()).join(", ")}.`
-      );
-    }
-    if (firstPositional !== undefined && resolvedMode !== command) {
-      throw new UsageError(
-        `--mode ${explicitMode} contradicts the command "${firstPositional}". Pass one or the other.`
-      );
-    }
   }
   const expectedArgs = COMMAND_ARITY[command];
   if (args.length !== expectedArgs) {
@@ -957,6 +955,33 @@ function installDependencies(cwd: string): InstallOutcome {
 }
 
 /**
+ * The output directory a `setup` run's own generation will use, for the pre-commit hook.
+ *
+ * `init.outDir` is the directory the wizard's answers name, which is the right answer when setup
+ * has just written the config from those answers. A reused config was not written from them:
+ * baking that answer put `SNAPSHOT_DIR="snapshot"` into a project whose config names `ctx`, so the
+ * hook found no manifest there and skipped the staleness check on every commit — a gate that
+ * silently never ran, which is the one failure mode a commit gate must not have. Resolving the
+ * kept config is the only way to know the directory the hook has to guard.
+ */
+async function setupHookOutDir(
+  invocation: ParsedInvocation,
+  init: { outDir: string; reused: boolean }
+): Promise<string> {
+  if (!init.reused || invocation.outDir !== undefined) return init.outDir;
+  const loaded = await loadConfigFileDetailed(invocation.cwd);
+  if (loaded.errors.length > 0) {
+    // The generation below is about to fail with the same reason; failing here first keeps a hook
+    // for a directory that will never receive a snapshot out of the user's .git.
+    throw new Error(
+      `The config file could not be read: ${loaded.errors.join("; ")}. ` +
+        "Fix it, or delete it to use the defaults."
+    );
+  }
+  return resolveConfig(loaded.config, {}, invocation.cwd).outDir;
+}
+
+/**
  * Runs `fn` with stdout captured.
  *
  * `setup` generates through the normal `generate` command so every guard, summary line and JSON
@@ -1019,12 +1044,23 @@ async function runSetupCommand(
       dryRun: invocation.dryRun,
     });
 
-    // Installed after the config exists and before the first generate, so the very first
-    // commit of the setup is already gated. A dry run writes nothing, so it is skipped there.
-    const hook =
-      invocation.installHook === true
-        ? installPreCommitHook(invocation.cwd, init.outDir)
-        : null;
+    // `runInit`'s answers describe the config it would write. When it keeps an existing file they
+    // name a path and a preset that are not on disk: setup used to print "Keeping
+    // snapshot.config.mjs" for a kept snapshot.config.json, and claim the requested `--preset`
+    // while the generation used the kept config's own one. Report the file that was actually
+    // kept, and claim a preset only when this run wrote one down.
+    const keptConfigPath = init.reused
+      ? findConfigFile(invocation.cwd) ?? init.configPath
+      : init.configPath;
+    const appliedPreset = init.reused ? null : init.preset;
+    if (init.reused && invocation.preset !== undefined) {
+      // A kept config is the repository's own file, so the flag cannot be written anywhere.
+      // Saying nothing about it would be the silent fallback rule 1 forbids.
+      init.notes.push(
+        `--preset ${invocation.preset} was not applied: the existing config is kept. ` +
+          "Edit its preset setting, or run `init --force` to write a new one."
+      );
+    }
 
     if (invocation.dryRun) {
       const manager = invocation.noInstall ? null : detectPackageManager(invocation.cwd).name;
@@ -1033,9 +1069,9 @@ async function runSetupCommand(
           `${JSON.stringify(
             {
               dryRun: true,
-              configPath: init.configPath,
+              configPath: keptConfigPath,
               configReused: init.reused,
-              preset: init.preset,
+              preset: appliedPreset,
               install: manager,
               configText: init.configText,
             },
@@ -1047,7 +1083,7 @@ async function runSetupCommand(
       }
       info("\n🧪 Dry run — setup would:");
       info(
-        `   1. ${init.reused ? `keep ${path.basename(init.configPath)}` : `write ${path.basename(init.configPath)} (preset: ${init.preset})`}`
+        `   1. ${init.reused ? `keep ${path.basename(keptConfigPath)}` : `write ${path.basename(keptConfigPath)} (preset: ${appliedPreset})`}`
       );
       info("   2. add the npm scripts, the devDependency and the .gitignore entries");
       if (manager !== null) info(`   3. install with ${manager}`);
@@ -1057,14 +1093,24 @@ async function runSetupCommand(
       return 0;
     }
 
+    // Installed after the config exists and before the first generate, so the very first commit of
+    // the setup is already gated. The dry-run branch returned above on purpose: a dry run writes
+    // nothing, and that includes the hook — this block used to sit before the branch and did write
+    // it. The directory comes from the config the generation will actually load, not from the
+    // wizard's answers, which describe a file setup may have deliberately kept.
+    const hook =
+      invocation.installHook === true
+        ? installPreCommitHook(invocation.cwd, await setupHookOutDir(invocation, init))
+        : null;
+
     if (invocation.format !== "json") {
       // The interactive path already introduced itself and printed the directory, so the
       // banner would be a second header for the same run.
       if (!interactive) info(`🚀 Setup for: ${invocation.cwd}`);
       if (init.reused) {
-        info(`♻  Keeping ${path.basename(init.configPath)} (${presetSummary(init)})`);
+        info(`♻  Keeping ${path.basename(keptConfigPath)}`);
       } else {
-        info(`✅ Created ${path.basename(init.configPath)} (${presetSummary(init)})`);
+        info(`✅ Created ${path.basename(keptConfigPath)} (${presetSummary(init)})`);
       }
       if (init.scripts.length > 0) info(`   Added npm scripts: ${init.scripts.join(", ")}`);
       if (init.dependency.added && init.dependency.range !== null) {
@@ -1074,6 +1120,9 @@ async function runSetupCommand(
         info(`   Added to .gitignore: ${init.gitignoreEntries.join(", ")}`);
       }
       if (hook) for (const note of hook.notes) info(`   ${note}`);
+      if (init.reused && invocation.preset !== undefined) {
+        info(`   ⚠ --preset ${invocation.preset} was not applied: the existing config is kept.`);
+      }
     }
 
     let install: InstallOutcome | null = null;
@@ -1095,7 +1144,14 @@ async function runSetupCommand(
     if (invocation.includeSensitiveFiles === true) generateArgs.push("--include-sensitive-files");
     const budget = invocation.maxPartBytesRaw ?? invocation.maxPartBytes;
     if (budget !== undefined) generateArgs.push("--max-part-bytes", String(budget));
-    if ((invocation.skipArtifacts ?? []).length > 0) {
+    // `--only-artifacts` has to travel as itself, not only as the derived suppression list:
+    // suppression cannot switch an artifact back on, so a reused config that turned the named
+    // artifact off left the run with *nothing* to write. This is the same bug `runCommand` had
+    // for a plain generate. Forwarding both spellings would make the nested generate reject the
+    // pair as a contradiction, so it is one or the other.
+    if ((invocation.onlyArtifacts ?? []).length > 0) {
+      generateArgs.push("--only-artifacts", (invocation.onlyArtifacts ?? []).join(","));
+    } else if ((invocation.skipArtifacts ?? []).length > 0) {
       generateArgs.push("--skip-artifacts", (invocation.skipArtifacts ?? []).join(","));
     }
     // Every explicit choice the caller made has to survive the hop into `generate`, or
@@ -1130,9 +1186,9 @@ async function runSetupCommand(
         parsed = null;
       }
       const setup = {
-        configPath: init.configPath,
+        configPath: keptConfigPath,
         configReused: init.reused,
-        preset: init.preset,
+        preset: appliedPreset,
         scripts: init.scripts,
         dependency: init.dependency,
         gitignoreEntries: init.gitignoreEntries,
@@ -1307,6 +1363,32 @@ function requestsJsonFormat(argv: readonly string[]): boolean {
   return format === "json";
 }
 
+/** Whether the closed-stdout guard has already been installed for this process. */
+let closedStdoutGuarded = false;
+
+/**
+ * Treats a downstream reader that closed the pipe as a normal early exit.
+ *
+ * `codebase-snapshot generate --format json | head` leaves the payload half-written, and the next
+ * write to stdout reports `EPIPE`. With no `error` listener Node treats that as an unhandled
+ * event and kills the process with a stack trace *after* the snapshot was already written — a
+ * crash the caller cannot act on, for a decision the reader made. The run therefore ends quietly
+ * with status 0. Every other stdout error is a real error and is re-thrown unchanged.
+ *
+ * Installed only when `main` runs, so importing this module (the documented side-effect-free
+ * surface) still installs nothing.
+ */
+function guardClosedStdout(): void {
+  if (closedStdoutGuarded) return;
+  closedStdoutGuarded = true;
+  process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE" || error.code === "ECONNRESET") {
+      process.exit(0);
+    }
+    throw error;
+  });
+}
+
 /**
  * Runs one invocation, and mentions a newer release when there is one.
  *
@@ -1315,6 +1397,8 @@ function requestsJsonFormat(argv: readonly string[]): boolean {
  * to the payload, and a JSON consumer must never have to parse a suggestion.
  */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  guardClosedStdout();
+
   // `stdout.isTTY` is the honest gate for "a person is watching": a pipe, a file or a CI job has
   // nobody to tell, and those are exactly the cases where a network call costs something.
   const pending =
@@ -1401,44 +1485,56 @@ async function runCommand(argv: string[]): Promise<number> {
     ? { config: null, warnings: [], errors: [], file: null }
     : await loadConfigFileDetailed(invocation.cwd);
   if (invocation.noConfig) info("⚙  --no-config: using built-in defaults, config file ignored");
-  for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
+  // A config that exists but cannot be read must not silently fall back to the defaults: the
+  // resulting snapshot would ignore every setting the developer wrote and still report success.
+  // The fatal entries are also in `loaded.warnings`, so they are not printed twice: they go into
+  // one message through `fail`, which is what keeps a `--format json` invocation from answering
+  // with an empty stdout. The non-fatal warnings are still listed as they are discovered.
   if (loaded.errors.length > 0) {
-    // A config that exists but cannot be read must not silently fall back to the
-    // defaults: the resulting snapshot would ignore every setting the developer
-    // wrote and still report success.
-    warn("❌ The config file could not be read. Fix it, or delete it to use the defaults.");
-    return 1;
+    return fail(
+      invocation.format,
+      `The config file could not be read: ${loaded.errors.join("; ")}. ` +
+        "Fix it, or delete it to use the defaults."
+    );
   }
+  for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
   if (loaded.file) info(`⚙  Using config ${path.relative(process.cwd(), loaded.file) || loaded.file}`);
 
-  const resolved = resolveConfig(
-    loaded.config,
-    {
-      mode: invocation.command as Mode,
-      format: invocation.format,
-      dryRun: invocation.dryRun,
-      cwd: invocation.cwd,
-      outDir: invocation.outDir,
-      includeMonolith: invocation.includeMonolith,
-      includeSensitiveFiles: invocation.includeSensitiveFiles,
-      maxPartBytes: invocation.maxPartBytes,
-      maxPartTokens: invocation.maxPartTokens,
-      largeFileBytes: invocation.largeFileBytes,
-      maxMonolithBytes: invocation.maxMonolithBytes,
-      skipArtifacts: invocation.skipArtifacts,
-      // `--only-artifacts` is forwarded as itself, not only as the derived suppression list:
-      // suppression cannot switch an artifact *on*, so a config that had turned one of the
-      // requested artifacts off left the run with nothing to write.
-      onlyArtifacts: invocation.onlyArtifacts,
-      discovery: invocation.discovery,
-      changedSince: invocation.changedSince,
-      staged: invocation.staged,
-      withDependents: invocation.withDependents,
-      skeleton: invocation.skeleton,
-      sarif: invocation.sarif,
-    } as Partial<CliOptions> & { discovery?: DiscoveryMode },
-    invocation.cwd
-  );
+  let resolved: ResolvedSnapshotConfig;
+  try {
+    resolved = resolveConfig(
+      loaded.config,
+      {
+        mode: invocation.command as Mode,
+        format: invocation.format,
+        dryRun: invocation.dryRun,
+        cwd: invocation.cwd,
+        outDir: invocation.outDir,
+        includeMonolith: invocation.includeMonolith,
+        includeSensitiveFiles: invocation.includeSensitiveFiles,
+        maxPartBytes: invocation.maxPartBytes,
+        maxPartTokens: invocation.maxPartTokens,
+        largeFileBytes: invocation.largeFileBytes,
+        maxMonolithBytes: invocation.maxMonolithBytes,
+        skipArtifacts: invocation.skipArtifacts,
+        // `--only-artifacts` is forwarded as itself, not only as the derived suppression list:
+        // suppression cannot switch an artifact *on*, so a config that had turned one of the
+        // requested artifacts off left the run with nothing to write.
+        onlyArtifacts: invocation.onlyArtifacts,
+        discovery: invocation.discovery,
+        changedSince: invocation.changedSince,
+        staged: invocation.staged,
+        withDependents: invocation.withDependents,
+        skeleton: invocation.skeleton,
+        sarif: invocation.sarif,
+      } as Partial<CliOptions> & { discovery?: DiscoveryMode },
+      invocation.cwd
+    );
+  } catch (err) {
+    // An unusable setting is a hard error, never a fallback — and a JSON consumer still receives
+    // exactly one document rather than a stack trace on stderr and an empty stdout.
+    return fail(invocation.format, (err as Error).message);
+  }
 
   if (invocation.command === "validate") {
     // `validateSnapshot` already shape-checks the manifest — `describeManifestShapeProblem` runs

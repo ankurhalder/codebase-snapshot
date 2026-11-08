@@ -6,7 +6,12 @@ import { countLines } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
 import { resolveChangedScope } from "./scanner/changed.js";
 import { buildImportResolver, importsChangedFile } from "./scanner/dependents.js";
-import { BINARY_SCAN_BYTES, isBinaryFile, decodeText } from "./scanner/binary.js";
+import {
+  BINARY_SCAN_BYTES,
+  decodeText,
+  isBinaryExtension,
+  isBinaryFile,
+} from "./scanner/binary.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { escapeControls } from "./terminal.js";
@@ -261,34 +266,36 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
       return result;
     }
   }
-  // `generate` skips binaries and records `binary` in manifest.skipped[]. The
-  // explanation used to answer "included: true" for a file the very next run
-  // would drop, which is worse than no answer at all.
-  //
-  // Only a file too large to load is sniffed *before* it is read. Below the cap the decode
-  // below is the complete check — it looks at every byte, not a head — and it reports why
-  // the file is binary instead of a bare size. Sniffing first opened the file, read it in
-  // chunks and then read it again in full.
+  // The inclusion decision comes first, and it has to be `generate`'s decision in
+  // `generate`'s order (`src/index.ts`): a binary extension is skipped without reading, a file
+  // past the read cap is sniffed before it is read, and below the cap the decode is the complete
+  // check. The explanation used to ask only "is the content text?", so it answered
+  // "included: true" for a file the very next run would drop — an `assets/logo.png` holding a
+  // Git-LFS pointer is text, but generate skips it by extension and records `binary`.
+  if (isBinaryExtension(absolute)) {
+    result.included = false;
+    result.reason = "binary";
+    result.detail =
+      "binary extension; generate skips it without reading and records `binary` in manifest.skipped[]";
+    return result;
+  }
+
   let sizeOnDisk: number | null = null;
   try {
     sizeOnDisk = fs.statSync(absolute).size;
   } catch {
     sizeOnDisk = null;
   }
+  // Only a file too large to load is sniffed *before* it is read. Below the cap the decode
+  // below is the complete check — it looks at every byte, not a head — and it reports why the
+  // file is binary instead of a bare size. Sniffing first also opened the file, read it in
+  // chunks and then read it again in full.
   if (sizeOnDisk !== null && sizeOnDisk > BINARY_SCAN_BYTES && isBinaryFile(absolute)) {
     result.included = false;
     result.reason = "binary";
     result.detail = "binary content; generate skips it and records `binary` in manifest.skipped[]";
     return result;
   }
-  result.layer = classifyLayer(relative, config.layers);
-  result.kind = classifyKind(relative, config.kinds);
-  result.language = detectLanguage(relative);
-
-  const layerRule = findRuleMatch(config.layers, relative);
-  if (layerRule) result.layerMatch = describeMatcher(layerRule.match);
-  const kindRule = findRuleMatch(config.kinds, relative);
-  if (kindRule) result.kindMatch = describeMatcher(kindRule.match);
 
   if (fs.existsSync(absolute) && fs.statSync(absolute).isFile()) {
     const buffer = fs.readFileSync(absolute);
@@ -312,6 +319,18 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
       .slice(0, 20)
       .map((finding) => ({ rules: finding.rules, line: finding.line }));
   }
+
+  // Classification is for a file the snapshot would actually contain. Assigning it before the
+  // skip decisions made `included: false` answers carry layer/kind/language, which the
+  // documented JSON contract says a skipped path does not have.
+  result.layer = classifyLayer(relative, config.layers);
+  result.kind = classifyKind(relative, config.kinds);
+  result.language = detectLanguage(relative);
+
+  const layerRule = findRuleMatch(config.layers, relative);
+  if (layerRule) result.layerMatch = describeMatcher(layerRule.match);
+  const kindRule = findRuleMatch(config.kinds, relative);
+  if (kindRule) result.kindMatch = describeMatcher(kindRule.match);
 
   const manifest = readManifest(config);
   const entry = Array.isArray(manifest?.files)

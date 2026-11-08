@@ -96,16 +96,14 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "version",
   ],
   validate: VALIDATE_OPTIONS,
+  // `report` reads `manifest.json` and prints what is there; a generation setting would change
+  // nothing. The seven generation flags used to be listed here and were accepted as silent no-ops
+  // — the exact "flag that parses but changes nothing" this table exists to prevent — while
+  // `--discovery` was already rejected. Both the parser and `describe`'s `appliesTo` read this
+  // list, so removing them narrows the two together.
   report: [
     "cwd",
     "out-dir",
-    "max-part-bytes",
-    "large-file-bytes",
-    "max-monolith-bytes",
-    "include-monolith",
-    "include-sensitive-files",
-    "skip-artifacts",
-    "only-artifacts",
     "no-config",
     "no-update-check",
     "format",

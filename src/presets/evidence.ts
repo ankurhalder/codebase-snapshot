@@ -66,6 +66,11 @@ export function suffixEvidence(context: PresetContext, suffix: string): string |
  * Mirrors the `docs` preset's condition exactly: three or more Markdown files and no
  * `package.json` (a JavaScript repository that happens to keep a `docs/` folder is not a
  * documentation site).
+ *
+ * The count is built by `buildPresetContext`, which skips this generator's own snapshot
+ * directories: their README, parts and reports are output, not documentation. Without that,
+ * a custom `outDir` made the second run of a no-`package.json` repository look like a docs
+ * site and changed what the snapshot contained.
  */
 export function markdownEvidence(context: PresetContext): string | null {
   if (context.markdownCount < 3 || context.files.has("package.json")) return null;

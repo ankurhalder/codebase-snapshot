@@ -32,7 +32,7 @@ const STRONG_CREDENTIAL_NAME =
   "(?:password|passwd|passphrase|pwd|api[_-]?key|api[_-]?secret|" +
   "secret[_-]?access[_-]?key|secret[_-]?key|client[_-]?secret[_-]?key|client[_-]?secret|" +
   "private[_-]?key|aws[_-]?secret[_-]?access[_-]?key|access[_-]?token|refresh[_-]?token|" +
-  "auth[_-]?token|session[_-]?token|secret|token)";
+  "auth[_-]?token|session[_-]?token|session[_-]?key|secret|token)";
 
 /**
  * Names that are only a credential when the value is unmistakably a credential.
@@ -103,11 +103,49 @@ const UNQUOTED_MIN_LENGTH = 2;
  */
 const PROSE_CONTINUATION = String.raw`(?!\s+[a-z])`;
 
+/**
+ * Characters a literal credential value may continue with.
+ *
+ * `$`, `!`, `@`, `^`, `*` and `?` are in every "must contain a symbol" password policy and
+ * in URL-safe tokens. Leaving them out did not make the unquoted rules safer: the value stopped at
+ * the first one and the artifact carried a mask followed by the rest of the password
+ * (`db_password: [REDACTED]$$w0rdSecr3t`, `api_token: [REDACTED]!en$value`), which claims
+ * coverage the snapshot does not have. A rule must mask the whole value or not fire at all.
+ *
+ * The characters kept out are the ones that end a value in the formats these rules serve:
+ * whitespace, quotes, `,` and `;` (separators) and the openers `(`, `[` and `{`. `#` is kept
+ * *in*: a leading `#` opens a comment, but a `#` in the middle of a token is part of the password —
+ * `Sup3r!Secret#Pass` used to stop at the `#` and emit `#Pass` beside the marker. The trailing
+ * lookahead below refuses a match that stops at an opener, so a call expression is never
+ * truncated into a credential — the failure mode above was a truncated *literal*.
+ */
+const UNQUOTED_VALUE_CHARS = String.raw`A-Za-z0-9_+=/%:~$!@#^*?-`;
+/** The value alphabet plus `.`, which continues a dotted path and therefore ends this token. */
+const UNQUOTED_VALUE_END = String.raw`[A-Za-z0-9_+=/%:.~$!@#^*?-]`;
+/**
+ * Punctuation a credential may **begin** with.
+ *
+ * Passwords made by a generator start with \`$\`, \`!\`, \`@\` or \`#\` at least as often as with a letter,
+ * and the literal class below begins with a word character — so \`api_token: !en$value\` and
+ * \`secret: $$w0rdSecr3t\` were emitted whole, with no match and therefore no marker. The value's
+ * first character may therefore be any of these; the token must also show one digit or a second
+ * punctuation character somewhere, which is what keeps a YAML/CloudFormation tag (\`!Ref\`,
+ * \`!GetAtt\`, \`!Sub\`) and a bare operator from looking like a credential.
+ *
+ * Quoted and backtick-wrapped values are already covered by the quoted rules; an *opener*-led
+ * value (\`(hunter2)\`, \`[hunter2]\`) is matched only when it closes, and \`redact.ts\` masks it only
+ * in a data/shell file because in source code the same shape is an expression.
+ */
+const UNQUOTED_VALUE_START = String.raw`[$!@#%^&*~+]`;
 const UNQUOTED_LITERAL =
-  String.raw`(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{${UNQUOTED_MIN_LENGTH - 1},511})(?![A-Za-z0-9_+=/%:.~-]|[({[])` +
+  String.raw`(` + // one capture, whichever branch matched: valueGroup is 1
+    String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))[A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{${UNQUOTED_MIN_LENGTH - 1},511}(?!${UNQUOTED_VALUE_END}|[({[])` +
+    String.raw`|(?=${UNQUOTED_VALUE_START}[^ \t]{0,62}(?:[0-9]|${UNQUOTED_VALUE_START}))${UNQUOTED_VALUE_START}[${UNQUOTED_VALUE_CHARS}]{2,511}(?!${UNQUOTED_VALUE_END}|[({[])` +
+    String.raw`|\([^()\s]{1,510}\)|\[[^\[\]\s]{1,510}\]|\{[^{}\s]{1,510}\}` +
+    String.raw`)` +
   PROSE_CONTINUATION;
 const UNQUOTED_AMBIGUOUS_LITERAL =
-  String.raw`(?![0-9]+(?![A-Za-z0-9_+=/%:.~-]))([A-Za-z0-9_][A-Za-z0-9_+=/%:~-]{7,511})(?![A-Za-z0-9_+=/%:.~-]|[({[])` +
+  String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))([A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{7,511})(?!${UNQUOTED_VALUE_END}|[({[])` +
   PROSE_CONTINUATION;
 
 /**
@@ -142,6 +180,19 @@ const NOT_AFTER_QUOTE = String.raw`(?<!["'])`;
  * `word(.word)+/`, and the MCP server's own field-name constants do.
  */
 const NOT_A_NAMESPACED_IDENTIFIER = String.raw`(?![a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+/)`;
+
+/**
+ * A quoted key whose name ENDS in a credential word.
+ *
+ * JSON and YAML quote their keys, and the credential word is normally a suffix of a longer
+ * camelCase name: `"dbPassword"`, `"discordToken"`, `"awsSecret"`, `"sessionKey"`. The old
+ * alternative required the whole quoted string to be exactly the credential word, so only
+ * `"password"` matched and every prefixed key — the spelling essentially every JSON config uses for
+ * the same field — reached `parts/*.md` with its value in clear. The bounded prefix is word
+ * characters only and cannot contain a quote, so a list of key *names* (`["awsSecret:", "apiKey:"]`)
+ * still does not match: there the quoted string contains the separator and is followed by a comma.
+ */
+const QUOTED_CREDENTIAL_KEY = `["'][A-Za-z0-9_$-]{0,64}${STRONG_CREDENTIAL_NAME}["']`;
 
 /**
  * The value of a quoted assignment, escaped pairs included.
@@ -241,14 +292,29 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     pattern: /xox[baprsdc]-[0-9A-Za-z-]{10,250}/,
   },
   {
-    // Prefix-only vendors. Each prefix below is documented, globally unique and
-    // cannot collide with an ordinary identifier, which is what makes a bare
-    // prefix rule cheap and safe: `glpat-` (GitLab), `hvs.`/`s.` (Vault service
-    // and batch tokens), `whsec_` (Stripe webhook secret), `dckr_pat_` (Docker
-    // Hub), `hf_` (HuggingFace), `ya29.` (Google OAuth access token).
+    // Known vendor token shapes: prefix-unique tokens, plus the few fixed layouts whose format is
+    // documented and cannot collide with an ordinary identifier.
+    //
+    // Each prefix below is globally unique, which is what makes a bare prefix rule cheap and
+    // safe: `glpat-` (GitLab), `hvs.`/`s.` (Vault service and batch tokens), `whsec_`
+    // (Stripe webhook secret), `dckr_pat_` (Docker Hub), `hf_` (HuggingFace), `ya29.`
+    // (Google OAuth access token), `shpat_`/`shpca_`/`shppa_`/`shpss_` (Shopify admin and
+    // storefront tokens).
+    //
+    // The fixed shapes have no prefix to anchor on and were each emitted in clear:
+    // - Telegram bot token: `<8-10 digit bot id>:<35-character secret>`.
+    // - Discord bot token: `<base64 user id>.<6-8 char hmac>.<25-45 char signature>`; demanding
+    //   all three segments keeps ordinary dotted identifiers out.
+    // - Azure DevOps personal access token: exactly 52 alphanumerics that always mix case and
+    //   digits, so a hash, a UUID or a plain identifier — all single-case or a different length —
+    //   does not match.
+    //
+    // The rule name still says "prefix" because that is how the catalogue began; it is the
+    // vendor-token rule, and growing a new named rule per vendor would make the documented
+    // pattern count drift on every release.
     rule: "known-vendor-token-prefix",
     pattern:
-      /\b(?:glpat-[A-Za-z0-9_-]{20,64}|glrt-[A-Za-z0-9_-]{20,64}|hvs\.[A-Za-z0-9_-]{20,128}|hvb\.[A-Za-z0-9_-]{20,128}|s\.[A-Za-z0-9]{20,64}|whsec_[A-Za-z0-9]{20,64}|dckr_pat_[A-Za-z0-9_-]{20,64}|hf_[A-Za-z0-9]{30,64}|ya29\.[A-Za-z0-9_-]{20,128}|sk_test_[A-Za-z0-9]{16,64}|1\/\/0[A-Za-z0-9_-]{20,64})/,
+      /\b(?:glpat-[A-Za-z0-9_-]{20,64}|glrt-[A-Za-z0-9_-]{20,64}|hvs\.[A-Za-z0-9_-]{20,128}|hvb\.[A-Za-z0-9_-]{20,128}|s\.[A-Za-z0-9]{20,64}|whsec_[A-Za-z0-9]{20,64}|dckr_pat_[A-Za-z0-9_-]{20,64}|hf_[A-Za-z0-9]{30,64}|ya29\.[A-Za-z0-9_-]{20,128}|sk_test_[A-Za-z0-9]{16,64}|1\/\/0[A-Za-z0-9_-]{20,64}|shpat_[A-Za-z0-9]{20,64}|shpca_[A-Za-z0-9]{20,64}|shppa_[A-Za-z0-9]{20,64}|shpss_[A-Za-z0-9]{20,64}|[0-9]{8,10}:[A-Za-z0-9_-]{35}|[A-Za-z0-9]{20,30}\.[A-Za-z0-9_-]{5,8}\.[A-Za-z0-9_-]{25,45}|(?=[A-Za-z0-9]{0,51}[a-z])(?=[A-Za-z0-9]{0,51}[A-Z])(?=[A-Za-z0-9]{0,51}[0-9])[A-Za-z0-9]{52})(?![A-Za-z0-9])/,
   },
   {
     rule: "slack-webhook-url",
@@ -303,36 +369,49 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // (including one invented tomorrow) is covered, provided the `//` is followed
     // immediately by the userinfo: `// see the docs` and a bare reminder comment
     // never match, because a space or the comment wording breaks the shape.
+    //
+    // Three shapes joined it, all the same fact — a URL carries the credential in plain sight —
+    // and each cost a leak while it was elsewhere:
+    // - The user part may be **empty**: Redis, SMTP, AMQP and FTP URLs routinely omit the username
+    //   (`redis://:password@host`), and a `{1,128}` prefix made every one of those invisible.
+    // - `curl -u user:password` sends the same userinfo without a scheme; the lookbehind
+    //   consumes the flag so the match is the credential alone.
+    // - An Azure SAS link authenticates with `?sig=`; the signature *is* the credential.
     rule: "uri-credentials",
     pattern:
-      /\/\/[^\s:/@"'`;()<>,]{1,128}:[^\s:/@"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}/,
+      /\/\/[^\s:/@"'`;()<>,]{0,128}:[^\s:/@"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}|(?<=(?:^|[\s;|&(])--?u(?:ser)?[ \t=]{1,8})["']?[^\s"']{1,300}:[^\s"']{0,256}["']?|(?<=[?&])sig=[A-Za-z0-9%._=~-]{20,300}(?![A-Za-z0-9%._=~-])/,
   },
   {
     // The host tail stops at quotes, `;`, `)`, `<`, `>` and `,`: an unbounded
     // `[^\s/]` used to swallow the closing quote and the statement separator of
     // the string the URL was written in.
+    // The user part may be empty here too: `redis://:password@host` and `amqp://:password@host`
+    // are how those services are configured when the account is the server's default.
     rule: "database-uri-credentials",
     pattern:
-      /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|maria(?:db)?|redis(?:s)?|amqp(?:s)?|clickhouse|mssql|sqlserver|oracle):\/\/[^\s:@/"'`;()<>,]{1,128}:[^\s@/"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}/,
+      /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|maria(?:db)?|redis(?:s)?|amqp(?:s)?|clickhouse|mssql|sqlserver|oracle):\/\/[^\s:@/"'`;()<>,]{0,128}:[^\s@/"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}/,
   },
   {
+    // An empty user part is valid userinfo (`smtp://:password@host`: the account is the server's
+    // default), and it used to be the one shape every scheme-listed rule refused.
     rule: "basic-auth-url",
     pattern:
-      /(?:https?|ftp|sftp|ssh|git|smtp|smtps|ldap|ldaps):\/\/[^\s:@/"'`;()<>,]{1,128}:[^\s@/"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}/i,
+      /(?:https?|ftp|sftp|ssh|git|smtp|smtps|ldap|ldaps):\/\/[^\s:@/"'`;()<>,]{0,128}:[^\s@/"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}/i,
   },
   {
     // Quoted credentials in any common key spelling. The value may be as short
     // as one character: `password: "hunter2"` is a credential whatever its
     // entropy, and a length floor was exactly how it survived into `parts`.
     //
-    // The key is either bare (`dbPassword:`) or wholly quoted (`"dbPassword":`).
+    // The key is bare (`dbPassword:`), wholly quoted (`"password":`), or quoted with a
+    // camelCase prefix (`"dbPassword":`) — the last one is {@link QUOTED_CREDENTIAL_KEY}.
     // There is deliberately no optional quote *before* the separator: that let a
     // previous string's closing quote stand in for the key's, so
     // ``${pass ? "  PASS" : "  FAIL"}`` had `"  FAIL"` masked as if `PASS` were
     // the key name.
     rule: "credential-assignment",
     pattern: new RegExp(
-      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_NAMESPACED_IDENTIFIER}(["'\`])${QUOTED_VALUE}\\1`,
+      `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_NAMESPACED_IDENTIFIER}(["'\`])${QUOTED_VALUE}\\1`,
       "i"
     ),
     valueGroup: 2,
@@ -360,9 +439,21 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // character, so `["awsSecret:", "apiKey:"]` — the list of key names the lookbehind was added
     // for — cannot match here anyway. `redact.ts` still refuses a match whose separator is inside
     // the literal, which is the case that list actually is.
+    //
+    // The name may also be a *quoted* key: YAML allows `"dbPassword": hunter2`, and JSON cannot
+    // spell a key any other way, so the same {@link QUOTED_CREDENTIAL_KEY} fragment is used here.
+    // Without it a quoted key whose value was not quoted emitted the value in clear.
+    //
+    // A colon-form assignment in a data file masks the whole remainder of the value to
+    // end-of-line, whatever punctuation it holds. A strong credential name is the evidence that
+    // the thing after it is a value, and the character classes above cannot cover every symbol a
+    // password may contain — `password: pa&ss` used to stop at the `&`. This branch is a
+    // lookbehind, so the match is the value alone, and `redact.ts` only applies it to a data or
+    // shell file: in source code the same shape is an expression and stays untouched, and an `URL`
+    // query string keeps its `&` separators because they are not a colon form.
     rule: "credential-assignment-unquoted",
     pattern: new RegExp(
-      `${UNQUOTED_STRONG_NAME}\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}`,
+      `(?:${QUOTED_CREDENTIAL_KEY}|${UNQUOTED_STRONG_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}:[ \t]{1,8})(?![ \t]*["'\`])(?![ \t]*[|>])${NOT_A_LITERAL_VALUE}[^\r\n#]{1,300}`,
       "i"
     ),
     valueGroup: 1,
@@ -385,9 +476,15 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // needs no `valueGroup`. A lone `Bearer`/`Basic`, and a word after it that
     // cannot be a credential (`Bearer authentication`), stay readable: the value
     // must contain a digit, be at least 32 chars, or carry base64 `=` padding.
+    //
+    // A fourth shape was leaking: `Basic dXNlcjpwYXNz` is the base64 of `user:pass` — 12
+    // characters, no digit, no padding — and the three tests above all said "not a
+    // credential", so it reached the parts in clear. Mixed case is the discriminator: a base64
+    // rendering of textual userinfo mixes cases, while the prose the earlier rules were
+    // protecting (`Bearer authentication`) is a lowercase word.
     rule: "authorization-header",
     pattern:
-      /(?<=(?:Bearer|Basic)\s{1,8})(?:[A-Za-z0-9_.+/-]{0,31}[0-9][A-Za-z0-9_.+/-]{0,1024}|[A-Za-z0-9_.+/-]{32,1024}|[A-Za-z0-9_.+/-]{8,1024}={1,2})(?![A-Za-z0-9_.+/=-])/,
+      /(?<=(?:Bearer|Basic)\s{1,8})(?:[A-Za-z0-9_.+/-]{0,31}[0-9][A-Za-z0-9_.+/-]{0,1024}|[A-Za-z0-9_.+/-]{32,1024}|[A-Za-z0-9_.+/-]{8,1024}={1,2}|(?=[A-Za-z0-9_.+/-]{0,1023}[A-Z])(?=[A-Za-z0-9_.+/-]{0,1023}[a-z])[A-Za-z0-9_.+/-]{12,1024})(?![A-Za-z0-9_.+/=-])/,
   },
   {
     // Broader names than before (`apiKey`, `clientSecret`, `privateKey` were

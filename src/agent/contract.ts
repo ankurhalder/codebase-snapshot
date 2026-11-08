@@ -522,8 +522,8 @@ export function buildAgentContract(): AgentContract {
         appliesTo: optionAppliesTo("mode"),
         summary:
           "Select the command when no command word is given. Values: generate, validate, check, " +
-          "report, init, setup, explain, diff, describe, skill. A command word and --mode must name " +
-          "the same command; a contradiction is a usage error (exit 2).",
+          "report, init, setup, explain, diff, describe, skill, mcp. A command word and --mode must " +
+          "name the same command; a contradiction is a usage error (exit 2).",
       },
       {
         flag: "--cwd",

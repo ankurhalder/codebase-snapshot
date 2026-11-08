@@ -50,8 +50,12 @@ same persistently. The ownership marker is always written.
 
 Each `part-NNN.md` holds whole files under the byte budget (`maxPartBytes`, default 300 KB).
 A file larger than the budget is not split mid-file: it is truncated and carries an omission
-marker naming the budget that cut it (`... [347 lines omitted: part budget 1887 B] ...`). A file
-above `largeFileBytes` is emitted as a head/tail excerpt instead, with the same marker.
+marker naming the budget that cut it — the part budget the run was given, `maxPartBytes` or a
+per-layer override, never the smaller allowance left for the body after the section header.
+`--max-part-bytes 4096` writes `... [347 lines omitted: part budget 4096 B] ...`, for example.
+The line count describes the whole file, not the cut: a large file that arrived as a head/tail
+preview still reports how many source lines are missing. A file above `largeFileBytes` is
+emitted as a head/tail excerpt instead, with the same marker.
 
 Each file section is an anchor, a `### FILE:` heading, and **one** metadata line:
 
@@ -285,19 +289,44 @@ omission: the directory and its files are all accounted for, just not at the sam
 - **The tool refuses to replace a directory it did not write.** Pointing `--out-dir` at
   `src/` is refused with exit `1` and the directory is left untouched — a mistyped output
   path cannot delete source code. Empty directories, directories that hold nothing but
-  `.DS_Store`, and directories holding a complete snapshot this build wrote are accepted.
+  `.DS_Store`, and a complete snapshot whose recorded evidence still matches the directory are
+  accepted.
   A `.gitkeep` or `.gitignore` inside the directory is not accepted, because the generator never
   writes either into an output directory: a directory that holds one is somebody's data, so the
   run refuses instead of deleting it.
 - **Ownership is the marker, not a filename.** `.codebase-snapshot` is a JSON record carrying
   this generator's name and `version`, the marker's `schemaVersion`, a `createdAt` timestamp,
   a `pid`, a per-snapshot `id`, the run `state` (`staging` while it is being written, `complete`
-  once it is whole), the `manifestSha256` digest of the manifest it shipped, and `entries` — the
-  inventory of everything it wrote. `pid` is what lets a later run tell a crashed run's staging
-  directory and lock from a live one. A zero-byte marker, a marker that is not JSON, a marker
-  written by 3.0.0 (no `id`), a bare `manifest.json`, and a directory with files you added
-  after the run are all refused.
+  once it is whole), the `manifestSha256` digest of the manifest it shipped when one was written,
+  `entries` — every path it wrote, directories included — and `files`, the digest inventory that
+  turns a filename into evidence. `pid` is what lets a later run tell a crashed run's staging
+  directory and lock from a live one.
   See [Troubleshooting](troubleshooting.md#refusing-to-replace-outdir-).
+
+The record has this shape:
+
+```text
+generator, version, schemaVersion, createdAt, state, id, pid
+manifestSha256            sha256 of manifest.json, when one was written
+entries[]                 every path written, directories included
+files[]                   { path, bytes, sha256 } for every regular file written
+```
+
+The marker cannot record its own digest, and Finder's `.DS_Store` is ignored by the ownership
+check: a marker that carries `files` is verified file by file, so every other regular file in the
+directory must appear with its recorded byte length and sha256, every recorded path must still
+exist, and every entry in the directory must be one the run recorded. A marker written before
+`files` existed is accepted on its `manifestSha256` instead, provided `manifest.json` is there and
+the digest matches — that keeps an upgraded user's snapshot replaceable, while a legacy snapshot
+generated with the manifest artifact disabled cannot prove itself and has to be removed once.
+
+Refused: a zero-byte marker, a marker that is not JSON, is not an object or whose `files`
+inventory is malformed, a marker naming another generator or an unknown `schemaVersion`, one with
+no snapshot `id` or run `state`, one that
+records no contents, a bare `manifest.json` with no marker, a directory holding a path the marker
+did not record, and a recorded file whose byte length or sha256 no longer matches. A hand-written
+marker whose recorded digests do not match the directory is therefore not evidence: passing the
+check means reproducing the digests of a completed run, not copying a filename.
 
 The marker also makes hook-written artifacts safe: the entries a `hooks.afterGenerate` adds to
 the output are recorded in the marker, so they do not make the next run refuse the directory.

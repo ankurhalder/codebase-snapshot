@@ -17,7 +17,9 @@ import { buildTools } from "../dist/mcp.js";
  */
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIST = path.join(HERE, "..", "dist");
+const ROOT = path.resolve(HERE, "..");
+const DIST = path.join(ROOT, "dist");
+const readRepoFile = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
 const tools = new Map(buildTools().map((tool) => [tool.name, tool]));
 
 const contextFor = (root) => ({ cwd: root, roots: [root], log: () => {} });
@@ -102,5 +104,89 @@ test("no shipped file points at a source map that is not shipped", () => {
     fs.readdirSync(DIST).some((name) => name.endsWith(".map")),
     false,
     "and no map files are left behind either"
+  );
+});
+
+/**
+ * Release-process promises, from the launch audit.
+ *
+ * The Node 18/20/22 matrix ran only at release time, so a compatibility break first surfaced during
+ * a publish instead of on the branch; the scaffolder declared MIT without shipping a licence; and
+ * the publish job could not tell a stale manifest from the tag being released. Each test below
+ * fails against the repository as it was before those fixes — that is what makes it a regression
+ * test rather than a description of the current files.
+ */
+
+/** The `uses:` values in a workflow, without the trailing version comment. */
+function workflowActions(workflow) {
+  return [...workflow.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)].map((match) => match[1]);
+}
+
+/** Every third-party action in a workflow is pinned to a full commit SHA. */
+function assertActionsPinned(workflow, label) {
+  const actions = workflowActions(workflow);
+  assert.ok(actions.length > 0, `${label} must use at least one action`);
+  for (const action of actions) {
+    assert.match(
+      action,
+      /@[0-9a-f]{40}$/,
+      `${label} must pin ${action} to a full commit SHA; a moved tag can change what runs`
+    );
+  }
+}
+
+test("a pull request runs the same verify gate a release does", () => {
+  const workflow = readRepoFile(".github/workflows/pr.yml");
+  assert.match(
+    workflow,
+    /^on:\n {2}pull_request:\n {2}push:\n {4}branches: \[main\]$/m,
+    "the gate must run on pull requests and on pushes to main"
+  );
+  assert.match(workflow, /runs-on: ubuntu-latest/);
+  assert.match(workflow, /node: \[18, 20, 22\]/, "the same supported Node versions as the release");
+  assert.match(workflow, /run: npm ci/);
+  assert.match(workflow, /run: npm run verify/, "the gate must be the repository's real gate");
+  assert.doesNotMatch(workflow, /npm publish/, "the publish job belongs to publish.yml alone");
+  assertActionsPinned(workflow, "pr.yml");
+});
+
+test("a release tag that disagrees with the manifest version fails the publish", () => {
+  const workflow = readRepoFile(".github/workflows/publish.yml");
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event\.release\.tag_name \}\}/);
+  assert.match(workflow, /TAG_VERSION="\$\{RELEASE_TAG#v\}"/);
+  assert.match(
+    workflow,
+    /if \[ "\$TAG_VERSION" != "\$VERSION" \]/,
+    "the comparison is what turns a stale manifest into a failed publish instead of a wrong one"
+  );
+  assert.match(
+    workflow,
+    /^ {8}if: github\.event_name == 'release'$/m,
+    "the check only applies to a release event, which is the only event that carries a tag"
+  );
+  assert.doesNotMatch(
+    workflow,
+    /The only workflow in the repository/,
+    "pr.yml now runs the gate too, so that claim is stale"
+  );
+});
+
+test("workflows that hold the npm token pin their actions", () => {
+  for (const name of ["deprecate.yml", "unpublish.yml"]) {
+    assertActionsPinned(readRepoFile(`.github/workflows/${name}`), name);
+  }
+});
+
+test("create-codebase-snapshot ships the licence it declares", () => {
+  const create = JSON.parse(readRepoFile("packages/create/package.json"));
+  assert.equal(create.license, "MIT");
+  assert.ok(
+    (create.files ?? []).includes("LICENSE"),
+    "packages/create#files must list LICENSE, or the tarball ships no licence text"
+  );
+  assert.equal(
+    fs.readFileSync(path.join(ROOT, "packages", "create", "LICENSE"), "utf8"),
+    readRepoFile("LICENSE"),
+    "the scaffolder's licence must not drift from the repository's"
   );
 });

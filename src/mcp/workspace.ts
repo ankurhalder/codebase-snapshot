@@ -63,6 +63,28 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /**
+ * Resolves a path through the deepest ancestor that exists.
+ *
+ * `realpath` cannot answer "where would this directory land" before it is created, and a lexical
+ * `path.resolve` alone would call `linked/snapshots` inside the root even when `linked` is a
+ * junction pointing out of it. Resolving the existing ancestor and appending the names still to be
+ * created is the same rule `skill --install` uses for its targets, and the only one that answers
+ * the question the caller is actually asking.
+ */
+function resolveThroughExistingAncestor(target: string): string {
+  let existing = target;
+  const missing: string[] = [];
+  while (!fs.existsSync(existing)) {
+    missing.unshift(path.basename(existing));
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  const resolved = canonicalPath(existing);
+  return missing.length === 0 ? resolved : path.join(resolved, ...missing);
+}
+
+/**
  * Resolves the `root` argument against the directories this server may read.
  *
  * The default is the directory the server was started for, so a client that passes nothing gets
@@ -96,7 +118,8 @@ export function resolveRoot(requested: unknown, context: ToolContext): RootOutco
     ok: false,
     message:
       `"${wanted}" resolves outside the directories this server may read (${shown}). ` +
-      "Restart it with --root <path> to add a repository.",
+      "The server reads the directory it was started for; restart it with --cwd <directory> to " +
+      "serve a different repository.",
   };
 }
 
@@ -155,7 +178,8 @@ export interface WorkspaceCliOptions {
  */
 export async function openWorkspace(
   root: string,
-  overrides: WorkspaceOverrides = {}
+  overrides: WorkspaceOverrides = {},
+  allowedRoots?: readonly string[]
 ): Promise<WorkspaceOutcome> {
   const loaded = await loadConfigFileDetailed(root);
   if (loaded.errors.length > 0) {
@@ -193,7 +217,25 @@ export async function openWorkspace(
     if (typeof overrides.outDir !== "string" || overrides.outDir.trim().length === 0) {
       return { ok: false, message: '"outDir" must be a non-empty string.' };
     }
-    cliOptions.outDir = overrides.outDir.trim();
+    const requested = overrides.outDir.trim();
+    // Confine the *argument*, not the configuration. A configured outDir is the project's own
+    // decision and a config may legitimately point one directory up; an outDir argument comes from
+    // a prompt, and a prompt must not be able to drop a snapshot tree anywhere the process can
+    // create one. Reads are already confined to the served directories by resolveRoot; this is the
+    // write half of that rule, so the two halves cannot disagree.
+    const permitted = allowedRoots !== undefined && allowedRoots.length > 0 ? allowedRoots : [root];
+    const resolved = resolveThroughExistingAncestor(path.resolve(root, requested));
+    if (!permitted.some((allowed) => isInside(canonicalPath(allowed), resolved))) {
+      const shown = permitted.map((allowed) => canonicalPath(allowed)).join(", ");
+      return {
+        ok: false,
+        message:
+          `"outDir" must resolve inside the repository this server serves (${shown}). ` +
+          "A tool argument may not place the snapshot outside it; pass a directory inside the " +
+          "root, or restart the server with --cwd pointing at the repository you want to write.",
+      };
+    }
+    cliOptions.outDir = requested;
   }
   if (overrides.changedSince !== undefined) {
     if (typeof overrides.changedSince !== "string" || overrides.changedSince.trim().length === 0) {

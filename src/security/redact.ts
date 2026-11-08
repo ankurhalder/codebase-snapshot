@@ -289,6 +289,50 @@ export function scanAndRedactSecrets(
           }
           // A "quoted value" that is entirely a template interpolation is code, not a literal.
           if (group && isTemplateInterpolation(line, group[0], group[1])) continue;
+          // An unquoted value that stops at a character the value alphabet does not contain would
+          // be masked up to that character only: the marker, then the rest of the password. Drop
+          // the match instead — see TRUNCATING_VALUE_CHARS.
+          if (
+            group &&
+            isUnquotedValue(line, group[0]) &&
+            TRUNCATING_VALUE_CHARS.test(line[group[1]] ?? "")
+          ) {
+            continue;
+          }
+          // The colon-form fallback in \`credential-assignment-unquoted\` matches the rest of the
+          // value with no capture group of its own, so \`group\` is undefined for it. That branch
+          // takes symbols a password may contain but an expression also uses (\`pa&ss\`): only a
+          // data or shell file may be masked that way, because editing an expression edits the
+          // program. A URL query string is untouched by it — that is not a colon form.
+          if (valueGroup !== undefined && group === undefined && !isAssignmentFile(filePath)) {
+            continue;
+          }
+          // An opener-led value is a literal in a data file and an expression in source code.
+          // Only the data-file reading is a credential; see OPENER_LED_VALUE.
+          if (
+            group &&
+            isUnquotedValue(line, group[0]) &&
+            OPENER_LED_VALUE.test(line.slice(group[0], group[1])) &&
+            !isAssignmentFile(filePath)
+          ) {
+            continue;
+          }
+          // \`&\` ends the token a rule can see, but the credential may continue past it. In a
+          // data-file colon form (\`password: pa&ss\`) the rest belongs to the value; in a URL query
+          // (\`?access_token=…&scope=read\`) it is the next parameter. Mask the token either way and
+          // keep the separator unless this is the colon form — never drop the match, because a
+          // dropped match emits the credential in clear (that was the 1.0.0 regression this guard
+          // replaces).
+          if (group && isUnquotedValue(line, group[0]) && line[group[1]] === "&") {
+            const valueStart = group[0];
+            const valueEnd =
+              isAssignmentFile(filePath) && isColonFormValue(line, valueStart)
+                ? tokenEnd(line, group[1])
+                : group[1];
+            spans.push({ start: valueStart, end: valueEnd, rule });
+            matchedRules.add(rule);
+            continue;
+          }
           spans.push(
             group
               ? { start: group[0], end: group[1], rule }
@@ -323,6 +367,29 @@ export function scanAndRedactSecrets(
 const TOKEN_CHARS_LEFT = /[A-Za-z0-9_+/-]/;
 /** Tokens may *end* with base64 padding, so the right side includes `=`. */
 const TOKEN_CHARS_RIGHT = /[A-Za-z0-9_+/=-]/;
+
+/**
+ * Characters that mean an unquoted value was **truncated**, not completed.
+ *
+ * `UNQUOTED_LITERAL` stops at every character outside a credential's alphabet, and its trailing
+ * lookahead already rejects the openers (`(`, `[`, `{`): there the value was an expression, and no mask
+ * is the right answer. The four characters below are neither part of that alphabet nor a
+ * legitimate value boundary, so a match that stops at one masks a prefix and then shows the rest
+ * of the password beside the marker — `db_password: [REDACTED]$$w0rdSecr3t` is the recorded
+ * failure. A mask that implies coverage it does not have is worse than no mask, so those
+ * matches are dropped entirely.
+ */
+const TRUNCATING_VALUE_CHARS = /[<>|\\]/;
+
+/**
+ * A value that begins with an opener is a *literal* in a data file and an *expression* in source.
+ *
+ * \`password: (hunter2)\` is a credential in YAML; \`opts.token: (value)\` is a program expression,
+ * and masking it would edit the code the snapshot is supposed to describe. The pattern requires a
+ * closing bracket either way, so the match is always the whole token; this guard decides whether
+ * the token is a value at all, from the file it came from.
+ */
+const OPENER_LED_VALUE = /^[(\\[{]/;
 
 /**
  * Widens a span over the whole token it belongs to.
@@ -479,6 +546,34 @@ function isSelfNamingConstant(line: string, start: number, end: number): boolean
  * `.env`, YAML and compose — the formats the unquoted rules exist for — but an expression in
  * a source file. This only classifies the value; what to do about it is `isDeclaredBinding`.
  */
+/**
+ * True when the value that starts at \`start\` is the right-hand side of a **colon** assignment.
+ *
+ * \`&` splits a URL query (\`?access_token=…&scope=read\`), so a value that reaches one is masked up
+ * to it and the separator is kept. In a colon-form data-file assignment (\`password: pa&ss`) the
+ * `&` is part of the password, and only then is the rest of the token masked with it. Walking back
+ * over the key name and the whitespace is what tells the two apart; \`=\` means a query parameter or
+ * a shell assignment and is deliberately not treated as colon form.
+ */
+function isColonFormValue(line: string, start: number): boolean {
+  let index = start;
+  while (index > 0 && /[A-Za-z0-9_$]/.test(line[index - 1] as string)) index -= 1;
+  while (index > 0 && (line[index - 1] === " " || line[index - 1] === "\t")) index -= 1;
+  return index > 0 && line[index - 1] === ":";
+}
+
+/**
+ * End of the token that starts at \`start\`, stopping at whitespace or a comment marker.
+ *
+ * Used for the colon-form `&` case: the credential continues past the `&` to the end of the
+ * assignment value, and a trailing \`# comment\` still starts a comment.
+ */
+function tokenEnd(line: string, start: number): number {
+  let end = start;
+  while (end < line.length && !/[\s#]/.test(line[end] as string)) end += 1;
+  return end;
+}
+
 function isUnquotedValue(line: string, start: number): boolean {
   const before = start > 0 ? line[start - 1] : "";
   return before !== '"' && before !== "'" && before !== "`";
