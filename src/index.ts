@@ -2533,7 +2533,15 @@ export function generateSnapshot(
   // Two runs with different tmpDirs but the same outDir used to take different locks
   // and both exit 0, the loser's snapshot silently gone. Lock both, in sorted order.
   const lockKeys = Array.from(new Set([tmpDir, outDir])).sort();
-  const releases = lockKeys.map((key) => acquireRunLock(key));
+  const releases: Array<() => void> = [];
+  try {
+    for (const key of lockKeys) releases.push(acquireRunLock(key));
+  } catch (error) {
+    // A run refused by the second lock must not keep the first: the leftover names
+    // this live pid, so the next run refuses it too instead of reclaiming it as stale.
+    for (const release of [...releases].reverse()) release();
+    throw error;
+  }
   const releaseLock = (): void => {
     // A copy: `reverse()` on the array itself reordered the list of locks this run
     // holds, which is the kind of state that turns a second `finally` into a bug.

@@ -81,3 +81,26 @@ test("a fresh lock is respected, whatever its contents", (t) => {
     fs.rmSync(lockPath, { force: true });
   }
 });
+
+test("a run refused by the second lock leaves neither lock behind", (t) => {
+  const dir = tempDir(t);
+  const config = project(dir);
+  const { lockPath: stagingLock } = lockFor(dir);
+
+  // The staging lock refuses the run. The output-directory lock is acquired before that
+  // refusal is discovered, and it used to stay behind — naming a *live* pid, so every
+  // later run refused it too instead of reclaiming it as stale.
+  fs.writeFileSync(stagingLock, "");
+  const outDirLock = lockPathFor(path.join(dir, "snapshot"));
+  t.after(() => {
+    fs.rmSync(stagingLock, { force: true });
+    fs.rmSync(outDirLock, { force: true });
+  });
+
+  assert.throws(() => generateSnapshot(config), /Another generate run is already using/);
+  assert.equal(
+    fs.existsSync(outDirLock),
+    false,
+    "the lock taken before the refusal is released"
+  );
+});
