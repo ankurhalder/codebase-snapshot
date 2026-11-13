@@ -8,9 +8,9 @@
  * a paragraph. A fragment is checked against the id set of the page it lands on, so it covers both
  * an in-page `href="#commands"` and a cross-page `href="configuration.html#project-presets"`.
  *
- * Runs against the built site, so run `npm run site` first. The deploy workflow runs this script
- * directly before uploading the artifact; `scripts/audit-site.mjs` runs the same anchor check as
- * part of `npm run verify`, which is where a pull request catches a dead link.
+ * Runs against the built site, so run `npm run site` first. `npm run verify` runs this script
+ * after the build and before the audit, so a pull request catches a dead link; the deploy
+ * workflow runs it directly before uploading the artifact.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";

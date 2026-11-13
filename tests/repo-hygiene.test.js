@@ -123,6 +123,23 @@ test("the site link checker cannot accept a sibling directory", () => {
   );
 });
 
+test("the verify gate checks that every site link resolves, not only the anchors", () => {
+  const verify = JSON.parse(read("package.json")).scripts.verify;
+
+  // `npm run site` builds the pages; `audit-site` only verifies fragments. A docs link to a page
+  // that does not exist therefore passed `npm run verify` and failed the deploy.
+  assert.match(verify, /npm run site/);
+  assert.match(
+    verify,
+    /node scripts\/check-site-links\.mjs/,
+    "a link to a page the site does not contain must fail the local gate too"
+  );
+  assert.ok(
+    verify.indexOf("npm run site") < verify.indexOf("node scripts/check-site-links.mjs"),
+    "the link check needs the built site"
+  );
+});
+
 test("the release notes and the version agree", () => {
   const version = JSON.parse(read("package.json")).version;
   const changelog = read("CHANGELOG.md");

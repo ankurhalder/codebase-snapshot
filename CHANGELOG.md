@@ -79,8 +79,9 @@ rejects the partitioning/artifact flags it never read and reports the inclusion 
 
 ### Verified
 
-`npm run verify` — lint, typecheck, 1,079 tests (0 failures, 8 skipped), the workflow pin check,
-the docs sync check, the site build, the site audit, the readme lint and the tarball check
+`npm run verify` — lint, typecheck, 1,080 tests (0 failures, 8 skipped), the workflow pin check,
+the docs sync check, the site build, the site link check, the site audit, the readme lint and the
+tarball check
 (38 files, lockfile agrees with 0.9.17). The publish workflow runs the same gate on Node 18, 20
 and 22 before it uploads.
 

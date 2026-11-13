@@ -111,7 +111,7 @@
     "audit-site": "node scripts/audit-site.mjs",
     "readme-lint": "node scripts/readme-lint.mjs",
     "seo-rank": "node scripts/seo-rank.mjs",
-    "verify": "npm run check && npm run check:workflows && npm run sync-docs -- --check && npm run site && npm run audit-site && npm run readme-lint && npm run pack-check",
+    "verify": "npm run check && npm run check:workflows && npm run sync-docs -- --check && npm run site && node scripts/check-site-links.mjs && npm run audit-site && npm run readme-lint && npm run pack-check",
     "snapshot": "node ./dist/bin.js generate",
     "snapshot:validate": "node ./dist/bin.js validate"
   },
