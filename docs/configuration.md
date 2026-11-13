@@ -188,7 +188,8 @@ Classification drives per-layer budgets and the `Layers:` breakdown in `report`.
 ```js
 export default {
   maxPartBytes: "300k",        // hard ceiling per part; default 307200, minimum 4096
-  // maxPartTokens: 32000,     // a per-part ceiling in tokens; narrows maxPartBytes (tokens x 4)
+  // maxPartTokens: 32000,     // a per-part ceiling in tokens; narrows maxPartBytes (tokens x 4,
+  //                           // and the byte ceiling is what is enforced — see docs/cli.md)
   // changedSince: "main",      // only files changed since this git ref
   // staged: true,             // only files staged for the next commit
   // withDependents: true,     // ...and the files that import them
@@ -388,6 +389,20 @@ ownership is established by the marker rather than by the filenames present.
 A hook runs in the **process** working directory, so with `--cwd elsewhere` a relative path
 resolves against your shell, not the target repository. Use the absolute paths on `manifest`
 (or resolve against `outDir` yourself) when passing `--cwd`.
+
+While an **async** hook is still running, the run keeps both locks (the staging root and the
+output directory) until it settles. A second `generate` for the same output is refused with
+"Another generate run is already using…" instead of publishing over the hook's writes; the lock's
+heartbeat means a hook that never settles cannot wedge the directory forever.
+
+A module config is re-evaluated only when its own bytes change. A helper module it imports stays
+cached under its own stable URL, so editing only the helper is picked up on the next process start
+— edit the config file itself if a running `--watch` must see the change.
+
+A `match` **function** in a layer or kind rule is executable code, and `manifest.config.digest`
+can only cover its source text, not the values its closure captures. `validate` says so in a
+warning rather than claiming that the classification is unchanged; use a string or `RegExp`
+matcher if the digest's answer matters to you.
 
 ## Complete example
 

@@ -193,7 +193,8 @@ test("manifests without a config digest say the configuration was not compared",
     generate(fx.repo, current);
     generate(fx.repo, full, ["--large-file-bytes", "1mb"]);
 
-    // Simulate a snapshot written before 4.0.5: same settings, no config.digest.
+    // Simulate a snapshot written before 4.0.5: same settings, no config.digest. A missing digest
+    // is unverifiable, not malformed, so the shape guard accepts it and diff says so.
     const oldSame = path.join(fx.outRoot, "old-same.json");
     const same = JSON.parse(fs.readFileSync(path.join(current, "manifest.json"), "utf8"));
     delete same.config.digest;

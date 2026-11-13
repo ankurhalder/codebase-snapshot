@@ -8,7 +8,8 @@
  */
 import { GENERATOR_NAME, GENERATOR_VERSION } from "../version.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
-import { ERROR_CODES, errorResponse } from "./protocol.js";
+import { ERROR_CODES, errorResponse, isJsonObject } from "./protocol.js";
+import type { JsonRpcId } from "./protocol.js";
 import { createMcpServer } from "./server.js";
 import type { McpServer } from "./server.js";
 import { createLineReader, createWriter } from "./stdio.js";
@@ -76,6 +77,16 @@ export async function runStdioServer(options: ServerOptions): Promise<number> {
     return writeChain;
   };
 
+  /**
+   * How many requests may run at once.
+   *
+   * The counter used to bound only shutdown, never admission: every line started immediately,
+   * and `snapshot_generate` spawns a worker per request, so ten concurrent calls meant ten workers
+   * over one repository and one output directory. Four keeps reads and one generation responsive
+   * while a client cannot wedge the server by flooding it.
+   */
+  const MAX_IN_FLIGHT = 4;
+
   let inFlight = 0;
   let inputEnded = false;
   let resolveDone: (code: number) => void = () => undefined;
@@ -98,9 +109,38 @@ export async function runStdioServer(options: ServerOptions): Promise<number> {
     if (response) await send(response);
   };
 
+  /**
+   * Answers a request the server will not admit.
+   *
+   * A notification has no id and gets no response; a request gets a typed `overloaded` error so
+   * the client can retry instead of waiting for an answer that was never going to arrive.
+   */
+  const rejectOverloaded = (line: string): void => {
+    let id: JsonRpcId | null = null;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (!isJsonObject(parsed)) return;
+      if (typeof parsed.id === "string" || typeof parsed.id === "number") id = parsed.id;
+      else return;
+    } catch {
+      return;
+    }
+    void send(
+      errorResponse(
+        id,
+        ERROR_CODES.overloaded,
+        `The server is already handling ${MAX_IN_FLIGHT} requests; retry this one when it is free.`
+      )
+    );
+  };
+
   const stopReading = createLineReader(process.stdin, {
     onOverflow: (bytes) => log(`mcp: discarded an oversized message (${bytes} bytes)`),
     onLine: (line) => {
+      if (inFlight >= MAX_IN_FLIGHT) {
+        rejectOverloaded(line);
+        return;
+      }
       inFlight += 1;
       void handleLine(line).finally(() => {
         inFlight -= 1;

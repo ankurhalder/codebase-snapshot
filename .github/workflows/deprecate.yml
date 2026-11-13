@@ -37,11 +37,9 @@ jobs:
       MESSAGE: ${{ inputs.message }}
     steps:
       - name: Refuse a non-exact spec
-        run: |
-          case "$SPEC" in
-            *@*.*.*) echo "deprecating $SPEC" ;;
-            *) echo "::error::spec must be an exact version like name@1.2.3 — refusing to touch a range"; exit 1 ;;
-          esac
+        # A parse, not a glob: `*@*.*.*` accepted `pkg@>=1.2.3` and `pkg@1.x.x`, and `npm
+        # deprecate` applies a range to every matching version.
+        run: node scripts/assert-exact-spec.mjs "$SPEC"
 
       # Pinned to a full commit SHA like every other action in a job that holds a long-lived token:
       # a moved tag must not be able to change the code that runs beside NPM_TOKEN.

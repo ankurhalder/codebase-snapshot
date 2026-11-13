@@ -3,8 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PRESETS } from "../presets/index.js";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
-import { REDACTION_MARKER } from "../security/redact.js";
+import { REDACTION_MARKER, advanceStringIndex } from "../security/redact.js";
 import type { DiscoveryMode, SecretRule, SkipRecord } from "../types.js";
+import { GENERATOR_NAME } from "../version.js";
 
 export interface GitInfo {
   branch: string;
@@ -52,6 +53,15 @@ export interface CollectOptions {
    * Defaults to the configured mode, then `auto`.
    */
   discovery?: DiscoveryMode;
+  /**
+   * Paths to consider even when discovery does not list them.
+   *
+   * `--staged` selects index paths, and a path staged for addition can be absent from the
+   * working tree (an unstaged delete), while a staged deletion has no working-tree file at all.
+   * Both must still reach the same include/exclude/sensitive filters as every other candidate, so
+   * they are appended here rather than merged into the result by hand.
+   */
+  extraPaths?: readonly string[];
 }
 
 export interface CollectResult {
@@ -236,13 +246,19 @@ const DEFAULT_IGNORED_FILES = [
  * were previously emitted verbatim into `parts/*.md`.
  */
 const SENSITIVE_BASENAME =
-  /^(?:\.env(?:[._-][A-Za-z0-9_-]*)*|\.env(?:backup|bak|old|orig|copy|save)|\.envrc|\.npmrc(?:\.[A-Za-z0-9_-]+)?|\.yarnrc(?:\.yml)?|\.netrc(?:\.[A-Za-z0-9_-]+)?|\.git-credentials|\.htpasswd|\.pgpass|\.vault-token|vault[-_]agent[-_]token|id_[a-z0-9_]+(?:\.[A-Za-z0-9_-]+)?|credentials(?:\.(?:json|ya?ml|toml))?|service[-_]?account(?:\.[a-z0-9_-]+)*\.json|secrets?\.(?:json|ya?ml|toml)|env|[A-Za-z0-9_-]{1,64}\.env)$/i;
+  /^(?:\.env(?:[._-][A-Za-z0-9_-]*)*|\.env(?:backup|bak|old|orig|copy|save)|\.envrc|\.npmrc(?:\.[A-Za-z0-9_-]+)?|\.yarnrc(?:\.yml)?|\.netrc(?:\.[A-Za-z0-9_-]+)?|\.git-credentials|\.htpasswd|\.pgpass|\.pypirc|\.vault-token|vault[-_]agent[-_]token|\.composer-auth\.json|auth\.json|application_default_credentials\.json|id_[a-z0-9_]+(?:\.[A-Za-z0-9_-]+)?|credentials(?:\.(?:json|ya?ml|toml))?|service[-_]?account(?:\.[a-z0-9_-]+)*\.json|secrets?\.(?:json|ya?ml|toml)|env|[A-Za-z0-9_-]{1,64}\.env)$/i;
 const SENSITIVE_PATH =
-  /(?:^|\/)\.(?:aws|ssh|gnupg)\/|(?:^|\/)\.docker\/config\.json$|(?:^|\/)\.kube\/config$/i;
+  /(?:^|\/)\.(?:aws|ssh|gnupg)\/|(?:^|\/)\.docker\/config\.json$|(?:^|\/)\.kube\/config$|(?:^|\/)\.config\/gcloud\/|(?:^|\/)\.composer\/|(?:^|\/)\.terraform\/credentials\.tfrc\.json$/i;
 const SENSITIVE_EXT = /\.(?:pem|key|p12|pfx|jks|keystore|ppk|asc|kdbx|tfstate|tfvars)$/i;
 
-/** `name.example`, `name.sample.json`, `id_rsa.template`, … */
-const TEMPLATE_SUFFIX = /\.(?:example|sample|template|dist)(?=$|[.])/i;
+/**
+ * A template marker as the final or penultimate segment: `name.example`, `name.sample.json`.
+ *
+ * The previous spelling was unanchored, and `replace(..., "gi")` removed `.example` from the
+ * *middle* of a name too: `id_rsa.example.pem` became `id_rsa.pem`, so the exemption below called
+ * a real private key a template and emitted it.
+ */
+const TEMPLATE_SUFFIX = /^(.*)\.(?:example|sample|template|dist)(\.[A-Za-z0-9_-]+)?$/i;
 
 /**
  * Editor, backup and download leftovers that hide a sensitive name behind a
@@ -279,15 +295,27 @@ export function isSensitivePath(relativePath: string): boolean {
   const raw = posixPath.split("/").pop() ?? posixPath;
   const base = normaliseName(raw);
 
-  // A template is allowed only when it would otherwise be denied on its own
-  // merit, so `credentials.example.json` is emitted while `credentials.json` is
-  // not, and `.env.example` is emitted while `.env.production.local` is not.
-  if (TEMPLATE_SUFFIX.test(base)) {
-    const stripped = base.replace(new RegExp(TEMPLATE_SUFFIX.source, "gi"), "");
-    if (matchesSensitiveList(posixPath, stripped)) return false;
-  }
+  if (templateOfCredentialFile(posixPath, base)) return false;
 
   return matchesSensitiveList(posixPath, base);
+}
+
+/**
+ * True when `base` is a *template of a credential file*, not a credential.
+ *
+ * The exemption exists for `credentials.example.json` and `.env.example`: a checked-in example is
+ * meant to be read. It applies only when the marker is the final suffix, because a key can carry
+ * a template word earlier in its name: `id_rsa.example.pem` and `certs/server.sample.key` stay
+ * sensitive, while `id_rsa.template` and `.env.example` are templates.
+ */
+function templateOfCredentialFile(posixPath: string, base: string): string | null {
+  // The marker must be the *last* suffix. `id_rsa.example.pem` is a private key whose stem
+  // happens to contain a template word; `id_rsa.template` is a template of one.
+  const match = TEMPLATE_SUFFIX.exec(base);
+  if (match === null) return null;
+  const stripped = `${match[1] ?? ""}${match[2] ?? ""}`;
+  if (SENSITIVE_EXT.test(stripped)) return null;
+  return matchesSensitiveList(posixPath, stripped) ? stripped : null;
 }
 
 /**
@@ -394,7 +422,7 @@ export function findSecretInPath(
     let match: RegExpExecArray | null;
     while ((match = scan.exec(posixPath)) !== null) {
       if (match[0].length === 0) {
-        scan.lastIndex += 1;
+        scan.lastIndex = advanceStringIndex(posixPath, match.index, scan.unicode);
         continue;
       }
       spans.push({ start: match.index, end: match.index + match[0].length });
@@ -500,11 +528,19 @@ function globBodyToRegExp(body: string, allowBraces: boolean): string {
     if (char === "*") {
       if (body[i + 1] === "*") {
         i += 1;
-        if (body[i + 1] === "/") {
+        // `**` has a cross-directory meaning only as a whole path segment. Everywhere else it is
+        // two stars in one name, which is `[^/]*` — translating it to `.*` made `src/a**b.ts`
+        // match `src/a/x/b.ts` and quietly included files the pattern never named.
+        // `i` now points at the second `*`, so the character before the pair is `i - 2`.
+        const startsSegment = i - 2 < 0 || body[i - 2] === "/";
+        if (startsSegment && body[i + 1] === "/") {
           i += 1;
-          out += "(?:.*/)?";
-        } else {
+          // Zero or more *complete* segments; `.*` also matched an empty one (`a//b`).
+          out += "(?:[^/]+/)*";
+        } else if (startsSegment && i + 1 === body.length) {
           out += ".*";
+        } else {
+          out += "[^/]*";
         }
       } else {
         out += "[^/]*";
@@ -964,6 +1000,67 @@ function hasSnapshotMarker(target: string): boolean {
  * configured output directory or the top-level `outDir`/`tmpDir` this run is
  * about to write (`toolOwnedPaths`), which cannot carry a marker on a first run.
  */
+/** Entries an operating system leaves behind; the marker does not record them either. */
+const IGNORABLE_DIRECTORY_ENTRIES = new Set([".DS_Store"]);
+
+/**
+ * True when `dir` carries a complete marker that accounts for everything in it.
+ *
+ * `existsSync` used to be the whole test, so a repository that shipped an empty
+ * `.codebase-snapshot` file (or a marker naming another generator) made the tool delete the
+ * directory as its own output. The marker is evidence only when it parses, names this generator,
+ * records a finished run, and its inventory covers every entry currently present: a directory
+ * holding anything the marker does not account for is someone else's, and is scanned instead.
+ */
+function isToolOwnedDirectory(dir: string): boolean {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(dir, ".codebase-snapshot"), "utf8");
+  } catch {
+    return false;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+  const marker = parsed as Record<string, unknown>;
+  if (
+    marker.generator !== GENERATOR_NAME ||
+    marker.state !== "complete" ||
+    typeof marker.id !== "string" ||
+    !Array.isArray(marker.files)
+  ) {
+    return false;
+  }
+
+  const accounted = new Set<string>();
+  for (const item of marker.files) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const entry = (item as Record<string, unknown>).path;
+    if (typeof entry !== "string" || entry.length === 0) return false;
+    const parts = entry.split("/");
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+      accounted.add(parts.slice(0, depth).join("/"));
+    }
+  }
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  return entries.every(
+    (entry) =>
+      entry === ".codebase-snapshot" ||
+      IGNORABLE_DIRECTORY_ENTRIES.has(entry) ||
+      accounted.has(entry)
+  );
+}
+
 function makeToolOwnedDecider(
   cwd: string,
   toolOwnedPaths: readonly string[]
@@ -976,7 +1073,7 @@ function makeToolOwnedDecider(
       const prefix = parts.slice(0, depth).join("/");
       let hasMarker = markers.get(prefix);
       if (hasMarker === undefined) {
-        hasMarker = fs.existsSync(path.join(cwd, prefix, ".codebase-snapshot"));
+        hasMarker = isToolOwnedDirectory(path.join(cwd, prefix));
         markers.set(prefix, hasMarker);
       }
       if (hasMarker) return true;
@@ -1262,6 +1359,19 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
     }
   }
 
+  // Staged paths are added before filtering, so they pass the identical include, exclude,
+  // secret-path and sensitive-file rules. Appending them to the *result* would have made a staged
+  // `.env` visible without `includeSensitiveFiles`.
+  const extraPaths = (options.extraPaths ?? []).map((entry) => entry.replace(/\\/g, "/"));
+  if (extraPaths.length > 0) {
+    const known = new Set(candidates);
+    for (const extra of extraPaths) {
+      if (extra.length === 0 || known.has(extra)) continue;
+      known.add(extra);
+      candidates.push(extra);
+    }
+  }
+
   const files = candidates
     .filter((file) => {
       // Our own output is bookkeeping, never a user-facing skip (C25).
@@ -1528,6 +1638,19 @@ function walkDirectory(
           path: relPath,
           reason: "symlink",
           detail: `link to neither a file nor a directory (target: ${linkTarget})`,
+        });
+        continue;
+      }
+      // Sensitivity is decided on the *target*, not only on the alias. The name check ran
+      // before this branch, so `public-context.txt -> .env` was inside the root, a regular
+      // file, and admitted with the `.env` contents intact. The detail never repeats the
+      // target's name: the skipped record itself lands in a report.
+      const targetRelative = path.relative(rootReal, targetReal).split(path.sep).join("/");
+      if (isSensitivePath(targetRelative)) {
+        results.skipped.push({
+          path: relPath,
+          reason: "sensitive-file",
+          detail: "link target is a credential-bearing file; not followed",
         });
         continue;
       }

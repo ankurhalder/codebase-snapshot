@@ -120,13 +120,14 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "with-dependents",
     "cwd",
     "out-dir",
-    "max-part-bytes",
+    // `--large-file-bytes` changes the inclusion mode `explain` reports, so it belongs here.
+    // `--max-part-bytes`, `--max-monolith-bytes`, `--include-monolith`, `--skip-artifacts` and
+    // `--only-artifacts` were accepted and never read: a per-file answer cannot depend on how the
+    // whole snapshot is partitioned, and none of them changes whether this file is included.
+    // Removed rather than implemented, because a flag that parses and does nothing is the defect
+    // this table exists to prevent.
     "large-file-bytes",
-    "max-monolith-bytes",
-    "include-monolith",
     "include-sensitive-files",
-    "skip-artifacts",
-    "only-artifacts",
     "no-config",
     "discovery",
     "no-update-check",

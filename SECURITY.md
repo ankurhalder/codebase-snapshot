@@ -79,21 +79,33 @@ strings: the test suites, the rule definitions in `src/security/patterns.ts` and
 the engine is meant to detect, they cannot authenticate against any service, and they exist so
 that detection can be proved. They are **not** credentials.
 
-Secret scanners are therefore configured to skip those surfaces, instead of asking a human to
-dismiss the same alert on every push:
+Secret scanners are therefore configured to skip the surfaces that are synthetic by
+construction, instead of asking a human to dismiss the same alert on every push:
 
 | Surface | Why it is excluded |
 | :--- | :--- |
 | `tests/**` | the fixtures assert that detection fires |
+| `audit/**` | verification reports quote the probes they describe |
 | `src/security/patterns.ts`, `src/security/redact.ts` | the rule definitions and their worked examples |
-| `**/*.md`, `**/docs/**`, `llms.txt` | documentation explains the shapes by showing them |
 | `package-lock.json` | integrity digests are not credentials |
 
-Both scanner configurations carry that list: `.github/secret_scanning.yml` for GitHub's scanner
-and `.gitguardian.yaml` for ggshield, the GitGuardian CLI and CI scanner. The GitGuardian
+`docs/**`, `**/*.md` and `llms.txt` are **not** excluded any more. They used to be, which put
+every published page and the README outside the detector: a real token pasted into documentation
+would not have been reported. Those files are scanned now.
+
+The documented example values that remain in scanned files are
+`hunter2`/`hunter2hunter2`, `AKIAIOSFODNN7EXAMPLE`, `replace-me-…`, `<…>` placeholders and
+`sk-...`. They are synthetic and cannot authenticate. An alert naming one of them is reviewed
+and allowlisted by value in the scanner's dashboard rather than by excluding the whole file —
+**owner: the maintainers**, reviewed when a scanner version changes its generic detectors. This is
+a residual risk: a real credential in a Markdown file is outside the file-level exclusion list and
+is reported, but a real credential *inside a documented example value* would not be.
+
+Both scanner configurations carry the file-level list: `.github/secret_scanning.yml` for GitHub's
+scanner and `.gitguardian.yaml` for ggshield, the GitGuardian CLI and CI scanner. The GitGuardian
 *dashboard* does not read either file — its exclusions live in workspace settings
 (**Secrets detection → Filepath exclusions**) and are applied retroactively, so adding them
-there also clears incidents that already exist.
+there also clears incidents that already exist. Its allowlist is configured there too.
 
 Anywhere outside those paths, a real credential is handled normally: it is reported and it must
 be revoked. If you add a fixture outside them, use a placeholder no detector matches, or extend

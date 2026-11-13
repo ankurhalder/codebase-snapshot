@@ -96,6 +96,13 @@ export const ERROR_CODES = {
    * invent a partial one.
    */
   resourceTooLarge: -32000,
+  /**
+   * The server is at its concurrency limit.
+   *
+   * Implementation-defined range, like `resourceTooLarge`. A typed error rather than silent
+   * queueing or a dropped request: the caller can retry, and knows why.
+   */
+  overloaded: -32001,
   unsupportedProtocolVersion: -32022,
 } as const;
 

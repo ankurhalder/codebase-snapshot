@@ -24,10 +24,12 @@ npm run check      # lint, tsc --noEmit, node --test
 npm run verify     # the above, plus a check of the tarball that would be published
 ```
 
-Verification is local, deliberately. GitHub Actions is used for one thing only — publishing —
-and that workflow runs `npm run verify` before it uploads, so a green `verify` here is the same
-gate a release passes. There is no matrix to wait for, and nothing a pull request can fail that
-you could not have caught on your own machine.
+Verification is local, deliberately, and `npm run verify` is the same command every workflow
+runs. GitHub Actions does more than publish: `pr.yml` verifies pull requests, `publish.yml`
+verifies and uploads on a tag, `pages.yml` builds the docs site, `seo-rank.yml` measures search
+visibility weekly, and `deprecate.yml`/`unpublish.yml` are manual release operations. None of
+them adds a check `verify` does not run, so there is no matrix to wait for, and nothing a pull
+request can fail that you could not have caught on your own machine.
 
 ## What makes a good change here
 

@@ -56,10 +56,13 @@ export function truncateToBytes(
   const buffer = Buffer.from(content, "utf8");
   if (buffer.length <= maxBytes) return { content, isTruncated: false };
 
-  let slice = buffer.subarray(0, maxBytes).toString("utf8");
-  // A cut in the middle of a multi-byte sequence yields U+FFFD; drop it.
-  while (slice.endsWith("\uFFFD")) slice = slice.slice(0, -1);
-  return { content: slice, isTruncated: true };
+  // Cut on a code-point boundary instead of decoding and then stripping every trailing
+  // U+FFFD: that loop also removed a replacement character the source really contains, so the
+  // preview described a file the repository does not have. Moving back over continuation bytes
+  // (0b10xxxxxx) leaves a complete sequence; a U+FFFD that survives came from the source.
+  let end = maxBytes;
+  while (end > 0 && ((buffer[end] as number) & 0xc0) === 0x80) end -= 1;
+  return { content: buffer.subarray(0, end).toString("utf8"), isTruncated: true };
 }
 
 export function truncatePreview(

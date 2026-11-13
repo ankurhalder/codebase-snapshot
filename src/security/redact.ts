@@ -45,19 +45,15 @@ function compilePattern(
     // it skipped. `d` is added on demand so `valueGroup` can be resolved.
     const flags = new Set(pattern.flags.replace(/[gy]/g, "").split(""));
     if (valueGroup !== undefined) flags.add("d");
-    return {
-      rule,
-      pattern: new RegExp(pattern.source, [...flags].join("")),
-      ...(valueGroup === undefined ? {} : { valueGroup }),
-    };
+    return checkedPattern(rule, new RegExp(pattern.source, [...flags].join("")), valueGroup);
   }
   if (typeof pattern === "string") {
     try {
-      return {
+      return checkedPattern(
         rule,
-        pattern: new RegExp(pattern, valueGroup === undefined ? "i" : "id"),
-        ...(valueGroup === undefined ? {} : { valueGroup }),
-      };
+        new RegExp(pattern, valueGroup === undefined ? "i" : "id"),
+        valueGroup
+      );
     } catch (err) {
       throw new Error(
         `Invalid regular expression for secret rule "${rule}": ${(err as Error).message}`
@@ -67,6 +63,34 @@ function compilePattern(
   throw new Error(
     `Secret rule "${rule}" has a pattern that is neither a RegExp nor a string (received ${describeValue(pattern)}).`
   );
+}
+
+/**
+ * Rejects a rule that can match the empty string.
+ *
+ * A zero-length match still advances `lastIndex` in the scan loop, but with the `u` flag an
+ * advance into the middle of a surrogate pair resets the engine and the same empty match is
+ * found forever: `/(?:)/gu` against `"😀"` hangs `generate` at 100% CPU with no diagnostic. The
+ * runtime has a Unicode-aware advance as a second line of defence; this is the one that names
+ * the offending rule at validation time, before a run starts.
+ */
+function checkedPattern(
+  rule: string,
+  compiled: RegExp,
+  valueGroup: number | undefined
+): SecretRule {
+  const stateless = new RegExp(compiled.source, compiled.flags.replace(/[gy]/g, ""));
+  if (stateless.test("")) {
+    throw new Error(
+      `Secret rule "${rule}" can match the empty string. Every alternative must require at ` +
+        "least one character, or the scan cannot advance past a match."
+    );
+  }
+  return {
+    rule,
+    pattern: compiled,
+    ...(valueGroup === undefined ? {} : { valueGroup }),
+  };
 }
 
 /**
@@ -169,6 +193,279 @@ const LINE_BREAK = /(\r\n|\n|\r)/;
  */
 const LINE_TERMINATOR = /\r\n|\n|\r/g;
 
+/**
+ * Per-line state shared by the guards, computed at most once per line.
+ *
+ * `quoteAt[i]` is the quote character open *before* `line[i]`, or 0 when the position is code.
+ * The map used to be recomputed from a sliced prefix for every match, which made a line with many
+ * assignments quadratic; the comment and command-separator positions had the same problem.
+ */
+interface LineContext {
+  quoteAt?: Uint8Array;
+  commentStart?: number;
+  commandSeparators?: number[];
+}
+
+/**
+ * A quote that opens a literal. A quote inside a word is text, not a delimiter.
+ *
+ * `don't` is the obvious apostrophe case, and the same rule applies to `"`: in
+ * `DB_PASSWORD=env"pass!@# # rotate` the quote is a character of an unquoted value, and reading it
+ * as an opening delimiter swallowed the trailing comment — the value's mask then covered the
+ * comment, which is exactly the over-redaction this pass is supposed to avoid. A backtick is
+ * always an opener: `` tag`…` `` is a tagged template.
+ */
+function isOpeningQuote(line: string, index: number): boolean {
+  const code = line.charCodeAt(index);
+  if (code === 96) return true;
+  if (code !== 34 && code !== 39) return false;
+  return index === 0 || !/[A-Za-z0-9]/.test(line[index - 1]);
+}
+
+/** Quote state before every character in `line`, with escapes honoured. */
+function quoteStates(line: string): Uint8Array {
+  const states = new Uint8Array(line.length + 1);
+  let quote = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    states[index] = quote;
+    const code = line.charCodeAt(index);
+    if (quote === 0) {
+      if (isOpeningQuote(line, index)) quote = code;
+    } else if (code === 92) {
+      // A backslash escapes the next character inside every literal form we track.
+      if (index + 1 < line.length) {
+        index += 1;
+        states[index] = quote;
+      }
+    } else if (code === quote) {
+      quote = 0;
+    }
+  }
+  states[line.length] = quote;
+  return states;
+}
+
+function quoteStateFor(line: string, context: LineContext): Uint8Array {
+  if (context.quoteAt === undefined) context.quoteAt = quoteStates(line);
+  return context.quoteAt;
+}
+
+/** Quote state at `end`, starting from `quote`. */
+function quoteStateAfter(text: string, quote: number, end: number = text.length): number {
+  for (let index = 0; index < end; index += 1) {
+    const code = text.charCodeAt(index);
+    if (quote === 0) {
+      if (isOpeningQuote(text, index)) quote = code;
+    } else if (code === 92) {
+      index += 1;
+    } else if (code === quote) {
+      quote = 0;
+    }
+  }
+  return quote;
+}
+
+/** Start of the first `#` comment on the line, or `line.length`. */
+function commentStartFor(line: string, context: LineContext): number {
+  if (context.commentStart !== undefined) return context.commentStart;
+  const quotes = quoteStateFor(line, context);
+  let start = line.length;
+  for (let index = 0; index < line.length; index += 1) {
+    if (line.charCodeAt(index) !== 35 || quotes[index] !== 0) continue;
+    // A `#` is a comment only at the start of a word: `pa#ss` is a value.
+    if (index === 0 || /\s/.test(line[index - 1])) {
+      start = index;
+      break;
+    }
+  }
+  context.commentStart = start;
+  return start;
+}
+
+/**
+ * Positions of shell operators that end an assignment value.
+ *
+ * `DB_PASSWORD=correct horse battery staple` is a passphrase; `DB_PASSWORD=secret && echo done`
+ * is an assignment followed by another command. An operator only counts when whitespace touches
+ * it, so `pa&&ss` and `pa;ss` stay one value, and an operator at the very start of the value is
+ * part of it (`secret: &&w0rd`).
+ */
+function commandSeparatorsFor(line: string, context: LineContext): number[] {
+  if (context.commandSeparators !== undefined) return context.commandSeparators;
+  const quotes = quoteStateFor(line, context);
+  const separators: number[] = [];
+  for (let index = 0; index < line.length; index += 1) {
+    if (quotes[index] !== 0) continue;
+    const ch = line[index];
+    const spaced =
+      (index > 0 && /\s/.test(line[index - 1])) ||
+      (index + 1 < line.length && /\s/.test(line[index + 1]));
+    if (ch === "&" || ch === "|") {
+      if (line[index + 1] === ch) {
+        const after = index + 2;
+        const doubleSpaced =
+          spaced || after >= line.length || /\s/.test(line[after] as string);
+        if (doubleSpaced) separators.push(index);
+        index += 1;
+      } else if (spaced) {
+        separators.push(index);
+      }
+    } else if ((ch === ";" || ch === ">" || ch === "<") && spaced) {
+      separators.push(index);
+    }
+  }
+  context.commandSeparators = separators;
+  return separators;
+}
+
+/** End of the assignment value that starts at `start`, including spaces, minus any comment. */
+function lineValueEnd(line: string, start: number, context: LineContext): number {
+  const comment = commentStartFor(line, context);
+  let end = comment > start ? comment : line.length;
+  for (const separator of commandSeparatorsFor(line, context)) {
+    if (separator > start && separator < end) {
+      end = separator;
+      break;
+    }
+  }
+  while (end > start && /\s/.test(line[end - 1] as string)) end -= 1;
+  return end;
+}
+
+/** True when a quote on the line is preceded by syntax that can own a string value. */
+function hasStructuralQuote(line: string): boolean {
+  for (let index = 0; index < line.length; index += 1) {
+    const ch = line[index];
+    if (ch !== '"' && ch !== "'" && ch !== "`") continue;
+    if (ch === "'" && index > 0 && /[A-Za-z0-9]/.test(line[index - 1])) continue;
+    let backslashes = 0;
+    for (let before = index - 1; before >= 0 && line[before] === "\\"; before -= 1) backslashes += 1;
+    if (backslashes % 2 === 1) continue;
+    let before = index - 1;
+    while (before >= 0 && (line[before] === " " || line[before] === "\t")) before -= 1;
+    if (before < 0 || "+,=:([{".includes(line[before] as string)) return true;
+  }
+  return false;
+}
+
+/** Masks a PEM line that is not inside a quoted segment, keeping indentation and comment syntax. */
+function maskRawPemLine(line: string): string {
+  if (line.trim() === "") return line;
+  const leading = /^[ \t]*(?:#|\/\/|;)?[ \t]*/.exec(line)?.[0] ?? "";
+  let rest = line.slice(leading.length);
+  const trailing = /[ \t]*(?:[,;\\+])?[ \t]*$/.exec(rest)?.[0] ?? "";
+  rest = rest.slice(0, rest.length - trailing.length);
+  return leading + (rest.length > 0 ? PEM_REDACTION_MARKER : "") + trailing;
+}
+
+/**
+ * Replaces one physical line of a PEM block with a skeleton that keeps the syntax around it.
+ *
+ * The block used to be replaced by one marker plus blank lines. In an array of quoted lines that
+ * removed every intermediate quote and comma, welding the elements into a single string; in a
+ * concatenation it removed the `+` operators. Both changed the program the snapshot describes.
+ * `initialQuote` is the literal state carried in from the previous line, so a template literal
+ * that spans the block closes on the right backtick.
+ */
+function skeletonisePemLine(
+  line: string,
+  initialQuote: number
+): { text: string; quote: number } {
+  const hasQuote = line.includes('"') || line.includes("'") || line.includes("`");
+  const structural =
+    initialQuote !== 0 ||
+    (hasQuote && (hasStructuralQuote(line) || /-----BEGIN|-----END/.test(line)));
+  if (!structural) return { text: maskRawPemLine(line), quote: initialQuote };
+
+  let out = "";
+  let quote = initialQuote;
+  let masking = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const code = line.charCodeAt(index);
+    if (quote === 0) {
+      if (isOpeningQuote(line, index)) {
+        quote = code;
+        masking = false;
+      }
+      out += line[index];
+      continue;
+    }
+    if (code === 92) {
+      // The marker for the run before the escape was already emitted when that run began;
+      // emitting another here put two markers inside one quoted segment.
+      masking = false;
+      out += line[index];
+      if (index + 1 < line.length) {
+        out += line[index + 1];
+        index += 1;
+      }
+      continue;
+    }
+    if (code === quote) {
+      // The marker was already emitted when the content run began; emitting another here put two
+      // markers inside one quoted segment.
+      masking = false;
+      quote = 0;
+      out += line[index];
+      continue;
+    }
+    if (!masking) {
+      out += PEM_REDACTION_MARKER;
+      masking = true;
+    }
+  }
+  return { text: out, quote };
+}
+
+/** Start and end of the physical line(s) touched by `[start, end)` in `text`. */
+function lineSpanAt(text: string, start: number, end: number): { start: number; end: number } {
+  let lineStart = start;
+  while (lineStart > 0 && text[lineStart - 1] !== "\n" && text[lineStart - 1] !== "\r") {
+    lineStart -= 1;
+  }
+  let lineEnd = end;
+  while (lineEnd < text.length && text[lineEnd] !== "\n" && text[lineEnd] !== "\r") lineEnd += 1;
+  if (lineEnd < text.length) {
+    lineEnd += text[lineEnd] === "\r" && text[lineEnd + 1] === "\n" ? 2 : 1;
+  }
+  return { start: lineStart, end: lineEnd };
+}
+
+/**
+ * Rewrites the physical line(s) a PEM block touches, leaving everything outside the match alone.
+ *
+ * Expanding to whole lines is what keeps the boundary syntax intact: the opening quote of a
+ * one-line JSON value lives before the `BEGIN` marker, and the closing quote lives after the
+ * `END` marker. Processing the full line but substituting only the matched part means a key name
+ * or a trailing statement on the same line is not collateral damage.
+ */
+function redactPemSpan(
+  text: string,
+  matchStart: number,
+  matchEnd: number
+): { replacement: string; start: number; end: number } {
+  const span = lineSpanAt(text, matchStart, matchEnd);
+  const segments = text.slice(span.start, span.end).split(LINE_BREAK);
+  let quote = quoteStateAfter(text, 0, matchStart);
+  let cursor = span.start;
+  for (let index = 0; index < segments.length; index += 2) {
+    const line = segments[index];
+    const lineStart = cursor;
+    const lineEnd = lineStart + line.length;
+    cursor =
+      lineEnd + (index + 1 < segments.length ? (segments[index + 1] as string).length : 0);
+    const from = Math.max(lineStart, matchStart);
+    const to = Math.min(lineEnd, matchEnd);
+    if (from >= to) continue;
+    const localFrom = from - lineStart;
+    const localTo = to - lineStart;
+    const result = skeletonisePemLine(line.slice(localFrom, localTo), quote);
+    segments[index] = line.slice(0, localFrom) + result.text + line.slice(localTo);
+    quote = result.quote;
+  }
+  return { replacement: segments.join(""), start: span.start, end: span.end };
+}
+
 
 /**
  * Redacts secrets from `content`.
@@ -214,35 +511,41 @@ export function scanAndRedactSecrets(
   redacted: string;
   findings: SecretFinding[];
 } {
-  const findings: SecretFinding[] = [];
+  // One finding per line, however many rules matched it. A PEM finding and a per-line finding on
+  // the same line are merged too, so the summary the user reads counts lines, not rules.
+  const findingsByLine = new Map<number, Set<string>>();
+  const recordFinding = (line: number, rulesForLine: Iterable<string>): void => {
+    let entry = findingsByLine.get(line);
+    if (entry === undefined) {
+      entry = new Set<string>();
+      findingsByLine.set(line, entry);
+    }
+    for (const rule of rulesForLine) entry.add(rule);
+  };
 
   // Pass 1 — whole PEM blocks. This must run BEFORE the per-line pass: the
   // per-line rules only see the `BEGIN` header and would remove it, leaving
   // every subsequent body line of a real key behind.
-  // The replacement preserves the block's line count so line numbers reported
-  // by pass 2 stay accurate. "Line count" means every terminator the block
-  // contained, not just `\n`: a CR-only file (old-Mac endings, which `decodeText`
-  // passes through) matched a whole block and replaced it with a marker carrying
-  // *no* line breaks, so every line number after the key was wrong.
+  //
+  // The replacement works line by line and keeps the syntax around the key: quotes, commas,
+  // concatenation operators, escape sequences and the original terminators. Replacing the whole
+  // block with one marker plus blank lines welded the elements of a string array into one string,
+  // dropped the `+` operators of a concatenation, and turned a CRLF file's block into bare LFs.
   let redacted = content;
   for (const blockPattern of [PEM_BLOCK_PATTERN, PEM_UNTERMINATED_PATTERN]) {
     blockPattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = blockPattern.exec(redacted)) !== null) {
       if (match[0].length === 0) {
-        blockPattern.lastIndex += 1;
+        blockPattern.lastIndex = advanceStringIndex(redacted, match.index, blockPattern.unicode);
         continue;
       }
-      const before = redacted.slice(0, match.index);
-      const line = (before.match(LINE_TERMINATOR) ?? []).length + 1;
-      const newlines = (match[0].match(LINE_TERMINATOR) ?? []).length;
-      findings.push({ rules: ["private-key-block"], line, path: filePath });
-      redacted =
-        before +
-        PEM_REDACTION_MARKER +
-        "\n".repeat(newlines) +
-        redacted.slice(match.index + match[0].length);
-      blockPattern.lastIndex = match.index + PEM_REDACTION_MARKER.length + newlines;
+      const matchEnd = match.index + match[0].length;
+      const line = (redacted.slice(0, match.index).match(LINE_TERMINATOR) ?? []).length + 1;
+      const span = redactPemSpan(redacted, match.index, matchEnd);
+      recordFinding(line, ["private-key-block"]);
+      redacted = redacted.slice(0, span.start) + span.replacement + redacted.slice(span.end);
+      blockPattern.lastIndex = span.start + span.replacement.length;
     }
   }
 
@@ -258,25 +561,82 @@ export function scanAndRedactSecrets(
     if (line.length > 0) {
       const spans: Span[] = [];
       const matchedRules = new Set<string>();
+      const context: LineContext = {};
 
       for (const { rule, pattern, valueGroup } of compiled) {
         pattern.lastIndex = 0;
         let match: RegExpExecArray | null;
         while ((match = pattern.exec(line)) !== null) {
           if (match[0].length === 0) {
-            pattern.lastIndex += 1;
+            pattern.lastIndex = advanceStringIndex(line, match.index, pattern.unicode);
             continue;
           }
           const group =
             valueGroup === undefined
               ? undefined
               : (match as RegExpExecArray & MatchIndices).indices?.[valueGroup];
+          // A placeholder is documentation, not a credential.
+          const candidate = group
+            ? line.slice(group[0], group[1])
+            : line.slice(match.index, match.index + match[0].length);
+          if (isPlaceholderValue(candidate)) continue;
+          // In a source file an unquoted right-hand side is an expression — an identifier, a member
+          // access, a ternary branch, an object-literal property. Only text inside a string literal
+          // can be a credential literal there.
+          if (
+            group &&
+            isUnquotedValue(line, group[0]) &&
+            isSourceCodeFile(filePath) &&
+            (quoteStateFor(line, context)[match.index] ?? 0) === 0
+          ) {
+            continue;
+          }
+          // A value that begins with a shell reference (`$VAR`, `${VAR:-x}`, `$(cmd)`) is not a
+          // literal, and masking a prefix of the expansion swallowed the closing quote of the
+          // string it lived in. Skipping it keeps the line parseable; the referenced value is not
+          // in this file anyway.
+          if (
+            group &&
+            /^\$[({A-Za-z_]/.test(line.slice(group[0], group[1])) &&
+            (isAssignmentFile(filePath) || isUnquotedValue(line, group[0]))
+          ) {
+            continue;
+          }
+          // `? "PASS" : "MUTATE"` is a ternary, not an assignment: the rule read the true-branch
+          // string as a weak key and the false-branch string as its value.
+          if (rule === "credential-assignment-weak" && group) {
+            let before = match.index - 1;
+            while (before >= 0 && (line[before] === " " || line[before] === "\t")) before -= 1;
+            if (before >= 0 && (line[before] === "?" || line[before] === ":")) continue;
+            const keyText = line.slice(match.index, group[0]).replace(/["'\s:=]+/g, " ").trim();
+            if (
+              /^(?:PASS|FAIL)$/i.test(keyText) &&
+              /^[A-Z]{2,}$/.test(line.slice(group[0], group[1]))
+            ) {
+              continue;
+            }
+          }
           // A constant whose value spells its own name is a symbol table entry, not a
           // credential; masking it would rewrite the meaning of the code it documents.
           if (group && isSelfNamingConstant(line, group[0], group[1])) continue;
+          // A quoted span that contains a concatenation is code, not a value. Widening the value
+          // class to allow the other quote character (SEC-03) let one literal's closing quote pair
+          // with the next literal's opening quote, swallowing ` + secretVar + ` and masking an
+          // expression variable in `'export API_KEY="' + secretVar + '"'`. A credential literal
+          // never has whitespace around a `+`.
+          if (
+            group &&
+            !isUnquotedValue(line, group[0]) &&
+            /["'`]\s*\+\s*|\s*\+\s*["'`]/.test(line.slice(group[0], group[1]))
+          ) {
+            continue;
+          }
           // A tail-matching key that began inside a string literal is text, not an assignment —
           // unless the literal closes between the key and the value.
-          if (valueGroup !== undefined && startsInsideStringLiteral(line, match.index, group?.[0])) {
+          if (
+            valueGroup !== undefined &&
+            startsInsideStringLiteral(line, match.index, group?.[0], context, filePath)
+          ) {
             continue;
           }
           // An unquoted value in a declaration is an expression, not a credential literal.
@@ -355,7 +715,12 @@ export function scanAndRedactSecrets(
             if (wholeValue) {
               spans.push({
                 start: group[0],
-                end: Math.max(group[1], tokenEnd(line, group[0])),
+                // A passphrase contains spaces: `DB_PASSWORD=correct horse battery staple` used to
+                // stop at the first one and emit the rest beside the marker. Stop at the end of
+                // the value, a trailing comment, or a shell operator instead. The rule's own end
+                // is not used: the colon form's value pattern includes the spaces before a
+                // trailing `# comment`, and masking them welds the comment to the marker.
+                end: lineValueEnd(line, group[0], context),
                 rule,
               });
               matchedRules.add(rule);
@@ -371,18 +736,250 @@ export function scanAndRedactSecrets(
         }
       }
 
+      // A credential split across a concatenation: `"X-Api-Key=" + "sk_live_…"`. Every rule
+      // above sees only the closing quote of the first literal and the opening quote of the
+      // second, so the value has no key-shaped neighbour to anchor on and it reaches the
+      // artefact in clear. The span covers the value literal only, never the `+` or the quotes.
+      for (const span of concatenatedCredentialSpans(line)) {
+        spans.push(span);
+        matchedRules.add(span.rule);
+      }
+
       if (spans.length > 0) {
-        // One finding per line, however many rules matched it. Pushing one per rule made a single
-        // `AUTH_TOKEN=<value>` line count twice in the summary the user reads.
-        findings.push({ rules: [...matchedRules], line: lineNumber, path: filePath });
-        segments[index] = applySpans(line, spans);
+        const maskedLine = applySpans(line, spans);
+        // Belt and braces for a span that still crosses a literal boundary: if the original line
+        // was balanced and the mask made it unbalanced, the mask describes a program that is not
+        // the source. Leave the line untouched rather than emit broken code.
+        if (!quotesAreBalanced(line) || quotesAreBalanced(maskedLine)) {
+          recordFinding(lineNumber, matchedRules);
+          segments[index] = maskedLine;
+        }
       }
     }
 
     if (index + 1 < segments.length) lineNumber += 1;
   }
 
-  return { redacted: segments.join(""), findings };
+  let finalText = segments.join("");
+  // Pass 3 — values a per-line rule cannot see. A YAML block scalar, a value on the following
+  // line, and Docker's legacy `ENV KEY VALUE` form all put the credential in the artefact in
+  // clear: the key and the value are on different physical lines, or separated by a space the
+  // rules read as prose. The pass is format-aware on purpose — the same shape in a source file
+  // is an expression, not a value.
+  finalText = redactStructuredValues(finalText, filePath, recordFinding);
+  finalText = redactDockerfileEnv(finalText, filePath, recordFinding);
+
+  const findings: SecretFinding[] = [...findingsByLine.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([line, rulesForLine]) => ({
+      rules: [...rulesForLine],
+      line,
+      path: filePath,
+    }));
+  return { redacted: finalText, findings };
+}
+
+/**
+ * The next index a zero-length match may resume from.
+ *
+ * After an empty match, `lastIndex += 1` is only a safe advance when the pattern is not
+ * Unicode-aware. With the `u` flag an index inside a surrogate pair is not a valid position: V8
+ * resets `lastIndex` to 0 and reports the same empty match again, so `/(?:)/gu` against `"😀x"`
+ * loops at index 0 forever. This is the advance `String.prototype.replace` uses: two code units
+ * over a valid pair, one otherwise. A custom rule that can match empty is also refused at config
+ * validation; this helper is the runtime half of the same fix.
+ */
+export function advanceStringIndex(text: string, index: number, unicode: boolean): number {
+  if (!unicode) return index + 1;
+  const first = text.charCodeAt(index);
+  if (first >= 0xd800 && first <= 0xdbff) {
+    const second = text.charCodeAt(index + 1);
+    if (second >= 0xdc00 && second <= 0xdfff) return index + 2;
+  }
+  return index + 1;
+}
+
+/** Extensions whose `key: value` is data rather than an expression. */
+const STRUCTURED_FILE = /\.(?:json|jsonc|json5|ya?ml|toml|ini|conf|cfg|properties|env|tf|tfvars)$/i;
+/** Data files spelled without a useful extension. */
+const STRUCTURED_BASENAME =
+  /^(?:\.env(?:\.[^/]*)?|docker-compose(?:\.[^/]*)?|compose(?:\.[^/]*)?)$/i;
+
+/** True for a file whose assignments are data, not code. */
+function isStructuredFile(filePath: string | undefined): boolean {
+  if (filePath === undefined) return false;
+  const normalised = filePath.replace(/\\/g, "/");
+  if (STRUCTURED_FILE.test(normalised)) return true;
+  return STRUCTURED_BASENAME.test(normalised.slice(normalised.lastIndexOf("/") + 1));
+}
+
+/** True for a Dockerfile, the only format where `ENV KEY VALUE` is an assignment. */
+function isDockerfile(filePath: string | undefined): boolean {
+  if (filePath === undefined) return false;
+  const normalised = filePath.replace(/\\/g, "/");
+  return /^(?:Dockerfile|[^/]*\.dockerfile)$/i.test(
+    normalised.slice(normalised.lastIndexOf("/") + 1)
+  );
+}
+
+/** Replaces one line's non-indented content, keeping its indentation. */
+function maskLineContent(line: string): string {
+  if (line.trim() === "") return line;
+  const indent = /^[ \t]*/.exec(line)?.[0] ?? "";
+  return `${indent}${REDACTION_MARKER}`;
+}
+
+/**
+ * Masks one line of a multi-line value while keeping the file parseable.
+ *
+ * A quoted scalar keeps its quotes and any trailing separator, so a formatted JSON object is
+ * still valid JSON after the masking; an unquoted YAML scalar is replaced whole.
+ */
+function maskValueLine(line: string): string {
+  if (line.trim() === "") return line;
+  const indent = /^[ \t]*/.exec(line)?.[0] ?? "";
+  const content = line.slice(indent.length);
+  const quoted = /^(["'`])(.*)\1([,;]?[ \t]*)$/.exec(content);
+  if (quoted !== null) {
+    return `${indent}${quoted[1]}${REDACTION_MARKER}${quoted[1]}${quoted[3] ?? ""}`;
+  }
+  return `${indent}${REDACTION_MARKER}`;
+}
+
+/** `key:` or `key=`, optionally quoted, with the rest of the line after the separator. */
+const STRUCTURED_KEY = /^([ \t]*)["']?([A-Za-z0-9_$.-]{1,128})["']?[ \t]*([:=])[ \t]*(.*)$/;
+/** A YAML block scalar indicator: `|`, `>`, with optional chomping and indentation digits. */
+const BLOCK_SCALAR = /^[|>][+-]?\d*[ \t]*(?:#.*)?$/;
+
+/**
+ * Masks a YAML block scalar body and a value written on the line after its key.
+ *
+ * Redaction is otherwise per physical line, so a key with no value on its own line has nothing
+ * for a rule to match. Both shapes are ordinary configuration: a certificate or long token in a
+ * block scalar, a formatted JSON object whose string sits one line below its key. The pass keeps
+ * indentation and the `|`/`>` indicator, so the masked document still parses.
+ */
+function redactStructuredValues(
+  text: string,
+  filePath: string | undefined,
+  recordFinding: (line: number, rules: Iterable<string>) => void
+): string {
+  if (!isStructuredFile(filePath)) return text;
+  const segments = text.split(LINE_BREAK);
+
+  for (let index = 0; index < segments.length; index += 2) {
+    const line = segments[index];
+    if (line === undefined || line.length === 0) continue;
+    const match = STRUCTURED_KEY.exec(line);
+    if (match === null) continue;
+    const key = match[2] ?? "";
+    if (!CREDENTIAL_KEY_TAIL.test(key)) continue;
+    const baseIndent = (match[1] ?? "").length;
+    const rest = (match[4] ?? "").trim();
+
+    if (BLOCK_SCALAR.test(rest)) {
+      let cursor = index + 2;
+      let masked = false;
+      while (cursor < segments.length) {
+        const body = segments[cursor] ?? "";
+        if (body.trim() !== "") {
+          const indent = (/^[ \t]*/.exec(body)?.[0] ?? "").length;
+          if (indent <= baseIndent) break;
+          segments[cursor] = maskLineContent(body);
+          masked = true;
+        }
+        cursor += 2;
+      }
+      if (masked) recordFinding(index / 2 + 1, ["credential-block-scalar"]);
+      continue;
+    }
+
+    if (rest !== "") continue;
+    let cursor = index + 2;
+    while (cursor < segments.length && (segments[cursor] ?? "").trim() === "") cursor += 2;
+    const firstValue = segments[cursor];
+    if (firstValue === undefined) continue;
+    const valueIndent = (/^[ \t]*/.exec(firstValue)?.[0] ?? "").length;
+    if (valueIndent <= baseIndent) continue;
+    let masked = false;
+    while (cursor < segments.length) {
+      const body = segments[cursor] ?? "";
+      if (body.trim() !== "") {
+        const indent = (/^[ \t]*/.exec(body)?.[0] ?? "").length;
+        if (indent < valueIndent) break;
+        segments[cursor] = maskValueLine(body);
+        masked = true;
+      }
+      cursor += 2;
+    }
+    if (masked) recordFinding(index / 2 + 1, ["credential-multiline-value"]);
+  }
+
+  return segments.join("");
+}
+
+/** Docker's legacy space-separated `ENV KEY VALUE`, which the rules read as prose. */
+const DOCKERFILE_ENV = /^([ \t]*ENV[ \t]+)([A-Za-z_][A-Za-z0-9_]*)([ \t]+)(\S.*)$/;
+
+/**
+ * Masks `ENV API_KEY value` in a Dockerfile.
+ *
+ * The `KEY=value` spelling is covered by the generic assignment rules; the space-separated form
+ * is still valid Docker and was emitted in clear. `ARG` has no space form — `ARG KEY VALUE` is
+ * not valid Docker — so only `ENV` is handled, and only in a Dockerfile: in a shell script
+ * `env KEY value` is a command.
+ */
+function redactDockerfileEnv(
+  text: string,
+  filePath: string | undefined,
+  recordFinding: (line: number, rules: Iterable<string>) => void
+): string {
+  if (!isDockerfile(filePath)) return text;
+  const segments = text.split(LINE_BREAK);
+  for (let index = 0; index < segments.length; index += 2) {
+    const line = segments[index];
+    if (line === undefined) continue;
+    const match = DOCKERFILE_ENV.exec(line);
+    if (match === null) continue;
+    if (!CREDENTIAL_KEY_TAIL.test(match[2] ?? "")) continue;
+    const value = match[4] ?? "";
+    if (value.startsWith("=")) continue;
+    segments[index] = `${match[1]}${match[2]}${match[3]}${REDACTION_MARKER}`;
+    recordFinding(index / 2 + 1, ["dockerfile-env-secret"]);
+  }
+  return segments.join("");
+}
+
+/**
+ * A credential written as `"key=" + "value"` on one line.
+ *
+ * The first literal ends at the separator and the second is the value, so no rule sees a key
+ * beside a value: the match begins on the closing quote of one literal and ends on the opening
+ * quote of the next. The reported span is group 4 — the value literal's contents — so the `+` and
+ * the quotes that make the expression valid are untouched. A variable after the `+`
+ * (`"key=" + secretVar`) is not a literal and is deliberately not matched.
+ */
+const CONCATENATED_CREDENTIAL = new RegExp(
+  "([A-Za-z0-9_$.-]{0,64}(?:password|passwd|passphrase|pwd|api[_-]?key|api[_-]?secret|" +
+    "access[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|client[_-]?secret[_-]?key|" +
+    "client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|" +
+    "session[_-]?token|session[_-]?key|secret|token))\\s*=\\s*(?<=[=:]\\s{0,8})([\"'`])\\s*\\+\\s*" +
+    "([\"'`])((?:(?!\\3)[^\\\\\\n]|\\\\.){1,512})\\3",
+  "gid"
+);
+
+/** Spans of concatenated credential values on one line. */
+function concatenatedCredentialSpans(line: string): Span[] {
+  const spans: Span[] = [];
+  CONCATENATED_CREDENTIAL.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = CONCATENATED_CREDENTIAL.exec(line)) !== null) {
+    const group = (match as RegExpExecArray & MatchIndices).indices?.[4];
+    if (group !== undefined) {
+      spans.push({ start: group[0], end: group[1], rule: "credential-concatenation" });
+    }
+  }
+  return spans;
 }
 
 /**
@@ -448,52 +1045,53 @@ function expandOverToken(line: string, start: number, end: number): { start: num
 }
 
 /**
- * True when the match started in the middle of an identifier that sits inside a
- * string literal.
- *
- * Credential names are matched as a **tail** (`dbPassword` matches on
- * `Password`), which is what catches camelCase keys. The same tail matching let
- * `for (const key of ["awsSecret:", "apiKey:"])` be read as an assignment: the
- * match began at `Secret`, inside the string `"awsSecret:"`, so the string's
- * closing quote was taken as the value's opening quote and the next element's
- * opening quote as its closing quote — the emitted line had two list elements
- * welded together with a marker between them. A regex lookbehind cannot see back
- * to the start of the identifier, so the check is made against the line here.
- *
- * A properly quoted key (`"dbPassword": "…"`, which is a real assignment) starts
- * at the quote, so its run begins there and the preceding character is not a
- * quote; only a match that began *inside* a literal is rejected.
- */
-/**
  * True when the matched credential name is text rather than a key: it begins inside a string
  * literal **and** that literal closes before the value does.
  *
- * `["awsSecret:", "apiKey:"]` is a list of key *names*, and a documentation line that shows
- * `password: "${DB_PASSWORD:-hunter2}"` inside a code span is showing an assignment. Both put the
- * name immediately after an opening quote — the list because the element is a string, the code
- * span because Markdown opens it with a backtick — so the quote is evidence that the name belongs
- * to the surrounding text.
+ * Credential names are matched as a **tail** (`dbPassword` matches on `Password`), which is what
+ * catches camelCase keys. The same tail matching let `for (const key of ["awsSecret:", "apiKey:"])`
+ * be read as an assignment: the match began at `Secret`, inside the string `"awsSecret:"`, so the
+ * string's closing quote was taken as the value's opening quote and the next element's opening
+ * quote as its closing quote — the emitted line had two list elements welded together.
  *
- * That test alone also discarded every credential written into a string, and a connection string
- * is written into a string: `const dsn = "password=hunter2;host=db"` and
- * `curl -d "password=hunter2"` were emitted in clear. What separates them is whether a quote sits
- * between the name and the value. In `"password=hunter2"` there is none — the name and the value
- * are in the same literal, which is what an assignment looks like when it is written inside one.
- * In `` `password: "…"` `` there is: the literal opened before the name closes, and the value
+ * Looking only at the character immediately before the identifier was not enough: a name preceded
+ * by a space inside a literal (`"note: awsSecret: …"`) still read as a key. The quote state is
+ * therefore taken from a single left-to-right pass over the line, not from a prefix slice per
+ * match — the slice was quadratic on a long line.
+ *
+ * Being inside a literal is not by itself a reason to refuse: a connection string is written into
+ * a string, and `const dsn = "password=hunter2;host=db"` and `curl -d "password=hunter2"` were
+ * emitted in clear when every literal was refused. What separates them is whether the literal
+ * closes between the name and the value. In `"password=hunter2"` it does not — the name and the
+ * value are in the same literal, which is what an assignment looks like when it is written inside
+ * one. In `` `password: "…"` `` it does: the literal opened before the name closes, and the value
  * belongs to a different one.
  */
 function startsInsideStringLiteral(
   line: string,
   matchIndex: number,
-  valueStart?: number
+  valueStart: number | undefined,
+  context: LineContext,
+  filePath?: string
 ): boolean {
-  let runStart = matchIndex;
-  while (runStart > 0 && /[A-Za-z0-9_-]/.test(line[runStart - 1])) runStart -= 1;
-  const before = runStart > 0 ? line[runStart - 1] : "";
-  if (before !== '"' && before !== "'" && before !== "`") return false;
+  const quote = quoteStateFor(line, context)[matchIndex] ?? 0;
+  if (quote === 0) return false;
+  // A markdown inline code span is documentation, not code: `\`password: "…"\`` in a sentence is
+  // an example, and masking it changes the sentence a reader sees. Only a match that begins
+  // *inside* the span is skipped — a fenced block's body lines carry no backtick, so a real
+  // credential in one is still masked.
+  if (quote === 96 && /\.(?:md|mdx)$/i.test(filePath ?? "")) return true;
   // Without a value span there is nothing to weigh: the match is the credential itself.
   if (valueStart === undefined) return true;
-  return /["'`]/.test(line.slice(matchIndex, valueStart));
+  for (let index = matchIndex; index < valueStart; index += 1) {
+    const code = line.charCodeAt(index);
+    if (code === 92) {
+      index += 1;
+    } else if (code === quote) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -566,6 +1164,73 @@ function isSelfNamingConstant(line: string, start: number, end: number): boolean
     if (closingQuote === '"' || closingQuote === "'" || closingQuote === "`") index -= 1;
   }
   return line.endsWith(value, index);
+}
+
+/**
+ * Files whose unquoted right-hand side is code, not a literal.
+ *
+ * The unquoted rules exist for YAML, compose, INI and shell. In a JavaScript or TypeScript file
+ * the same shape is an object-literal property, a ternary branch or a reference —
+ * `SEARXNG_SECRET_KEY: optionalString` and `"x-api-key": key` are the program itself. Masking
+ * them changes what the file means without changing whether it parses.
+ */
+const SOURCE_CODE_FILE = /\.(?:[cm]?[jt]sx?)$/i;
+
+function isSourceCodeFile(filePath: string | undefined): boolean {
+  return filePath !== undefined && SOURCE_CODE_FILE.test(filePath.replace(/\\/g, "/"));
+}
+
+/**
+ * Values that are placeholders rather than credentials.
+ *
+ * `replace-me-with-the-read-tier-key`, `sk-...`, `<fine-grained PAT…>` and `changeme` are
+ * documentation: masking them rewrites the sentence a reader is meant to read, and it teaches an
+ * agent that the marker means "secret" even where the file says "put your secret here".
+ *
+ * The test is narrow on purpose. Only a whole value that *is* a conventional placeholder is
+ * skipped; a real credential that merely contains the word "example" is still masked, and a
+ * three-dot ellipsis inside a value is treated as documentation because no generated credential
+ * contains one.
+ */
+const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
+  /^<[^>]*>?$/,
+  /^\.{3,}$/,
+  /^(?:x{4,}|X{4,}|\*{3,})$/,
+  /^(?:replace|change)[-_ ]?me(?:[-_ ].*)?$/i,
+  /^your[-_ ].*$/i,
+  /^(?:example|sample)(?:[-_ ].*)?$/i,
+];
+
+function isPlaceholderValue(value: string): boolean {
+  const trimmed = value.trim().replace(/^["'`]+/, "").replace(/["'`]+$/, "");
+  if (trimmed.length === 0) return false;
+  if (PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(trimmed))) return true;
+  return trimmed.includes("...") || /^<[^>]*$/.test(trimmed);
+}
+
+/**
+ * True when every quote on the line is closed.
+ *
+ * A mask that starts inside one literal and ends at an inner quote leaves the line syntactically
+ * broken — the 0.9.16 report's shell cases produced `CRON_SECRET="[REDACTED]"$ENV_FILE"…"`. The
+ * rules above are the fix; this is the belt-and-braces check, applied only when the original line
+ * was balanced so a multi-line template literal or an apostrophe in prose cannot trip it.
+ */
+function quotesAreBalanced(text: string): boolean {
+  let single = 0;
+  let double = 0;
+  let backtick = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === '"') double += 1;
+    else if (char === "'") single += 1;
+    else if (char === "`") backtick += 1;
+  }
+  return double % 2 === 0 && single % 2 === 0 && backtick % 2 === 0;
 }
 
 /**

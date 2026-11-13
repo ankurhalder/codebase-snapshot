@@ -77,15 +77,15 @@ test("a constant whose value spells its own name survives", () => {
 
 test("real credentials in the same shapes are still redacted", () => {
   const cases = [
-    ['const dbPassword = "hunter2";', "hunter2"],
-    ['{"apiKey": "abcdefgh12345678"}', "abcdefgh12345678"],
-    ["POSTGRES_PASSWORD=hunter2", "hunter2"],
-    ["export GITHUB_DEPLOY_TOKEN=ghp_secretvalue", "secretvalue"],
-    ['  token = "hunter2hunter2";', "hunter2hunter2"],
-    ["awsSecret: hunter2hunter2", "hunter2hunter2"],
+    ['const dbPassword = "hunter2";', "hunter2", "fixture.ts"],
+    ['{"apiKey": "abcdefgh12345678"}', "abcdefgh12345678", "fixture.json"],
+    ["POSTGRES_PASSWORD=hunter2", "hunter2", "fixture.env"],
+    ["export GITHUB_DEPLOY_TOKEN=ghp_secretvalue", "secretvalue", "fixture.sh"],
+    ['  token = "hunter2hunter2";', "hunter2hunter2", "fixture.ts"],
+    ["awsSecret: hunter2hunter2", "hunter2hunter2", "fixture.yml"],
   ];
-  for (const [line, secret] of cases) {
-    const { redacted, findings } = scan(line);
+  for (const [line, secret, file] of cases) {
+    const { redacted, findings } = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, file);
     assert.ok(findings.length > 0, `a finding is expected for: ${line}`);
     assert.equal(redacted.includes(secret), false, `the value must not survive: ${line}`);
   }

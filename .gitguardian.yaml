@@ -6,19 +6,26 @@
 #
 # The GitGuardian *dashboard* does not read this file: its exclusions live in workspace
 # settings (Secrets detection -> Filepath exclusions) and are applied retroactively to
-# existing incidents. SECURITY.md lists the shapes and the reasoning; keep the two lists
-# in step.
+# existing incidents. SECURITY.md lists the shapes, the reasoning, the residual risk and
+# the known synthetic example values; keep the two lists in step.
 #
 # This repository is a secret-redaction engine, so its fixtures, rule definitions and
 # documentation hold synthetic credentials on purpose. They are the vectors the engine
 # detects, not credentials.
+#
+# The exclusions are deliberately narrow. `docs/**`, `**/*.md` and `llms.txt` used to be
+# ignored wholesale, which put every published page and the README outside the detector:
+# a real token pasted into a doc would have gone unreported. Only files that are synthetic
+# by construction are excluded now. Alerts on the documented example values
+# (`hunter2`, `AKIAIOSFODNN7EXAMPLE`, `replace-me-…`) are reviewed and allowlisted in the
+# dashboard; they are described in SECURITY.md.
 version: 2
 secret:
   ignored_paths:
+    # Test suites: the engine's own vectors, inline in the tests that exercise them.
     - "**/tests/**"
-    - "**/docs/**"
-    - "**/*.md"
-    - "llms.txt"
+    # The verification reports quote the probes they describe, including the synthetic values.
+    - "**/audit/**"
     - "**/package-lock.json"
     # Rule definitions and their worked examples: patterns, not credentials.
     - "**/src/security/patterns.ts"

@@ -14,9 +14,11 @@ import { resolveChangedScope } from "../scanner/changed.js";
 import { buildImportResolver, importsChangedFile } from "../scanner/dependents.js";
 import type { ImportResolver } from "../scanner/dependents.js";
 import { importsOfFile } from "../ast/imports.js";
+import { SCHEMA_VERSION, isOurGeneratorName } from "../version.js";
 import { BINARY_SCAN_BYTES, decodeText, isBinaryExtension, isBinaryFile } from "../scanner/binary.js";
 import type {
   Manifest,
+  ManifestArtifact,
   ResolvedSnapshotConfig,
   SnapshotConfig,
   SecretRule,
@@ -229,13 +231,82 @@ export function describeManifestShapeProblem(value: unknown): string | null {
     return 'missing "totals" object';
   }
 
+  // The current schema's full shape. Older manifests legitimately lack fields added since, so
+  // the stronger requirements apply only to a document that claims this build's schema. A
+  // hand-written or truncated manifest that copies `schemaVersion: "3.0.0"` has to be one.
+  const currentSchema = candidate.schemaVersion === SCHEMA_VERSION;
+  if (currentSchema) {
+    const generator = candidate.generator;
+    if (!generator || typeof generator !== "object" || Array.isArray(generator)) {
+      return 'missing "generator" object';
+    }
+    const generatorFields = generator as Record<string, unknown>;
+    if (!isOurGeneratorName(generatorFields.name)) {
+      return '`generator.name` is not this generator';
+    }
+    if (typeof generatorFields.version !== "string" || generatorFields.version.trim() === "") {
+      return '`generator.version` must be a non-empty string';
+    }
+
+    const git = candidate.git;
+    if (!git || typeof git !== "object" || Array.isArray(git)) return 'missing "git" object';
+    const gitFields = git as Record<string, unknown>;
+    if (typeof gitFields.branch !== "string") return '`git.branch` must be a string';
+    if (typeof gitFields.commit !== "string") return '`git.commit` must be a string';
+    if (typeof gitFields.isDirty !== "boolean") return '`git.isDirty` must be a boolean';
+
+    const config = candidate.config;
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      return 'missing "config" object';
+    }
+    // `config.digest` is deliberately not required: a manifest without one is *unverifiable*
+    // rather than malformed, and `validate` reports exactly that ("no configuration digest")
+    // instead of refusing the document. A manifest written before the digest existed therefore
+    // still diffs and reports; it just cannot be called current.
+
+    const budgets = candidate.budgets;
+    if (!budgets || typeof budgets !== "object" || Array.isArray(budgets)) {
+      return 'missing "budgets" object';
+    }
+    for (const key of ["maxPartBytes", "largeFileBytes"]) {
+      const value = (budgets as Record<string, unknown>)[key];
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+        return `\`budgets.${key}\` must be a non-negative integer`;
+      }
+    }
+
+    if (!candidate.indexes || typeof candidate.indexes !== "object" || Array.isArray(candidate.indexes)) {
+      return 'missing "indexes" object';
+    }
+    if (!candidate.kinds || typeof candidate.kinds !== "object" || Array.isArray(candidate.kinds)) {
+      return 'missing "kinds" object';
+    }
+  }
+
   if (!Array.isArray(candidate.files)) return 'missing "files" array';
   for (const entry of candidate.files) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       return 'a "files" entry is not an object';
     }
-    if (typeof (entry as Record<string, unknown>).relativePath !== "string") {
+    const fields = entry as Record<string, unknown>;
+    if (typeof fields.relativePath !== "string") {
       return 'a "files" entry has no "relativePath"';
+    }
+    if (!currentSchema) continue;
+    if (typeof fields.part !== "string" || fields.part.length === 0) {
+      return 'a "files" entry records no "part"';
+    }
+    if (typeof fields.hashSha256 !== "string" || !/^[0-9a-f]{64}$/.test(fields.hashSha256)) {
+      return 'a "files" entry "hashSha256" must be a 64-character lowercase sha256 hex digest';
+    }
+    for (const key of ["sizeBytes", "lines"]) {
+      const value = fields[key];
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+        return `a "files" entry "${key}" must be a non-negative integer`;
+      }
+    }
+    if (!["full", "preview", "signatures"].includes(String(fields.inclusionMode))) {
+      return 'a "files" entry has an unknown "inclusionMode"';
     }
   }
 
@@ -245,7 +316,8 @@ export function describeManifestShapeProblem(value: unknown): string | null {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       return 'a "parts" entry is not an object';
     }
-    const filename = (entry as Record<string, unknown>).filename;
+    const fields = entry as Record<string, unknown>;
+    const filename = fields.filename;
     if (typeof filename !== "string" || filename.trim() === "") {
       return 'a "parts" entry has no "filename"';
     }
@@ -264,6 +336,24 @@ export function describeManifestShapeProblem(value: unknown): string | null {
       path.isAbsolute(filename)
     ) {
       return 'a "parts" entry "filename" must be a bare filename inside parts/';
+    }
+    if (currentSchema) {
+      if (typeof fields.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(fields.sha256)) {
+        return 'a "parts" entry "sha256" must be a 64-character lowercase sha256 hex digest';
+      }
+      if (
+        typeof fields.byteSize !== "number" ||
+        !Number.isSafeInteger(fields.byteSize) ||
+        fields.byteSize < 0
+      ) {
+        return 'a "parts" entry "byteSize" must be a non-negative integer';
+      }
+      if (typeof fields.index !== "number" || !Number.isSafeInteger(fields.index) || fields.index < 1) {
+        return 'a "parts" entry "index" must be a positive integer';
+      }
+      if (!Array.isArray(fields.includedFiles)) {
+        return 'a "parts" entry has no "includedFiles" array';
+      }
     }
   }
 
@@ -339,6 +429,28 @@ export function validateSnapshot(
   const drift = emptyDrift();
   const warnings: string[] = [];
   const snapshotDir = path.resolve(config.cwd, config.outDir);
+
+  // A file that could not be read when the snapshot was taken is recorded as a skip, and a skip
+  // is invisible to every later check because there is no hash to compare. Say so, rather than
+  // letting a validate run over a dirty tree report only "uncommitted changes".
+  const unreadableSkips = manifest.skipped.filter(
+    (entry) => entry.reason === "missing" || entry.reason === "read-error"
+  );
+  if (unreadableSkips.length > 0) {
+    warnings.push(
+      `${unreadableSkips.length} path(s) could not be read when this snapshot was generated ` +
+        "(see manifest.skipped[] with reason \"missing\" or \"read-error\"); they are not in the snapshot."
+    );
+  }
+  // A function matcher's closure is not part of the digest: two matchers with identical source
+  // and different captured values digest identically. Saying so is the honest half of the fix; the
+  // alternative was claiming a drift check the digest cannot perform.
+  if ([...config.layers, ...config.kinds].some((rule) => typeof rule.match === "function")) {
+    warnings.push(
+      "The configuration uses executable (function) matchers; the recorded digest covers their " +
+        "source text, not the values they capture, so it cannot prove their classification is unchanged."
+    );
+  }
 
   // ---- source files -------------------------------------------------------
   const manifestFileMap = new Map<string, string>();
@@ -603,22 +715,91 @@ export function validateSnapshot(
     }
   }
 
-  const filesInParts = manifest.parts.reduce(
-    (total, part) => total + (typeof part?.fileCount === "number" ? part.fileCount : 0),
-    0
-  );
-  if (filesInParts !== manifest.files.length) {
-    drift.partIssues.push({
-      part: "(totals)",
-      issue: `parts list ${filesInParts} file(s) but the manifest lists ${manifest.files.length}`,
-    });
-  }
-  for (const file of manifest.files) {
-    if (file?.part && !partNames.has(file.part)) {
+  // The manifest is the contract every reader trusts: `snapshot_read` uses `files[].part` to
+  // find a section. Summing declared `fileCount` proved nothing (two parts claiming the same
+  // file still added up), an empty `part` was skipped by `if (file?.part)`, and a part that
+  // exists but does not list the file passed the name check. Check the relation both ways.
+  // Paths in a manifest are masked when written, but a hand-edited one is not. Every message
+  // below can carry a credential-shaped path to stdout, so it is masked like every other echo.
+  const maskDriftPath = (value: string): string =>
+    findSecretInPath(value, config.secretRules)?.masked ?? value;
+  const includedByPart = new Map<string, Set<string>>();
+  const partIndexes = new Set<number>();
+  for (const part of manifest.parts) {
+    if (includedByPart.has(part.filename)) {
       drift.partIssues.push({
-        part: file.part,
-        issue: `${file.relativePath} points at a part that is not in the manifest`,
+        part: maskDriftPath(part.filename),
+        issue: "appears more than once in parts[]",
       });
+    }
+    if (typeof part.index === "number") {
+      if (partIndexes.has(part.index)) {
+        drift.partIssues.push({
+          part: maskDriftPath(part.filename),
+          issue: `reuses part index ${part.index}`,
+        });
+      }
+      partIndexes.add(part.index);
+    }
+    const listed = new Set<string>();
+    for (const included of part.includedFiles ?? []) {
+      if (typeof included?.relativePath !== "string") continue;
+      if (listed.has(included.relativePath)) {
+        drift.partIssues.push({
+          part: maskDriftPath(part.filename),
+          issue: `lists ${maskDriftPath(included.relativePath)} twice`,
+        });
+      }
+      listed.add(included.relativePath);
+    }
+    includedByPart.set(part.filename, listed);
+    if (typeof part.fileCount === "number" && part.fileCount !== listed.size) {
+      drift.partIssues.push({
+        part: maskDriftPath(part.filename),
+        issue: `declares ${part.fileCount} file(s) but lists ${listed.size} in includedFiles`,
+      });
+    }
+  }
+
+  const filePaths = new Set<string>();
+  for (const file of manifest.files) {
+    if (filePaths.has(file.relativePath)) {
+      drift.partIssues.push({
+        part: "(files)",
+        issue: `${maskDriftPath(file.relativePath)} appears more than once in files[]`,
+      });
+      continue;
+    }
+    filePaths.add(file.relativePath);
+    if (typeof file.part !== "string" || file.part.length === 0) {
+      drift.partIssues.push({
+        part: "(files)",
+        issue: `${maskDriftPath(file.relativePath)} records no part`,
+      });
+      continue;
+    }
+    if (!partNames.has(file.part)) {
+      drift.partIssues.push({
+        part: maskDriftPath(file.part),
+        issue: `${maskDriftPath(file.relativePath)} points at a part that is not in the manifest`,
+      });
+      continue;
+    }
+    if (!includedByPart.get(file.part)?.has(file.relativePath)) {
+      drift.partIssues.push({
+        part: maskDriftPath(file.part),
+        issue: `${maskDriftPath(file.relativePath)} is not listed in that part's includedFiles`,
+      });
+    }
+  }
+  for (const [partName, listed] of includedByPart) {
+    for (const relativePath of listed) {
+      if (!filePaths.has(relativePath)) {
+        drift.partIssues.push({
+          part: maskDriftPath(partName),
+          issue: `lists ${maskDriftPath(relativePath)}, which the manifest does not`,
+        });
+      }
     }
   }
 
@@ -819,6 +1000,15 @@ export function validateSnapshot(
   );
 
   expectEqual("counts.totalFiles", counts.totalFiles, manifest.files.length);
+  // A manifest whose file list was edited kept a valid-looking `totalLines` and fingerprint.
+  // Both are recomputable from the manifest itself, so they are reconciled rather than trusted.
+  if (manifest.files.every((file) => typeof file?.lines === "number")) {
+    expectEqual(
+      "counts.totalLines",
+      counts.totalLines,
+      manifest.files.reduce((total, file) => total + file.lines, 0)
+    );
+  }
   expectEqual("counts.partsCount", counts.partsCount, manifest.parts.length);
   expectEqual("counts.skippedCount", counts.skippedCount, manifest.skipped.length);
   expectEqual("counts.totalSizeBytes", counts.totalSizeBytes, sumSourceBytes);
@@ -846,6 +1036,47 @@ export function validateSnapshot(
       `totals.fullFiles + previewFiles (${totals.fullFiles} + ${totals.previewFiles}) != ${manifest.files.length} files`
     );
   }
+  // The fingerprint identifies the snapshot; a manifest whose file list was edited (a hash
+  // changed, a file removed, an inclusion mode flipped) kept a valid-looking value because only
+  // its shape was checked. Recompute it from the manifest's own files and recorded settings
+  // digest. The pre-0.9.17 formula also folded in `inclusionMode`; that value is accepted so a
+  // snapshot written by an older build keeps validating.
+  const recordedSettingsDigest =
+    manifest.config && typeof manifest.config.digest === "string"
+      ? manifest.config.digest
+      : null;
+  if (recordedSettingsDigest !== null && manifest.files.every((file) => typeof file?.hashSha256 === "string")) {
+    const settingsLine = `settings:${recordedSettingsDigest}`;
+    const currentDefinition = sha256Hex(
+      Buffer.from(
+        [
+          ...manifest.files.map(
+            (file) => `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}`
+          ),
+          settingsLine,
+        ].join("\n"),
+        "utf8"
+      )
+    );
+    const legacyDefinition = sha256Hex(
+      Buffer.from(
+        [
+          ...manifest.files.map(
+            (file) =>
+              `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}:${file.inclusionMode}`
+          ),
+          settingsLine,
+        ].join("\n"),
+        "utf8"
+      )
+    );
+    if (manifest.fingerprint !== currentDefinition && manifest.fingerprint !== legacyDefinition) {
+      totalsMismatches.push(
+        "fingerprint: does not match the files and settings recorded in this manifest"
+      );
+    }
+  }
+
   if (manifest.budgets && manifest.budgets.maxPartBytes !== config.maxPartBytes) {
     totalsMismatches.push(
       `budgets.maxPartBytes: manifest ${manifest.budgets.maxPartBytes} vs current ${config.maxPartBytes}`
@@ -884,20 +1115,49 @@ export function validateSnapshot(
     }
   }
 
-  // ---- monolith artefacts -------------------------------------------------
-  for (const [key, artifact] of [
+  // ---- declared artifacts -------------------------------------------------
+  // Every artifact the manifest records a digest for is checked the same way. Before this, only
+  // the monoliths and SARIF were: deleting README.md, reports/navigation.md,
+  // reports/project-tree.md or reports/audit.md — the first files a reader opens — left
+  // `validate` green.
+  const declaredArtifacts: Array<[string, ManifestArtifact | null | undefined]> = [
+    ["README.md", manifest.artifacts?.readme],
+    ["reports/navigation.md", manifest.artifacts?.navigation],
+    ["reports/project-tree.md", manifest.artifacts?.projectTree],
+    ["reports/audit.md", manifest.artifacts?.audit],
     ["full-codebase.json", manifest.artifacts?.fullJson],
     ["full-codebase.md", manifest.artifacts?.fullMarkdown],
-  ] as const) {
+  ];
+  for (const [key, artifact] of declaredArtifacts) {
     if (!artifact) continue;
-    const artifactPath = path.join(snapshotDir, key);
+    const artifactPath = path.join(snapshotDir, ...key.split("/"));
+    let buffer: Buffer;
     try {
-      const buffer = fs.readFileSync(artifactPath);
-      if (sha256Hex(buffer) !== artifact.sha256 || buffer.length !== artifact.byteSize) {
-        drift.partIssues.push({ part: key, issue: "artifact does not match its recorded digest" });
-      }
+      if (!fs.statSync(artifactPath).isFile()) throw new Error("not a regular file");
+      buffer = fs.readFileSync(artifactPath);
     } catch {
       drift.partIssues.push({ part: key, issue: "declared artifact is missing" });
+      continue;
+    }
+    if (sha256Hex(buffer) !== artifact.sha256 || buffer.length !== artifact.byteSize) {
+      drift.partIssues.push({ part: key, issue: "artifact does not match its recorded digest" });
+      continue;
+    }
+    // The navigation index is the map into the snapshot; a link it carries that points at
+    // nothing is a dead end a reader only discovers after opening the file.
+    if (key === "reports/navigation.md") {
+      for (const match of buffer.toString("utf8").matchAll(/\]\(([^)\s]+)\)/g)) {
+        const target = (match[1] as string).split("#")[0] as string;
+        if (target.length === 0 || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
+        const resolved = path.resolve(snapshotDir, "reports", target);
+        const relative = path.relative(snapshotDir, resolved);
+        if (relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(resolved)) {
+          drift.partIssues.push({
+            part: key,
+            issue: `links to ${maskedPath(target, config.secretRules)}, which does not exist in the snapshot`,
+          });
+        }
+      }
     }
   }
 
@@ -921,8 +1181,15 @@ export function validateSnapshot(
 
   // ---- git ----------------------------------------------------------------
   if (manifest.git && manifest.git.branch && manifest.git.branch !== config.branch) {
+    // A branch name is repository-controlled text and can be credential-shaped
+    // (`feature/AKIA…`). Every other configuration echo on this path is masked; these two
+    // were the exception, and the warning reaches stdout and the shipped manifest.
+    const maskBranch = (value: string): string =>
+      findSecretInPath(value, config.secretRules)?.masked ?? value;
+    const generatedOn = maskBranch(manifest.git.branch);
+    const configuredAs = maskBranch(config.branch);
     warnings.push(
-      `Snapshot was generated on branch "${manifest.git.branch}" but the configured branch is "${config.branch}".`
+      `Snapshot was generated on branch "${generatedOn}" but the configured branch is "${configuredAs}".`
     );
   }
 

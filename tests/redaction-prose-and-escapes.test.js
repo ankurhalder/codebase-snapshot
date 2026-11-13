@@ -71,18 +71,21 @@ test("a one-character bare value is not a credential", () => {
 });
 
 test("real credentials in the shapes the prose guard could have broken", () => {
+  // The line shape decides which format the value belongs to. An unquoted `KEY: identifier` in a
+  // source file is an expression and is deliberately left readable; the same text in YAML, a
+  // .env or a shell script is a value.
   const cases = [
-    "dbPassword: hunter2",
-    "dbPassword: hunter2  # rotate",
-    'dbPassword: "hunter2"',
-    "POSTGRES_PASSWORD=hunter2",
-    "      POSTGRES_PASSWORD: hunter2hunter2",
-    '{"apiKey": "abcdefgh12345678"}',
-    "awsSecret: hunter2hunter2",
-    "DB_PASSWORD=abc123 node app.js",
+    ["dbPassword: hunter2", "fixture.yml"],
+    ["dbPassword: hunter2  # rotate", "fixture.yml"],
+    ['dbPassword: "hunter2"', "fixture.yml"],
+    ["POSTGRES_PASSWORD=hunter2", "fixture.env"],
+    ["      POSTGRES_PASSWORD: hunter2hunter2", "fixture.yml"],
+    ['{"apiKey": "abcdefgh12345678"}', "fixture.json"],
+    ["awsSecret: hunter2hunter2", "fixture.yml"],
+    ["DB_PASSWORD=abc123 node app.js", "fixture.sh"],
   ];
-  for (const line of cases) {
-    const { redacted, findings } = scan(line);
+  for (const [line, file] of cases) {
+    const { redacted, findings } = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, file);
     assert.ok(findings.length > 0, `a finding is expected for: ${line}`);
     assert.equal(/hunter2|abcdefgh|abc123/.test(redacted), false, `the value leaked: ${line}`);
   }

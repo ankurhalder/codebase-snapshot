@@ -10,7 +10,16 @@
  * `package.json` carries the same version; `npm run verify` compares the two.
  */
 export const GENERATOR_NAME = "codebase-snapshot";
-export const GENERATOR_VERSION = "0.9.16";
+export const GENERATOR_VERSION = "0.9.17";
+
+/**
+ * The manifest and ownership-marker schema this build writes and understands.
+ *
+ * Living here rather than in `index.ts` lets `validate` decide whether a manifest is the current
+ * schema without importing the barrel that imports `validate` — the same cycle that moved
+ * {@link GENERATOR_NAME} here. `index.ts` re-exports it, so the public surface is unchanged.
+ */
+export const SCHEMA_VERSION = "3.0.0";
 
 /**
  * Names this generator was published under before it moved to `codebase-snapshot`.

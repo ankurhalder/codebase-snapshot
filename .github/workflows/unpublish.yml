@@ -40,10 +40,8 @@ jobs:
             echo '::error::confirmation was not "yes" — nothing was changed'
             exit 1
           fi
-          case "$SPEC" in
-            *@*.*.*) echo "unpublishing $SPEC" ;;
-            *) echo "::error::spec must be an exact version like name@1.2.3"; exit 1 ;;
-          esac
+          # A parse, not a glob: a range would unpublish every matching version.
+          node scripts/assert-exact-spec.mjs "$SPEC"
 
       # Pinned to a full commit SHA like every other action in a job that holds a long-lived token:
       # a moved tag must not be able to change the code that runs beside NPM_TOKEN.

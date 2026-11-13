@@ -184,20 +184,31 @@ export function partitionFilesForBuckets(
    * one that overflowed: fifty parts and a handful of splits re-hashed tens of megabytes for
    * numbers that had not changed.
    */
-  const measurements = new Map<RenderGroup, { index: number; width: number; size: number }>();
+  type Assembly = ReturnType<typeof assembleGroup>;
+  const assemblies = new Map<RenderGroup, { index: number; width: number; value: Assembly }>();
   const widthOf = (total: number): number => Math.max(3, String(total).length);
 
-  const measure = (group: RenderGroup, index: number, total: number): number => {
-    const cached = measurements.get(group);
+  /**
+   * The part exactly as it will be written, assembled once.
+   *
+   * Measuring used to assemble the whole markdown and the final render then assembled every group
+   * again from the same sections — roughly double the string building and token estimation on the
+   * largest data this tool handles. The cache key is (group, index, numbering width): those are
+   * the only inputs beyond the sections, and a split invalidates the group it changed.
+   */
+  const assemble = (group: RenderGroup, index: number, total: number): Assembly => {
     const width = widthOf(total);
+    const cached = assemblies.get(group);
     if (cached !== undefined && cached.index === index && cached.width === width) {
-      return cached.size;
+      return cached.value;
     }
-    const { content } = assembleGroup(group, index, total, contentFingerprint);
-    const size = Buffer.byteLength(content, "utf8");
-    measurements.set(group, { index, width, size });
-    return size;
+    const value = assembleGroup(group, index, total, contentFingerprint);
+    assemblies.set(group, { index, width, value });
+    return value;
   };
+
+  const measure = (group: RenderGroup, index: number, total: number): number =>
+    Buffer.byteLength(assemble(group, index, total).content, "utf8");
 
   for (let pass = 0; pass < MAX_SPLIT_PASSES; pass++) {
     const total = groups.length;
@@ -209,20 +220,20 @@ export function partitionFilesForBuckets(
         break;
       }
     }
-    if (oversized === -1) return renderGroups(groups, contentFingerprint);
+    if (oversized === -1) return renderGroups(groups, contentFingerprint, assemble);
 
     const group = groups[oversized] as RenderGroup;
     if (group.sections.length > 1) {
       const moved = group.sections.pop() as PreparedSection;
       groups.splice(oversized + 1, 0, { sections: [moved], budget: group.budget });
-      measurements.delete(group);
+      assemblies.delete(group);
       continue;
     }
 
     // A single section still exceeds the budget (its metadata alone is huge):
     // shrink the body until it fits.
     const [section] = group.sections;
-    if (section === undefined) return renderGroups(groups, contentFingerprint);
+    if (section === undefined) return renderGroups(groups, contentFingerprint, assemble);
     const overflow = measure(group, oversized, total) - group.budget;
     const currentContent = section.file.content ?? "";
     const shrinkTo = Math.max(
@@ -239,7 +250,7 @@ export function partitionFilesForBuckets(
       applyTruncatedContent(section.file, shrunk.content);
       section.text = renderFileSection(section.file);
       section.byteSize = Buffer.byteLength(section.text, "utf8");
-      measurements.delete(group);
+      assemblies.delete(group);
       continue;
     }
 
@@ -248,7 +259,7 @@ export function partitionFilesForBuckets(
     // token line {@link rehashPart} rewrites below, so the same room is held back here as in
     // `enforceBudget`. Without it a part clipped exactly to budget came out over it whenever the
     // rewoven estimate was a digit wider.
-    const rendered = renderGroups(groups, contentFingerprint);
+    const rendered = renderGroups(groups, contentFingerprint, assemble);
     const marker = TRUNCATION_MARKER;
     assertBudgetHoldsMarker(group.budget);
     const target = Math.max(
@@ -267,7 +278,7 @@ export function partitionFilesForBuckets(
   // section). Clip anything still over budget so the byte bound is a guarantee
   // rather than a best effort — against the budget each part was built for, which
   // with per-layer budgets is not the same for every part.
-  return renderGroups(groups, contentFingerprint).flatMap((part) =>
+  return renderGroups(groups, contentFingerprint, assemble).flatMap((part) =>
     enforceBudget([part], part.metadata.budgetBytes)
   );
 }
@@ -351,8 +362,10 @@ export function renumberParts(
       throw new Error(`${part.filename} has no "## Contents" section to re-number.`);
     }
 
-    const layerCounts: Record<string, number> = {};
-    const kindCounts: Record<string, number> = {};
+    // Null-prototype maps: a layer or kind name from the config may be `constructor` or
+    // `__proto__`, which a plain object reads from its prototype instead of counting.
+    const layerCounts: Record<string, number> = Object.create(null) as Record<string, number>;
+    const kindCounts: Record<string, number> = Object.create(null) as Record<string, number>;
     for (const file of included) {
       layerCounts[file.layer] = (layerCounts[file.layer] || 0) + 1;
       kindCounts[file.kind] = (kindCounts[file.kind] || 0) + 1;
@@ -683,8 +696,10 @@ function assembleGroup(
     section.file.part = filename;
   }
 
-  const layerCounts: Record<string, number> = {};
-  const kindCounts: Record<string, number> = {};
+  // Null-prototype maps: layer and kind names come from the config and may be `constructor`
+  // or `__proto__`, which a plain object reads from its prototype instead of counting.
+  const layerCounts: Record<string, number> = Object.create(null) as Record<string, number>;
+  const kindCounts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const section of group.sections) {
     layerCounts[section.file.layer] = (layerCounts[section.file.layer] || 0) + 1;
     kindCounts[section.file.kind] = (kindCounts[section.file.kind] || 0) + 1;
@@ -727,16 +742,13 @@ function assembleGroup(
 
 function renderGroups(
   groups: readonly RenderGroup[],
-  contentFingerprint?: string
+  contentFingerprint?: string,
+  assemble: (group: RenderGroup, index: number, total: number) => ReturnType<typeof assembleGroup> =
+    (group, index, total) => assembleGroup(group, index, total, contentFingerprint)
 ): PartitionedPart[] {
   const total = groups.length;
   return groups.map((group, index) => {
-    const { filename, content, estimatedTokens } = assembleGroup(
-      group,
-      index,
-      total,
-      contentFingerprint
-    );
+    const { filename, content, estimatedTokens } = assemble(group, index, total);
     const byteSize = Buffer.byteLength(content, "utf8");
     const sha256 = crypto.createHash("sha256").update(content).digest("hex");
     const layersCovered = Array.from(new Set(group.sections.map((s) => s.file.layer))).sort();

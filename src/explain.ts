@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { importsOfFile } from "./ast/imports.js";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
-import { countLines } from "./partitioner/preview.js";
+import { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
+import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
 import { resolveChangedScope } from "./scanner/changed.js";
 import { buildImportResolver, importsChangedFile } from "./scanner/dependents.js";
@@ -298,7 +299,17 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   }
 
   if (fs.existsSync(absolute) && fs.statSync(absolute).isFile()) {
-    const buffer = fs.readFileSync(absolute);
+    let buffer: Buffer;
+    try {
+      buffer = fs.readFileSync(absolute);
+    } catch (err) {
+      // `explain` exists to say why a file is not in the snapshot; one unreadable file must
+      // produce that answer, not a stack trace that aborts a batch.
+      result.included = false;
+      result.reason = "read-error";
+      result.detail = `${(err as Error).message} (explain could not read the file; generate records this as a skipped entry)`;
+      return result;
+    }
     // Decode the way `generate` decodes: a UTF-16 file is transcoded rather than reported as a
     // pile of NULs, and a lossy decode is stated instead of being passed off as clean text.
     const decoded = decodeText(buffer);
@@ -318,6 +329,20 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     result.secrets = findings
       .slice(0, 20)
       .map((finding) => ({ rules: finding.rules, line: finding.line }));
+
+    // The inclusion mode is what `generate` would choose at *these* settings, not what the last
+    // run happened to record. Reading it from the manifest made `--large-file-bytes` a no-op and
+    // reported a stale answer after the threshold changed.
+    let inclusionMode: ExplainResult["inclusionMode"] = "full";
+    if (config.skeleton === true && isSkeletonizable(relative)) {
+      const skeleton = skeletonizeTypeScript(text, relative);
+      if (skeleton.collapsed > 0) inclusionMode = "signatures";
+    }
+    if (inclusionMode !== "signatures" && buffer.length > config.largeFileBytes) {
+      const preview = truncatePreview(text, config.previewHeadLines, config.previewTailLines);
+      inclusionMode = preview.isTruncated ? "preview" : "full";
+    }
+    result.inclusionMode = inclusionMode;
   }
 
   // Classification is for a file the snapshot would actually contain. Assigning it before the
@@ -337,7 +362,6 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     ? manifest.files.find((file) => file.relativePath === relative)
     : undefined;
   result.part = entry?.part ?? null;
-  result.inclusionMode = entry?.inclusionMode;
 
   return result;
 }

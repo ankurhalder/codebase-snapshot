@@ -44,8 +44,12 @@ If you want to paste a repo into a chat right now: **use gitingest.**
 
 ## Where this is the better choice
 
-- **The repository must not leave your machine.** This tool never makes a network request; it reads
-  the local tree. If the code is private enough that a hosted digest is not allowed, that settles it.
+- **The repository must not leave your machine.** No source code, path or identifier is sent
+  anywhere; the tool reads the local tree. An interactive run makes one GET to the npm registry to
+  check for a newer version — CI, non-TTY and `--format json` runs skip it, and
+  `--no-update-check` or `CODEBASE_SNAPSHOT_NO_UPDATE_CHECK=1` disables it entirely (see
+  [The update check](update-check.md)). If the code is private enough that a hosted digest is not
+  allowed, that settles it.
 - **You need a size guarantee.** A part either fits the budget or carries an explicit truncation
   marker naming the budget. A digest that grows with the repository eventually stops fitting, and
   discovering that at ingestion time is too late.

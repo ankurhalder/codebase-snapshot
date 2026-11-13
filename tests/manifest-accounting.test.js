@@ -165,15 +165,17 @@ test("the fingerprint is a digest of the file list and the recorded settings dig
   write(dir, "src/a.ts", "export const a = 1;\n");
   const manifest = generateSnapshot({ cwd: dir });
 
-  // No file is truncated in this fixture, so manifest.files[].inclusionMode is the value the
-  // pre-partition fingerprint hashed. The trailing settings line names the recorded digest.
+  // The per-file line deliberately omits `inclusionMode`: the partitioner can change a file's
+  // mode after the fingerprint is computed (a body clipped by the part budget becomes
+  // `preview`), which made the value impossible to reproduce from the manifest. The settings
+  // digest still distinguishes every mode-changing setting. The trailing line names the recorded
+  // digest.
   const recomputed = crypto
     .createHash("sha256")
     .update(
       [
         ...manifest.files.map(
-          (file) =>
-            `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}:${file.inclusionMode}`
+          (file) => `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}`
         ),
         `settings:${manifest.config.digest}`,
       ].join("\n")

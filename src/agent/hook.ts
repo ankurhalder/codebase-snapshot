@@ -16,6 +16,7 @@
  *  - **Say what happened.** Every outcome — written, already ours, someone else's, no git
  *    here — is reported, and a caller that cannot write says why instead of exiting 0.
  */
+import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -64,9 +65,17 @@ set -e
 SNAPSHOT_DIR="${dir}"
 
 if [ ! -f "$SNAPSHOT_DIR/manifest.json" ]; then
-  echo "${GENERATOR_NAME}: no snapshot in $SNAPSHOT_DIR, skipping the staleness check." >&2
-  echo "  Run \\"npx ${GENERATOR_NAME} generate\\" to create one." >&2
-  exit 0
+  # Fail closed. A missing snapshot used to exit 0 with a reassuring message, so deleting or
+  # renaming the output directory disabled the gate while every commit still succeeded — the one
+  # failure mode a commit gate must not have. The opt-out is explicit and documented.
+  if [ "\${CODEBASE_SNAPSHOT_ALLOW_MISSING:-}" = "1" ]; then
+    echo "${GENERATOR_NAME}: no snapshot in $SNAPSHOT_DIR; skipping the check (CODEBASE_SNAPSHOT_ALLOW_MISSING=1)." >&2
+    exit 0
+  fi
+  echo "${GENERATOR_NAME}: refusing the commit: no snapshot in $SNAPSHOT_DIR." >&2
+  echo "  Run \\"npx ${GENERATOR_NAME} generate\\", stage it, and commit again." >&2
+  echo "  To disable this gate, set CODEBASE_SNAPSHOT_ALLOW_MISSING=1." >&2
+  exit 1
 fi
 
 if ! npx --no-install ${GENERATOR_NAME} validate >/dev/null 2>&1; then
@@ -111,10 +120,78 @@ function gitDirectory(cwd: string): string | null {
     if (!match) return null;
     const target = match[1] as string;
     const resolved = path.isAbsolute(target.trim()) ? target.trim() : path.join(cwd, target.trim());
-    return fs.statSync(resolved).isDirectory() ? resolved : null;
+    if (!fs.statSync(resolved).isDirectory()) return null;
+    // A `.git` file is repository-controlled input: a cloned archive can point it at any
+    // directory the user can write, and `init --install-hook` would then write an executable
+    // script there. Accept only a target inside the repository, or the registered worktree
+    // metadata that names this checkout back.
+    if (isInside(path.resolve(cwd), path.resolve(resolved))) return resolved;
+    return isRegisteredWorktree(path.resolve(resolved), cwd) ? resolved : null;
   } catch {
     return null;
   }
+}
+
+/** True when `child` is `parent` or inside it. */
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * True when `gitDir` is the metadata git itself registered for this worktree.
+ *
+ * A linked worktree's git directory lives in the main repository and carries a `gitdir` file
+ * naming the worktree's own `.git`. That back-reference is what separates a worktree the user
+ * created from a `.git` file a repository archive invented to redirect a write.
+ */
+function isRegisteredWorktree(gitDir: string, cwd: string): boolean {
+  try {
+    const back = fs.readFileSync(path.join(gitDir, "gitdir"), "utf8").trim();
+    return path.resolve(gitDir, back) === path.join(path.resolve(cwd), ".git");
+  } catch {
+    return false;
+  }
+}
+
+/** Runs git in `cwd` and returns trimmed stdout, or null when git cannot answer. */
+function gitOutput(cwd: string, args: string[]): string | null {
+  try {
+    const output = childProcess.execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const trimmed = output.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The hooks directory git will actually run, or a refusal.
+ *
+ * `git rev-parse --git-path hooks` is the only answer that honours `core.hooksPath` (Husky sets
+ * `.husky/_`) and a linked worktree's shared hooks directory. Writing `.git/hooks/pre-commit`
+ * regardless produced a gate that git never ran while reporting success.
+ *
+ * A configured path outside the repository is refused rather than written: it belongs to another
+ * repository or to the user's home directory, and a hook is an executable file.
+ */
+function configuredHooksDirectory(cwd: string): { dir: string } | { refusal: string } | null {
+  const hooks = gitOutput(cwd, ["rev-parse", "--git-path", "hooks"]);
+  if (hooks === null) return null;
+  const resolved = path.resolve(cwd, hooks);
+  const common = gitOutput(cwd, ["rev-parse", "--git-common-dir"]);
+  const commonDir = common === null ? null : path.resolve(cwd, common);
+  if (isInside(path.resolve(cwd), resolved)) return { dir: resolved };
+  if (commonDir !== null && isInside(commonDir, resolved)) return { dir: resolved };
+  return {
+    refusal:
+      `The hooks directory git reports (${resolved}) is outside this repository, so no hook was ` +
+      `written. Add \`npx ${GENERATOR_NAME} validate\` to the hook manager that owns it instead.`,
+  };
 }
 
 /**
@@ -124,8 +201,12 @@ function gitDirectory(cwd: string): string | null {
  * upgrade of this package updates the check. Anyone else's hook is untouched.
  */
 export function installPreCommitHook(cwd: string, outDir = "snapshot"): HookInstallResult {
-  const gitDir = gitDirectory(cwd);
-  if (gitDir === null) {
+  const configured = configuredHooksDirectory(cwd);
+  if (configured !== null && "refusal" in configured) {
+    return { path: null, written: false, notes: [configured.refusal] };
+  }
+  const gitDir = configured === null ? gitDirectory(cwd) : null;
+  if (configured === null && gitDir === null) {
     return {
       path: null,
       written: false,
@@ -135,7 +216,7 @@ export function installPreCommitHook(cwd: string, outDir = "snapshot"): HookInst
     };
   }
 
-  const hooksDir = path.join(gitDir, "hooks");
+  const hooksDir = configured === null ? path.join(gitDir as string, "hooks") : configured.dir;
   const hookPath = path.join(hooksDir, "pre-commit");
 
   try {

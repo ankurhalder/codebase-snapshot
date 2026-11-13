@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { Worker } from "node:worker_threads";
 import { hookStdoutScope, installStdoutRouter } from "./stdout.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -38,18 +39,24 @@ import {
   isBinaryExtension,
   isBinaryFile,
 } from "./scanner/binary.js";
-import { resolveChangedScope } from "./scanner/changed.js";
-import { buildImportResolver, importsChangedFile, resolveSpecifier } from "./scanner/dependents.js";
+import { readStagedBlob, resolveChangedScope } from "./scanner/changed.js";
+import {
+  buildImportResolver,
+  importsChangedFile,
+  resolveSpecifier,
+  tsconfigPathsFor,
+} from "./scanner/dependents.js";
 import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
-import { GENERATOR_NAME, GENERATOR_VERSION, isOurGeneratorName } from "./version.js";
+import { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION, isOurGeneratorName } from "./version.js";
 import type {
   FileEntry,
   InclusionMode,
   JsonSummary,
   Manifest,
+  ManifestArtifact,
   ManifestIndexes,
   MarkdownSummary,
   ResolvedArtifacts,
@@ -63,8 +70,7 @@ import type {
   TextEncoding,
 } from "./types.js";
 
-export { GENERATOR_NAME, GENERATOR_VERSION } from "./version.js";
-export const SCHEMA_VERSION = "3.0.0";
+export { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION } from "./version.js";
 
 /**
  * The update check, exported because it is useful on its own: an embedder that wraps this package
@@ -153,6 +159,10 @@ let fileDerivationBytes = 0;
 function takeDerivation(path: string, hash: string, settings: string): Derivation | undefined {
   const cached = FILE_DERIVATIONS.get(path);
   if (cached === undefined || cached.hash !== hash || cached.settings !== settings) return undefined;
+  // Recency on a hit: Map iteration is insertion order, so a frequently used entry must move to
+  // the end or a cold file inserted earlier outlives it and the cache behaves as FIFO.
+  FILE_DERIVATIONS.delete(path);
+  FILE_DERIVATIONS.set(path, cached);
   return cached;
 }
 
@@ -171,6 +181,17 @@ function rememberDerivation(
   const bytes = bodyBytes * 2 + 512;
   // One enormous file must not evict the rest of the repository to cache itself.
   if (bytes > FILE_DERIVATION_LIMIT_BYTES / 4) return;
+
+  // A path inserted again (a file edited between runs in one process) replaces its entry. The
+  // old code added the new bytes without subtracting the old ones, so the accounting drifted
+  // upward and the eviction loop removed live entries to make room for a total that was too large.
+  const previous = FILE_DERIVATIONS.get(path);
+  if (previous !== undefined) {
+    FILE_DERIVATIONS.delete(path);
+    fileDerivationBytes -= previous.bytes;
+  } else {
+    FILE_DERIVATIONS.delete(path);
+  }
 
   while (fileDerivationBytes + bytes > FILE_DERIVATION_LIMIT_BYTES) {
     const oldest = FILE_DERIVATIONS.keys().next();
@@ -218,6 +239,9 @@ function deriveFile(
   const { redacted, findings } = scanAndRedactSecrets(rawContent, config.secretRules, relativePath);
 
   const isLarge = sizeBytes > config.largeFileBytes;
+  /** Computed once: the skeleton decision and the summary decision must use the same ceiling. */
+  const oversizeForSummary =
+    Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES;
   let finalContent = redacted;
   let isPreviewTruncated = false;
   let includedLines = lineCount;
@@ -227,7 +251,12 @@ function deriveFile(
   // previewing it afterwards would throw away the structure this mode exists to keep.
   // The summary is still built from the whole text below, so `exports` and `imports`
   // describe the real file rather than the compressed one.
-  if (config.skeleton === true && isSkeletonizable(relativePath)) {
+  //
+  // The size ceiling is checked *first*: the TypeScript parser costs more memory than the file
+  // itself (a 50 MB source peaked at 3.3 GB RSS), and `--skeleton` parsed files that the summary
+  // guard below exists to avoid. A file this large is emitted as a preview, so a skeleton of it
+  // would describe lines the snapshot does not contain anyway.
+  if (config.skeleton === true && isSkeletonizable(relativePath) && !oversizeForSummary) {
     const skeleton = skeletonizeTypeScript(redacted, relativePath);
     if (skeleton.collapsed > 0) {
       finalContent = skeleton.text;
@@ -253,7 +282,7 @@ function deriveFile(
   // Size first, then preview: a 3 MB file is both, and "exceeds 2 MB" is the more useful of the
   // two true statements — it names the ceiling that kept the run bounded. The preview rule then
   // covers the 200 KB–2 MB band, where the file is small enough to have been parsed before.
-  if (Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES) {
+  if (oversizeForSummary) {
     // A structural summary of a file this size costs far more memory than the file itself — the
     // TypeScript parser builds an AST whose nodes dwarf the text, and a 50 MB source file peaked
     // at 3.3 GB RSS. The body is a head/tail preview at this size anyway, so the summary would
@@ -411,8 +440,8 @@ function retain<T>(items: T[], keep: (item: T) => boolean): void {
  */
 const SKIP_PREVIEW_SUMMARIES = true;
 
-function buildIndexes(files: FileEntry[]): ManifestIndexes {
-  const resolver = buildImportResolver(files);
+function buildIndexes(files: FileEntry[], tsconfigPaths: ReturnType<typeof tsconfigPathsFor>): ManifestIndexes {
+  const resolver = buildImportResolver(files, { tsconfig: tsconfigPaths });
   const importerCounts = new Map<string, number>();
 
   const byFile = files.filter((file) => isSourceSummary(file.summary)).map((file) => {
@@ -731,7 +760,19 @@ function listEntries(dir: string): string[] {
  * once, immediately after this run wrote those same bytes, so it costs a sequential read of
  * the snapshot rather than anything proportional to the repository.
  */
-function markerInventory(dir: string): { entries: string[]; files: MarkerFileDigest[] } {
+/** A file this run wrote, with the metadata that lets a later marker skip re-reading it. */
+interface WrittenArtifact {
+  digest: MarkerFileDigest;
+  mtimeMs: number;
+}
+
+/** Every artifact this run wrote, by entry name, so the marker need not hash its own output. */
+type WrittenLedger = Map<string, WrittenArtifact>;
+
+function markerInventory(
+  dir: string,
+  written?: WrittenLedger
+): { entries: string[]; files: MarkerFileDigest[] } {
   const entries = listEntries(dir);
   const files: MarkerFileDigest[] = [];
   for (const entry of entries) {
@@ -749,6 +790,15 @@ function markerInventory(dir: string): { entries: string[]; files: MarkerFileDig
       continue;
     }
     if (!stats.isFile()) continue;
+    // This run wrote the file and recorded its digest; re-reading it costs the snapshot's own
+    // size on every run for bytes that are already in memory. A size or mtime that changed since
+    // the write — a `hooks.afterGenerate` edit, a rename across devices — falls through to the
+    // read, which is what makes the shortcut safe rather than an assumption.
+    const recorded = written?.get(entry);
+    if (recorded !== undefined && recorded.digest.bytes === stats.size && recorded.mtimeMs === stats.mtimeMs) {
+      files.push(recorded.digest);
+      continue;
+    }
     let digest: string;
     try {
       digest = sha256Hex(fs.readFileSync(full));
@@ -765,9 +815,10 @@ function markerPayload(
   dir: string,
   state: MarkerState,
   id: string,
-  createdAt: string
+  createdAt: string,
+  written?: WrittenLedger
 ): OwnershipMarker {
-  const { entries, files } = markerInventory(dir);
+  const { entries, files } = markerInventory(dir, written);
   const marker: OwnershipMarker = {
     generator: GENERATOR_NAME,
     version: GENERATOR_VERSION,
@@ -1371,6 +1422,69 @@ function ensureParentDirectory(target: string, label: "outDir" | "tmpDir"): void
   }
 }
 
+/** How often the lock owner refreshes the heartbeat while the run is alive. */
+const LOCK_HEARTBEAT_MS = 5_000;
+
+/**
+ * How old a heartbeat may be before the lock is treated as a corpse.
+ *
+ * A live run — even one inside a synchronous 50 MB parse — refreshes it from a worker thread
+ * every {@link LOCK_HEARTBEAT_MS}. Two minutes is 24 missed beats: long enough to survive a
+ * suspended laptop or a pathological pause, short enough that a crashed CI job recovers without
+ * a human. The old rule was the lock file's *creation* mtime and a one-hour window, so a process
+ * killed between `openSync` and `writeSync` wedged every later run for an hour, and a pid reused
+ * by an unrelated process wedged it forever.
+ */
+const LOCK_STALE_HEARTBEAT_MS = 120_000;
+
+/**
+ * Worker source that refreshs the lock's mtime.
+ *
+ * A worker thread, not `setInterval` in this process: `generateSnapshot` is synchronous, so the
+ * main event loop is blocked for the whole run and a timer would never fire. The worker is
+ * `unref`ed and dies with the parent, so a crashed run cannot leave a heartbeat behind.
+ */
+const LOCK_HEARTBEAT_SOURCE = `
+const { parentPort, workerData } = require("node:worker_threads");
+const fs = require("node:fs");
+const { lockPath, intervalMs } = workerData;
+const timer = setInterval(() => {
+  try {
+    const now = new Date();
+    fs.utimesSync(lockPath, now, now);
+  } catch (err) {
+    // The lock was reclaimed or removed; nothing left to keep alive.
+  }
+}, intervalMs);
+timer.unref();
+if (parentPort) {
+  parentPort.on("message", (message) => {
+    if (message === "stop") {
+      clearInterval(timer);
+      process.exit(0);
+    }
+  });
+}
+`;
+
+/** Starts the heartbeat and returns the function that stops it. */
+function startLockHeartbeat(lockPath: string): () => void {
+  try {
+    const worker = new Worker(LOCK_HEARTBEAT_SOURCE, {
+      eval: true,
+      workerData: { lockPath, intervalMs: LOCK_HEARTBEAT_MS },
+    });
+    worker.unref();
+    return () => {
+      void worker.terminate().catch(() => undefined);
+    };
+  } catch {
+    // The lock still has a fresh mtime from acquisition, and refusing the run over an optional
+    // safety net would be worse than losing the heartbeat for one run.
+    return () => undefined;
+  }
+}
+
 /**
  * Serialises runs that share a staging root.
  *
@@ -1379,7 +1493,7 @@ function ensureParentDirectory(target: string, label: "outDir" | "tmpDir"): void
  * locks and then delete each other's staging files. Runs that share a staging
  * root are serialised; runs with distinct roots proceed independently. The lock
  * lives in the OS temp directory — never inside the repository, where it could
- * be scanned — and records the owning pid so a crashed run's lock does not block
+ * be scanned — and carries a heartbeat so a crashed run's lock does not block
  * forever.
  */
 function acquireRunLock(stagingRoot: string): () => void {
@@ -1387,6 +1501,9 @@ function acquireRunLock(stagingRoot: string): () => void {
   const payload = `${JSON.stringify({
     pid: process.pid,
     stagingRoot,
+    host: os.hostname(),
+    runId: crypto.randomUUID(),
+    heartbeatMs: LOCK_HEARTBEAT_MS,
     startedAt: new Date().toISOString(),
   })}\n`;
 
@@ -1398,20 +1515,23 @@ function acquireRunLock(stagingRoot: string): () => void {
       } finally {
         fs.closeSync(handle);
       }
+      const stopHeartbeat = startLockHeartbeat(lockPath);
       return () => {
+        stopHeartbeat();
         try {
           fs.rmSync(lockPath, { force: true });
         } catch {
           // A lock that cannot be removed is detected as stale by the next run
-          // (dead pid) or reported to the user; the snapshot itself is fine.
+          // (dead pid or a stale heartbeat) or reported to the user; the snapshot itself is fine.
         }
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       if (attempt === 0 && reclaimStaleLock(lockPath)) continue;
       throw new Error(
-        `Another generate run is already using the staging directory ${stagingRoot}. Wait for ` +
-          `it to finish, or delete ${lockPath} if no other run is active.`
+        `Another generate run is already using the staging directory ${stagingRoot} ` +
+          `(lock ${lockPath}, heartbeat ${Math.round(lockHeartbeatAgeMs(lockPath) / 1000)}s old). ` +
+          `Wait for it to finish, or delete the lock if no other run is active.`
       );
     }
   }
@@ -1478,7 +1598,24 @@ export function lockPathFor(stagingRoot: string): string {
   return path.join(os.tmpdir(), `codebase-snapshot-${lockKeyFor(stagingRoot)}.lock`);
 }
 
-/** True only when the lock names a pid that certainly no longer exists, or is a corpse. */
+/** Milliseconds since the lock was last refreshed, or `Infinity` when it cannot be read. */
+function lockHeartbeatAgeMs(lockPath: string): number {
+  try {
+    return Date.now() - fs.statSync(lockPath).mtimeMs;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
+ * True only when the lock's owner is certainly gone, proven by its pid or its heartbeat.
+ *
+ * The pid check alone could not distinguish a live run from an unrelated process that reused the
+ * pid, and a truncated lock carried no pid at all — so "not provably dead" meant "refuse for an
+ * hour". Every live run now refreshes the lock from a worker thread, so a heartbeat older than
+ * {@link LOCK_STALE_HEARTBEAT_MS} is positive evidence that no run owns it. A pid that no longer
+ * exists is still immediate evidence; the heartbeat bounds the reused-pid case.
+ */
 function lockOwnerIsGone(lockPath: string): boolean {
   let raw: string;
   try {
@@ -1492,18 +1629,20 @@ function lockOwnerIsGone(lockPath: string): boolean {
   } catch {
     // A zero-byte or truncated lock file is the record of a process that died between
     // `openSync(…, "wx")` and `writeSync` — the file exists, so it was never cleaned up,
-    // and it carries no pid, so nothing could ever prove it dead. The run locked itself
-    // out permanently and only deleting the file by hand recovered it. Age is the
-    // remaining evidence: a lock older than any plausible run is a corpse.
+    // and it carries no pid, so only age could prove it dead. It now recovers in minutes, not
+    // an hour, because the heartbeat window is the heartbeat interval's business.
     return lockFileIsAncient(lockPath);
   }
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return lockFileIsAncient(lockPath);
   try {
     process.kill(pid, 0);
-    return false;
+    // The pid exists. It may be the owner or an unrelated process that reused the number; the
+    // heartbeat is the only portable way to tell them apart.
+    return lockFileIsAncient(lockPath);
   } catch (err) {
     // EPERM means the process exists but belongs to someone else.
-    return (err as NodeJS.ErrnoException).code === "ESRCH";
+    if ((err as NodeJS.ErrnoException).code !== "ESRCH") return lockFileIsAncient(lockPath);
+    return true;
   }
 }
 
@@ -1545,17 +1684,14 @@ function reclaimStaleLock(lockPath: string): boolean {
 }
 
 /**
- * True when the lock file is older than {@link STALE_RUN_MS}.
+ * True when the lock's heartbeat is older than {@link LOCK_STALE_HEARTBEAT_MS}.
  *
- * Used only when the lock's contents cannot name an owner: an unreadable payload is not
- * proof of a live run, and treating it as one wedged every later run.
+ * Used when the lock's contents cannot prove an owner dead: an unreadable payload is not proof
+ * of a live run, and a pid alone cannot rule out reuse. A lock older than the heartbeat window
+ * has no run behind it, because a live run refreshes it every few seconds.
  */
 function lockFileIsAncient(lockPath: string): boolean {
-  try {
-    return Date.now() - fs.statSync(lockPath).mtimeMs > STALE_RUN_MS;
-  } catch {
-    return false;
-  }
+  return lockHeartbeatAgeMs(lockPath) > LOCK_STALE_HEARTBEAT_MS;
 }
 
 /**
@@ -1590,26 +1726,74 @@ function writeManifestAtomically(manifestPath: string, manifest: Manifest): void
  * (e.g. two `--tmp-dir` values), so the swap is retried briefly when it loses
  * that race instead of failing with a raw ENOENT/ENOTEMPTY from `rename`.
  */
-function swapIntoPlace(stagingDir: string, outDir: string): void {
+function swapIntoPlace(stagingDir: string, outDir: string, beforeSwap?: () => void): void {
   ensureParentDirectory(outDir, "outDir");
   const deadline = Date.now() + 3_000;
+  let delay = 25;
 
-  for (let attempt = 0; ; attempt += 1) {
+  // The loop was capped at ten 50 ms attempts, so the 3 s deadline was never reached and a
+  // directory held open for a moment longer — the normal case on Windows when a virus scanner
+  // or an editor has a handle — failed at 500 ms. The deadline is now the bound, and the
+  // delay backs off so a genuinely busy directory is not hammered.
+  for (;;) {
     try {
-      swapOnce(stagingDir, outDir);
+      swapOnce(stagingDir, outDir, beforeSwap);
       return;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      const racy = code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST" || code === "EPERM";
-      if (!racy || attempt >= 10 || Date.now() > deadline) throw err;
-      sleepSync(50);
+      const retryable =
+        code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST" || code === "EPERM";
+      const remaining = deadline - Date.now();
+      if (!retryable || remaining <= 0) throw err;
+      sleepSync(Math.min(delay, remaining));
+      delay = Math.min(delay * 2, 400);
     }
   }
 }
 
-function swapOnce(stagingDir: string, outDir: string): void {
+/**
+ * Restores `outDir` from the one backup an interrupted publish left behind.
+ *
+ * A run killed between "move the old snapshot aside" and "rename the new one in" leaves `outDir`
+ * missing and a single `<outDir>.backup-*`. The next run used to read that as a first run, write a
+ * fresh snapshot, and leave the previous one under a name nobody looks for. The backup is restored
+ * only when it is the only one, it carries a complete marker of this tool's, and `outDir` is
+ * absent — otherwise there is nothing unambiguous to recover.
+ */
+function recoverInterruptedPublish(outDir: string): void {
+  if (fs.existsSync(outDir)) return;
+  const parent = path.dirname(outDir);
+  const base = path.basename(outDir);
+  let backups: string[];
+  try {
+    backups = fs
+      .readdirSync(parent)
+      .filter((name) => name.startsWith(`${base}.backup-`));
+  } catch {
+    return;
+  }
+  if (backups.length !== 1) return;
+  const backupDir = path.join(parent, backups[0] as string);
+  const { marker, problem } = readOwnershipMarker(backupDir);
+  if (problem !== null || marker === null || marker.state !== "complete") return;
+  try {
+    fs.renameSync(backupDir, outDir);
+    process.stderr.write(
+      `⚠ Recovered ${outDir} from ${backupDir}, left by an interrupted run. ` +
+        `That snapshot is the one from before the interrupted run.\n`
+    );
+  } catch {
+    // Leave the backup where it is: refusing to generate is safer than deleting the only copy.
+  }
+}
+
+function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): void {
   const backupDir = `${outDir}.backup-${process.pid}-${Date.now()}`;
   const hadPrevious = fs.existsSync(outDir);
+
+  // The guard ran before staging; the directory may have changed while the snapshot was
+  // generated. Re-check immediately before the rename, when the window is as small as it gets.
+  if (hadPrevious) beforeSwap?.();
 
   if (hadPrevious) fs.renameSync(outDir, backupDir);
 
@@ -1832,22 +2016,6 @@ export function generateSnapshot(
 
   const gitInfo = getGitInfo(config.cwd, config.branch);
 
-  const collection = collectFiles(config.cwd, {
-    includePatterns: config.include,
-    excludePatterns: [...config.excludePatterns, ...config.presetExclude],
-    includeSensitiveFiles: config.includeSensitiveFiles,
-    secretRules: config.secretRules,
-    discovery: config.discovery,
-    // The output and staging directories this run is about to write, relative to the root. A
-    // first run cannot have marked them yet, so the name alone keeps a run from recording its own
-    // output — but only at these exact paths, not at every directory that shares the name.
-    toolOwnedPaths: [config.outDir, config.tmpDir]
-      .map((directory) =>
-        path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
-      )
-      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
-  });
-
   /**
    * The changed-files scope, resolved once, or `null` when the run is not scoped.
    *
@@ -1867,6 +2035,27 @@ export function generateSnapshot(
         })
       : null;
   const changedPaths = changedScope === null ? null : new Set(changedScope.paths);
+  const stagedPaths = changedScope?.stagedPaths ?? new Set<string>();
+  const stagedDeletedPaths = changedScope?.deletedPaths ?? new Set<string>();
+
+  const collection = collectFiles(config.cwd, {
+    includePatterns: config.include,
+    excludePatterns: [...config.excludePatterns, ...config.presetExclude],
+    includeSensitiveFiles: config.includeSensitiveFiles,
+    secretRules: config.secretRules,
+    discovery: config.discovery,
+    // The output and staging directories this run is about to write, relative to the root. A
+    // first run cannot have marked them yet, so the name alone keeps a run from recording its own
+    // output — but only at these exact paths, not at every directory that shares the name.
+    toolOwnedPaths: [config.outDir, config.tmpDir]
+      .map((directory) =>
+        path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
+      )
+      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
+    // A staged path can be absent from the working tree while its index blob exists. Discovery
+    // lists the working tree, so those paths would never reach the scan at all.
+    ...(stagedPaths.size > 0 ? { extraPaths: [...stagedPaths] } : {}),
+  });
 
   /** Paths the scope removed before the scan; recorded in `skipped[]` after the loop. */
   const unchangedPaths: string[] = [];
@@ -1934,8 +2123,11 @@ export function generateSnapshot(
    * summary is refused.
    */
   const skippedSummaryImports = new Map<string, string[]>();
-  const layerCounts: LayerOrKindCounts = {};
-  const kindCounts: LayerOrKindCounts = {};
+  // Null-prototype registries: a config may name a layer or kind `constructor` or `__proto__`,
+  // both valid identifiers, and indexing a plain object with either read `Object` or assigned the
+  // prototype instead of creating an own key.
+  const layerCounts: LayerOrKindCounts = Object.create(null) as LayerOrKindCounts;
+  const kindCounts: LayerOrKindCounts = Object.create(null) as LayerOrKindCounts;
 
   let totalLines = 0;
   let totalSizeBytes = 0;
@@ -1943,61 +2135,119 @@ export function generateSnapshot(
 
   for (const relativePath of candidateFiles) {
     const absolutePath = path.join(config.cwd, relativePath);
+    // `--staged` selects index paths, so the bytes must come from the index too. Reading the
+    // working tree described a different revision whenever a staged file had later unstaged
+    // edits, which is exactly the state a pre-commit run is in.
+    const fromIndex = stagedPaths.has(relativePath);
+    /** The bytes this file contributes: the index blob when staged, else the working tree. */
+    let buffer: Buffer;
+    /** Its size in the same domain, so every recorded size describes the bytes actually read. */
+    let sizeBytes: number;
 
-    let stats: fs.Stats;
-    try {
-      stats = fs.statSync(absolutePath);
-      if (!stats.isFile()) {
-        // A submodule is a single gitlink, so git lists a path where a file is expected and the
-        // stat answers "directory". Reporting that as `not-file` implied a socket or a FIFO; a
-        // nested checkout is a different fact, and one the reader needs to know: the contents
-        // exist and are simply somebody else's history.
-        const nestedRepository =
-          stats.isDirectory() && fs.existsSync(path.join(absolutePath, ".git"));
-        skipped.push(
-          nestedRepository
-            ? {
-                path: relativePath,
-                reason: "nested-repository" as const,
-                detail:
-                  "a directory belonging to another repository (nested checkout or submodule); its contents are not scanned",
-              }
-            : { path: relativePath, reason: "not-file" }
-        );
+    if (fromIndex && stagedDeletedPaths.has(relativePath)) {
+      skipped.push({
+        path: relativePath,
+        reason: "deleted",
+        detail: "staged for deletion; it is not part of the next commit",
+      });
+      continue;
+    }
+
+    if (fromIndex) {
+      const staged = readStagedBlob(config.cwd, relativePath);
+      if (staged === null) {
+        // No index object: either a staged deletion `--diff-filter=D` did not report (a rename
+        // source, a submodule) or an unreadable object. Recording it is the point.
+        skipped.push({
+          path: relativePath,
+          reason: "deleted",
+          detail: "staged path has no blob in the index; it is not part of the next commit",
+        });
         continue;
       }
-    } catch {
-      skipped.push({ path: relativePath, reason: "read-error" });
-      continue;
-    }
+      if (isBinaryExtension(absolutePath)) {
+        skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${staged.length} B` });
+        continue;
+      }
+      buffer = staged;
+      sizeBytes = staged.length;
+    } else {
+      let stats: fs.Stats;
+      try {
+        stats = fs.statSync(absolutePath);
+        if (!stats.isFile()) {
+          // A submodule is a single gitlink, so git lists a path where a file is expected and the
+          // stat answers "directory". Reporting that as `not-file` implied a socket or a FIFO; a
+          // nested checkout is a different fact, and one the reader needs to know: the contents
+          // exist and are simply somebody else's history.
+          const nestedRepository =
+            stats.isDirectory() && fs.existsSync(path.join(absolutePath, ".git"));
+          skipped.push(
+            nestedRepository
+              ? {
+                  path: relativePath,
+                  reason: "nested-repository" as const,
+                  detail:
+                    "a directory belonging to another repository (nested checkout or submodule); its contents are not scanned",
+                }
+              : { path: relativePath, reason: "not-file" }
+          );
+          continue;
+        }
+      } catch (err) {
+        // A tracked file deleted without staging reaches this branch: `git ls-files` lists it and
+        // `statSync` answers ENOENT. Calling it `read-error` with no detail left the operator
+        // unable to tell a missing file from a permission problem.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") {
+          skipped.push({
+            path: relativePath,
+            reason: "missing",
+            detail: "tracked but absent from disk (deleted without staging)",
+          });
+        } else {
+          skipped.push({
+            path: relativePath,
+            reason: "read-error",
+            detail: String((err as Error).message).replace(/\s+/g, " "),
+          });
+        }
+        continue;
+      }
 
-    // One read, not three.
-    //
-    // This used to call `isBinaryFile(absolutePath)`, which opened a descriptor, allocated a
-    // 64 KB buffer and read the file in chunks looking for a NUL — and then read the *same*
-    // bytes again with `readFileSync`, and then scanned them again with `decodeText`. Every
-    // included file under the 8 MB scan cap was opened twice and read twice.
-    //
-    // A binary extension needs no read at all, and below the cap `decodeText` already answers
-    // the question on the buffer the generator had to hold anyway — it checks for a NUL
-    // anywhere in the buffer, so it is stricter than the head scan it replaces. Above the cap
-    // the chunked scan stays, because that is the case it exists for: the file may be far too
-    // large to load, and a head check is better than reading a gigabyte of noise.
-    if (isBinaryExtension(absolutePath)) {
-      skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${stats.size} B` });
-      continue;
-    }
-    if (stats.size > BINARY_SCAN_BYTES && isBinaryFile(absolutePath)) {
-      skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${stats.size} B` });
-      continue;
-    }
+      // One read, not three.
+      //
+      // This used to call `isBinaryFile(absolutePath)`, which opened a descriptor, allocated a
+      // 64 KB buffer and read the file in chunks looking for a NUL — and then read the *same*
+      // bytes again with `readFileSync`, and then scanned them again with `decodeText`. Every
+      // included file under the 8 MB scan cap was opened twice and read twice.
+      //
+      // A binary extension needs no read at all, and below the cap `decodeText` already answers
+      // the question on the buffer the generator had to hold anyway — it checks for a NUL
+      // anywhere in the buffer, so it is stricter than the head scan it replaces. Above the cap
+      // the chunked scan stays, because that is the case it exists for: the file may be far too
+      // large to load, and a head check is better than reading a gigabyte of noise.
+      if (isBinaryExtension(absolutePath)) {
+        skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${stats.size} B` });
+        continue;
+      }
+      if (stats.size > BINARY_SCAN_BYTES && isBinaryFile(absolutePath)) {
+        skipped.push({ path: relativePath, reason: "binary", detail: `Size: ${stats.size} B` });
+        continue;
+      }
 
-    let buffer: Buffer;
-    try {
-      buffer = fs.readFileSync(absolutePath);
-    } catch {
-      skipped.push({ path: relativePath, reason: "read-error" });
-      continue;
+      try {
+        buffer = fs.readFileSync(absolutePath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        skipped.push({
+          path: relativePath,
+          reason: code === "ENOENT" || code === "ENOTDIR" ? "missing" : "read-error",
+          detail: String((err as Error).message).replace(/\s+/g, " "),
+        });
+        continue;
+      }
+      sizeBytes = stats.size;
     }
 
     // The pre-read NUL scan gives up after BINARY_SCAN_BYTES so a huge blob is never pulled into
@@ -2014,7 +2264,7 @@ export function generateSnapshot(
       skipped.push({
         path: relativePath,
         reason: "read-error",
-        detail: `Size: ${stats.size} B; could not be decoded: ${(err as Error).message}`.replace(
+        detail: `Size: ${sizeBytes} B; could not be decoded: ${(err as Error).message}`.replace(
           /\s+/g,
           " "
         ),
@@ -2025,7 +2275,7 @@ export function generateSnapshot(
       skipped.push({
         path: relativePath,
         reason: "binary",
-        detail: `Size: ${stats.size} B; ${decoded.binaryReason ?? "binary content"}`,
+        detail: `Size: ${sizeBytes} B; ${decoded.binaryReason ?? "binary content"}`,
       });
       continue;
     }
@@ -2035,7 +2285,7 @@ export function generateSnapshot(
     const hashSha256 = sha256Hex(buffer);
     const rawContent = decoded.text;
 
-    totalSizeBytes += stats.size;
+    totalSizeBytes += sizeBytes;
 
     if (decoded.encoding !== "utf-8") {
       encodingNotes.push({
@@ -2060,7 +2310,7 @@ export function generateSnapshot(
     const derivation =
       takeDerivation(absolutePath, hashSha256, derivationKey) ??
       (() => {
-        const fresh = deriveFile(relativePath, rawContent, stats.size, config);
+        const fresh = deriveFile(relativePath, rawContent, sizeBytes, config);
         rememberDerivation(absolutePath, hashSha256, derivationKey, fresh);
         return fresh;
       })();
@@ -2096,7 +2346,7 @@ export function generateSnapshot(
 
     files.push({
       relativePath,
-      sizeBytes: stats.size,
+      sizeBytes,
       lines: lineCount,
       hashSha256,
       part: "",
@@ -2123,7 +2373,10 @@ export function generateSnapshot(
   // reported the layer distribution and the secret count of the whole repository.
   if (changedScope !== null && changedPaths !== null && config.withDependents === true) {
     const keep = new Set(changedPaths);
-    const resolver = buildImportResolver(files);
+    const resolver = buildImportResolver(files, {
+      extraPaths: changedPaths,
+      tsconfig: tsconfigPathsFor(config.cwd),
+    });
     // One hop, and only one hop — `importsChangedFile` is the shared test, so `explain` and
     // `validate` answer this question with the same rule the generator applies here.
     for (const file of files) {
@@ -2251,11 +2504,16 @@ export function generateSnapshot(
   // unchanged settings), and folding it in keeps the value a sha256. It is a trailing line so
   // the file list stays shaped as it was; it also means a truncated part does not move the
   // fingerprint, because this is still computed before partitioning.
+  //
+  // The per-file line deliberately omits `inclusionMode`: the partitioner can change a file's
+  // mode after this point (a body clipped by the part budget becomes `preview`), so including it
+  // made the value impossible to reproduce from the manifest `validate` reads. The mode is a
+  // function of the file list, the file's size and the settings, all of which are already here —
+  // and `validate` can now recompute the fingerprint instead of trusting its shape.
   const fingerprint = sha256Hex(
     [
       ...files.map(
-        (file) =>
-          `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}:${file.inclusionMode}`
+        (file) => `${file.relativePath}:${file.hashSha256}:${file.sizeBytes}`
       ),
       `settings:${configDigest(config)}`,
     ].join("\n")
@@ -2362,6 +2620,8 @@ export function generateSnapshot(
       skippedFiles: skipped.length,
       totalSourceBytes: totalSizeBytes,
       totalContentBytes,
+      sourceLines: totalLines,
+      emittedLines: files.reduce((total, file) => total + file.includedLines, 0),
       // The parts are what a model is handed, so the estimate is over the parts rather than
       // over the sources: previews and the byte budget both shrink the number.
       estimatedTokens: parts.reduce((total, part) => total + part.metadata.estimatedTokens, 0),
@@ -2380,7 +2640,7 @@ export function generateSnapshot(
     },
     layers: layerCounts,
     kinds: kindCounts,
-    indexes: buildIndexes(files),
+    indexes: buildIndexes(files, tsconfigPathsFor(config.cwd)),
     parts: parts.map((part) => part.metadata),
     files: files.map((file) => {
       const { content: _content, ...rest } = file;
@@ -2407,6 +2667,40 @@ export function generateSnapshot(
         "Increase maxPartBytes or lower largeFileBytes."
     );
     manifest.totals.warningCount = manifest.warnings.length;
+  }
+
+  // A preview threshold at or below the part budget means a file that would fit in one part is
+  // still emitted as head/tail only. That is the 0.9.16 report's 252 KB route module: 121 of 6,731
+  // lines, with `maxPartBytes` and `largeFileBytes` set to the same number. Naming the two
+  // settings is actionable; silently previewing is not.
+  if (
+    files.some((file) => file.isPreviewTruncated) &&
+    config.largeFileBytes <= config.maxPartBytes
+  ) {
+    manifest.warnings.push(
+      `${files.filter((file) => file.isPreviewTruncated).length} file(s) were previewed because ` +
+        `largeFileBytes (${config.largeFileBytes} B) is not above maxPartBytes ` +
+        `(${config.maxPartBytes} B). Raise largeFileBytes if a whole file is wanted.`
+    );
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
+
+  // A token budget is converted to bytes at 4 bytes/token, and the partitioner enforces only the
+  // byte ceiling. The estimate can still exceed the number the user named, so say so: presenting
+  // an estimate as a guarantee was the defect, not the estimate itself.
+  if (config.maxPartTokens !== undefined) {
+    const overTokenBudget = parts.filter(
+      (part) => part.metadata.estimatedTokens > (config.maxPartTokens ?? 0)
+    );
+    if (overTokenBudget.length > 0) {
+      manifest.warnings.push(
+        `${overTokenBudget.length} part(s) exceed the estimated token ceiling of ` +
+          `${config.maxPartTokens}: the partitioner enforces the equivalent byte budget ` +
+          "(" +
+          "tokens × 4), and estimatedTokens is an estimate, not a hard bound."
+      );
+      manifest.totals.warningCount = manifest.warnings.length;
+    }
   }
 
   // The per-line detail lives only in `reports/audit.md`. With that artifact disabled the count
@@ -2457,6 +2751,32 @@ export function generateSnapshot(
     };
   }
 
+  /**
+   * The digest of one artifact's exact text.
+   *
+   * Recorded before the manifest is serialised, so `validate` can require the README, the
+   * navigation index, the project tree and the audit report to exist and match. Only the
+   * monoliths and SARIF were recorded before, so deleting any of these four left `validate`
+   * green — for the first files a reader opens.
+   */
+  const artifacts = config.artifacts;
+  const artifactRecord = (text: string): ManifestArtifact => ({
+    byteSize: Buffer.byteLength(text, "utf8"),
+    sha256: sha256Hex(text),
+  });
+
+  // Rendered before the monolith so the manifest it embeds already records them. None of these
+  // four depends on the monolith's own bytes, only on the file/part lists that are final here.
+  const navigationText = artifacts.navigation ? generateNavigation(manifest) : null;
+  if (navigationText !== null) manifest.artifacts.navigation = artifactRecord(navigationText);
+  const auditText = artifacts.audit
+    ? generateAuditReport(manifest, secretFindings, config.secretRules)
+    : null;
+  if (auditText !== null) manifest.artifacts.audit = artifactRecord(auditText);
+  const readmeText = artifacts.readme ? generateReadme(manifest, artifacts) : null;
+  if (readmeText !== null) manifest.artifacts.readme = artifactRecord(readmeText);
+  if (projectTree !== null) manifest.artifacts.projectTree = artifactRecord(projectTree);
+
   // Monolith artefacts are serialised LAST, after every warning they have to
   // describe and after the markdown digest they embed, so the manifest inside
   // full-codebase.json agrees with the shipped one. The JSON cannot record its own
@@ -2482,15 +2802,31 @@ export function generateSnapshot(
       };
     });
 
-    const markdown = generateMonolithMarkdown(manifest, fullFiles);
-    const markdownBytes = Buffer.byteLength(markdown, "utf8");
-    if (!config.maxMonolithBytes || markdownBytes <= config.maxMonolithBytes) {
+    // A body that already exceeds the ceiling cannot fit once headers and escaping are added,
+    // so refusing from `includedBytes` avoids building the whole string first. The exact check
+    // below still runs for every body that might fit: this only short-circuits the impossible.
+    const bodyBytes = fullFiles.reduce((total, file) => total + file.includedBytes, 0);
+    const definitelyTooLarge =
+      config.maxMonolithBytes !== null && bodyBytes > config.maxMonolithBytes;
+    if (definitelyTooLarge) {
+      // One warning per artifact, with the same prefixes as the exact check below, so the reason
+      // a reader looks for does not change just because the decision was made before serialising.
+      const reason =
+        `their bodies total ${bodyBytes} B, which already exceeds ` +
+        `maxMonolithBytes ${config.maxMonolithBytes ?? 0} B`;
+      manifest.warnings.push(`full-codebase.md skipped: ${reason}`);
+      manifest.warnings.push(`full-codebase.json skipped: ${reason}`);
+    }
+
+    const markdown = definitelyTooLarge ? null : generateMonolithMarkdown(manifest, fullFiles);
+    const markdownBytes = markdown === null ? 0 : Buffer.byteLength(markdown, "utf8");
+    if (markdown !== null && (!config.maxMonolithBytes || markdownBytes <= config.maxMonolithBytes)) {
       monolithMarkdown = markdown;
       manifest.artifacts.fullMarkdown = {
         byteSize: markdownBytes,
         sha256: sha256Hex(markdown),
       };
-    } else {
+    } else if (!definitelyTooLarge) {
       manifest.warnings.push(
         `full-codebase.md skipped: ${markdownBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
       );
@@ -2499,12 +2835,12 @@ export function generateSnapshot(
 
     // Last: the JSON embeds the manifest, so it now carries the markdown digest and
     // every warning produced above (artifact warnings, monolith skips).
-    const json = generateMonolithJson(manifest, fullFiles);
-    const jsonBytes = Buffer.byteLength(json, "utf8");
-    if (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes) {
+    const json = definitelyTooLarge ? null : generateMonolithJson(manifest, fullFiles);
+    const jsonBytes = json === null ? 0 : Buffer.byteLength(json, "utf8");
+    if (json !== null && (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes)) {
       monolithJson = json;
       manifest.artifacts.fullJson = { byteSize: jsonBytes, sha256: sha256Hex(json) };
-    } else {
+    } else if (!definitelyTooLarge) {
       manifest.warnings.push(
         `full-codebase.json skipped: ${jsonBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
       );
@@ -2513,7 +2849,6 @@ export function generateSnapshot(
   }
 
   const { outDir, tmpDir } = resolveSafeOutputDirs(config);
-  const { artifacts } = config;
 
   // The guards run for a dry run too: a dry run exists to predict the real one,
   // and it used to exit 0 with "Would write 1 part(s)" for an outDir the real
@@ -2547,7 +2882,23 @@ export function generateSnapshot(
     // holds, which is the kind of state that turns a second `finally` into a bug.
     for (const release of [...releases].reverse()) release();
   };
+
+  // Only now that no other run can be mid-swap is a missing `outDir` with one backup
+  // unambiguous: it is a run that died, not a run that is working. The re-check that follows is
+  // the one that matters — it validates what recovery put back instead of trusting the marker.
+  recoverInterruptedPublish(outDir);
+  assertReplaceable(outDir, "outDir", config.secretRules);
   let stagingDir: string | null = null;
+  /**
+   * When an async hook is running, the lock is released when *it* settles rather than here.
+   *
+   * `generateSnapshot` is synchronous and returns while the hook is still pending. Releasing the
+   * lock at that point let a second run publish into the same output directory, and the first
+   * run's slow hook could then append to, or delete from, a snapshot it no longer owned. Holding
+   * the lock until the hook settles makes the two runs serialise; the heartbeat (FS-06) keeps a
+   * hung hook from wedging the directory forever.
+   */
+  let releaseDeferred = false;
 
   try {
     ensureParentDirectory(outDir, "outDir");
@@ -2580,50 +2931,81 @@ export function generateSnapshot(
       fs.mkdirSync(reportsDir, { recursive: true });
     }
 
+    /**
+     * Writes one artifact and records what the ownership marker will need.
+     *
+     * The marker used to walk the finished snapshot and re-read every file it had just written,
+     * once for staging and again after an `afterGenerate` hook — two or three whole-snapshot
+     * reads for bytes still in memory. Recording the digest here makes the marker's inventory
+     * O(artifacts); the walk still catches anything a hook added.
+     */
+    const writtenArtifacts: WrittenLedger = new Map();
+    const writeArtifact = (targetDir: string, relativeEntry: string, data: string): void => {
+      const full = path.join(targetDir, ...relativeEntry.split("/"));
+      fs.writeFileSync(full, data, "utf8");
+      const stats = fs.statSync(full);
+      writtenArtifacts.set(relativeEntry, {
+        digest: { path: relativeEntry, bytes: stats.size, sha256: sha256Hex(data) },
+        mtimeMs: stats.mtimeMs,
+      });
+    };
+    /** Re-records a file that was written by another helper (the post-hook manifest). */
+    const recordArtifact = (targetDir: string, relativeEntry: string): void => {
+      const full = path.join(targetDir, ...relativeEntry.split("/"));
+      const stats = fs.statSync(full);
+      writtenArtifacts.set(relativeEntry, {
+        digest: {
+          path: relativeEntry,
+          bytes: stats.size,
+          sha256: sha256Hex(fs.readFileSync(full)),
+        },
+        mtimeMs: stats.mtimeMs,
+      });
+    };
+
     if (artifacts.parts) {
       for (const part of parts) {
-        fs.writeFileSync(path.join(partsDir, part.filename), part.markdown, "utf8");
+        writeArtifact(partsDir, part.filename, part.markdown);
       }
     }
 
     if (projectTree !== null) {
-      fs.writeFileSync(path.join(reportsDir, "project-tree.md"), projectTree, "utf8");
+      writeArtifact(reportsDir, "project-tree.md", projectTree);
     }
-    if (artifacts.navigation) {
-      fs.writeFileSync(path.join(reportsDir, "navigation.md"), generateNavigation(manifest), "utf8");
+    if (navigationText !== null) {
+      writeArtifact(reportsDir, "navigation.md", navigationText);
     }
-    if (artifacts.audit) {
-      fs.writeFileSync(
-        path.join(reportsDir, "audit.md"),
-        generateAuditReport(manifest, secretFindings, config.secretRules),
-        "utf8"
-      );
+    if (auditText !== null) {
+      writeArtifact(reportsDir, "audit.md", auditText);
     }
     if (sarifText !== null) {
       // Written beside audit.md rather than instead of it: a human reads one and a CI gate
       // reads the other, and asking which one you want is a false choice.
-      fs.writeFileSync(path.join(reportsDir, "audit.sarif"), sarifText, "utf8");
+      writeArtifact(reportsDir, "audit.sarif", sarifText);
     }
-    if (artifacts.readme) {
-      fs.writeFileSync(path.join(stagingDir, "README.md"), generateReadme(manifest, artifacts), "utf8");
+    if (readmeText !== null) {
+      writeArtifact(stagingDir, "README.md", readmeText);
     }
     if (artifacts.manifest) {
-      fs.writeFileSync(path.join(stagingDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+      writeArtifact(stagingDir, "manifest.json", JSON.stringify(manifest, null, 2));
     }
 
     if (monolithJson !== null) {
-      fs.writeFileSync(path.join(stagingDir, "full-codebase.json"), monolithJson, "utf8");
+      writeArtifact(stagingDir, "full-codebase.json", monolithJson);
     }
     if (monolithMarkdown !== null) {
-      fs.writeFileSync(path.join(stagingDir, "full-codebase.md"), monolithMarkdown, "utf8");
+      writeArtifact(stagingDir, "full-codebase.md", monolithMarkdown);
     }
 
     // The snapshot is whole in staging: record its inventory and manifest digest
     // before the swap, so a crash right after the swap still leaves a directory
     // the next run can prove it wrote.
-    writeOwnershipMarker(stagingDir, markerPayload(stagingDir, "complete", snapshotId, createdAt));
+    writeOwnershipMarker(
+      stagingDir,
+      markerPayload(stagingDir, "complete", snapshotId, createdAt, writtenArtifacts)
+    );
 
-    swapIntoPlace(stagingDir, outDir);
+    swapIntoPlace(stagingDir, outDir, () => assertReplaceable(outDir, "outDir", config.secretRules));
     // The rename consumed the staging directory; there is nothing left to clean.
     stagingDir = null;
 
@@ -2643,8 +3025,12 @@ export function generateSnapshot(
       if (!markerBelongsTo(outDir, snapshotId)) return;
       if (artifacts.manifest && manifest.warnings.length !== warningsBeforeHook) {
         writeManifestAtomically(path.join(outDir, "manifest.json"), manifest);
+        recordArtifact(outDir, "manifest.json");
       }
-      writeOwnershipMarker(outDir, markerPayload(outDir, "complete", snapshotId, createdAt));
+      writeOwnershipMarker(
+        outDir,
+        markerPayload(outDir, "complete", snapshotId, createdAt, writtenArtifacts)
+      );
     };
     // With no hook, nothing after the swap can add a file or a warning, and the staging
     // marker already records this directory's exact inventory — skip a second full digest
@@ -2700,6 +3086,12 @@ export function generateSnapshot(
           if (pendingHooks.get(outDir) === tracked) pendingHooks.delete(outDir);
         });
       pendingHooks.set(outDir, tracked);
+      // The hook owns this run's lock now; the outer `finally` must not release it early.
+      releaseDeferred = true;
+      void tracked.finally(() => {
+        removeIfEmpty(tmpDir);
+        releaseLock();
+      });
     }
 
     return manifest;
@@ -2716,9 +3108,12 @@ export function generateSnapshot(
     }
     throw err;
   } finally {
-    // Remove the staging container when this run left nothing in it.
-    removeIfEmpty(tmpDir);
-    releaseLock();
+    // Remove the staging container when this run left nothing in it; an async hook releases the
+    // lock itself when it settles, so that no other run can publish over its writes.
+    if (!releaseDeferred) {
+      removeIfEmpty(tmpDir);
+      releaseLock();
+    }
   }
 }
 
@@ -2799,6 +3194,7 @@ export type { ExplainResult } from "./explain.js";
 export { compareManifests, loadManifest, renderDiffText } from "./diff.js";
 export type { ManifestDiff } from "./diff.js";
 export { stripJsonComments } from "./ast/structured.js";
+export { appendGitignoreEntries, gitignorePath } from "./gitignore.js";
 export { runInit } from "./wizard/init.js";
 export type { InitDependency, InitOptions, InitResult } from "./wizard/init.js";
 export {
@@ -2853,7 +3249,12 @@ export type { HookInstallResult } from "./agent/hook.js";
 export { resolveChangedScope } from "./scanner/changed.js";
 // The import graph moved to its own module so `explain` and `validate` can apply the same
 // `--with-dependents` hop the generator applies; it stays on the public surface from here.
-export { buildImportResolver, importsChangedFile, resolveSpecifier } from "./scanner/dependents.js";
+export {
+  buildImportResolver,
+  importsChangedFile,
+  resolveSpecifier,
+  tsconfigPathsFor,
+} from "./scanner/dependents.js";
 export type { ImportCandidate, ImportResolver } from "./scanner/dependents.js";
 export { importsOfFile, importsOfText } from "./ast/imports.js";
 export { isSkeletonizable, isTsxFileName, skeletonizeTypeScript } from "./ast/skeleton.js";

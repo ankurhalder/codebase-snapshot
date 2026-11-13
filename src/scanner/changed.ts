@@ -21,11 +21,23 @@ export interface ChangedScopeRequest {
 export interface ChangedScope {
   /** Repository-relative paths, POSIX separators. */
   paths: ReadonlySet<string>;
+  /** The subset selected by `--staged`, whose bytes must come from the index. */
+  stagedPaths: ReadonlySet<string>;
+  /** Paths whose staged change is a deletion; they have no index blob to read. */
+  deletedPaths: ReadonlySet<string>;
   /** How the set was produced, for the manifest and the summary line. */
   detail: string;
 }
 
-/** Runs git and returns NUL-separated paths, or throws with a message worth reading. */
+/**
+ * Runs git and returns NUL-separated paths, or throws with a message worth reading.
+ *
+ * The output is used verbatim: git emits literal paths with `-z`, so neither `trim()` nor a
+ * backslash rewrite is safe. A legal POSIX filename may begin or end with whitespace, and a
+ * backslash is a legal character in a name on every platform. Both were rewritten, which made
+ * the scope describe a path that does not exist — silently omitting the changed file, or worse,
+ * matching a different file that did not change.
+ */
 function gitPaths(cwd: string, args: string[]): string[] {
   let output: string;
   try {
@@ -44,10 +56,29 @@ function gitPaths(cwd: string, args: string[]): string[] {
         "run `codebase-snapshot generate` without --changed-since to scan everything."
     );
   }
-  return output
-    .split("\0")
-    .map((entry) => entry.trim().replace(/\\/g, "/"))
-    .filter((entry) => entry.length > 0);
+  return output.split("\0").filter((entry) => entry.length > 0);
+}
+
+/**
+ * Reads one path's staged bytes from the index.
+ *
+ * `--staged` used to select index *paths* and then read working-tree *bytes*, so a file with
+ * staged changes plus later unstaged edits was snapshotted at content that is not what the next
+ * commit will contain. `git cat-file blob :<path>` returns exactly the staged object.
+ *
+ * Returns `null` when the path has no blob in the index (a staged deletion). The caller records
+ * that as `deleted` rather than letting it disappear.
+ */
+export function readStagedBlob(cwd: string, relativePath: string): Buffer | null {
+  try {
+    return execFileSync("git", ["cat-file", "blob", `:${relativePath}`], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 512 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -78,6 +109,8 @@ function assertUsableRef(ref: string): void {
  */
 export function resolveChangedScope(cwd: string, request: ChangedScopeRequest): ChangedScope {
   const paths = new Set<string>();
+  const stagedPaths = new Set<string>();
+  const deletedPaths = new Set<string>();
   const descriptions: string[] = [];
 
   if (request.changedSince !== undefined) {
@@ -85,12 +118,27 @@ export function resolveChangedScope(cwd: string, request: ChangedScopeRequest): 
     // The trailing `--` separates revisions from paths, so nothing after it can be read as one.
     // `--relative` keeps the listing relative to the directory git runs in (the scan root), and
     // no `--full-name` is passed: mixing the two bases produces paths that match nothing.
+    // Three dots, not two: `<ref>...HEAD` is the diff from the merge base, so a feature branch
+    // that forked a week ago does not inherit every commit `main` has taken since. Two dots
+    // compared the ref's tree with the branch tip and listed those unrelated files as changed.
     for (const path of gitPaths(cwd, [
       "diff",
       "--name-only",
       "-z",
       "--relative",
-      request.changedSince,
+      `${request.changedSince}...HEAD`,
+      "--",
+    ])) {
+      paths.add(path);
+    }
+    // Reviews also cover what is not committed yet: the working tree against HEAD, which is the
+    // same set two dots produced for the ref when the ref *was* HEAD.
+    for (const path of gitPaths(cwd, [
+      "diff",
+      "--name-only",
+      "-z",
+      "--relative",
+      "HEAD",
       "--",
     ])) {
       paths.add(path);
@@ -111,9 +159,21 @@ export function resolveChangedScope(cwd: string, request: ChangedScopeRequest): 
       "--",
     ])) {
       paths.add(path);
+      stagedPaths.add(path);
+    }
+    for (const path of gitPaths(cwd, [
+      "diff",
+      "--cached",
+      "--name-only",
+      "-z",
+      "--relative",
+      "--diff-filter=D",
+      "--",
+    ])) {
+      deletedPaths.add(path);
     }
     descriptions.push("staged");
   }
 
-  return { paths, detail: descriptions.join(" and ") };
+  return { paths, stagedPaths, deletedPaths, detail: descriptions.join(" and ") };
 }

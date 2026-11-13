@@ -32,8 +32,9 @@ export function generateAuditReport(
     `**Generated:** ${manifest.generatedAt}  `,
     `**Git Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})  `,
     `**Total Files:** ${formatNumber(manifest.counts.totalFiles)}  `,
-    `**Total Lines:** ${formatNumber(manifest.counts.totalLines)}  `,
-    `**Total Size:** ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB  `,
+    `**Source Lines:** ${formatNumber(manifest.counts.totalLines)}  `,
+    `**Emitted Lines:** ${formatNumber(manifest.totals.emittedLines ?? manifest.counts.totalLines)}  `,
+    `**Total Size:** ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MiB  `,
     // This counts the bytes that were *emitted* after redaction, not the bytes
     // that were masked: calling it "redacted bytes" made a repository with zero
     // secrets report a non-zero redacted-byte figure directly above "no secrets
@@ -85,9 +86,24 @@ export function generateAuditReport(
       typeof (file.summary as { parseErrors?: unknown }).parseErrors === "number" &&
       (file.summary as { parseErrors: number }).parseErrors > 0
   );
+  // A previewed or oversized file is deliberately not parsed for a structural summary, so
+  // "every parsed file" is true but misleading next to the generation warning that the same file
+  // "was not parsed". Naming the skipped count makes the two accounts agree.
+  const unparsedPreviews = manifest.files.filter(
+    (file) =>
+      file.summary === undefined && (file.isPreviewTruncated === true || file.isLarge === true)
+  ).length;
   lines.push("## 2. Parse & AST Diagnostics", "");
   if (parseIssues.length === 0) {
-    lines.push("✅ Every parsed file produced a complete structural summary.", "");
+    if (unparsedPreviews > 0) {
+      lines.push(
+        `✅ No parse errors among the files that were parsed; ${formatNumber(unparsedPreviews)} ` +
+          "file(s) were previewed or too large to parse and produced no structural summary.",
+        ""
+      );
+    } else {
+      lines.push("✅ Every parsed file produced a complete structural summary.", "");
+    }
   } else {
     lines.push(
       `${parseIssues.length} file(s) produced an incomplete summary:`,

@@ -12,6 +12,28 @@ const ROUTE_HANDLER_NAMES = new Set([
 ]);
 
 /**
+ * Receivers whose `.verb("path", handler)` registers an HTTP route.
+ *
+ * The Next.js App Router shape is an *exported* identifier named `GET`/`POST`; an Express,
+ * Hono, Koa or Fastify application registers `router.get("/x", handler)`, which the summary
+ * ignored — every route in such a repository had `methods: []`. The receiver list is
+ * deliberately narrow: `headers.get("content-type")` is a Map lookup, not a route, and a
+ * receiver named `cache.get` is not one either.
+ */
+const ROUTE_RECEIVERS = new Set(["app", "router", "server", "fastify", "api", "route"]);
+
+/** Lower-case verbs accepted as route registrations. */
+const ROUTE_REGISTRATION_VERBS = new Set([
+  "get",
+  "post",
+  "put",
+  "delete",
+  "patch",
+  "head",
+  "options",
+]);
+
+/**
  * The identifiers a binding declares, into `into`.
  *
  * `export const { a, b } = obj` / `export const [first] = pair` declare real exports, and the
@@ -29,6 +51,83 @@ function bindingNames(name: ts.BindingName, into: string[]): void {
     if (ts.isOmittedExpression(element)) continue;
     bindingNames(element.name, into);
   }
+}
+
+/** The names an object literal binds, for `module.exports = { a, b }`. */
+function objectLiteralNames(node: ts.ObjectLiteralExpression): string[] {
+  const names: string[] = [];
+  for (const property of node.properties) {
+    if (ts.isShorthandPropertyAssignment(property)) {
+      names.push(property.name.text);
+      continue;
+    }
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = property.name;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      names.push(name.text);
+    }
+  }
+  return names;
+}
+
+/**
+ * The CommonJS export names one assignment declares, or `null` when it is not one.
+ *
+ * A `.cjs` module's public surface is `module.exports = { … }` / `exports.handler = …`, and the
+ * summary only recognised `export` declarations — so a CommonJS module was reported as exporting
+ * nothing. The two canonical forms cover what a reader needs; a dynamic `Object.assign` or a
+ * computed property is left out rather than guessed at.
+ */
+function cjsExportedNames(expression: ts.BinaryExpression): string[] | null {
+  const left = expression.left;
+  if (!ts.isPropertyAccessExpression(left)) return null;
+
+  const isModuleExports =
+    left.name.text === "exports" &&
+    ts.isIdentifier(left.expression) &&
+    left.expression.text === "module";
+  if (isModuleExports) {
+    const right = expression.right;
+    if (ts.isObjectLiteralExpression(right)) return objectLiteralNames(right);
+    if (ts.isIdentifier(right)) return [right.text];
+    return [];
+  }
+
+  if (ts.isIdentifier(left.expression) && left.expression.text === "exports") {
+    return [left.name.text];
+  }
+
+  const parent = left.expression;
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.name.text === "exports" &&
+    ts.isIdentifier(parent.expression) &&
+    parent.expression.text === "module"
+  ) {
+    return [left.name.text];
+  }
+  return null;
+}
+
+/**
+ * Counts syntactic errors through TypeScript's public transpile API.
+ *
+ * Used only when the parser's internal `parseDiagnostics` field is absent. `transpileModule`
+ * reports syntax problems and ignores type errors, which is exactly what this summary wants:
+ * a valid program with a type mistake must not be described as unparsable.
+ */
+function countSyntacticErrors(fileName: string, content: string): number {
+  const result = ts.transpileModule(content, {
+    fileName,
+    compilerOptions: {
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.ESNext,
+    },
+    reportDiagnostics: true,
+  });
+  return (result.diagnostics ?? []).filter(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error
+  ).length;
 }
 
 /**
@@ -60,23 +159,37 @@ export function summarizeTypeScriptSource(
   };
 
   const lowerPath = relativePath.toLowerCase();
-  const isJsx = lowerPath.endsWith(".tsx") || lowerPath.endsWith(".jsx");
+  const scriptKind = /.tsx$/.test(lowerPath)
+    ? ts.ScriptKind.TSX
+    : /.jsx$/.test(lowerPath)
+      ? ts.ScriptKind.JSX
+      : /.(?:js|mjs|cjs)$/.test(lowerPath)
+        ? ts.ScriptKind.JS
+        : ts.ScriptKind.TS;
 
   const sourceFile = ts.createSourceFile(
     relativePath,
     content,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ false,
-    isJsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    scriptKind
   );
 
   // A file with syntax errors still produces a (partial) summary. Recording the
   // count lets the caller say so instead of presenting a broken file as clean.
-  // `parseDiagnostics` is part of the compiler's implementation surface, hence
-  // the narrowing cast rather than a public API call.
-  const parseErrors =
-    (sourceFile as unknown as { parseDiagnostics?: readonly unknown[] }).parseDiagnostics
-      ?.length ?? 0;
+  //
+  // `parseDiagnostics` is the compiler's own parse result and is free — but it is not part of
+  // TypeScript's public surface, so a future version could rename it and every broken file
+  // would be reported as clean. When the field is not an array, the public `transpileModule`
+  // path (syntactic diagnostics only) answers the same question. The fast path is used because
+  // it costs nothing on a file that was parsed anyway.
+  const parsedDiagnostics = (
+    sourceFile as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }
+  ).parseDiagnostics;
+  const parseErrors = Array.isArray(parsedDiagnostics)
+    ? parsedDiagnostics.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+        .length
+    : countSyntacticErrors(relativePath, content);
   if (parseErrors > 0) summary.parseErrors = parseErrors;
 
   // Module directives ("use client" / "use server") are only meaningful in the
@@ -162,6 +275,9 @@ export function summarizeTypeScriptSource(
     if (/^[A-Z]/.test(name) && rendersJsx(node)) summary.reactComponents.push(name);
   };
 
+  /** Exports declared through the CommonJS forms, merged in after the walk. */
+  const cjsExports: string[] = [];
+
   const stack: ts.Node[] = [sourceFile];
   while (stack.length > 0) {
     const node = stack.pop() as ts.Node;
@@ -194,6 +310,18 @@ export function summarizeTypeScriptSource(
         const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
         if (isDynamicImport || isRequire) summary.imports.push(firstArgument.text);
       }
+      // Express/Hono/Koa/Fastify route registration: `router.get("/x", handler)`.
+      const callee = node.expression;
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        ROUTE_RECEIVERS.has(callee.expression.text) &&
+        ROUTE_REGISTRATION_VERBS.has(callee.name.text.toLowerCase()) &&
+        firstArgument !== undefined &&
+        ts.isStringLiteral(firstArgument)
+      ) {
+        summary.routeHandlers.push(callee.name.text.toUpperCase());
+      }
     }
 
     if (ts.isExportDeclaration(node)) {
@@ -219,6 +347,15 @@ export function summarizeTypeScriptSource(
           if (ROUTE_HANDLER_NAMES.has(exported)) summary.routeHandlers.push(exported);
         }
       }
+    }
+
+    if (
+      ts.isExpressionStatement(node) &&
+      ts.isBinaryExpression(node.expression) &&
+      node.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      const cjsNames = cjsExportedNames(node.expression);
+      if (cjsNames !== null) cjsExports.push(...cjsNames);
     }
 
     if (ts.isExportAssignment(node)) {
@@ -310,6 +447,13 @@ export function summarizeTypeScriptSource(
     for (let index = children.length - 1; index >= 0; index--) {
       stack.push(children[index]);
     }
+  }
+
+  // CommonJS exports are recorded alongside ESM ones, and `exportsKind` says which module
+  // system the reader is looking at. A mixed file keeps both and is called `mixed`.
+  if (cjsExports.length > 0) {
+    summary.exportsKind = summary.exports.length > 0 ? "mixed" : "cjs";
+    summary.exports.push(...cjsExports);
   }
 
   const dedupeSorted = (values: string[]): string[] =>

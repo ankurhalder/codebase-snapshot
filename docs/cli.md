@@ -183,7 +183,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.16
+   Added devDependency: codebase-snapshot ^0.9.17
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -232,7 +232,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.16
+   Added devDependency: codebase-snapshot ^0.9.17
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -421,19 +421,19 @@ for the two install flags, and the init-and-setup flags list both commands.
 | :--- | :--- | :--- | :--- | :--- |
 | `--cwd <path>` | path | current directory | generate, validate, report, explain, init, setup, skill, mcp | Repository to operate on. Must exist and be a directory. `diff` and `describe` take no `--cwd`; for `mcp` it chooses the one repository the server serves. |
 | `--out-dir <path>` | path | `snapshot` | generate, validate, report, explain, init, setup | Where the snapshot is written or read. May be absolute. |
-| `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, explain, init, setup | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
-| `--max-part-tokens <n>` | size | unset | generate, validate, setup | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. Minimum 1024 — below that it is a usage error, not a value quietly raised to the floor. |
+| `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, init, setup | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
+| `--max-part-tokens <n>` | size | unset | generate, validate, setup | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. Minimum 1024 — below that it is a usage error, not a value quietly raised to the floor. The byte ceiling is what is enforced: `estimatedTokens` is an estimate, and a part whose estimate exceeds the token ceiling is named in a warning rather than silently accepted. |
 | `--large-file-bytes <n>` | size | `204800` (200 KB) | generate, validate, explain, setup | Above this, a file becomes a head/tail preview. |
-| `--max-monolith-bytes <n>` | size | unset | generate, validate, explain, setup | Skip the single-file monolith when it would exceed this. |
-| `--include-monolith` | flag | off | generate, validate, explain, setup | Also write `full-codebase.json` and `full-codebase.md`. |
+| `--max-monolith-bytes <n>` | size | unset | generate, validate, setup | Skip the single-file monolith when it would exceed this. |
+| `--include-monolith` | flag | off | generate, validate, setup | Also write `full-codebase.json` and `full-codebase.md`. |
 | `--include-sensitive-files` | flag | off | generate, validate, explain, init, setup | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |
-| `--skip-artifacts <names>` | list | unset | generate, validate, explain, init, setup | Comma-separated artifacts to omit. |
-| `--only-artifacts <names>` | list | unset | generate, validate, explain, init, setup | Write *only* these, and **turn on** any this names: a config with `artifacts: { audit: false }` still gets `reports/audit.md` from `--only-artifacts audit`, because "only these" is a statement about the whole selection rather than a suppression list. Cannot be combined with `--skip-artifacts`. |
+| `--skip-artifacts <names>` | list | unset | generate, validate, init, setup | Comma-separated artifacts to omit. |
+| `--only-artifacts <names>` | list | unset | generate, validate, init, setup | Write *only* these, and **turn on** any this names: a config with `artifacts: { audit: false }` still gets `reports/audit.md` from `--only-artifacts audit`, because "only these" is a statement about the whole selection rather than a suppression list. Cannot be combined with `--skip-artifacts`. |
 | `--format <text\|json>` | enum | `text` | generate, validate, report, explain, init, setup, diff, describe, skill | `json` writes a pure JSON payload to stdout. Every command except `mcp` honours it — stdout there is the JSON-RPC protocol stream — and `describe` reports the same nine-command list. |
 | `--sarif` | flag | off | generate, validate, setup | Also write `reports/audit.sarif`: the redaction findings as SARIF 2.1.0, for upload to GitHub Code Scanning. The artefact carries the path, the line and the rule — never the value. Works with `--skip-artifacts audit`, because a CI gate does not read markdown. Rule ids are fixed per rule name, so adding a custom rule never re-points an existing alert. |
 | `--skeleton` | flag | off | generate, validate, setup | Emit signatures instead of bodies: each function or method body becomes `{ /* ... */ }` in place, so formatting and comments around it are untouched. Covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` and `.cjs`; `.d.ts` files are left alone because they are already declarations. The summary still describes the whole file, and affected entries carry `inclusionMode: "signatures"`. `--include-monolith` still writes the whole body, so the monolith's `inclusionMode: "full"` stays true. |
 | `--changed-since <ref>` | git ref | unset | generate, validate, explain | Include only files changed since this ref, plus untracked ones. Every other file is recorded in `manifest.skipped[]` with reason `unchanged` and is never opened. `validate` re-resolves the scope: a skipped file that has changed since is reported as drift, and one that has not is left alone — and with `--with-dependents`, so is a file that now imports one that changed. `explain` answers with the same rule. A ref beginning with `-` is refused. |
-| `--staged` | flag | off | generate, validate, explain | Include only files staged for the next commit. |
+| `--staged` | flag | off | generate, validate, explain | Include only files staged for the next commit. The bytes are read from the **index**, not the working tree, so a file with staged changes plus later unstaged edits is snapshotted at what `git commit` will write; a staged deletion is recorded in `manifest.skipped[]` with reason `deleted`. |
 | `--with-dependents` | flag | off | generate, validate, explain | With either of the two above, also include the files that import a changed one — a one-hop closure, not a transitive walk. Needs a scope; alone it is a usage error. |
 | `--install-hook` | flag | off | init, setup | Write `.git/hooks/pre-commit` so a commit is refused while the snapshot is out of date. The hook checks the `outDir` the config names, so it works for a project that does not use `snapshot/`. An existing hook is never replaced; the note says what to add to it instead. |
 | `--dry-run` | flag | off | generate, init, setup | Compute everything, print it, write nothing. |
@@ -461,6 +461,11 @@ The same rule applies to the compression and scope options. `--skeleton`, `--sar
 `--max-part-tokens` are recorded in `manifest.config.digest`, so `validate` accepts them too —
 without that, a snapshot generated with `--skeleton` could not be validated at all, and passing
 the flag to `validate` was rejected as a flag that "does not apply to validate". `--changed-since`,
+`explain` accepts only flags that can change a per-file answer: the scope flags, `--out-dir`,
+`--large-file-bytes` (it reports the inclusion mode `generate` would choose), and the
+discovery/sensitive-file settings. Partitioning and artifact-selection flags are rejected rather
+than accepted as no-ops.
+
 `--staged` and `--with-dependents` are accepted by `validate` and `explain` because they decide
 which recorded `unchanged` skips are re-checked and what `explain` answers about one file.
 

@@ -10,7 +10,9 @@
  * `--with-dependents` was involved — the generator included a file the other two called
  * unchanged, and every one of them was telling the truth about a different rule.
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
+import ts from "typescript";
 
 const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 
@@ -49,23 +51,10 @@ const SOURCE_EXTENSIONS = new Set([
  * in the graph pointed at nothing: `from .models import Order` was in the manifest, resolved to
  * `null`, and the module that imports it was dropped from a `--with-dependents` snapshot.
  *
- * Each of these languages spells "this directory" differently, and the difference is the whole
- * reason a single rule cannot serve them:
- *
- * - **Python** writes it with dots: `from .models import Order` is `.models`, `from ..util import x`
- *   is `..util`. One dot is the current package (the file's directory), two is its parent.
- * - **Ruby** has no marker at all — `require_relative "user"` is relative to the file and
- *   `require "json"` is a gem. The profile prefixes the first form with `./` so the two stay
- *   distinguishable.
- * - **C and C++** use `#include "board.h"` for a local header and `<stdio.h>` for a system one.
- *   The profile prefixes the quoted form with `./`.
- * - **Dart** writes a relative import bare: `import 'widget.dart'` next to the file, while
- *   `package:flutter/…` and `dart:async` are not paths in this repository at all.
- *
- * Package-rooted languages (Go modules, Rust `crate::`, PHP PSR-4, JVM packages, Swift modules) are
- * deliberately absent: their specifiers are resolved through a manifest — `go.mod`, `Cargo.toml`,
- * `composer.json` — and guessing a path from them would fabricate edges that `validate` then has
- * to disagree about.
+ * Package-rooted languages (Go modules, Rust `crate::`, PHP PSR-4, JVM packages, Swift modules)
+ * are deliberately absent: their specifiers are resolved through a manifest — `go.mod`,
+ * `Cargo.toml`, `composer.json` — and guessing a path from them would fabricate edges that
+ * `validate` then has to disagree about.
  */
 const PYTHON_EXTENSIONS = new Set([".py", ".pyi"]);
 const RUBY_EXTENSIONS = new Set([".rb", ".rake", ".gemspec"]);
@@ -73,6 +62,96 @@ const C_EXTENSIONS = new Set([".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx",
 
 /** Suffixes a Python module specifier may resolve to, in the order Python's own finder tries. */
 const PYTHON_SUFFIXES = [".py", ".pyi", "/__init__.py", "/__init__.pyi"];
+
+/**
+ * Whether this platform's filesystems fold case by default.
+ *
+ * The folded maps used to be consulted unconditionally, so on Linux — where `Foo.ts` and
+ * `foo.ts` are different files — `import "./foo"` resolved to `Foo.ts` even though node and
+ * TypeScript would fail to resolve it. A false dependent edge is as wrong as a missing one, so
+ * folding is now a platform property and never overrides an exact match.
+ */
+const CASE_INSENSITIVE_FILESYSTEM = process.platform === "win32" || process.platform === "darwin";
+
+/** One `compilerOptions.paths` entry, with its targets already in repository-relative form. */
+interface TsconfigPathRule {
+  pattern: string;
+  targets: readonly string[];
+}
+
+/** The `baseUrl`/`paths` shape of the nearest `tsconfig.json`. */
+export interface TsconfigPaths {
+  /** Repository-relative base directory for non-relative specifiers, or null when unset. */
+  baseUrl: string | null;
+  paths: readonly TsconfigPathRule[];
+}
+
+const TSCONFIG_CACHE = new Map<string, { key: string; value: TsconfigPaths | null }>();
+
+/**
+ * Reads `baseUrl` and `paths` from `<cwd>/tsconfig.json`, following `extends`.
+ *
+ * Type aliases — `@/lib/db`, `~/components/Button` — are the default in Next.js, Vite, Nuxt and
+ * most large TypeScript repositories. `resolveSpecifier` only understood relative specifiers, so
+ * every file importing through an alias was invisible to `--with-dependents`: the graph was
+ * empty for exactly the files a change was most likely to break.
+ *
+ * `ts.parseJsonConfigFileContent` is used for the `extends` chain and for TypeScript's own
+ * resolution of `baseUrl`, rather than a hand-written JSON reader that would disagree with the
+ * compiler about comments and inherited fields. Failure is not fatal: a repository without a
+ * readable tsconfig simply has no aliases, exactly as before.
+ */
+export function tsconfigPathsFor(cwd: string): TsconfigPaths | null {
+  const configPath = path.join(cwd, "tsconfig.json");
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(configPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    return null;
+  }
+  const key = `${stats.mtimeMs}:${stats.size}`;
+  const cached = TSCONFIG_CACHE.get(configPath);
+  if (cached !== undefined && cached.key === key) return cached.value;
+
+  let value: TsconfigPaths | null = null;
+  try {
+    const read = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (read.error === undefined) {
+      const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, cwd, undefined, configPath);
+      const options = parsed.options;
+      const baseUrl =
+        typeof options.baseUrl === "string" ? repositoryRelative(cwd, options.baseUrl) : null;
+      const rules: TsconfigPathRule[] = [];
+      if (options.paths !== undefined) {
+        for (const [pattern, targets] of Object.entries(options.paths)) {
+          if (!Array.isArray(targets)) continue;
+          rules.push({
+            pattern,
+            targets: targets.map((target) => String(target).replace(/\\/g, "/")),
+          });
+        }
+      }
+      // A baseUrl outside the repository is not a path this graph can see into; recording it
+      // would fabricate passes into `../shared` that the snapshot does not contain.
+      if (baseUrl !== null || rules.length > 0) value = { baseUrl, paths: rules };
+    }
+  } catch (err) {
+    // A malformed tsconfig is a project problem, not a reason to fail a snapshot. The other
+    // language profiles behave the same way: a manifest they cannot read means no edges.
+    value = null;
+  }
+  TSCONFIG_CACHE.set(configPath, { key, value });
+  return value;
+}
+
+/** `target` relative to `cwd` as a POSIX path, or null when it escapes the repository. */
+function repositoryRelative(cwd: string, target: string): string | null {
+  const relative = path.relative(cwd, target).replace(/\\/g, "/");
+  return relative.length === 0 || (!relative.startsWith("..") && !path.isAbsolute(relative))
+    ? relative
+    : null;
+}
 
 /** One-pass lookup tables for relative-import resolution.
  *
@@ -93,6 +172,8 @@ export interface ImportResolver {
   byPathFolded: Map<string, string>;
   byStem: Map<string, string>;
   byStemFolded: Map<string, string>;
+  /** Type aliases the graph could resolve, when a tsconfig was supplied. */
+  tsconfig: TsconfigPaths | null;
 }
 
 /** Anything that knows its own repository-relative path; `FileEntry` is the common case. */
@@ -100,36 +181,66 @@ export interface ImportCandidate {
   relativePath: string;
 }
 
-export function buildImportResolver(files: readonly ImportCandidate[]): ImportResolver {
+/** Extra inputs to the resolver. */
+export interface ImportResolverOptions {
+  /**
+   * Paths that changed but were not included — deleted modules.
+   *
+   * `resolveSpecifier` used to resolve against included files only, so when `a.ts` was deleted,
+   * `import "./a"` in `b.ts` resolved to `null` and `b.ts` was not added as a dependent — the
+   * one file the change was most likely to break. A tombstone makes the edge resolvable without
+   * pretending the file is in the snapshot.
+   */
+  extraPaths?: Iterable<string>;
+  /** `baseUrl`/`paths` from the repository's tsconfig, when the caller read one. */
+  tsconfig?: TsconfigPaths | null;
+}
+
+function rememberFirst(map: Map<string, string>, key: string, value: string): void {
+  if (!map.has(key)) map.set(key, value);
+}
+
+export function buildImportResolver(
+  files: readonly ImportCandidate[],
+  options: ImportResolverOptions = {}
+): ImportResolver {
   const byPath = new Map<string, string>();
   const byPathFolded = new Map<string, string>();
   const byStem = new Map<string, string>();
   const byStemFolded = new Map<string, string>();
-  // First writer wins, so ambiguity resolves to the lexicographically first
-  // path (the scanner hands files over sorted) and stays deterministic.
-  const remember = (map: Map<string, string>, key: string, value: string): void => {
-    if (!map.has(key)) map.set(key, value);
-  };
 
-  for (const file of files) {
-    const relativePath = file.relativePath;
-    remember(byPath, relativePath, relativePath);
-    remember(byPathFolded, relativePath.toLowerCase(), relativePath);
+  const register = (relativePath: string): void => {
+    rememberFirst(byPath, relativePath, relativePath);
+    if (CASE_INSENSITIVE_FILESYSTEM) {
+      rememberFirst(byPathFolded, relativePath.toLowerCase(), relativePath);
+    }
 
     const extension = path.posix.extname(relativePath);
-    if (!SOURCE_EXTENSIONS.has(extension)) continue;
+    if (!SOURCE_EXTENSIONS.has(extension)) return;
     const stem = relativePath.slice(0, -extension.length);
-    remember(byStem, stem, relativePath);
-    remember(byStemFolded, stem.toLowerCase(), relativePath);
+    rememberFirst(byStem, stem, relativePath);
+    if (CASE_INSENSITIVE_FILESYSTEM) {
+      rememberFirst(byStemFolded, stem.toLowerCase(), relativePath);
+    }
     // `import "./dir"` resolves to `dir/index.ts`.
     if (path.posix.basename(stem) === "index") {
       const directory = path.posix.dirname(stem);
-      remember(byStem, directory, relativePath);
-      remember(byStemFolded, directory.toLowerCase(), relativePath);
+      rememberFirst(byStem, directory, relativePath);
+      if (CASE_INSENSITIVE_FILESYSTEM) {
+        rememberFirst(byStemFolded, directory.toLowerCase(), relativePath);
+      }
+    }
+  };
+
+  // Included files first: a tombstone must never shadow a file the snapshot contains.
+  for (const file of files) register(file.relativePath);
+  if (options.extraPaths !== undefined) {
+    for (const extra of options.extraPaths) {
+      if (!byPath.has(extra)) register(extra);
     }
   }
 
-  return { byPath, byPathFolded, byStem, byStemFolded };
+  return { byPath, byPathFolded, byStem, byStemFolded, tsconfig: options.tsconfig ?? null };
 }
 
 /** Best-effort resolution of a relative import to an included file. */
@@ -141,13 +252,30 @@ export function resolveSpecifier(
   const extension = path.posix.extname(fromFile).toLowerCase();
 
   const exact = (key: string): string | null =>
-    resolver.byPath.get(key) ?? resolver.byPathFolded.get(key.toLowerCase()) ?? null;
+    resolver.byPath.get(key) ??
+    (CASE_INSENSITIVE_FILESYSTEM ? resolver.byPathFolded.get(key.toLowerCase()) : undefined) ??
+    null;
   const firstOf = (candidates: readonly string[]): string | null => {
     for (const candidate of candidates) {
       const hit = exact(candidate);
       if (hit) return hit;
     }
     return null;
+  };
+  /** Exact, extension, directory-index and `.js`-to-`.ts` candidates for one path. */
+  const lookupPath = (joined: string): string | null => {
+    const direct = exact(joined);
+    if (direct) return direct;
+    for (const suffix of IMPORT_CANDIDATE_SUFFIXES) {
+      const hit = exact(`${joined}${suffix}`);
+      if (hit) return hit;
+    }
+    const stem = joined.replace(/\.(?:js|mjs|cjs|jsx)$/, "");
+    const byStem = (key: string): string | null =>
+      resolver.byStem.get(key) ??
+      (CASE_INSENSITIVE_FILESYSTEM ? resolver.byStemFolded.get(key.toLowerCase()) : undefined) ??
+      null;
+    return byStem(joined) ?? byStem(stem);
   };
 
   if (PYTHON_EXTENSIONS.has(extension) && specifier.startsWith(".")) {
@@ -185,25 +313,62 @@ export function resolveSpecifier(
     return firstOf([joined, `${joined}.dart`]);
   }
 
-  if (!RELATIVE_SPECIFIER.test(specifier)) return null;
+  if (!RELATIVE_SPECIFIER.test(specifier)) {
+    return resolveTsconfigSpecifier(specifier, resolver, lookupPath);
+  }
   const joined = path.posix.normalize(
     path.posix.join(path.posix.dirname(fromFile), specifier)
   );
+  return lookupPath(joined);
+}
 
-  const direct = exact(joined);
-  if (direct) return direct;
+/**
+ * Resolves a non-relative specifier through `compilerOptions.baseUrl` and `paths`.
+ *
+ * The substitution follows TypeScript's rule: the first `*` in the pattern captures, and every
+ * `*` in a target is replaced with that capture. Candidates then go through the same
+ * extension/index/`.js`-to-`.ts` lookup as a relative import, so an alias to a directory or to a
+ * `.js` specifier behaves like the real module resolver.
+ */
+function resolveTsconfigSpecifier(
+  specifier: string,
+  resolver: ImportResolver,
+  lookupPath: (joined: string) => string | null
+): string | null {
+  const config = resolver.tsconfig;
+  if (!config) return null;
 
-  for (const suffix of IMPORT_CANDIDATE_SUFFIXES) {
-    const hit = exact(`${joined}${suffix}`);
-    if (hit) return hit;
+  for (const rule of config.paths) {
+    const star = rule.pattern.indexOf("*");
+    let captured: string | null;
+    if (star === -1) {
+      captured = specifier === rule.pattern ? "" : null;
+    } else {
+      const prefix = rule.pattern.slice(0, star);
+      const suffix = rule.pattern.slice(star + 1);
+      if (
+        specifier.length < prefix.length + suffix.length ||
+        !specifier.startsWith(prefix) ||
+        !specifier.endsWith(suffix)
+      ) {
+        captured = null;
+      } else {
+        captured = specifier.slice(prefix.length, specifier.length - suffix.length);
+      }
+    }
+    if (captured === null) continue;
+    for (const target of rule.targets) {
+      const substituted = target.split("*").join(captured);
+      const base = config.baseUrl === null ? substituted : path.posix.join(config.baseUrl, substituted);
+      const hit = lookupPath(path.posix.normalize(base));
+      if (hit) return hit;
+    }
   }
 
-  // An extensionless import (`./x`), a directory import (`./dir` → index), or a
-  // TypeScript-style `./x.js` that actually lives in `./x.ts`.
-  const stem = joined.replace(/\.(?:js|mjs|cjs|jsx)$/, "");
-  const byStem = (key: string): string | null =>
-    resolver.byStem.get(key) ?? resolver.byStemFolded.get(key.toLowerCase()) ?? null;
-  return byStem(joined) ?? byStem(stem);
+  if (config.baseUrl !== null) {
+    return lookupPath(path.posix.normalize(path.posix.join(config.baseUrl, specifier)));
+  }
+  return null;
 }
 
 /**

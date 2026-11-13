@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.9.16",
+  "version": "0.9.17",
   "description": "Pack a codebase for an LLM into budgeted Markdown parts, with a manifest of every file and skip, and validate to prove the snapshot is current.",
   "keywords": [
     "codebase",
@@ -98,6 +98,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/lint.mjs",
+    "check:workflows": "node scripts/check-workflows.mjs",
     "check": "npm run lint && npm run typecheck && npm test",
     "pretest": "npm run build",
     "test": "node scripts/test-run.mjs",
@@ -110,7 +111,7 @@
     "audit-site": "node scripts/audit-site.mjs",
     "readme-lint": "node scripts/readme-lint.mjs",
     "seo-rank": "node scripts/seo-rank.mjs",
-    "verify": "npm run check && npm run sync-docs -- --check && npm run site && npm run audit-site && npm run readme-lint && npm run pack-check",
+    "verify": "npm run check && npm run check:workflows && npm run sync-docs -- --check && npm run site && npm run audit-site && npm run readme-lint && npm run pack-check",
     "snapshot": "node ./dist/bin.js generate",
     "snapshot:validate": "node ./dist/bin.js validate"
   },

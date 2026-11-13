@@ -220,7 +220,30 @@ const QUOTED_CREDENTIAL_KEY = `["'](?!id[-_]token["'])[A-Za-z0-9_$-]{0,64}${STRO
  * `password: "C:\\temp"` and `password: "abc\\"` are unaffected: there the quote after `\\`
  * is followed by end-of-line, `,` or `}`, not by another value character.
  */
-const QUOTED_VALUE = String.raw`((?:[^"'\\\n]|\\\\["'](?=[A-Za-z0-9_])|\\.){1,512})`;
+/**
+ * The value of a quoted assignment, escaped pairs included, bounded by its own delimiter.
+ *
+ * The class used to exclude **both** quote characters, so a double-quoted value containing an
+ * apostrophe (`"hunter'2"`) — or a single-quoted value containing a double quote (`'abc"def'`) —
+ * stopped before that character, the closing-delimiter backreference never matched, and the rule
+ * did not fire at all. Generated passwords and passphrases contain both characters routinely, and
+ * the whole value reached `parts/*.md` in clear.
+ *
+ * The delimiter captured by `delimiterGroup` is the only quote the value may not contain, so the
+ * negative lookahead is `(?!\<group>)`. The group number is a parameter rather than a hardcoded
+ * `\1`: every rule embedding this today captures the delimiter in group 1, and a future rule that
+ * captures it elsewhere must not be silently changed.
+ *
+ * Both escape behaviours the class had are preserved: `\\.` consumes an escaped pair, and the
+ * doubly-escaped `\\\\["']` case (a quoted value inside a quoted string) is consumed as three
+ * characters when the quote is followed by another value character.
+ */
+function quotedValueFor(delimiterGroup: number): string {
+  return (
+    "((?:(?!\\" + delimiterGroup + String.raw`)[^\\\n]|\\\\["'](?=[A-Za-z0-9_])|\\.){1,512})`
+  );
+}
+const QUOTED_VALUE = quotedValueFor(1);
 
 /**
  * `id-token` / `id_token` is a GitHub Actions permission, not a credential: the
@@ -394,7 +417,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // - An Azure SAS link authenticates with `?sig=`; the signature *is* the credential.
     rule: "uri-credentials",
     pattern:
-      /\/\/[^\s:/@"'`;()<>,]{0,128}:[^\s:/@"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}|(?<=(?:^|[\s;|&(])--?u(?:ser)?[ \t=]{1,8})["']?[^\s"']{1,300}:[^\s"']{0,256}["']?|(?<=[?&])sig=[A-Za-z0-9%._=~-]{20,300}(?![A-Za-z0-9%._=~-])/,
+      /\/\/[^\s:/@"'`;()<>,]{0,128}:[^\s:/@"'`;()<>,]{1,256}@[^\s/"'`;()<>,]{1,256}|(?<=(?:^|[\s;|&(])--?u(?:ser)?[ \t=]{1,8})["']?[A-Za-z0-9._~-][A-Za-z0-9._~-]{0,127}:[^\s"'%$()+]{1,256}["']?|(?<=[?&])sig=[A-Za-z0-9%._=~-]{20,300}(?![A-Za-z0-9%._=~-])/,
   },
   {
     // The host tail stops at quotes, `;`, `)`, `<`, `>` and `,`: an unbounded
@@ -508,7 +531,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // protecting (`Bearer authentication`) is a lowercase word.
     rule: "authorization-header",
     pattern:
-      /(?<=(?:Bearer|Basic)\s{1,8})(?:[A-Za-z0-9_.+/-]{0,31}[0-9][A-Za-z0-9_.+/-]{0,1024}|[A-Za-z0-9_.+/-]{32,1024}|[A-Za-z0-9_.+/-]{8,1024}={1,2}|(?=[A-Za-z0-9_.+/-]{0,1023}[A-Z])(?=[A-Za-z0-9_.+/-]{0,1023}[a-z])[A-Za-z0-9_.+/-]{12,1024})(?![A-Za-z0-9_.+/=-])/,
+      /(?<=[Aa]uthorization["']?\s*[:=]\s*["']?[A-Za-z][A-Za-z0-9._~+/-]{0,31}\s{1,8})(?:[A-Za-z0-9_.+/-]{0,31}[0-9][A-Za-z0-9_.+/-]{0,1024}|[A-Za-z0-9_.+/-]{32,1024}|[A-Za-z0-9_.+/-]{8,1024}={1,2}|(?=[A-Za-z0-9_.+/-]{0,1023}[A-Z])(?=[A-Za-z0-9_.+/-]{0,1023}[a-z])[A-Za-z0-9_.+/-]{12,1024})(?![A-Za-z0-9_.+/=-])/,
   },
   {
     // Broader names than before (`apiKey`, `clientSecret`, `privateKey` were
@@ -536,7 +559,9 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // between the braces to mask, and `isTemplateInterpolation` keeps such a value readable.
     rule: "interpolation-fallback-secret",
     pattern: new RegExp(
-      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}["'\`]?\\$\\{[A-Za-z_][A-Za-z0-9_]*:?[-=?+]([^}"'\`\\r\\n]{2,512})\\}["'\`]?`,
+      // The operator set deliberately omits `?`: `${VAR:?message}` is an error message in shell
+      // and Compose, not a fallback value, and masking it hid the sentence a user is meant to read.
+      `(?:["']${STRONG_CREDENTIAL_NAME}["']|${NOT_AFTER_QUOTE}${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}["'\`]?\\$\\{[A-Za-z_][A-Za-z0-9_]*:?[-=+]([^}"'\`\\r\\n]{2,512})\\}["'\`]?`,
       "i"
     ),
     valueGroup: 1,

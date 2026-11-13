@@ -63,12 +63,20 @@ test("this repository's own tokenize.ts is not rewritten by its own redactor", (
 });
 
 test("real credentials in data files are still masked", () => {
-  redacted("API_KEY=sk_live_abcdef1234567890", "an unquoted .env assignment");
-  redacted("POSTGRES_PASSWORD: hunter2", "an unquoted YAML assignment");
-  redacted("dbPassword: 'correct horse battery'", "a quoted YAML assignment");
+  // Unquoted assignment shapes are data, not source. In a `.ts` file the same text is an
+  // expression (`KEY: identifier`) and is deliberately left alone — see the source-file guard.
+  const data = (line, file = "fixture.env") =>
+    scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, file).redacted;
+  assert.match(data("API_KEY=sk_live_abcdef1234567890"), /\[REDACTED/, "an unquoted .env assignment");
+  assert.match(data("POSTGRES_PASSWORD: hunter2", "fixture.yml"), /\[REDACTED/, "an unquoted YAML assignment");
+  assert.match(data("dbPassword: 'correct horse battery'", "fixture.yml"), /\[REDACTED/, "a quoted YAML assignment");
   redacted('const API_KEY = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";', "a real literal in code");
-  redacted("SECRET=abc/def+ghi/jkl=", "a base64-shaped value");
-  redacted("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "an AWS key");
+  assert.match(data("SECRET=abc/def+ghi/jkl="), /\[REDACTED/, "a base64-shaped value");
+  assert.match(
+    data("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+    /\[REDACTED/,
+    "an AWS key"
+  );
 });
 
 test("the weak names keep their length floor, so `pass: 3` stays readable", () => {

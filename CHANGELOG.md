@@ -23,6 +23,69 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.17
+
+Closes the remaining entries of the 0.9.16 verified-bug report and the follow-up report from a
+CommonJS gateway. The theme is that a gate now proves what it claims: the manifest is the schema
+it says it is, an artifact cannot be deleted while `validate` stays green, a staged snapshot is
+what `git commit` will write, and a mask never changes what a file means.
+
+**Redaction.** Unquoted assignments in source files are expressions, not credentials:
+`SEARXNG_SECRET_KEY: optionalString`, `{ "x-api-key": key }` and `? "PASS" : "MUTATE"` survive
+verbatim, while the same text in YAML, a `.env` or a shell file is still masked. A shell
+expansion (`"${VAR:-…}"`, `$(date -u …)`) is a reference and is never partially masked; the
+`-u` userinfo rule no longer matches a date format; `${VAR:?message}` keeps its message; and
+placeholders (`replace-me-…`, `sk-...`, `<…>`) stay readable. A line whose quotes were balanced
+before masking and not after is left untouched rather than emitted broken.
+
+**Scope and graph.** `--staged` reads the index blob, so further unstaged edits are not
+snapshotted, and a staged deletion is recorded as `deleted`. Git paths keep their bytes (no
+`.trim()`, no backslash rewrite). A deleted module is a tombstone, so its importers are found by
+`--with-dependents`. `tsconfig` `baseUrl`/`paths` aliases resolve. Case folding is a
+platform property. `**` inside a segment no longer crosses `/`. `.gitignore` updates preserve
+UTF-8/UTF-16 BOMs and dedupe by meaning; the entries written are root-anchored.
+
+**Lifecycle.** The run lock carries a heartbeat refreshed from a worker thread (the main loop is
+synchronous), so a zero-byte or pid-reused lock recovers in two minutes instead of an hour or
+never. An async `afterGenerate` hook holds both locks until it settles, so it cannot mutate a
+newer snapshot. Size limits are checked before the skeleton parse and before serialising a
+monolith that cannot fit.
+
+**Validation.** The manifest shape guard checks the schema it claims (`generator`, `git`,
+`config`, `budgets`, `indexes`, `kinds`, per-file part/hash/size/mode, per-part
+sha256/byteSize/index). `README.md`, `reports/navigation.md`, `reports/project-tree.md` and
+`reports/audit.md` carry recorded digests and are verified; a navigation link that points at
+nothing fails. `counts.totalLines` is summed from `files[]`, and the fingerprint is recomputed
+from the manifest's files and recorded settings digest. A file deleted from disk is `missing`
+with a detail, not a bare `read-error`, and `validate` surfaces unreadable skips.
+
+**Internals.** Module configs are re-evaluated only when their bytes change. Layer/kind registries
+are ordered-safe (`constructor`, `__proto__`). The derivation cache subtracts replaced entries
+and is LRU. Part assembly is memoised. The ownership marker reuses digests recorded at write time.
+`.js` is parsed as JavaScript, CommonJS exports are summarised, and Express/Hono/Koa/Fastify
+route registrations populate route methods.
+
+**MCP.** At most four requests run at once, with a typed `overloaded` error for the rest. The route
+lookup is indexed rather than quadratic. A `snapshot_read` page that ends inside one very long line
+reports `pageable: false` instead of advancing `fromLine` past the only line.
+
+**Contracts and repository gates.** `describe` says JS/JSX for `--skeleton` and nested
+`.gitignore` files for `--discovery`, and says `--autopilot` chooses the preset. `explain`
+rejects the partitioning/artifact flags it never read and reports the inclusion mode
+`generate` would choose. Every workflow action is pinned to a commit SHA, enforced by
+`scripts/check-workflows.mjs` in `npm run verify`. Secret scanning no longer ignores `docs/**`,
+`**/*.md` or `llms.txt`; the residual risk and the documented example values are stated in
+`SECURITY.md`.
+
+### Verified
+
+`npm run verify` — lint, typecheck, 1,079 tests (0 failures, 8 skipped), the workflow pin check,
+the docs sync check, the site build, the site audit, the readme lint and the tarball check
+(38 files, lockfile agrees with 0.9.17). The publish workflow runs the same gate on Node 18, 20
+and 22 before it uploads.
+
+---
+
 ## 0.9.16
 
 A run refused by the lock it did not get could leave a lock of its own behind — one naming a

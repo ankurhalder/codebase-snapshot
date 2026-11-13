@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.9.16 mcp
+npx -y codebase-snapshot@0.9.17 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.9.16", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.9.17", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.16 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.9.17 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -87,7 +87,13 @@ kinds — and returns the part each match lives in.
 
 `snapshot_read` is windowed on purpose. It defaults to 200 lines and reports `nextFromLine` when
 more remains, so an agent continues deliberately instead of pulling a whole part into a context
-window it has not budgeted.
+window it has not budgeted. A single line longer than one result can carry is the exception: the
+page ends mid-line, `pageable` is `false` and `reason` says so, because advancing `fromLine` would
+silently skip the rest of that line.
+
+At most four requests run at once. A fifth gets a JSON-RPC `overloaded` error (`-32001`) naming
+the limit instead of being queued silently or dropped, so a client can retry and `snapshot_status`
+stays responsive.
 
 ## Resources
 
@@ -134,7 +140,10 @@ making changes.
   redaction applies to everything the client sees.
 - **Install or configure.** `snapshot_generate` writes the snapshot directory and nothing else. It
   never runs a package manager and never writes a config file.
-- **Touch the network.** The server makes no outbound connections, and there is no HTTP transport.
+- **Touch the network.** The server itself makes no outbound connection, and there is no HTTP
+  transport. Module configs (`.mjs`, `.cjs`, `.ts`) are refused: importing one would run repository
+  code with the user's privileges, so the server accepts only JSON configuration. The CLI still
+  loads a module config, because there the user invoked the repository's own command.
 
 ## Both protocol eras
 
@@ -161,8 +170,9 @@ the presence of a library.
 ## Performance
 
 Generation runs in a worker thread, so the server keeps answering `ping` and acknowledging
-`notifications/cancelled` while the snapshot is written. The numbers below are measured, not
-estimated:
+`notifications/cancelled` while the snapshot is written. Admission is bounded to four concurrent
+requests, so a flood of `snapshot_generate` calls cannot spawn an unbounded number of workers over
+the same repository. The numbers below are measured, not estimated:
 
 | Repository | Files | `snapshot_generate` |
 | :-- | --: | --: |

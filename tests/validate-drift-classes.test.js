@@ -53,12 +53,12 @@ test("M1: a manifest with no configuration digest is not 'up to date'", (t) => {
   const result = validateSnapshot({ cwd: dir });
 
   assert.equal(result.valid, false, "an unverifiable configuration cannot be called current");
-  const mismatch = result.drift.configMismatches.find((entry) => /no configuration digest/.test(entry));
-  assert.ok(mismatch, `the reason is stated: ${JSON.stringify(result.drift.configMismatches)}`);
-  assert.ok(
-    result.errors.some((error) => /configuration mismatch/.test(error)),
-    "the summary counts it"
-  );
+  // A manifest that claims the current schema but has no `config.digest` is rejected by the shape
+  // guard now (VAL-01), before the configuration comparison. Either message says the configuration
+  // could not be verified; neither may call the snapshot current.
+  const reason = [...result.errors, ...result.drift.configMismatches].join("\n");
+  assert.match(reason, /config\.digest|no configuration digest|not a snapshot manifest/);
+  assert.doesNotMatch(reason, /valid and up to date/);
 });
 
 test("M1: a manifest with no recorded discovery mode is not drift on its own", (t) => {

@@ -43,6 +43,14 @@ export interface SourceSummary {
   routeHandlers: string[];
   /** Number of parser diagnostics, present only when the file has syntax errors. */
   parseErrors?: number;
+  /**
+   * Which module system's exports are recorded here.
+   *
+   * Absent means the file had no exports at all. `cjs` means the names came from
+   * `module.exports`/`exports.*` — a shape the ES-module walk used to miss entirely, leaving a
+   * CommonJS module's public surface empty in the manifest.
+   */
+  exportsKind?: "esm" | "cjs" | "mixed";
 }
 
 export interface JsonSummary {
@@ -86,6 +94,14 @@ export type SkipReason =
   | "symlink"
   /** A file link whose target resolves outside the scanned root. */
   | "outside-root"
+  /**
+   * A tracked path that is absent from disk — deleted without staging.
+   *
+   * Distinct from `read-error`, which means the path exists but could not be read (EACCES, a
+   * sharing violation). Conflating the two left an operator unable to tell a missing file from an
+   * unreadable one, because neither record carried a detail.
+   */
+  | "missing"
   /** Excluded by a `.gitignore` in a scan without git. */
   | "gitignore"
   /** Excluded by a built-in rule: the ignore list, a preset, or an output dir. */
@@ -107,7 +123,15 @@ export type SkipReason =
    * Here the file is perfectly includable and simply did not change; reporting it as
    * `excluded` would send a reader looking for an exclude pattern they never wrote.
    */
-  | "unchanged";
+  | "unchanged"
+  /**
+   * Staged for deletion: the path is in the next commit's parent, not in the next commit.
+   *
+   * With `--staged` the scope is the index, and a deletion has no blob to read. Recording it is
+   * the point: the alternative was to drop it silently and describe a commit that deletes a file
+   * as though the file never existed.
+   */
+  | "deleted";
 
 export interface SkipRecord {
   /** Path as it may be shown in an artifact: secret spans are masked. */
@@ -242,6 +266,16 @@ export interface ManifestTotals {
   totalSourceBytes: number;
   totalContentBytes: number;
   /**
+   * Lines the source files contain, after redaction, before previews and part budgets.
+   *
+   * `counts.totalLines` is the same number. `emittedLines` below is the one a reader of the parts
+   * actually sees; the two differ whenever a preview or a byte-budget cut removed lines, and the
+   * README used to print only the first under the label "Total Code Lines".
+   */
+  sourceLines?: number;
+  /** Lines carried by the emitted parts. Optional for manifests written before it was recorded. */
+  emittedLines?: number;
+  /**
    * Estimated tokens in the emitted parts.
    *
    * Optional because a manifest written before this was recorded has no such key. The number
@@ -363,6 +397,17 @@ export interface Manifest {
     errors: string[];
   };
   artifacts: {
+    /**
+     * The human-facing artifacts, recorded in the same shape as the monoliths.
+     *
+     * `validate` used to verify only parts, monoliths and SARIF, so deleting the README or the
+     * navigation index left it green. Optional because a manifest written before these were
+     * recorded has no key; a current manifest records every artifact it wrote.
+     */
+    readme?: ManifestArtifact;
+    navigation?: ManifestArtifact;
+    projectTree?: ManifestArtifact;
+    audit?: ManifestArtifact;
     fullJson: ManifestArtifact | null;
     fullMarkdown: ManifestArtifact | null;
     /**

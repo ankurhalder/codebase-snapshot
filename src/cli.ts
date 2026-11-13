@@ -581,10 +581,17 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
         )
       )
     );
-    const hint = ignored.some((flag) => ["--preset", "--include", "--exclude"].includes(flag))
-      ? " To scope a run, set include/excludePatterns/preset in snapshot.config.ts " +
-        "(or run `codebase-snapshot init` to generate one)."
-      : "";
+    // `generate --autopilot` runs the setup wizard in non-interactive mode, and the setup flags
+    // it cannot take are the ones a user is most likely to try. Name the reason instead of
+    // listing what they could have typed elsewhere.
+    const setupOnly = ["--preset", "--include", "--exclude", "--install-hook"];
+    const autopilotChose = values.autopilot === true && ignored.some((flag) => setupOnly.includes(flag));
+    const hint = autopilotChose
+      ? " --autopilot chooses the preset and takes none of these: name them with `setup` (or `init`) instead."
+      : ignored.some((flag) => ["--preset", "--include", "--exclude"].includes(flag))
+        ? " To scope a run, set include/excludePatterns/preset in snapshot.config.ts " +
+          "(or run `codebase-snapshot init` to generate one)."
+        : "";
     throw new UsageError(
       `${ignored.join(", ")} ${ignored.length === 1 ? "does" : "do"} not apply to \`${command}\` and ` +
         `${ignored.length === 1 ? "was" : "were"} not applied. ${ignored.length === 1 ? "It is" : "They are"} ` +
@@ -909,10 +916,29 @@ interface InstallOutcome {
  * the child read the project's own `.npmrc` and flags, which is the whole point of using the
  * project's package manager.
  */
+/**
+ * npm settings a child install may inherit.
+ *
+ * npm writes `npm_config_*` into the environment of every lifecycle script, and inheriting all
+ * of them lets a parent's `npm_config_prefix` or `npm_config_global` change what the child
+ * installs where. Stripping *every* one also removed the settings the user chose deliberately:
+ * an install behind a proxy or a private registry failed with "network unreachable" because
+ * `npm_config_registry`, the proxy and the CA file had been deleted from its environment.
+ */
+const INHERITED_NPM_SETTINGS = new Set([
+  "npm_config_registry",
+  "npm_config_proxy",
+  "npm_config_https_proxy",
+  "npm_config_noproxy",
+  "npm_config_cafile",
+  "npm_config_ca",
+  "npm_config_strict_ssl",
+]);
+
 export function cleanInstallEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const cleaned: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (/^npm_config_/i.test(key)) continue;
+    if (/^npm_config_/i.test(key) && !INHERITED_NPM_SETTINGS.has(key.toLowerCase())) continue;
     if (key === "npm_lifecycle_event" || key === "npm_lifecycle_script") continue;
     cleaned[key] = value;
   }

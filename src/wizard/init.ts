@@ -223,15 +223,50 @@ function describeJsonValue(value: unknown): string {
  */
 function writeFileOrExplain(target: string, content: string): void {
   try {
-    fs.writeFileSync(target, content, "utf8");
+    // `writeFileSync` follows a symlink, so a repository that ships `snapshot.config.json ->
+    // ~/.bashrc` would get that file overwritten by a wizard the user ran to *read* a config.
+    // The skill installer already refuses this; `init` now uses the same rule, and the write is
+    // a same-directory rename so a crash cannot leave half a configuration behind.
+    let stats: fs.Stats | null = null;
+    try {
+      stats = fs.lstatSync(target);
+    } catch {
+      stats = null;
+    }
+    if (stats !== null && stats.isSymbolicLink()) {
+      throw new Error(
+        `Cannot write ${target}: it is a symbolic link, and writing through it would modify whatever it points at.`
+      );
+    }
+    if (stats !== null && !stats.isFile()) {
+      throw new Error(
+        `Cannot write ${target}: ${stats.isDirectory() ? "it is a directory" : "it is not a regular file"}.`
+      );
+    }
+    const temporary = `${target}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
+    try {
+      fs.renameSync(temporary, target);
+    } catch (err) {
+      try {
+        fs.unlinkSync(temporary);
+      } catch {
+        // The rename error explains the failure; a cleanup error must not mask it.
+      }
+      throw err;
+    }
   } catch (err) {
+    const message = (err as Error).message;
+    // The guards above already phrase themselves; wrapping their message again would read
+    // "Cannot write X: Cannot write X: …".
+    if (message.startsWith(`Cannot write ${target}:`)) throw err;
     const code = (err as NodeJS.ErrnoException).code;
     const reason =
       code === "EACCES" || code === "EPERM" || code === "EROFS"
         ? `permission denied (${code})`
         : code === "EISDIR"
           ? "it is a directory"
-          : `${(err as Error).message}`;
+          : message;
     throw new Error(`Cannot write ${target}: ${reason}`);
   }
 }
@@ -417,7 +452,10 @@ function updatePackageJson(cwd: string, notes: string[]): PackageJsonUpdate {
  * The snapshot itself and the scratch copy it is swapped from. Both are build output, and leaving
  * them untracked is what makes `init` produce two file changes rather than a dirty tree.
  */
-const GITIGNORE_ENTRIES = ["snapshot/", "snapshot.tmp/"];
+// Anchored: an unanchored `snapshot/` ignores a directory of that name at any depth, so a
+// fixture or package called `snapshot` disappeared from git. Only the repository-root
+// output and staging directories are this tool's.
+const GITIGNORE_ENTRIES = ["/snapshot/", "/snapshot.tmp/"];
 
 /**
  * One entry in the preset list.

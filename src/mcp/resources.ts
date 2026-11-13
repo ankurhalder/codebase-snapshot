@@ -101,7 +101,7 @@ function formatBytes(bytes: number): string {
 async function workspaceFor(context: ToolContext): Promise<Workspace | { error: string }> {
   const root = resolveRoot(undefined, context);
   if (!root.ok) return { error: root.message };
-  const opened = await openWorkspace(root.root);
+  const opened = await openWorkspace(root.root, {}, undefined, { allowExecutableConfig: false });
   if (!opened.ok) return { error: opened.message };
   return opened.workspace;
 }

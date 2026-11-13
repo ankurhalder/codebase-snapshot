@@ -29,6 +29,9 @@ function write(base, relativePath, content) {
 }
 
 const scan = (content) => scanAndRedactSecrets(content, DEFAULT_SECRET_PATTERNS, "fixture.ts");
+/** The same content in a data/shell file, where an unquoted right-hand side is a literal. */
+const scanData = (content, file = "fixture.env") =>
+  scanAndRedactSecrets(content, DEFAULT_SECRET_PATTERNS, file).redacted;
 
 /** Runs `git init` in `dir`; false when git is unavailable on this host. */
 function initGitRepository(dir) {
@@ -81,7 +84,7 @@ test("F1: short unquoted values in .env and compose files are redacted", () => {
     "password: credentialsYamlValue1234",
   ].join("\n");
 
-  const { redacted } = scan(content);
+  const redacted = scanData(content, "fixture.yml");
 
   assert.equal(redacted.includes("backupTildeSecret1234"), false);
   assert.equal(redacted.includes("pw1"), false);
@@ -105,7 +108,7 @@ test("S1/S16: CRLF, trailing comments and trailing spaces do not disable the env
     `export AUTH_TOKEN=${values[4]}`,
   ].join("\r\n");
 
-  const { redacted } = scan(crlf);
+  const redacted = scanData(crlf, "fixture.sh");
 
   for (const value of values) {
     assert.equal(redacted.includes(value), false, `CRLF/trailing text must not leak: ${value}`);
@@ -115,7 +118,7 @@ test("S1/S16: CRLF, trailing comments and trailing spaces do not disable the env
   assert.ok(redacted.includes("\r\n"), "line terminators must be preserved");
 
   // The same content with LF endings must behave identically.
-  const lf = scan(crlf.replace(/\r\n/g, "\n")).redacted;
+  const lf = scanData(crlf.replace(/\r\n/g, "\n"), "fixture.sh");
   assert.equal(lf.includes(values[0]), false, "the LF baseline must also be redacted");
 });
 
@@ -742,7 +745,7 @@ test("S23: any scheme is covered by the scheme-less userinfo rule", () => {
 });
 
 test("the mask stops at a token boundary and keeps the assignment name", () => {
-  const env = scan("DB_PASSWORD=hunter2").redacted;
+  const env = scanData("DB_PASSWORD=hunter2");
   assert.ok(env.includes("DB_PASSWORD"), `the name must survive: ${env}`);
   assert.equal(env.includes("hunter2"), false);
 
@@ -757,7 +760,7 @@ test("S24/S25: unquoted STRONG names keep short values, WEAK names need length",
     "pass: hunter2hunter2",
     "credentials: hunter2hunter2",
   ]) {
-    const { redacted } = scan(line);
+    const redacted = scanData(line, "fixture.yml");
     assert.ok(redacted.includes("[REDACTED"), `not masked: ${line}`);
     assert.equal(redacted.includes("hunter2"), false, `not masked: ${line}`);
     assert.equal(redacted.includes("abc123"), false, `not masked: ${line}`);
@@ -816,7 +819,23 @@ test("C25: the tool's own output never appears in skipped[]", (t) => {
   write(dir, ".context/.codebase-snapshot", "{}\n");
   write(dir, ".context/manifest.json", "{}\n");
   write(dir, ".context/parts/part-001.md", "# part\n");
-  write(dir, "snapshot/.codebase-snapshot", "{}\n");
+  // A marker is evidence only when it records this tool's finished run and accounts for the
+  // directory's contents; a `{}` file is not (see the FS-01 case in
+  // `tests/audit-0-9-16-trust.test.js`). These fixtures are what a real run leaves behind.
+  write(
+    dir,
+    "snapshot/.codebase-snapshot",
+    `${JSON.stringify({
+      generator: "codebase-snapshot",
+      schemaVersion: "2",
+      id: "20260101-000000-0000",
+      state: "complete",
+      files: [
+        { path: "manifest.json", bytes: 3, sha256: "a".repeat(64) },
+        { path: "parts/part-001.md", bytes: 9, sha256: "b".repeat(64) },
+      ],
+    })}\n`
+  );
   write(dir, "snapshot/manifest.json", "{}\n");
   fs.mkdirSync(path.join(dir, "snapshot.backup-123-456"), { recursive: true });
   write(dir, "snapshot.backup-123-456/manifest.json", "{}\n");
@@ -826,6 +845,9 @@ test("C25: the tool's own output never appears in skipped[]", (t) => {
     includePatterns: config.include,
     excludePatterns: [...config.excludePatterns, ...config.presetExclude],
     includeSensitiveFiles: config.includeSensitiveFiles,
+    // What `generateSnapshot` passes: the output and staging directories this run is about
+    // to write cannot carry a marker on a first run, so their exact paths are owned by name.
+    toolOwnedPaths: [config.outDir, config.tmpDir],
   };
 
   const first = collectFiles(dir, options);

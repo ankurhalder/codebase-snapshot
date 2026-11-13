@@ -147,7 +147,7 @@ test("artifact counts do not depend on the machine's locale", (t) => {
   const audit = readAudit(dir);
   assert.match(
     audit,
-    /\*\*Total Lines:\*\* \d{3},\d{3}/,
+    /\*\*Source Lines:\*\* \d{3},\d{3}/,
     "counts use three-digit grouping regardless of the host locale"
   );
   assert.equal(audit.includes("1,00,"), false, "no en-IN grouping may leak into the artifact");

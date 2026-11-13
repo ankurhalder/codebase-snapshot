@@ -179,9 +179,10 @@ export interface WorkspaceCliOptions {
 export async function openWorkspace(
   root: string,
   overrides: WorkspaceOverrides = {},
-  allowedRoots?: readonly string[]
+  allowedRoots?: readonly string[],
+  options: { allowExecutableConfig?: boolean } = {}
 ): Promise<WorkspaceOutcome> {
-  const loaded = await loadConfigFileDetailed(root);
+  const loaded = await loadConfigFileDetailed(root, options);
   if (loaded.errors.length > 0) {
     return {
       ok: false,
@@ -262,11 +263,20 @@ export async function openWorkspace(
 
 interface CacheEntry {
   mtimeMs: number;
+  ctimeMs: number;
   size: number;
   manifest: Manifest;
 }
 
-/** One process serves one repository; the cache is small and never evicts. */
+/**
+ * One manifest per file, bounded.
+ *
+ * The cache used to grow for the life of the process, and `resolveRoot` lets a session read
+ * several roots, so a long-lived server leaked one parsed manifest per repository it touched. It
+ * is small by design: the entry exists to keep repeated tool calls from re-reading the same file
+ * between two writes, not to be a store.
+ */
+const MANIFEST_CACHE_LIMIT = 8;
 const manifestCache = new Map<string, CacheEntry>();
 
 export type ManifestOutcome =
@@ -302,6 +312,21 @@ export function partPathFor(workspace: Workspace, filename: string): string | nu
   ) {
     return null;
   }
+  // Lexical containment is not enough: a symlink named like a part passes every string check
+  // and reads whatever it points at. `snapshot://parts/{n}` is auto-approved by MCP clients
+  // because it is read-only, so that was a prompt-injected read of any file the server can open.
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(resolved);
+  } catch {
+    return null;
+  }
+  if (!stats.isFile()) return null;
+  try {
+    if (path.dirname(fs.realpathSync(resolved)) !== fs.realpathSync(partsDir)) return null;
+  } catch {
+    return null;
+  }
   return resolved;
 }
 
@@ -324,7 +349,14 @@ export function readManifest(workspace: Workspace): ManifestOutcome {
   }
 
   const cached = manifestCache.get(file);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+  // `ctimeMs` catches a same-size replacement (a copy over the old file) that `mtimeMs` can miss
+  // on a coarse filesystem clock.
+  if (
+    cached &&
+    cached.mtimeMs === stats.mtimeMs &&
+    cached.ctimeMs === stats.ctimeMs &&
+    cached.size === stats.size
+  ) {
     return { ok: true, manifest: cached.manifest, file };
   }
 
@@ -352,7 +384,18 @@ export function readManifest(workspace: Workspace): ManifestOutcome {
   }
 
   const manifest = parsed as Manifest;
-  manifestCache.set(file, { mtimeMs: stats.mtimeMs, size: stats.size, manifest });
+  manifestCache.delete(file);
+  manifestCache.set(file, {
+    mtimeMs: stats.mtimeMs,
+    ctimeMs: stats.ctimeMs,
+    size: stats.size,
+    manifest,
+  });
+  while (manifestCache.size > MANIFEST_CACHE_LIMIT) {
+    const oldest = manifestCache.keys().next().value;
+    if (oldest === undefined) break;
+    manifestCache.delete(oldest);
+  }
   return { ok: true, manifest, file };
 }
 

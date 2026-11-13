@@ -252,7 +252,9 @@ async function prepare(
   if (!rootOutcome.ok) return { ok: false, outcome: failure(rootOutcome.message) };
   // The outDir override is confined to the same directories a root may name: one comes from a
   // prompt, the other from the server's launch directory, and a tool argument may not widen either.
-  const opened = await openWorkspace(rootOutcome.root, overrides, context.roots);
+  const opened = await openWorkspace(rootOutcome.root, overrides, context.roots, {
+    allowExecutableConfig: false,
+  });
   if (!opened.ok) return { ok: false, outcome: failure(opened.message) };
   return { ok: true, workspace: opened.workspace };
 }
@@ -670,12 +672,16 @@ const locateTool: McpTool = {
     }
 
     if (wants("route")) {
+      // Indexed rather than a linear scan of `matches` per route: with a few hundred routes and
+      // a few thousand matches the old `matches.some(...)` was quadratic on every locate call.
+      const matchedPaths = new Set(matches.map((match) => match.path));
       for (const route of manifest.indexes.routes) {
         // A route is matched on its path *or* its method: "which endpoints accept POST"
         // is the same question as "where is /api/x", and only the path was searchable.
         const method = route.methods.find((name) => name.toLowerCase().includes(needle));
         if (!route.path.toLowerCase().includes(needle) && method === undefined) continue;
-        if (matches.some((match) => match.path === route.path)) continue;
+        if (matchedPaths.has(route.path)) continue;
+        matchedPaths.add(route.path);
         matches.push({
           path: route.path,
           part: route.part,
@@ -911,6 +917,8 @@ const readTool: McpTool = {
       returnedLines: { type: "integer" },
       totalLines: { type: "integer" },
       nextFromLine: { type: "integer" },
+      pageable: { type: "boolean" },
+      reason: { type: "string" },
     },
   },
   annotations: READ_ONLY,
@@ -980,19 +988,29 @@ const readTool: McpTool = {
 
     let body = window.text;
     let truncatedByBytes = false;
+    /** The window ended inside a line too long to return, so no `fromLine` can reach the rest. */
+    let clippedInsideLine = false;
     if (Buffer.byteLength(body, "utf8") > MAX_RESULT_BYTES) {
       // Bytes, not code units. `String.prototype.slice` counts UTF-16 code units, so a
       // body of three-byte characters came back up to three times over the limit — and
       // slicing at an odd index could split a surrogate pair, emitting a lone half that
       // no JSON parser downstream can accept. `truncateToBytes` walks the boundary.
       const clipped = truncateToBytes(body, MAX_RESULT_BYTES);
-      body = clipped.content;
-      const lastBreak = body.lastIndexOf("\n");
-      body = lastBreak > 0 ? body.slice(0, lastBreak) : body;
+      const lastBreak = clipped.content.lastIndexOf("\n");
+      if (lastBreak > 0) {
+        body = clipped.content.slice(0, lastBreak);
+      } else {
+        // A single line longer than one result can carry. The old code returned its prefix and
+        // advanced `fromLine` by one, so the rest of the line was unreachable: the next call was
+        // "past the end of the file". Say so explicitly instead of pretending to paginate.
+        body = clipped.content;
+        clippedInsideLine = true;
+      }
       truncatedByBytes = true;
     }
     const returnedLines = body.length === 0 ? 0 : body.split("\n").length;
-    const moreRemain = !window.pastEnd && (window.truncated || truncatedByBytes);
+    const moreRemain =
+      !clippedInsideLine && !window.pastEnd && (window.truncated || truncatedByBytes);
 
     const header = [
       `${entry.relativePath} — ${entry.part}, ${entry.layer}/${entry.kind}, ${entry.language}`,
@@ -1017,12 +1035,20 @@ const readTool: McpTool = {
         ? "This file is empty."
         : window.pastEnd
           ? `This file has ${window.totalLines} line(s); fromLine=${window.fromLine} is past its end.`
-          : `Lines ${window.fromLine}\u2013${window.fromLine + returnedLines - 1} of ${window.totalLines}.`,
+          : clippedInsideLine
+            ? `Line ${window.fromLine} of ${window.totalLines}: this line is longer than one result can carry, so this page ends mid-line.`
+            : `Lines ${window.fromLine}\u2013${window.fromLine + returnedLines - 1} of ${window.totalLines}.`,
     ];
     const lines = [...header, "", body];
     if (moreRemain) {
       const next = window.fromLine + returnedLines;
       lines.push("", `Truncated. Call snapshot_read with fromLine=${next} for the rest.`);
+    } else if (clippedInsideLine) {
+      lines.push(
+        "",
+        "Truncated. The remainder of this line is not reachable through snapshot_read; read the " +
+          "file from disk to see it."
+      );
     }
 
     return {
@@ -1037,7 +1063,11 @@ const readTool: McpTool = {
         fromLine: window.fromLine,
         returnedLines,
         totalLines: window.totalLines,
-        truncated: moreRemain,
+        truncated: moreRemain || clippedInsideLine,
+        pageable: !clippedInsideLine,
+        ...(clippedInsideLine
+          ? { reason: "line exceeds the result limit; its remainder is not reachable by fromLine" }
+          : {}),
         nextFromLine: moreRemain ? window.fromLine + returnedLines : null,
         sha256: entry.hashSha256,
       },

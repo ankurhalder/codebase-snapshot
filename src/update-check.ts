@@ -187,17 +187,23 @@ export function shouldCheck(argv: readonly string[], env: NodeJS.ProcessEnv): bo
   // and only then. Matching the substring "json" anywhere in argv meant
   // `snapshot explain package.json` and `snapshot diff a/manifest.json b/manifest.json`
   // never asked, even though both write plain text.
+  //
+  // The parser is last-wins, so this scan has to be as well. It used to `break` at the first
+  // `--format`, which read `--format text --format json` as text (an unnecessary request and a
+  // stray stderr line in machine-read mode) and `--format json --format text` as json (no notice
+  // for a text run). `--` ends option parsing, exactly as it does for the CLI parser.
+  let format: string | null = null;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index] as string;
+    if (argument === "--") break;
     if (argument === "--format") {
-      if (args[index + 1] === "json") return false;
-      break;
+      format = args[index + 1] ?? null;
+      index += 1;
+      continue;
     }
-    if (argument.startsWith("--format=")) {
-      if (argument.slice("--format=".length) === "json") return false;
-      break;
-    }
+    if (argument.startsWith("--format=")) format = argument.slice("--format=".length);
   }
+  if (format === "json") return false;
 
   return true;
 }

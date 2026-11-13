@@ -411,8 +411,9 @@ export function buildAgentContract(): AgentContract {
         default: "unset",
         appliesTo: optionAppliesTo("max-part-tokens"),
         summary:
-          'Ceiling on a part expressed in tokens. Narrows --max-part-bytes instead of replacing it; ' +
-          "the manifest records both units. Minimum 1024.",
+          "Ceiling on a part expressed in tokens. Converted to bytes at 4 bytes/token and enforced " +
+          "as that byte ceiling — the estimate in manifest.parts[].estimatedTokens is not a hard " +
+          "bound, and a warning names any part whose estimate exceeds it. Minimum 1024.",
       },
       {
         flag: "--large-file-bytes",
@@ -447,7 +448,9 @@ export function buildAgentContract(): AgentContract {
         type: "string",
         default: "auto",
         appliesTo: optionAppliesTo("discovery"),
-        summary: "How files are discovered: auto (git when usable), git (require git), walk (read the root .gitignore directly; the escape hatch for a .git that cannot be listed).",
+        summary:
+          "How files are discovered: auto (git when usable), git (require git), walk (read .gitignore " +
+          "files directly, including nested ones; the escape hatch for a .git that cannot be listed).",
       },
       {
         flag: "--skip-artifacts",
@@ -469,8 +472,9 @@ export function buildAgentContract(): AgentContract {
         default: false,
         appliesTo: optionAppliesTo("skeleton"),
         summary:
-          "Replace function and method bodies with `{ /* ... */ }` in TypeScript/TSX files, keeping " +
-          "signatures and comments. The part records inclusionMode \"signatures\" for each file it touched.",
+          "Replace function and method bodies with `{ /* ... */ }` in JS, JSX, TS and TSX files " +
+          "(including .mjs/.cjs; .d.ts files have nothing to collapse), keeping signatures and " +
+          "comments. The part records inclusionMode \"signatures\" for each file it touched.",
       },
       {
         flag: "--sarif",
@@ -596,8 +600,10 @@ export function buildAgentContract(): AgentContract {
         summary:
           "Set the project up without asking, then generate: detect the preset, write the config " +
           "and .gitignore, add the npm scripts and devDependency, install with the project's own " +
-          "package manager, generate. Never overwrites an existing config, and never prompts. Refuses " +
-          "an empty directory (exit 1); contradicts --no-config (exit 2).",
+          "package manager, generate. Autopilot chooses the preset and takes no --preset/--include/" +
+          "--exclude/--install-hook: those belong to `setup` or `init`. Never overwrites an " +
+          "existing config, and never prompts. Refuses an empty directory (exit 1); contradicts " +
+          "--no-config (exit 2).",
       },
       {
         flag: "--install",

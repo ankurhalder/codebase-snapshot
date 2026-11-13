@@ -50,7 +50,18 @@ const CONFIG_FILENAMES = [
 export function findConfigFile(cwd: string): string | null {
   for (const filename of CONFIG_FILENAMES) {
     const fullPath = path.join(cwd, filename);
-    if (fs.existsSync(fullPath)) return fullPath;
+    let stats: fs.Stats | null = null;
+    try {
+      stats = fs.statSync(fullPath);
+    } catch {
+      // An unreadable path that exists is still a broken configuration, not an absent one:
+      // the loader reports it rather than falling through to a different file.
+      if (fs.existsSync(fullPath)) return fullPath;
+      continue;
+    }
+    // A *directory* named `snapshot.config.json` is not a configuration. Returning it made the
+    // loader report EISDIR instead of trying the next candidate.
+    if (stats.isFile()) return fullPath;
   }
   const pkgJsonPath = path.join(cwd, "package.json");
   if (!fs.existsSync(pkgJsonPath)) return null;
@@ -525,29 +536,60 @@ function readConfigExport(exported: unknown, file: string): SnapshotConfig {
 }
 
 /**
- * Bumped for every module-config load (`snapshot.config.ts|js|mjs|cjs`).
+ * The last module config this process evaluated, keyed by path and content.
  *
- * ESM caches a module per specifier, so a second `import()` of the same file
- * returned the module evaluated on the first load. `generate --watch` therefore
- * kept applying the config it started with, and a config that became invalid
- * mid-watch silently re-used the last good object instead of reporting the error
- * a cold start reports. A distinct query string makes each load a fresh module.
+ * ESM caches a module per specifier, so a second `import()` of the same URL returns the module
+ * evaluated on the first load. `generate --watch` therefore kept applying the config it started
+ * with. The old fix was a unique query string on every load, which made each reload a brand-new
+ * module record that the engine cannot collect: a long-lived watch or MCP server grew without
+ * bound, one module graph per reload.
+ *
+ * The key is the config file's content, so an unchanged file reuses the cached module (one URL
+ * for the process) and an edit produces a new one — exactly the guarantee a reload needs. The
+ * query covers `.mjs`, `.ts` and `.js` in an ES-module package. A CommonJS file (`.cjs`, or
+ * `.js` in a CommonJS package) is additionally evicted from the require cache, which is keyed
+ * by filename and ignores the query.
+ *
+ * A helper module the config imports is cached under its own stable URL, so editing it alone is
+ * not picked up until the config file changes. That is stated in `docs/configuration.md`.
  */
-let moduleConfigLoadToken = 0;
+let lastModuleConfig: {
+  path: string;
+  key: string;
+  exports: Record<string, unknown> & { default?: unknown };
+} | null = null;
+
+/** A content key for a config file, or a stat-based approximation if it cannot be read. */
+function moduleConfigKey(fullPath: string): string {
+  try {
+    return createHash("sha256").update(fs.readFileSync(fullPath)).digest("hex").slice(0, 24);
+  } catch {
+    try {
+      const stats = fs.statSync(fullPath);
+      return `stat-${stats.mtimeMs}-${stats.size}`;
+    } catch {
+      return "unreadable";
+    }
+  }
+}
 
 /**
- * Imports a module config without re-using an earlier evaluation of it.
+ * Imports a module config, re-evaluating it only when its bytes changed.
  *
- * The query string covers `.mjs`, `.ts` and `.js` in an ES-module package. A
- * CommonJS file (`.cjs`, or `.js` in a CommonJS package) is additionally evicted
- * from the require cache, which is keyed by filename and ignores the query, so
- * without the eviction the custom loader would still hand back stale exports.
- * Failures are left to the caller: `import()` below reports them the same way a
- * first load does.
+ * Failures are left to the caller: `import()` below reports them the same way a first load does.
  */
 async function importConfigModule(
   fullPath: string
 ): Promise<Record<string, unknown> & { default?: unknown }> {
+  const key = moduleConfigKey(fullPath);
+  if (
+    lastModuleConfig !== null &&
+    lastModuleConfig.path === fullPath &&
+    lastModuleConfig.key === key
+  ) {
+    return lastModuleConfig.exports;
+  }
+
   try {
     const requireFromConfig = createRequire(fullPath);
     delete requireFromConfig.cache[requireFromConfig.resolve(fullPath)];
@@ -557,9 +599,10 @@ async function importConfigModule(
   }
 
   const url = pathToFileURL(fullPath);
-  moduleConfigLoadToken += 1;
-  url.searchParams.set("codebaseSnapshotLoad", String(moduleConfigLoadToken));
-  return (await import(url.href)) as Record<string, unknown> & { default?: unknown };
+  url.searchParams.set("codebaseSnapshotLoad", key);
+  const loaded = (await import(url.href)) as Record<string, unknown> & { default?: unknown };
+  lastModuleConfig = { path: fullPath, key, exports: loaded };
+  return loaded;
 }
 
 /**
@@ -589,13 +632,30 @@ function attachConfigDir(config: SnapshotConfig, filePath: string): SnapshotConf
   return config;
 }
 
-export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadResult> {
+export async function loadConfigFileDetailed(
+  cwd: string,
+  options: { allowExecutableConfig?: boolean } = {}
+): Promise<ConfigLoadResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
+  const configDirectories: string[] = [];
 
   for (const filename of CONFIG_FILENAMES) {
     const fullPath = path.join(cwd, filename);
-    if (!fs.existsSync(fullPath)) continue;
+    let candidateStats: fs.Stats | null = null;
+    try {
+      candidateStats = fs.statSync(fullPath);
+    } catch {
+      // An existing path the process cannot stat is a broken config, not an absent one: fall
+      // through to the loader so it can report the reason.
+      if (!fs.existsSync(fullPath)) continue;
+    }
+    // A directory with a config's name is not a config file; reading it produced EISDIR and a
+    // hard "could not be read" even when a later candidate was a perfectly good file.
+    if (candidateStats !== null && !candidateStats.isFile()) {
+      configDirectories.push(fullPath);
+      continue;
+    }
 
     if (filename.endsWith(".json") || filename === ".snapshotrc") {
       try {
@@ -619,6 +679,20 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
         errors.push(message);
         continue;
       }
+    }
+
+    // A `.mjs`, `.cjs` or `.ts` config is code, and importing it runs that code with the
+    // server's privileges. `snapshot serve-mcp` answers prompts from a repository's own files, so
+    // a repository that ships one of these would get arbitrary execution from a cloned archive.
+    // The MCP server refuses them and says why; the CLI keeps loading them, because the user
+    // invoked the repository's own command there.
+    if (options.allowExecutableConfig === false) {
+      const message =
+        `${fullPath} was not loaded: it is an executable config, and this server does not run ` +
+        `repository code. Export the same settings from snapshot.config.json instead.`;
+      warnings.push(message);
+      errors.push(message);
+      continue;
     }
 
     if (filename.endsWith(".ts") && !supportsTypeScriptImports()) {
@@ -688,6 +762,16 @@ export async function loadConfigFileDetailed(cwd: string): Promise<ConfigLoadRes
       warnings.push(message);
       errors.push(message);
     }
+  }
+
+  // A directory with a configuration's name is worth saying out loud when nothing else
+  // configured the repository: it is almost always a mistake, and it used to surface as an
+  // EISDIR hard failure.
+  if (configDirectories.length > 0) {
+    warnings.push(
+      `${configDirectories.join(", ")} ${configDirectories.length === 1 ? "is a directory" : "are directories"}, ` +
+        `not a configuration file; no configuration was read from ${configDirectories.length === 1 ? "it" : "them"}.`
+    );
   }
 
   return { config: null, file: null, warnings, errors };
@@ -1596,6 +1680,13 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     // moving `{ name: "api", match: "src/api/**" }` to `"src/v2/**"` produced the same
     // digest, so `validate` reported "valid and up to date" for a snapshot whose files
     // had all been reclassified — and per-layer budgets applied to different files.
+    // A function matcher's `String()` is its source, not its closure: two functions with the same
+    // body but different captured values digest identically. That cannot be fixed by hashing, so
+    // the digest records that executable matchers are present and `validate` says the digest does
+    // not cover their closure, instead of claiming a equality it cannot prove.
+    executableMatchers: [...config.layers, ...config.kinds].some(
+      (rule) => typeof rule.match === "function"
+    ),
     layers: config.layers.map((layer) => ({ name: layer.name, match: String(layer.match) })),
     kinds: config.kinds.map((kind) => ({ kind: kind.kind, match: String(kind.match) })),
     // How files are enumerated decides what is in the snapshot at all.
