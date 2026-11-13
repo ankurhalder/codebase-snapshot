@@ -221,7 +221,7 @@ Options:
   --install                     Write the skill into the repository instead of printing
   --target <name>               claude | cursor | all (default: all)
 
-  --no-update-check             Skip the daily check for a newer published version
+  --no-update-check             Skip the check for a newer published version
 
   -h, --help                    Display this help message
   -v, --version                 Display version

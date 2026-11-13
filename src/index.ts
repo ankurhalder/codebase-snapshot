@@ -82,6 +82,7 @@ export {
   FAILURE_INTERVAL_MS,
   PACKAGE_LATEST_URL,
   REQUEST_TIMEOUT_MS,
+  UP_TO_DATE_INTERVAL_MS,
   cacheDirectory,
   cacheFilePath,
   checkForUpdate,

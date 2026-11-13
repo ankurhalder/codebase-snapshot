@@ -13,6 +13,7 @@ import test from "node:test";
 import {
   CHECK_INTERVAL_MS,
   FAILURE_INTERVAL_MS,
+  UP_TO_DATE_INTERVAL_MS,
   cacheFilePath,
   checkForUpdate,
   formatUpdateNotice,
@@ -137,6 +138,54 @@ test("the cache decides whether the network is touched", async (t) => {
     });
 
     assert.equal(fetcher.calls.length, 1);
+  });
+
+  await t.test("a 'you are current' cache is re-asked after an hour", async () => {
+    const cacheFile = tempCache(t);
+    fs.writeFileSync(cacheFile, JSON.stringify({ checkedAt: 1000, latest: "0.9.5" }));
+    const fetcher = stubFetcher("0.9.9");
+
+    const notice = await checkForUpdate({
+      current: "0.9.5",
+      cacheFile,
+      fetchLatest: fetcher.fetchLatest,
+      now: () => 1000 + UP_TO_DATE_INTERVAL_MS + 1,
+    });
+
+    assert.deepEqual(notice, { current: "0.9.5", latest: "0.9.9" });
+    assert.equal(fetcher.calls.length, 1, "a new release can only appear after a current answer");
+  });
+
+  await t.test("a 'you are current' cache still answers within the hour", async () => {
+    const cacheFile = tempCache(t);
+    fs.writeFileSync(cacheFile, JSON.stringify({ checkedAt: 1000, latest: "0.9.5" }));
+    const fetcher = stubFetcher("0.9.9");
+
+    const notice = await checkForUpdate({
+      current: "0.9.5",
+      cacheFile,
+      fetchLatest: fetcher.fetchLatest,
+      now: () => 1000 + UP_TO_DATE_INTERVAL_MS - 1,
+    });
+
+    assert.equal(notice, null);
+    assert.equal(fetcher.calls.length, 0);
+  });
+
+  await t.test("a cached upgrade is not re-fetched early", async () => {
+    const cacheFile = tempCache(t);
+    fs.writeFileSync(cacheFile, JSON.stringify({ checkedAt: 1000, latest: "0.9.9" }));
+    const fetcher = stubFetcher("ignored");
+
+    const notice = await checkForUpdate({
+      current: "0.9.5",
+      cacheFile,
+      fetchLatest: fetcher.fetchLatest,
+      now: () => 1000 + UP_TO_DATE_INTERVAL_MS + 1,
+    });
+
+    assert.deepEqual(notice, { current: "0.9.5", latest: "0.9.9" });
+    assert.equal(fetcher.calls.length, 0, "the upgrade is already known; a second request buys nothing");
   });
 
   await t.test("a failed check is remembered for the short interval, not the long one", async () => {

@@ -10,9 +10,9 @@ better choice, including where repomix clearly is.
 
 ## The short version
 
-**repomix** packs a repository into one AI-friendly file. It is the established tool in this space
-by a wide margin — tens of thousands of stars, an MCP server, remote repository URLs, and an
-ecosystem of integrations.
+**repomix** packs a repository into an AI-friendly file, or several with `--split-output`. It is the
+established tool in this space by a wide margin — tens of thousands of stars, an MCP server, remote
+repository URLs, a token budget that fails a build, and an ecosystem of integrations.
 
 **codebase-snapshot** produces *size-budgeted parts* rather than one file, and treats the snapshot
 as something that can go stale and be proven current. Its distinguishing features are a hard byte
@@ -24,8 +24,8 @@ If you want the most popular, most integrated tool: **use repomix.**
 
 | | codebase-snapshot | repomix |
 | :--- | :--- | :--- |
-| Output shape | Multiple parts, each under a hard byte budget, plus a JSON manifest | A single packed file (XML, Markdown or JSON) |
-| Hard size ceiling | **Yes** — `maxPartBytes` is a ceiling, not a target | Token counting and warnings; no per-artifact ceiling |
+| Output shape | Multiple parts, each under a hard byte budget, plus a JSON manifest | One packed file (XML, Markdown or JSON), or several with `--split-output <size>` |
+| Size control | **Yes** — `maxPartBytes` is a per-part byte ceiling; a file too large for one part is truncated with a marker naming the budget | `--split-output <size>` splits by output size, and `--token-budget <n>` exits non-zero above a token count |
 | Reproducible output | Parts are byte-identical across runs; a fingerprint covers them | Content is stable; no published determinism guarantee |
 | Staleness check | `validate` re-hashes the repository and exits non-zero on drift | Not a feature |
 | Remote repositories | No — operates on a local checkout | **Yes** — packs a GitHub URL directly |
@@ -46,6 +46,10 @@ If you want the most popular, most integrated tool: **use repomix.**
   purpose, and it can tell the agent whether the snapshot it is reading is still current.
 - **You want the ecosystem.** More stars, more tutorials, more people who have already hit your
   problem.
+- **Your limit is a token count, not a byte count.** `--token-budget <n>` fails the run when the
+  packed output exceeds a tokenizer's count, which is the number a context window actually measures.
+  This project budgets bytes per part: exact, cheap to enforce, and one conversion away from the
+  token count you care about.
 - **You are packing something enormous and prefer compression to budgets.** repomix's tree-sitter
   compression mode is a different bet — shrink the content — and on very large repositories it may
   suit you better than partitioning.

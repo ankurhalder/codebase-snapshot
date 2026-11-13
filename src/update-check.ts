@@ -11,7 +11,9 @@
  *    call costs something and buys nothing.
  *  - **It cannot fail loudly.** Every error path returns null; a wrong clock, a captive portal or
  *    an air-gapped machine must never affect a command that would otherwise have worked.
- *  - **It is cached for a day**, so the cost is one request per machine per day at most.
+ *  - **It is cached**, so the cost is bounded: a result that names a newer release is trusted
+ *    for a day, and a "you are already current" result is re-asked after an hour — that is the
+ *    only answer a new release can change.
  *
  * The request is started at the top of the command and awaited at the end, so on real work it
  * overlaps entirely and adds no wall time.
@@ -25,8 +27,17 @@ import * as path from "node:path";
 /** The one endpoint this package will ever request. */
 export const PACKAGE_LATEST_URL = "https://registry.npmjs.org/codebase-snapshot/latest";
 
-/** A result younger than this is trusted without asking again. */
+/** A result naming a newer release is trusted for a day: the upgrade command cannot change. */
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long "you are already current" is trusted.
+ *
+ * That is the only answer a new release can invalidate. Re-asking it hourly means an active run
+ * notices a release within the hour, while a cached upgrade keeps the daily interval: the notice
+ * is already known and a second request would buy nothing.
+ */
+export const UP_TO_DATE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * How long a *failed* check is remembered.
@@ -335,7 +346,12 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
         needsFetch = age >= FAILURE_INTERVAL_MS;
       } else {
         latest = cached.latest;
-        needsFetch = age >= CHECK_INTERVAL_MS;
+        // A cached upgrade is already actionable, so it stays valid for the day. A cached
+        // "you are current" is the only answer a new release can change, so it is re-asked sooner.
+        const interval = isNewer(cached.latest, options.current)
+          ? CHECK_INTERVAL_MS
+          : UP_TO_DATE_INTERVAL_MS;
+        needsFetch = age >= interval;
       }
     }
 

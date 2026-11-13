@@ -1,7 +1,7 @@
 {
   "name": "create-codebase-snapshot",
-  "version": "0.9.17",
-  "description": "Set up codebase-snapshot in a repository",
+  "version": "0.9.18",
+  "description": "Scaffold a project that uses codebase-snapshot: write the config, npm scripts and dependency, then generate.",
   "license": "MIT",
   "author": "Ankur Halder <ankur.halder12345@gmail.com>",
   "repository": {
@@ -23,7 +23,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "codebase-snapshot": "^0.9.17"
+    "codebase-snapshot": "^0.9.18"
   },
   "engines": {
     "node": ">=18.0.0"

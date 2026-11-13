@@ -23,6 +23,74 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.18
+
+A release about what the listing says. The generator is unchanged; what changed is every place
+that describes it — the npm page, the README, the machine-readable summary, and one comparison
+table that had two rows wrong.
+
+### The update notice waited a day
+
+The check remembered "you are already current" for 24 hours, so a release published two hours
+after a run went unnoticed until the next day — even though the tool exists to prove a thing is
+current. A cached answer that names a newer release still keeps the daily interval, because the
+upgrade command is already known; a "you are current" answer is now re-asked after an hour. An
+active run therefore notices a release within the hour, and a machine that is up to date makes at
+most one request an hour instead of one a day.
+
+### The npm description did not contain the product's name
+
+"Pack a codebase for an LLM into budgeted Markdown parts" described the mechanism and never said
+*snapshot*. The package is called `codebase-snapshot` and the words people type are "codebase
+snapshot"; the description now opens with that phrase, names the clients it is used with, and says
+it is local.
+
+The keyword list lost the words that describe the implementation rather than the job —
+`partitioner`, `ast`, `ai`, `code-analysis`, `prompt-engineering` — and gained the ones a person
+searching for this would use: `llm-context`, `codebase-to-markdown`, `token-budget`, `claude-code`,
+`drift-detection`. Twenty terms, and none of them a competitor's name.
+
+### Two rows in the repomix comparison were wrong
+
+`docs/vs-repomix.md` said repomix emits "a single packed file" with "no per-artifact ceiling". It
+has `--split-output <size>` and `--token-budget <n>`, and the second exits non-zero above a token
+count — a ceiling of the kind the table denied it. Both rows are corrected, and the page now lists
+a token budget under *where repomix is the better choice*: tokens are what a context window
+measures, and this project budgets bytes.
+
+The page was also the first thing a search for "repomix alternative" could land on. A comparison
+that is wrong about the other tool is worse than no comparison, and the correction costs less than
+the credibility it protects.
+
+### The README asked for a command the reader did not have yet
+
+The first block led with `snapshot`, which exists only after a global install, so the very first
+thing a visitor copied could fail. It leads with `npx codebase-snapshot generate` now, with the
+short form after it.
+
+The weekly-downloads badge is gone. On a repository with two stars it advertised a number that is
+mostly registry mirrors and old lockfiles, in a README whose central claim is that it does not
+overstate what it has proven.
+
+### `llms.txt` described three of the four pillars
+
+The summary an agent reads first mentioned budgeted parts, the manifest and a secret audit, and
+left out `validate` and the MCP server — the two things the project argues about. Both are in the
+summary now.
+
+### The scaffolder now says it is the scaffolder
+
+`create-codebase-snapshot` described itself as "Set up codebase-snapshot in a repository", which
+reads as the tool itself when it is the first npm result for the name. It describes the scaffolding
+it actually performs.
+
+### Also
+
+- The 0.9.5 paragraph beginning "The MCP server has not been run against a real client" now carries
+  a note pointing at what superseded it: the digit-as-string fix in 0.9.6 was reported from a live
+  client session, and `snapshot_dependents` arrived in 0.9.8. The paragraph is history, not a
+  current disclaimer, and a reader who found it by search had no way to tell.
+
 ## 0.9.17
 
 Closes the remaining entries of the 0.9.16 verified-bug report and the follow-up report from a
@@ -1306,6 +1374,10 @@ spawns with no shell at all.
 The MCP server has not been run against a real client. Its protocol is exercised against the built
 binary, but a client's own configuration, timeouts and approval prompts are theirs. That is the next
 thing to check, not something this release proves.
+
+> Superseded since: the digit-as-string fix in 0.9.6 was reported from a live client session, and
+> `snapshot_dependents` arrived in 0.9.8 on the same basis. This paragraph describes 0.9.5 and is
+> left as written — it is history, not a disclaimer about the current server.
 
 ## 0.9.4
 

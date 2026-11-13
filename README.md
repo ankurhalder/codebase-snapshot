@@ -9,7 +9,7 @@
 
   <p>
     <a href="https://www.npmjs.com/package/codebase-snapshot"><img alt="npm version" src="https://img.shields.io/npm/v/codebase-snapshot.svg"></a>
-    <a href="https://www.npmjs.com/package/codebase-snapshot"><img alt="weekly downloads" src="https://img.shields.io/npm/dw/codebase-snapshot.svg"></a>
+    <a href="https://github.com/ankurhalder/codebase-snapshot/actions/workflows/pr.yml"><img alt="verify" src="https://img.shields.io/github/actions/workflow/status/ankurhalder/codebase-snapshot/pr.yml?label=verify"></a>
     <a href="#license"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
     <a href="https://nodejs.org"><img alt="node: 18 or newer" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg"></a>
     <a href="https://ankurhalder.github.io/codebase-snapshot/"><img alt="documentation" src="https://img.shields.io/badge/docs-read-1a7f37"></a>
@@ -17,8 +17,8 @@
 </div>
 
 ```bash
-snapshot                        # detects the project, sets it up, generates
-npx codebase-snapshot generate  # or no install at all, straight to the snapshot
+npx codebase-snapshot generate  # no install: straight to the snapshot
+snapshot                        # once installed: detects the project, sets it up, generates
 ```
 
 That writes `./snapshot/` — a directory you can drop into a chat, a prompt, a RAG pipeline or a
@@ -200,7 +200,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.9.17 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.9.18 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

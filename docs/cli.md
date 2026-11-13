@@ -183,7 +183,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.17
+   Added devDependency: codebase-snapshot ^0.9.18
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -232,7 +232,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.17
+   Added devDependency: codebase-snapshot ^0.9.18
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -551,10 +551,12 @@ install, a plain `npm install codebase-snapshot@latest` when the package is a de
 project being worked in, and `npx -y codebase-snapshot@latest` when it was reached through `npx` —
 a global install would leave a second copy shadowing the pinned one.
 
-The request goes to `registry.npmjs.org/codebase-snapshot/latest`, carries no identifier of any
-kind, and its answer is remembered for 24 hours — one request per machine per day at most. It is
-skipped when stdout is not a terminal, in CI, in any `--format json` run, and in `mcp`, whose server
-makes no outbound connections at all.
+The request goes to `registry.npmjs.org/codebase-snapshot/latest` and carries no identifier of any
+kind. Its answer is remembered for 24 hours when it names a newer release — the upgrade command is
+already known — and for one hour when it says you are current, because that is the only answer a
+new release can change. A machine therefore makes at most one request an hour while it is current,
+and at most one a day while an upgrade is waiting. It is skipped when stdout is not a terminal, in
+CI, in any `--format json` run, and in `mcp`, whose server makes no outbound connections at all.
 
 `--no-update-check` or `CODEBASE_SNAPSHOT_NO_UPDATE_CHECK=1` turns it off entirely.
 

@@ -643,7 +643,7 @@ export function buildAgentContract(): AgentContract {
         default: false,
         appliesTo: optionAppliesTo("no-update-check"),
         summary:
-          "Skip the once-a-day check for a newer published version. The check is already skipped " +
+          "Skip the check for a newer published version. The check is already skipped " +
           "when stdout is not a terminal, in CI, in a JSON invocation, and in `mcp`, which makes " +
           "no network requests.",
       },
