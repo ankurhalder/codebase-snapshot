@@ -110,10 +110,12 @@ do not assume the repository is broken.
      \`kind\`, \`language\`, \`part\`, \`inclusionMode\`, \`hashSha256\` and the structural
      \`summary\`, plus \`encoding\` when the file was not plain UTF-8. \`summary\` is
      **optional**: it is absent for languages with no structural summary, and
-     \`summaryOmitted: true\` marks one dropped to fit the part budget — never assume it
+     \`summaryOmitted: true\` marks one dropped for size, and the reason in \`summaryOmittedReason\` says which rule — never assume it
      exists. The per-file \`hashSha256\` is only here and in the manifest; it is not printed
      into the parts.
-     \`skipped[]\` records every excluded file **and why**. Prefer querying this over
+     \`skipped[]\` records every excluded file **and why**. The top-level \`incomplete[]\` records every included
+     file whose body is not the whole file, with its reason and omittedRanges: ask that list,
+     not the footer of a part, when the question is whether anything was lost. Prefer querying this over
      re-reading the parts.
    - \`snapshot/reports/audit.md\` — secrets found, large files, parse diagnostics, git
      state. Read this before you quote code back to a user.

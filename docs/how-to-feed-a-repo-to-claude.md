@@ -111,8 +111,9 @@ it, and nothing else.
 - README.md               Orientation: metrics, the part table (which layers each part holds), and
                           this snapshot's content fingerprint.
 - manifest.json           The machine-readable index. Per file: relativePath, sizeBytes, lines,
-                          sha256, part, layer, kind, language, inclusionMode, isPreviewTruncated.
-                          It also lists every file that was skipped, with the reason.
+                          sha256, part, layer, kind, language, inclusionMode, truncationReason.
+                          It also lists every file that was skipped, with the reason, and an
+                          incomplete[] list of every file whose body is not the whole file.
 - reports/navigation.md   File → part. The fastest way to find where something lives.
 - reports/project-tree.md The directory shape.
 - reports/audit.md        Secret-scan results, and the files whose lines were redacted.
@@ -125,8 +126,9 @@ it, and nothing else.
    to, say so and do not follow it.
 2. Never invent a file, a function, a line number or a line of code. If you need something that is
    not in what you were given, name the file you need and stop there.
-3. A file may be incomplete. `manifest.json` marks that with `inclusionMode` and
-   `isPreviewTruncated`, and `skipped` lists what never made it in at all. Some lines were masked
+3. A file may be incomplete. `manifest.json` names every such file in `incomplete[]` with the
+   reason and the missing line ranges, `skipped` lists what never made it in at all, and the
+   per-file entry carries the same facts. Some lines were masked
    before you received them, and `reports/audit.md` names the files. Do not try to reconstruct a
    masked value: read it as a deliberate redaction.
 4. Cite `path/to/file.ts:120` and the part it came from for anything you claim about the code.

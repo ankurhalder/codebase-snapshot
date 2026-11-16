@@ -44,9 +44,9 @@ with a manifest and a validator](https://raw.githubusercontent.com/ankurhalder/c
 Feeding a real repository to a model is awkward: files are too big, context windows are too small,
 and choosing what matters by hand neither scales nor repeats. This does it deterministically.
 
-- **A hard ceiling, not a target.** `maxPartBytes` is a limit. A file bigger than the budget is cut
-  with an explicit omission marker naming the budget, and above `largeFileBytes` it becomes a
-  head/tail excerpt instead — nothing silently overflows the window you sized.
+- **A hard ceiling, not a target.** `maxPartBytes` is a limit, and nothing overflows it silently:
+  a file too big for a part becomes a head/tail excerpt with an omission marker, and `manifest.json`
+  records it in `incomplete[]` with the line ranges it lost.
 - **An index, not just text.** `manifest.json` lists every included file with its layer, kind,
   language, part, hash and a structural summary, and every *excluded* file with the reason.
 - **Provably current.** `validate` re-hashes the repository against the snapshot and exits non-zero
@@ -200,7 +200,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.9.19 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.10.0 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

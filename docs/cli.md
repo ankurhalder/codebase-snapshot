@@ -97,10 +97,10 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB
+   Branch: main | Part budget: 300 KB | Generator: 0.10.0 (project dependency ^0.10.0)
 
 ✅ Snapshot generated in 0.14s:
-   - Tracked files: 128
+   - Tracked files: 121 included of 128 found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
    - Total lines:   9,431
    - Total size:    0.41 MB
    - Parts written: 3 under snapshot/parts/
@@ -183,18 +183,21 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.19
+   Added devDependency: codebase-snapshot ^0.10.0
    Added to .gitignore: snapshot/, snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
 ✅ Snapshot generated in 0.16s:
-   - Tracked files: 128
+   - Tracked files: 121 included of 128 found — 7 skipped (binary 6, sensitive-file 1)
    …
    Next:  npm run snapshot
 ```
 
 - `--no-install` skips step 4 — CI, an offline machine, or a lockfile you would rather no package
   manager touched.
+- A directory with no `package.json` is not a package, so step 4 is skipped there too and says
+  so. There is no dependency to add, and running the package manager anyway used to leave an
+  empty `package-lock.json` at the repository root.
 - `--dry-run` prints the plan and the config it would write, and writes nothing — including the
   `.git/hooks/pre-commit` that `--install-hook` would otherwise install.
 - `--force` rewrites an existing config; `--preset`, `--include`, `--exclude`, `--out-dir`,
@@ -232,7 +235,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.9.19
+   Added devDependency: codebase-snapshot ^0.10.0
    Added to .gitignore: snapshot/, snapshot.tmp/
 ```
 
@@ -423,7 +426,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--out-dir <path>` | path | `snapshot` | generate, validate, report, explain, init, setup | Where the snapshot is written or read. May be absolute. |
 | `--max-part-bytes <n>` | size | `307200` (300 KB) | generate, validate, init, setup | Hard ceiling per markdown part. Accepts `120k`, `1.5mb`. Minimum 4096. |
 | `--max-part-tokens <n>` | size | unset | generate, validate, setup | A per-part ceiling in **tokens**, for a context window rather than a disk. Narrows `--max-part-bytes` to the equivalent byte count (`tokens × 4`); the smaller of the two ceilings always wins, and both are recorded in the manifest. Accepts `32k`. Minimum 1024 — below that it is a usage error, not a value quietly raised to the floor. The byte ceiling is what is enforced: `estimatedTokens` is an estimate, and a part whose estimate exceeds the token ceiling is named in a warning rather than silently accepted. |
-| `--large-file-bytes <n>` | size | `204800` (200 KB) | generate, validate, explain, setup | Above this, a file becomes a head/tail preview. |
+| `--large-file-bytes <n>` | size | the part budget (307200) | generate, validate, explain, setup | Above this, a file becomes a head/tail preview. It may not exceed `--max-part-bytes`: a file between the two could not fit a part. |
 | `--max-monolith-bytes <n>` | size | unset | generate, validate, setup | Skip the single-file monolith when it would exceed this. |
 | `--include-monolith` | flag | off | generate, validate, setup | Also write `full-codebase.json` and `full-codebase.md`. |
 | `--include-sensitive-files` | flag | off | generate, validate, explain, init, setup | Emit `.env`, `*.pem`, `.npmrc` and similar. Off by default; they are reported as skipped. |

@@ -32,7 +32,7 @@ window can take the largest.
 ```js
 const config = {
   maxPartBytes: "120k",
-  largeFileBytes: "200k",
+  largeFileBytes: "120k",   // defaults to maxPartBytes; may not exceed it
   budgets: { default: "120k", byLayer: { docs: 40_000, config: 20_000 } },
   artifacts: { monolith: false },
 };

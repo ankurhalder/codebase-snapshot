@@ -114,30 +114,30 @@ not mistaken for a Node library.
 | Preset | Priority | Detected from | Budget | Ecosystem ignores |
 | :--- | ---: | :--- | :--- | :--- |
 | `nextjs` | 100 | `next.config.*`, or `next` | 300k | `.svelte-kit`, `.astro`, `.vite`, `.output` |
-| `nuxt` | 98 | `nuxt.config.*`, or `nuxt` | 200k | `.nuxt`, `.output` |
-| `sveltekit` | 96 | `svelte.config.*`, `@sveltejs/kit` | 200k | `.svelte-kit`, `.vercel` |
-| `remix` | 94 | `@remix-run/*` | 200k | `.cache`, `public/build` |
-| `astro` | 92 | `astro.config.*`, `astro` | 150k | `.astro`, `dist` |
-| `angular` | 90 | `angular.json`, `@angular/core` | 200k | `.angular`, `dist` |
-| `solid` | 88 | `solid-js`, `solid-start` | 120k | `.solid`, `dist` |
-| `vue-vite` | 86 | `vue` + `vite`/`vite.config.*` | 120k | `.vite`, `dist` |
-| `react-vite` | 84 | `react` + `vite`/`vite.config.*` | 120k | `.vite`, `dist` |
-| `nest` | 80 | `@nestjs/core` | 200k | `dist`, `node_modules` |
-| `node-express` | 78 | `express`, `fastify`, `koa`, `@hapi/hapi` | 200k | `dist` |
-| `monorepo` | 70 | `pnpm-workspace.yaml`, `nx.json`, `turbo.json`, `lerna.json`, `"workspaces"` | 200k | `.turbo`, `.nx` |
-| `python-django` | 56 | `manage.py`, django in `pyproject.toml`/`requirements.txt` | 150k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs`, `staticfiles`, `media` |
-| `python-fastapi` | 54 | fastapi or flask in `pyproject.toml`/`requirements.txt` | 150k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs` |
-| `go` | 50 | `go.mod` | 200k | `vendor`, `testdata` |
-| `rust` | 48 | `Cargo.toml` | 200k | `target` |
-| `java-spring` | 46 | `pom.xml`, `build.gradle`, `build.gradle.kts` | 200k | `.gradle`, `out`, `target` |
-| `node-lib` | 45 | any `package.json` | 120k | `dist` |
-| `dotnet` | 44 | `*.csproj`, `*.sln`, `global.json` | 200k | `bin`, `obj`, `.vs` |
-| `php-laravel` | 42 | `artisan`, laravel in `composer.json`, `composer.json` | 150k | `vendor`, `storage`, `bootstrap/cache`, `public/build` |
-| `ruby-rails` | 40 | `Gemfile`, `config.ru`, `Rakefile` | 150k | `.bundle`, `log`, `tmp`, `vendor/bundle`, `public/assets` |
-| `python-lib` | 30 | `pyproject.toml`, `setup.py`, `requirements.txt`, `.py` files | 120k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs` |
-| `infra` | 24 | `*.tf`, `Chart.yaml`, `kustomization.yaml`, `docker-compose.yml` | 100k | `.terraform`, `.terragrunt-cache` |
-| `docs` | 22 | ≥ 3 markdown files and no `package.json` | 100k | `.docusaurus`, `.vitepress/dist`, `site` |
-| `generic` | 0 | anything else | 120k | — |
+| `nuxt` | 98 | `nuxt.config.*`, or `nuxt` | 300k | `.nuxt`, `.output` |
+| `sveltekit` | 96 | `svelte.config.*`, `@sveltejs/kit` | 300k | `.svelte-kit`, `.vercel` |
+| `remix` | 94 | `@remix-run/*` | 300k | `.cache`, `public/build` |
+| `astro` | 92 | `astro.config.*`, `astro` | 300k | `.astro`, `dist` |
+| `angular` | 90 | `angular.json`, `@angular/core` | 300k | `.angular`, `dist` |
+| `solid` | 88 | `solid-js`, `solid-start` | 300k | `.solid`, `dist` |
+| `vue-vite` | 86 | `vue` + `vite`/`vite.config.*` | 300k | `.vite`, `dist` |
+| `react-vite` | 84 | `react` + `vite`/`vite.config.*` | 300k | `.vite`, `dist` |
+| `nest` | 80 | `@nestjs/core` | 300k | `dist`, `node_modules` |
+| `node-express` | 78 | `express`, `fastify`, `koa`, `@hapi/hapi` | 300k | `dist` |
+| `monorepo` | 70 | `pnpm-workspace.yaml`, `nx.json`, `turbo.json`, `lerna.json`, `"workspaces"` | 300k | `.turbo`, `.nx` |
+| `python-django` | 56 | `manage.py`, django in `pyproject.toml`/`requirements.txt` | 300k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs`, `staticfiles`, `media` |
+| `python-fastapi` | 54 | fastapi or flask in `pyproject.toml`/`requirements.txt` | 300k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs` |
+| `go` | 50 | `go.mod` | 300k | `vendor`, `testdata` |
+| `rust` | 48 | `Cargo.toml` | 300k | `target` |
+| `java-spring` | 46 | `pom.xml`, `build.gradle`, `build.gradle.kts` | 300k | `.gradle`, `out`, `target` |
+| `node-lib` | 45 | any `package.json` | 300k | `dist` |
+| `dotnet` | 44 | `*.csproj`, `*.sln`, `global.json` | 300k | `bin`, `obj`, `.vs` |
+| `php-laravel` | 42 | `artisan`, laravel in `composer.json`, `composer.json` | 300k | `vendor`, `storage`, `bootstrap/cache`, `public/build` |
+| `ruby-rails` | 40 | `Gemfile`, `config.ru`, `Rakefile` | 300k | `.bundle`, `log`, `tmp`, `vendor/bundle`, `public/assets` |
+| `python-lib` | 30 | `pyproject.toml`, `setup.py`, `requirements.txt`, `.py` files | 300k | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.tox`, `.eggs` |
+| `infra` | 24 | `*.tf`, `Chart.yaml`, `kustomization.yaml`, `docker-compose.yml` | 300k | `.terraform`, `.terragrunt-cache` |
+| `docs` | 22 | ≥ 3 markdown files and no `package.json` | 300k | `.docusaurus`, `.vitepress/dist`, `site` |
+| `generic` | 0 | anything else | 300k | — |
 
 Each detector reports **the signal that fired**, not just a verdict: `next.config.ts`, `depends on
 express`, `django in pyproject.toml`. The first run prints it — `Detected nextjs` / `Because
@@ -210,7 +210,12 @@ values are errors; so is anything below 4096 — a part budget that small cannot
 let alone code.
 
 The budget is a hard ceiling: a part never exceeds it. A single file larger than the budget is
-not split mid-file — it becomes a head/tail preview, marked `isPreviewTruncated`.
+not split mid-file — it becomes a head/tail preview, marked `isPreviewTruncated`, and listed in
+`manifest.incomplete[]` with the line ranges it lost.
+
+`largeFileBytes` is the size at which that happens. It defaults to the part budget and may not
+be set above it: a file between the two could not fit a part, so it would be cut to fit while
+the manifest called it a preview by policy. That combination is a config error.
 
 `budgets.byLayer` lets expensive layers get more room than generated docs, for example.
 

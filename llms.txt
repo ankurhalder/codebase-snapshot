@@ -9,8 +9,9 @@
 `codebase-snapshot` is a Node.js CLI and MCP server (Node >= 18, one runtime dependency:
 `typescript`). It is for handing a whole repository to a language model as context: it packs
 source files into markdown parts that never exceed a byte budget, records every included file and
-every excluded file (with the reason) in `manifest.json`, masks secret values in place, and reports
-large files and git state. `validate` re-hashes the tree and exits non-zero when the snapshot no
+every excluded file (with the reason) in `manifest.json`, lists every file whose body is not the
+whole file in `incomplete[]` with its missing line ranges, masks secret values in place, and
+reports large files and git state. `validate` re-hashes the tree and exits non-zero when the snapshot no
 longer matches it, which makes "is this context still current?" a checkable question.
 
 ## Start here

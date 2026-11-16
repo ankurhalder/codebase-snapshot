@@ -25,7 +25,7 @@ If you want the most popular, most integrated tool: **use repomix.**
 | | codebase-snapshot | repomix |
 | :--- | :--- | :--- |
 | Output shape | Multiple parts, each under a hard byte budget, plus a JSON manifest | One packed file (XML, Markdown or JSON), or several with `--split-output <size>` |
-| Size control | **Yes** — `maxPartBytes` is a per-part byte ceiling; a file too large for one part is truncated with a marker naming the budget | `--split-output <size>` splits by output size, and `--token-budget <n>` exits non-zero above a token count |
+| Size control | **Yes** — `maxPartBytes` is a per-part byte ceiling; a file that cannot fit one part becomes a head/tail preview listed in `incomplete[]` | `--split-output <size>` splits by output size, and `--token-budget <n>` exits non-zero above a token count |
 | Reproducible output | Parts are byte-identical across runs; a fingerprint covers them | Content is stable; no published determinism guarantee |
 | Staleness check | `validate` re-hashes the repository and exits non-zero on drift | Not a feature |
 | Remote repositories | No — operates on a local checkout | **Yes** — packs a GitHub URL directly |

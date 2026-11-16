@@ -228,10 +228,35 @@ followed by the usage text:
 name, and their minimum is 1 rather than 4096:
 `--large-file-bytes must be at least 1, received "0".`
 
+### `largeFileBytes (…) is larger than maxPartBytes (…)`
+
+The two ceilings answer one question — *can this file be emitted whole?* — and they disagree.
+A part cannot hold more than its budget, so a file between the two numbers cannot fit a part;
+it would be cut to fit while the manifest called it a preview by policy. That is exactly the
+silent truncation this check exists to prevent, so it is refused **before anything is written**.
+
+Raise `maxPartBytes` to at least `largeFileBytes`, or lower `largeFileBytes`. Leaving
+`largeFileBytes` unset is the usual answer: it then follows the budget.
+
+A config written by an older `setup` may set `largeFileBytes: "200k"` beside a smaller budget;
+delete that line and it follows the budget again.
+
 ### `Cannot write the snapshot: permission denied under …`
 
 The output directory is not writable (or a parent is not readable). The previous snapshot is
 left intact. Fix the permissions, or choose another `--out-dir`.
+
+### `EPERM: rename 'snapshot' -> 'snapshot.backup-…'` (Windows, OneDrive)
+
+Something holds a handle *inside* the previous snapshot — a sync client, an antivirus, an
+editor with one of those files open — and Windows will not rename a directory while any handle
+in it is open. The swap retries for three seconds and then, because the ownership guard has
+already proved the directory holds nothing but a snapshot this tool wrote, removes it and
+places the new one in the same path. You will see a `could not be moved aside … replaced in
+place` note when that happens.
+
+If it still fails, close whatever is holding the old snapshot and run again. The new snapshot
+is complete in the staging directory (`snapshot.tmp` by default) and its path is printed.
 
 ### `Snapshot validation failed` (from `validate`)
 

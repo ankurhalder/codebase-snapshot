@@ -49,13 +49,18 @@ same persistently. The ownership marker is always written.
 ## Parts
 
 Each `part-NNN.md` holds whole files under the byte budget (`maxPartBytes`, default 300 KB).
-A file larger than the budget is not split mid-file: it is truncated and carries an omission
-marker naming the budget that cut it — the part budget the run was given, `maxPartBytes` or a
-per-layer override, never the smaller allowance left for the body after the section header.
-`--max-part-bytes 4096` writes `... [347 lines omitted: part budget 4096 B] ...`, for example.
-The line count describes the whole file, not the cut: a large file that arrived as a head/tail
-preview still reports how many source lines are missing. A file above `largeFileBytes` is
-emitted as a head/tail excerpt instead, with the same marker.
+A file is never split mid-file, and a file is never cut down just to make the part fit:
+`largeFileBytes` defaults to the part budget and may not exceed it, so a file too big for a part
+is also over the threshold, and the preview below applies.
+
+A file above `largeFileBytes` is emitted as a head/tail excerpt with an omission marker naming
+the ceiling that removed it. The excerpt is normally well under the budget; when it is not —
+very long lines, or a small per-layer budget — it is cut again and the marker names the part
+budget that did it: `--max-part-bytes 4096` writes `... [347 lines omitted: part budget 4096
+B] ...`. The line count describes the whole file, not the cut.
+
+Either way the manifest records the file in `incomplete[]` with the reason and the missing line
+ranges, so a marker buried on line 1 300 of a part is not the only notification.
 
 Each file section is an anchor, a `### FILE:` heading, and **one** metadata line:
 
@@ -176,24 +181,32 @@ has several at once, and "within budget" cannot be answered without knowing whic
 }
 ```
 
-- `isLarge` is a fact about the file: it is bigger than `largeFileBytes` (default 200 KB).
-  A large file is emitted as a head/tail excerpt rather than inlined whole.
+- `isLarge` is a fact about the file: it is bigger than `largeFileBytes`, which defaults to
+  `maxPartBytes` and may not exceed it. A large file is emitted as a head/tail excerpt rather
+  than inlined whole.
 - `isPreviewTruncated` is a fact about what was written: the body in this snapshot is **not**
   the whole file, because lines were dropped.
 - `includedLines` counts content lines after CRLF normalisation and without a trailing empty
   element, which is what the fenced block holds. An empty file therefore records `0` while the
   fence shows one empty line, and a file ending in a blank line records one fewer than a reader
   counts — the number describes content, not rendering.
-- `inclusionMode` is `preview` exactly when `isPreviewTruncated` is `true`, and there are two
-  routes to it:
-  - **Over `largeFileBytes`** — the head/tail excerpt drops the middle, so
-    `isLarge: true`, `isPreviewTruncated: true`. If the head and tail happen to cover every
-    line, nothing is dropped and the entry stays `isLarge: true`, `inclusionMode: "full"`.
-  - **Under `largeFileBytes` but too big for its part** — the partitioner byte-truncates the
-    section to keep the part inside its budget, so `isLarge: false`,
-    `isPreviewTruncated: true`. This is the one that surprises people: the file is not "large"
-    by the configured threshold, yet its body is incomplete.
-- Only `isPreviewTruncated` tells you content is missing; `isLarge` alone does not.
+- `inclusionMode` is `preview` exactly when `isPreviewTruncated` is `true`. There used to be two
+  routes to it, and the second — a file *under* `largeFileBytes` but too big for its part, cut
+  by the partitioner with `isLarge: false` — is what made the manifest unreadable: it looked
+  like a preview chosen by policy while 57 % of the file was gone. That configuration is now a
+  hard error (`largeFileBytes` above `maxPartBytes`), so `preview` now means one thing: the file
+  is over the threshold and cannot be emitted whole.
+  - The head/tail excerpt drops the middle, so `isLarge: true`, `isPreviewTruncated: true`. If
+    the head and tail happen to cover every line, nothing is dropped and the entry stays
+    `isLarge: true`, `inclusionMode: "full"`.
+  - A preview that is still too large for its part is cut again, and `truncationReason` becomes
+    `part-budget` instead of `large-file-budget`.
+- `truncationReason` says which rule produced the omission: `large-file-budget`, `part-budget`
+  or `section-metadata`. It is present exactly when something was dropped.
+- `omittedRanges` are the 1-based, inclusive source lines that are missing or partial. A byte
+  cut can end inside a line, and that line is named rather than the list staying empty.
+- The same facts are collected in the manifest's top-level `incomplete[]`, which is what to ask
+  when the question is "was anything left out?" rather than "what is in this file?".
 - `hashSha256` is the hash of the source file on disk — `validate` recomputes it to detect
   drift. It is the full 64-character digest.
 - `encoding` is present **only** when the file is not plain UTF-8; its absence means clean UTF-8.
@@ -220,9 +233,11 @@ has several at once, and "within budget" cannot be answered without knowing whic
   not parse. `headings` skips headings inside fenced code and inside YAML front matter, and a
   document that *opens* with a `---` horizontal rule keeps its headings: the block has to look like
   YAML before it counts as front matter.
-- `summaryOmitted: true` means the file's summary was dropped because the summary alone would
-  not fit the part budget. The entry then has `summaryQuality` but no `summary`, and the
-  file's body is still emitted in full. It is only ever present when `true`.
+- `summaryOmitted: true` means a summary was not emitted for a size reason, and
+  `summaryOmittedReason` says which: `oversize` (the file is too large to parse), `preview` (the
+  body is a head/tail excerpt, so a whole-file summary would describe lines the snapshot does not
+  contain) or `part-budget` (the summary alone would not fit the part). The entry then has no
+  `summary`. It is only ever present when `true`.
 - `summaryQuality` is `ast` (parsed by the TypeScript compiler), `structural` (JSON or
   Markdown shape) or `heuristic` (pattern-matched). It tells you how much to trust the
   summary: `heuristic` means a line scan, not a parse.

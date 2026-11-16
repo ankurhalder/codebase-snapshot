@@ -23,12 +23,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
-## 0.9.19
+## 0.10.0
 
 The 0.9.18 report had one real bug in it. A complete file could be cut down to fit a part budget
 and the run still exited 0: 1 241 of 2 883 lines emitted, a marker on line 1 300, and a manifest
 that recorded `inclusionMode: "preview"` beside `isLarge: false` — a shape that reads as policy
 whether the preview was chosen or 57 % of the file had been lost.
+
+**Upgrading.** A config that sets `largeFileBytes` above `maxPartBytes` now refuses to run. That
+is the change, and the refusal is the point: the pair described a file the tool could not emit
+whole but would not call large either. Raise `maxPartBytes` to at least `largeFileBytes`, or
+delete the `largeFileBytes` line so it follows the budget. Configs written by this release's
+`setup` already agree, and every preset now recommends the same 300 KB budget.
 
 ### A file is not cut to fit a part
 
