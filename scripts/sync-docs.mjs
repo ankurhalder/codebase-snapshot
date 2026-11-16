@@ -76,6 +76,14 @@ for (const relative of targets()) {
   // copying it installs the wrong version — so it is rewritten by shape too. `@latest` does not
   // match, which is what the guides that do not want a pin use.
   after = after.replace(/(codebase-snapshot@)\d+\.\d+\.\d+/g, `$1${VALUES.version}`);
+  // The run banner prints the version it is running and where it came from:
+  // `Generator: 1.2.3 (project dependency ^1.2.3)`. It is inside a fence too, so it is matched
+  // by shape. Without this, the sample output in `docs/cli.md` silently described the previous
+  // release from the day after every publish.
+  after = after.replace(
+    /(Generator: )\d+\.\d+\.\d+( \(project dependency \^)\d+\.\d+\.\d+/g,
+    `$1${VALUES.version}$2${VALUES.version}`
+  );
   if (after !== before) {
     stale.push(relative);
     if (!check) fs.writeFileSync(absolute, after, "utf8");

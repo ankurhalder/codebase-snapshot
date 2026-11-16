@@ -23,6 +23,34 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.10.1
+
+Documentation only. The build is 0.10.0 with the documentation that describes it — no behaviour,
+option or manifest field changed.
+
+`npm install codebase-snapshot@0.10.0` bundles `README.md`, `CHANGELOG.md` and `docs/*.md` as they
+stood when that tarball was built. The documentation pass that followed 0.10.0 landed after that,
+so anyone reading `node_modules/codebase-snapshot/docs/` got the previous release's description of
+truncation — including `docs/output.md` explaining an `isLarge: false` preview route that 0.10.0
+had already turned into a config error. Publishing the corrected docs is the whole change.
+
+Corrected in that pass, for the record:
+
+- `--help` printed the pre-0.10.0 `--large-file-bytes` default (204800).
+- Three comparison pages promised a file too large is "truncated with a marker" rather than a
+  preview listed in `incomplete[]`.
+- `docs/output.md` documented a preview route that no longer exists, and did not mention
+  `truncationReason`, `omittedRanges` or `summaryOmittedReason`.
+- `docs/configuration.md` listed the old per-preset budgets (100k–200k) and quoted
+  `recommendedBudget: "120k"`.
+- The README, the `describe` contract's `consume` step and the MCP `snapshot://manifest` row
+  described the manifest without `incomplete[]`.
+- `setup` wrote `largeFileBytes: "200k"` beside a 300 KB budget, previewing files that would fit.
+  It follows the budget now, which is what the pages already claimed.
+
+Also: `sync-docs` rewrites the `Generator: … (project dependency ^…)` banner sample, which sat in
+a fence and so could not carry a marker. It described the previous release from the day after
+every publish; it cannot now.
 ## 0.10.0
 
 The 0.9.18 report had one real bug in it. A complete file could be cut down to fit a part budget
