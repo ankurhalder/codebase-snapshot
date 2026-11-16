@@ -487,7 +487,7 @@ also what lets you reference the object (from a test, or from `--dry-run`) witho
 This is **not** byte-identical to a generated file. `codebase-snapshot init` starts from these
 values and substitutes two things: `preset` becomes the detected name (`node-lib` for a plain
 npm package), and `maxPartBytes` with `budgets.default` become that preset's
-`recommendedBudget` (`"120k"` in the same project). `generate` on its own applies no
+`recommendedBudget` (`"300k"` for every preset). `generate` on its own applies no
 recommended budget — without a config it uses `--max-part-bytes`, default 307200 — so the
 preset's figure only takes effect once `init` has written it into a config.
 

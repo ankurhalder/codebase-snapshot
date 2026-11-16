@@ -178,7 +178,7 @@ Options:
   --max-part-bytes <n>          Maximum byte budget per markdown part (default: 307200).
                                 Accepts units: 120k, 1.5mb
   --max-part-tokens <n>         Per-part budget in tokens; narrows --max-part-bytes
-  --large-file-bytes <n>        Threshold for head/tail truncation (default: 204800)
+  --large-file-bytes <n>        Preview threshold (default: the part budget; never above it)
   --changed-since <ref>         Only files changed since this git ref, plus untracked ones
   --staged                      Only files staged for the next commit
   --with-dependents             With the two above: also include their importers

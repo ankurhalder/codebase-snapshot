@@ -23,6 +23,7 @@ window can take the largest.
 - **`maxPartBytes`** — the hard ceiling for one part. This is a promise, not an average: no part
   exceeds it. Set it to the destination's limit and stop worrying about the largest file.
 - **`largeFileBytes`** — above this, a file becomes a head/tail excerpt rather than its full body.
+  It defaults to `maxPartBytes` and may not be set above it.
   This is what stops one generated 40 MB file from consuming an entire snapshot.
 - **`budgets.byLayer`** — different ceilings per layer. Documentation is usually worth less per byte
   than source; `{ docs: 40_000 }` is a common shape.

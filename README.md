@@ -48,7 +48,8 @@ and choosing what matters by hand neither scales nor repeats. This does it deter
   a file too big for a part becomes a head/tail excerpt with an omission marker, and `manifest.json`
   records it in `incomplete[]` with the line ranges it lost.
 - **An index, not just text.** `manifest.json` lists every included file with its layer, kind,
-  language, part, hash and a structural summary, and every *excluded* file with the reason.
+  language, part, hash and a structural summary, every *excluded* file with the reason, and an
+  `incomplete[]` list of every file it could only emit in part, with the line ranges it lost.
 - **Provably current.** `validate` re-hashes the repository against the snapshot and exits non-zero
   on any drift, so a pipeline can gate on the context being fresh.
 - **Repeatable.** Two runs over unchanged input give byte-identical parts and the same

@@ -101,7 +101,7 @@ Resources are the browse surface; tools are the act surface.
 
 | URI | Contents |
 | :-- | :-- |
-| `snapshot://manifest` | Every included file with layer, kind, part and hash, plus every skip reason |
+| `snapshot://manifest` | Every included file with layer, kind, part and hash, every skip reason, and `incomplete[]` — the files whose body is not the whole file, with their missing line ranges |
 | `snapshot://parts/{index}` | One budgeted part, by 1-based index |
 | `snapshot://reports/audit` | Secret findings, large files, parse diagnostics |
 | `snapshot://reports/tree` | The directory tree of included files |

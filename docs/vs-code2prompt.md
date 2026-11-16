@@ -42,8 +42,9 @@ If the prompt format is the thing you care about: **use code2prompt.**
 
 ## Where this is the better choice
 
-- **You need the output to fit a budget.** `maxPartBytes` is a ceiling: an oversized file is
-  truncated with an omission marker naming the budget rather than silently blowing the limit.
+- **You need the output to fit a budget.** `maxPartBytes` is a ceiling: a file that cannot fit one
+  part becomes a head/tail preview with an omission marker, listed in `incomplete[]` with the line
+  ranges it lost, rather than silently blowing the limit.
 - **You need to detect staleness.** `validate` compares every file hash plus a digest of the
   generation settings, so a changed budget counts as drift. Prompt generators generally have no
   concept of a snapshot that can expire.

@@ -66,12 +66,21 @@ dependency is `typescript`; keep it that way — the zero-dependency property is
    it, and the proof is evidence rather than a filename: `.codebase-snapshot` is a JSON record
    (generator, schema version, run id, state, manifest digest, inventory of every file written)
    and the directory may contain nothing outside that inventory. A hand-written marker whose
-   recorded digests do not match the directory is not evidence.
+   recorded digests do not match the directory is not evidence. When Windows or OneDrive will
+   not rename a directory whose handle someone else holds, the swap removes that
+   guard-cleared directory and replaces it in place — the same rule by a different mechanism,
+   and only after the marker has been checked.
 3. **Never leak secrets.** Sensitive files stay out unless explicitly requested; redaction masks
    only the matched span and no excerpt of a matched line reaches an artifact.
 4. **Progress to stderr, payload to stdout.** `--format json` must keep stdout parseable.
 5. **The contract must not lie.** `describe` is generated from code, and a test compares its
-   defaults against a real `generate --dry-run` manifest. Update both together.
+   defaults against a real `generate --dry-run` manifest. Update both together. A file's
+   `inclusionMode` says *what was written*, `truncationReason` says *which rule removed the
+   bytes*, and `omittedRanges` says *where*: a preview with no reason is a lie of omission,
+   and `verifyInMemory` fails the run for it.
+6. **Nothing disappears without a recorded reason.** Every scanned path is in `files[]` or in
+   `skipped[]`, and `verifyInMemory` asserts it. If you add a path that can be dropped, add its
+   skip record in the same change.
 
 **Before you commit.**
 

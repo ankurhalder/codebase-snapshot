@@ -75,9 +75,10 @@ that. In order of preference:
 4. **Summarise once, in a separate session.** Ask the model for a map of the parts, then use that
    map to choose which parts to read in detail.
 
-What not to do: silently truncate. A snapshot never exceeds its budget — a file too large for
-the remaining space is cut with an explicit omission marker that names the budget, and above
-`largeFileBytes` it becomes a head/tail excerpt rather than a full body.
+What not to do: silently truncate. A snapshot never exceeds its budget — a file that cannot fit
+one part becomes a head/tail excerpt with an explicit omission marker, and above `largeFileBytes`
+(which defaults to the budget and may not exceed it) that is the only route by which content is
+dropped. `manifest.json` names every such file in `incomplete[]`.
 
 ## Checking your own number
 

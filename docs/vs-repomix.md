@@ -57,8 +57,9 @@ If you want the most popular, most integrated tool: **use repomix.**
 ## Where this is the better choice
 
 - **You need a guarantee, not a best effort.** `maxPartBytes` promises no part exceeds the ceiling;
-  a file too large is truncated with an explicit marker naming the budget. If a downstream system
-  rejects payloads above a size, a warning is not enough.
+  a file that cannot fit one part is a head/tail preview with an explicit marker, and the manifest
+  lists it in `incomplete[]` with the line ranges it lost. If a downstream system rejects payloads
+  above a size, a warning is not enough.
 - **You need to know the snapshot still matches the code.** `validate` compares every file hash
   *and* a digest of the settings the snapshot was generated with, so a changed budget or secret
   pattern counts as drift. That makes "is my context current?" a CI-gateable question.

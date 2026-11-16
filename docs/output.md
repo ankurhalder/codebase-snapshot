@@ -49,7 +49,7 @@ same persistently. The ownership marker is always written.
 ## Parts
 
 Each `part-NNN.md` holds whole files under the byte budget (`maxPartBytes`, default 300 KB).
-A file is never split mid-file, and a file is never cut down just to make the part fit:
+A file is never split mid-file, and a complete file is never cut down just to make the part fit:
 `largeFileBytes` defaults to the part budget and may not exceed it, so a file too big for a part
 is also over the threshold, and the preview below applies.
 

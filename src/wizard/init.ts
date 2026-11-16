@@ -520,15 +520,11 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     // what the run used is drift the next `validate` reports, and `setup` is the one command
     // that is supposed to leave a project in a consistent state.
     maxPartTokens: options.maxPartTokens ?? DEFAULT_ANSWERS.maxPartTokens,
-    largeFileBytes:
-      options.largeFileBytes ??
-      // A threshold above the part budget is a configuration error (a file between the two
-      // cannot fit, so it is cut while the manifest calls it a preview). Writing the old fixed
-      // 200 KB beside `--max-part-tokens 32k` made the setup's own output fail its own validate.
-      Math.min(
-        parseByteSize(DEFAULT_ANSWERS.largeFileBytes) ?? effectiveBudgetBytes,
-        effectiveBudgetBytes
-      ),
+    // Follows the budget unless the caller named one. A threshold above the part budget is a
+    // config error (a file between the two cannot fit a part, so it is cut while the manifest
+    // calls it a preview); a fixed 200 KB beside `--max-part-tokens 32k` made setup's own output
+    // fail its own validate, and a fixed 200 KB under a 300 KB budget previewed files that fit.
+    largeFileBytes: options.largeFileBytes ?? effectiveBudgetBytes,
     maxMonolithBytes: options.maxMonolithBytes ?? DEFAULT_ANSWERS.maxMonolithBytes,
     discovery: options.discovery ?? DEFAULT_ANSWERS.discovery,
     skeleton: options.skeleton ?? DEFAULT_ANSWERS.skeleton,

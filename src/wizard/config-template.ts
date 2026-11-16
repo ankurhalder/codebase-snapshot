@@ -24,7 +24,7 @@ export const DEFAULT_ANSWERS: WizardAnswers = {
   branch: "main",
   maxPartBytes: "300k",
   maxPartTokens: null,
-  largeFileBytes: "200k",
+  largeFileBytes: "300k",
   maxMonolithBytes: null,
   discovery: "auto",
   skeleton: false,

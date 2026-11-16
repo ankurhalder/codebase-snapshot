@@ -290,7 +290,9 @@ export function buildAgentContract(): AgentContract {
         expect: "the code, the index of what was included, and the risk findings",
         notes:
           "manifest.json.files[] lists every included file with layer, kind, language, part and summary. " +
-          "manifest.skipped[] explains every file that was left out and why.",
+          "manifest.skipped[] explains every file that was left out and why; " +
+          "manifest.incomplete[] lists every included file that is not present in full, with its " +
+          "missing line ranges.",
       },
     ],
     commands: [

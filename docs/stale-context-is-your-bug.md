@@ -75,6 +75,12 @@ checked.
 When an answer is wrong because the model never saw a file, this is the list that tells you
 whether the file was excluded on purpose or by accident.
 
+The second half of the same question is a file that was included but not in full.
+`manifest.incomplete[]` names every one of those with its `reason` — `large-file-budget`,
+`part-budget` or `section-metadata` — and `omittedRanges`, the 1-based source lines that are
+missing or partial. A server that only reports what it included is telling half the story; this
+is the half that explains a confident answer about code the model never saw.
+
 ## Gate it
 
 The comparison is only a guard if something runs it. In CI, after whatever changes the tree:

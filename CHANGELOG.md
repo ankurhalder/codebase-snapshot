@@ -94,7 +94,7 @@ behaviour depends on whichever `npx` cache or global install was first on `PATH`
 pinned project dependency exists to prevent:
 
 ```
-   Branch: main | Part budget: 300 KB | Generator: 0.9.19 (via npx)
+   Branch: main | Part budget: 300 KB | Generator: 0.10.0 (via npx)
 ```
 
 The origin is printed and not written into an artefact: an artefact naming an absolute install

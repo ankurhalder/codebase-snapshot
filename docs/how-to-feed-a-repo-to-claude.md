@@ -66,8 +66,9 @@ const config = {
 export default config;
 ```
 
-A file larger than the budget is not silently dropped: it is truncated with an explicit marker
-naming the budget, and files above `largeFileBytes` become a head/tail excerpt instead of a body.
+A file is never cut down to make a part fit. A file above `largeFileBytes` — which defaults to the
+budget — becomes a head/tail excerpt with an explicit marker, and `manifest.json` lists it in
+`incomplete[]` with the line ranges it lost.
 
 ### 3. Tell the model what it is looking at
 
