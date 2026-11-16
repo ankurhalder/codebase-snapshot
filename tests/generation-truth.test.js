@@ -927,8 +927,8 @@ test("fingerprint: a budget or preview-threshold change moves it, and the parts 
     "big.txt": "x".repeat(20_000),
     "lines.txt": "line of text\n".repeat(400),
   });
-  const wide = generate(dir, { outDir: "wide", maxPartBytes: 8192, largeFileBytes: 204800 });
-  const narrow = generate(dir, { outDir: "narrow", maxPartBytes: 4096, largeFileBytes: 204800 });
+  const wide = generate(dir, { outDir: "wide", maxPartBytes: 8192, largeFileBytes: 8192 });
+  const narrow = generate(dir, { outDir: "narrow", maxPartBytes: 4096, largeFileBytes: 4096 });
   const tokens = generate(dir, { outDir: "tokens", maxPartTokens: 1024 });
   const previewed = generate(dir, { outDir: "previewed", maxPartBytes: 8192, largeFileBytes: 1000 });
   assert.notEqual(narrow.fingerprint, wide.fingerprint, "a different part budget is a different snapshot");

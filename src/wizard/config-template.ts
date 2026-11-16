@@ -117,7 +117,9 @@ export function renderConfig(answers: WizardAnswers): string {
   // The same ceiling expressed in tokens; it narrows maxPartBytes rather than
   // replacing it. null = not set. Minimum 1024.
   maxPartTokens: ${answers.maxPartTokens === null ? "null" : String(answers.maxPartTokens)},
-  // Files above this size get a head/tail preview instead of the full body.
+  // Files above this size get a head/tail preview instead of the full body. It may not
+  // exceed maxPartBytes: a file between the two could not fit a part, and cutting it to fit
+  // while the manifest called it a preview is exactly what this ceiling pair must prevent.
   largeFileBytes: ${size(answers.largeFileBytes)},
   previewHeadLines: 80,
   previewTailLines: 40,

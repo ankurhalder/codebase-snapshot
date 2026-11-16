@@ -889,6 +889,30 @@ interface PackageManager {
  * A lockfile is the only honest signal: running `npm install` inside a pnpm workspace rewrites a
  * lockfile the project's own tooling owns, and the snapshot is not worth that.
  */
+/**
+ * How this binary was reached, for the run banner.
+ *
+ * The generator version alone does not say whether the snapshot came from the project's own pin
+ * or from whatever `npx`/global install was first on PATH — and a snapshot whose behaviour
+ * depends on the machine is exactly what a pinned project dependency exists to prevent. The
+ * origin is printed rather than written into an artefact: an artefact naming an absolute install
+ * path would stop being byte-identical across machines.
+ */
+function generatorOrigin(cwd: string): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const spec = pkg.dependencies?.["codebase-snapshot"] ?? pkg.devDependencies?.["codebase-snapshot"];
+    if (typeof spec === "string") return `project dependency ${spec}`;
+  } catch {
+    // No manifest, or not JSON: the other two answers cover it.
+  }
+  const entry = process.argv[1] ?? "";
+  if (entry.includes("_npx") || entry.includes(`${path.sep}npx${path.sep}`)) return "via npx";
+  return "global or direct install";
+}
 function detectPackageManager(cwd: string): PackageManager {
   const has = (name: string): boolean => fs.existsSync(path.join(cwd, name));
   if (has("bun.lockb") || has("bun.lock")) return { name: "bun", command: "bun", args: ["install"] };
@@ -1151,9 +1175,18 @@ async function runSetupCommand(
       }
     }
 
+    // A directory with no `package.json` is not an npm project, and running `npm install` there
+    // answered ENOENT — then npm left an empty `package-lock.json` at the repository root, a file
+    // the user never asked for and the tool never mentioned. There is nothing to install into, so
+    // the install is skipped and said out loud instead of attempted.
+    const hasManifest = fs.existsSync(path.join(invocation.cwd, "package.json"));
     let install: InstallOutcome | null = null;
     if (invocation.noInstall) {
       if (invocation.format !== "json") info("   Skipped the install (--no-install)");
+    } else if (!hasManifest) {
+      if (invocation.format !== "json") {
+        info("   Skipped the install: no package.json here, so there is no dependency to add.");
+      }
     } else {
       if (invocation.format !== "json") info("⏳ Installing dependencies…");
       install = installDependencies(invocation.cwd);
@@ -1666,7 +1699,8 @@ async function runCommand(argv: string[]): Promise<number> {
   const started = performance.now();
   info(`📸 ${invocation.dryRun ? "Planning snapshot (dry run)" : "Generating snapshot"} for: ${resolved.cwd}`);
   info(
-    `   Branch: ${resolved.branch} | Part budget: ${(resolved.maxPartBytes / 1024).toFixed(0)} KB`
+    `   Branch: ${resolved.branch} | Part budget: ${(resolved.maxPartBytes / 1024).toFixed(0)} KB | ` +
+      `Generator: ${GENERATOR_VERSION} (${generatorOrigin(resolved.cwd)})`
   );
 
   try {
@@ -1687,11 +1721,45 @@ async function runCommand(argv: string[]): Promise<number> {
             displayOutPath(resolved.cwd, resolved.outDir, "reports/audit.md")
         );
       }
+      const incomplete = manifest.incomplete ?? [];
+      if (incomplete.length > 0) {
+        const byReason = new Map<string, number>();
+        for (const record of incomplete) {
+          byReason.set(record.reason, (byReason.get(record.reason) ?? 0) + 1);
+        }
+        const detail = [...byReason.entries()]
+          .map(([reason, count]) => `${count} ${reason}`)
+          .join(", ");
+        info(`   - Incomplete:   ${incomplete.length} file(s) — ${detail}; see manifest.json incomplete[]`);
+      }
       info(`   - Integrity:    ${manifest.validation.status}`);
       for (const error of manifest.validation.errors.slice(0, 10)) info(`     - ${error}`);
     } else {
       info(`\n✅ Snapshot generated in ${elapsed}s:`);
-      info(`   - Tracked files: ${manifest.counts.totalFiles}`);
+      // The included count alone read as "the whole repository" while 155 tracked files went
+      // out the window. The breakdown is the number the manifest already had, printed where a
+      // reader forms the impression: one line, with the reasons that took the rest.
+      const skipCounts = new Map<string, number>();
+      for (const record of manifest.skipped) {
+        skipCounts.set(record.reason, (skipCounts.get(record.reason) ?? 0) + 1);
+      }
+      const skipBreakdown = [...skipCounts.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .map(([reason, count]) => `${reason} ${formatNumber(count)}`);
+      const shownReasons = skipBreakdown.slice(0, 3);
+      const reasons =
+        skipBreakdown.length > shownReasons.length
+          ? `${shownReasons.join(", ")}, +${skipBreakdown.length - shownReasons.length} more`
+          : shownReasons.join(", ");
+      const candidates = manifest.counts.totalFiles + manifest.counts.skippedCount;
+      info(
+        manifest.counts.skippedCount === 0
+          ? `   - Tracked files: ${formatNumber(manifest.counts.totalFiles)}`
+          : `   - Tracked files: ${formatNumber(manifest.counts.totalFiles)} included of ` +
+              `${formatNumber(candidates)} found — ${formatNumber(manifest.counts.skippedCount)} skipped ` +
+              `(${reasons}); every one is listed in ` +
+              `${displayOutPath(resolved.cwd, resolved.outDir, "reports/audit.md")}`
+      );
       info(`   - Total lines:   ${formatNumber(manifest.counts.totalLines)}`);
       info(
         `   - Total size:    ${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MB`

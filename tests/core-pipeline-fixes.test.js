@@ -176,29 +176,27 @@ test("a credential-shaped hook error is masked in the manifest and on stdout", (
 });
 
 // ------------------------------------------------------------------ item 7b
-test("a part budget below largeFileBytes warns only when it actually cuts a file", (t) => {
+test("a large-file threshold above the part budget is refused, not cut around", (t) => {
   const cwd = tempDir(t);
   writePackage(cwd);
   write(cwd, "src/a.ts", "export const a = 1;\n");
 
-  // Nothing is big enough to be cut, so the configuration alone stays quiet: several presets
-  // recommend a part budget below the default large-file threshold (node-lib is 120 KB against
-  // 200 KB), so warning on the configuration alone fired on every one of their repositories.
-  const quiet = generateSnapshot({ cwd, outDir: "quiet", maxPartBytes: 4096, largeFileBytes: 8192 });
-  assert.deepEqual(
-    quiet.warnings.filter((warning) => /is below largeFileBytes/.test(warning)),
-    [],
-    "no file was cut, so there is nothing to warn about"
+  // A file between the two numbers cannot fit a part, so the old code cut it to fit while the
+  // manifest recorded `inclusionMode: preview` beside `isLarge: false` — a reader could not tell
+  // policy from loss. The two settings answer one question; disagreement is a config error.
+  assert.throws(
+    () => generateSnapshot({ cwd, outDir: "loud", maxPartBytes: 4096, largeFileBytes: 8192 }),
+    /is larger than maxPartBytes/
   );
 
-  // A file between the two budgets IS cut by the part budget, and that is worth one warning
-  // naming both values.
-  write(cwd, "src/big.ts", `export const big = "${"x".repeat(6000)}";\n`);
-  const loud = generateSnapshot({ cwd, outDir: "loud", maxPartBytes: 4096, largeFileBytes: 8192 });
-  const matches = loud.warnings.filter((warning) => /is below largeFileBytes/.test(warning));
-  assert.equal(matches.length, 1, `expected exactly one warning, got ${JSON.stringify(loud.warnings)}`);
-  assert.match(matches[0], /4096 B/);
-  assert.match(matches[0], /8192 B/);
+  // Equality is the default and is legitimate: a file at exactly the threshold still fits one
+  // part, so nothing is previewed early and nothing is warned about.
+  const quiet = generateSnapshot({ cwd, outDir: "quiet", maxPartBytes: 8192, largeFileBytes: 8192 });
+  assert.deepEqual(
+    quiet.warnings.filter((warning) => /largeFileBytes/.test(warning)),
+    [],
+    "an equal threshold previews nothing early"
+  );
 });
 
 // ------------------------------------------------------------------ item 22

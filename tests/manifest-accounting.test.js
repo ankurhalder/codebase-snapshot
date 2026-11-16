@@ -136,9 +136,9 @@ test("a file clipped by the part budget still matches its block", (t) => {
   // `largeFileBytes`, and the numbers must still describe what survived.
   write(dir, "clipped.ts", "export const v = 1;\n".repeat(20_000));
 
-  // `largeFileBytes` is raised above the fixture so preview truncation does NOT run first: the
-  // part budget must be the only thing that clips it, which is the case this test exists for.
-  const manifest = generateSnapshot({ cwd: dir, maxPartBytes: 4096, largeFileBytes: 10_000_000 });
+  // The threshold equals the budget — the only shape the config allows — so the file is previewed
+  // first. What this test checks is unchanged: the numbers describe what actually survived.
+  const manifest = generateSnapshot({ cwd: dir, maxPartBytes: 4096, largeFileBytes: 4096 });
   const entry = manifest.files.find((file) => file.relativePath === "clipped.ts");
   assert.ok(entry, "the file is in the manifest");
   assert.equal(entry.inclusionMode, "preview", "the budget, not the size threshold, clipped it");

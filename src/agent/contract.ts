@@ -418,9 +418,9 @@ export function buildAgentContract(): AgentContract {
       {
         flag: "--large-file-bytes",
         type: "string",
-        default: 204800,
+        default: 307200,
         appliesTo: optionAppliesTo("large-file-bytes"),
-        summary: "Above this size a file gets a head/tail preview instead of the full body.",
+        summary: "Above this size a file gets a head/tail preview instead of the full body. It defaults to maxPartBytes and may not exceed it: a file between the two could not fit a part.",
       },
       {
         flag: "--max-monolith-bytes",
@@ -682,7 +682,7 @@ export function buildAgentContract(): AgentContract {
         { key: "changedSince", type: "string | null", default: null, summary: "Snapshot only files that differ from this git ref." },
         { key: "staged", type: "boolean", default: false, summary: "Snapshot only files staged in the index." },
         { key: "withDependents", type: "boolean", default: false, summary: "With a changed-files scope, also include one hop of importers." },
-        { key: "largeFileBytes", type: "number | string", default: 204800, summary: "Preview threshold for large files." },
+        { key: "largeFileBytes", type: "number | string", default: 307200, summary: "Preview threshold for large files; defaults to maxPartBytes and may not exceed it." },
         { key: "previewHeadLines", type: "number", default: 80, summary: "Lines kept from the head of a large file." },
         { key: "previewTailLines", type: "number", default: 40, summary: "Lines kept from the tail of a large file." },
         { key: "includeMonolith", type: "boolean", default: false, summary: "Also write the single-file monolith." },
@@ -711,8 +711,8 @@ export function buildAgentContract(): AgentContract {
         "<outDir>/.codebase-snapshot  (ownership marker, always written)",
       ],
       notes: [
-        "Parts are ordered and budget-limited; a single file larger than the budget becomes a head/tail preview.",
-        "manifest.json.files[] carries relativePath, layer, kind, language, part, inclusionMode and hash; `summary` is conditional — it is absent for languages with no structural summary, and `summaryOmitted: true` marks a summary dropped to fit the part budget; encoding appears when the file was not plain UTF-8.",
+        "Parts are ordered and budget-limited; a file that cannot fit one part is emitted as a head/tail preview, and every file not present in full is listed in manifest.json incomplete[] with the missing line ranges.",
+        "manifest.json.files[] carries relativePath, layer, kind, language, part, inclusionMode, truncationReason, omittedRanges and hash; manifest.json.incomplete[] lists every file not present in full; `summary` is conditional — it is absent for languages with no structural summary, and `summaryOmitted: true` marks a summary dropped to fit the part budget; encoding appears when the file was not plain UTF-8.",
         "manifest.skipped[] carries the path and the exact reason it was excluded.",
         `The output directory is replaced atomically; ${MIN_MAX_PART_BYTES} bytes is the smallest legal budget.`,
       ],

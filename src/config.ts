@@ -791,6 +791,37 @@ export async function loadConfigFile(cwd: string): Promise<SnapshotConfig | null
   return loaded.config;
 }
 
+/**
+ * Resolves the large-file threshold against the budget it has to agree with.
+ *
+ * The two settings answer one question — *can this file be emitted whole?* A part cannot hold
+ * more than its budget, so a threshold **above** the budget describes files the tool cannot emit
+ * whole while still refusing to call them large. The partitioner then cuts them to fit and the
+ * manifest records `inclusionMode: "preview"` beside `isLarge: false`, which reads as "previewed
+ * by policy" and is in fact "57 % of this file is gone".
+ *
+ * Defaulting the threshold to the budget makes the two numbers agree without configuration. An
+ * explicit threshold above the budget is a contradiction, so it is an error rather than a warning
+ * printed after the damage is written.
+ */
+function largeFileBytesFor(
+  maxPartBytes: number,
+  cliOptions: Partial<CliOptions> | undefined,
+  userConfig: SnapshotConfig | null | undefined
+): number {
+  const requested = cliOptions?.largeFileBytes ?? userConfig?.largeFileBytes;
+  const value = boundedBytes(requested, maxPartBytes, 1, "largeFileBytes");
+  if (value > maxPartBytes) {
+    throw new Error(
+      `largeFileBytes (${describeBytes(value)}) is larger than maxPartBytes ` +
+        `(${describeBytes(maxPartBytes)}). A file between the two cannot fit a part, so it would be ` +
+        "cut to fit while the manifest called it complete. Raise maxPartBytes to at least " +
+        "largeFileBytes, or lower largeFileBytes."
+    );
+  }
+  return value;
+}
+
 /** Smallest usable part budget: a part header plus one section must fit. */
 export const MIN_MAX_PART_BYTES = 4096;
 
@@ -1532,7 +1563,7 @@ export function resolveConfig(
     tmpDir,
     maxPartBytes: resolvedMaxPartBytes,
     ...(maxPartTokens === undefined ? {} : { maxPartTokens }),
-    largeFileBytes: boundedBytes(cliOptions?.largeFileBytes ?? userConfig?.largeFileBytes, 200 * 1024, 1, "largeFileBytes"),
+    largeFileBytes: largeFileBytesFor(resolvedMaxPartBytes, cliOptions, userConfig),
     previewHeadLines: strictPositiveInteger(userConfig?.previewHeadLines, 80, "`previewHeadLines`"),
     previewTailLines: strictPositiveInteger(userConfig?.previewTailLines, 40, "`previewTailLines`"),
     includeMonolith: artifacts.monolith,

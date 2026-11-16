@@ -929,7 +929,7 @@ test("a summary larger than the part budget is dropped, not emitted oversized", 
   // summarised at all (see tests/summary-preview.test.js), so keeping the default
   // 200 KB threshold here would test a path that no longer builds a summary.
   const manifest = generateSnapshot(
-    baseConfig(dir, { maxPartBytes, largeFileBytes: 10_000_000 })
+    baseConfig(dir, { maxPartBytes, largeFileBytes: maxPartBytes })
   );
 
   for (const part of manifest.parts) {
@@ -951,8 +951,9 @@ test("counts and totals agree when the byte budget (not the line preview) trunca
   });
 
   const manifest = generateSnapshot(
-    // largeFileBytes is huge, so only byte-budget truncation can apply
-    baseConfig(dir, { maxPartBytes: 8192, largeFileBytes: 10_000_000 })
+    // A one-line file has nothing for a head/tail preview to trim, so the part budget is what
+    // clips it — the remaining path to a `part-budget` cut.
+    baseConfig(dir, { maxPartBytes: 8192, largeFileBytes: 8192 })
   );
 
   const entry = manifest.files.find((file) => file.relativePath === "src/wide.ts");
@@ -1005,7 +1006,7 @@ test("an oversized summary is dropped without zeroing the body", () => {
   // Summary far larger than the budget (thousands of exports), generous budget:
   // dropping the summary must free room for the body, not consume it.
   const lines = Array.from(
-    { length: 20000 },
+    { length: 7000 },
     (_, i) => `export const exportedThing${i} = ${i};`
   ).join("\n");
   const dir = makeRepo("r3-", {
@@ -1014,7 +1015,7 @@ test("an oversized summary is dropped without zeroing the body", () => {
   });
 
   const manifest = generateSnapshot(
-    baseConfig(dir, { maxPartBytes: 300 * 1024, largeFileBytes: 10_000_000 })
+    baseConfig(dir, { maxPartBytes: 300 * 1024, largeFileBytes: 300 * 1024 })
   );
   const entry = manifest.files.find((file) => file.relativePath === "src/huge.ts");
 
@@ -1353,10 +1354,10 @@ test("byte budgets accept human-readable units from CLI and config", () => {  co
   });
 
   const fromConfig = generateSnapshot(
-    baseConfig(dir, { maxPartBytes: "120k", largeFileBytes: "1mb" })
+    baseConfig(dir, { maxPartBytes: "120k", largeFileBytes: "100k" })
   );
   assert.equal(fromConfig.config.maxPartBytes, 122880);
-  assert.equal(fromConfig.config.largeFileBytes, 1048576);
+  assert.equal(fromConfig.config.largeFileBytes, 102400);
 
   const viaCli = runCli([
     "generate",

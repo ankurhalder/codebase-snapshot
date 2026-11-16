@@ -42,7 +42,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: ["__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox", ".eggs", "staticfiles", "media"],
-    recommendedBudget: "150k",
+    recommendedBudget: "300k",
   },
   {
     name: "python-fastapi",
@@ -69,7 +69,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: ["__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox", ".eggs"],
-    recommendedBudget: "150k",
+    recommendedBudget: "300k",
   },
   {
     name: "python-lib",
@@ -87,7 +87,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     ],
     kinds: [suffixKind("module", ".py"), ...commonKinds()],
     exclude: ["__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox", ".eggs"],
-    recommendedBudget: "120k",
+    recommendedBudget: "300k",
   },
   {
     name: "go",
@@ -111,7 +111,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: ["vendor", "testdata"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "rust",
@@ -127,7 +127,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
     ],
     kinds: [suffixKind("module", ".rs"), suffixKind("test", "_test.rs"), ...commonKinds()],
     exclude: ["target"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "java-spring",
@@ -153,7 +153,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".gradle", "out", "target"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "dotnet",
@@ -179,7 +179,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: ["bin", "obj", ".vs"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "php-laravel",
@@ -208,7 +208,7 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: ["vendor", "storage", "bootstrap/cache", "public/build"],
-    recommendedBudget: "150k",
+    recommendedBudget: "300k",
   },
   {
     name: "ruby-rails",
@@ -236,6 +236,6 @@ export const LANGUAGE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".bundle", "log", "tmp", "vendor/bundle", "public/assets"],
-    recommendedBudget: "150k",
+    recommendedBudget: "300k",
   },
 ];

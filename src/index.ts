@@ -53,6 +53,7 @@ import { validateSnapshot } from "./validator/validate.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION, isOurGeneratorName } from "./version.js";
 import type {
   FileEntry,
+  IncompleteFile,
   InclusionMode,
   JsonSummary,
   Manifest,
@@ -68,6 +69,7 @@ import type {
   SourceSummary,
   SummaryQuality,
   TextEncoding,
+  TruncationReason,
 } from "./types.js";
 
 export { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION } from "./version.js";
@@ -132,6 +134,8 @@ interface Derivation {
   finalContent: string;
   inclusionMode: InclusionMode;
   isPreviewTruncated: boolean;
+  truncationReason: TruncationReason | undefined;
+  omittedRanges: Array<[number, number]>;
   includedLines: number;
   isLarge: boolean;
   summary: FileEntry["summary"];
@@ -245,6 +249,8 @@ function deriveFile(
     Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES;
   let finalContent = redacted;
   let isPreviewTruncated = false;
+  let truncationReason: TruncationReason | undefined;
+  let omittedRanges: Array<[number, number]> = [];
   let includedLines = lineCount;
   let inclusionMode: InclusionMode = "full";
 
@@ -272,6 +278,13 @@ function deriveFile(
     isPreviewTruncated = preview.isTruncated;
     includedLines = preview.includedLines;
     inclusionMode = isPreviewTruncated ? "preview" : "full";
+    if (isPreviewTruncated) {
+      // A file over largeFileBytes, and resolveConfig refuses a largeFileBytes above
+      // maxPartBytes, so this preview is the only shape the file could take. That is what
+      // makes the reason worth recording: it says policy, not loss.
+      truncationReason = "large-file-budget";
+      omittedRanges = preview.omittedRanges;
+    }
   }
 
   let summary: FileEntry["summary"];
@@ -333,6 +346,8 @@ function deriveFile(
     finalContent,
     inclusionMode,
     isPreviewTruncated,
+    truncationReason,
+    omittedRanges,
     includedLines,
     isLarge,
     summary,
@@ -517,9 +532,37 @@ function buildIndexes(files: FileEntry[], tsconfigPaths: ReturnType<typeof tscon
  */
 function verifyInMemory(
   files: FileEntry[],
-  parts: ReturnType<typeof partitionFiles>
+  parts: ReturnType<typeof partitionFiles>,
+  unaccounted: readonly string[]
 ): string[] {
   const errors: string[] = [];
+
+  if (unaccounted.length > 0) {
+    const shown = unaccounted.slice(0, 5).join(", ");
+    errors.push(
+      `${unaccounted.length} scanned file(s) appear in neither files[] nor skipped[]` +
+        `${unaccounted.length > 5 ? ` (first five: ${shown})` : `: ${shown}`}.`
+    );
+  }
+
+  for (const file of files) {
+    // An incomplete body has to say why, and where the missing lines are. `inclusionMode`
+    // alone cannot: it reads as policy whether the preview was chosen or the bytes were cut.
+    if (file.isPreviewTruncated && file.truncationReason === undefined) {
+      errors.push(`${file.relativePath} is truncated but records no truncationReason.`);
+    }
+    const ranges = file.omittedRanges ?? [];
+    if (file.truncationReason !== undefined && ranges.length === 0) {
+      errors.push(`${file.relativePath} is truncated but records no omittedRanges.`);
+    }
+    for (const [from, to] of ranges) {
+      if (from < 1 || to < from || to > file.lines) {
+        errors.push(
+          `${file.relativePath} records omitted range ${from}-${to}, outside 1-${file.lines}.`
+        );
+      }
+    }
+  }
   const partNames = new Set(parts.map((part) => part.filename));
 
   for (const file of files) {
@@ -1796,7 +1839,30 @@ function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): 
   // generated. Re-check immediately before the rename, when the window is as small as it gets.
   if (hadPrevious) beforeSwap?.();
 
-  if (hadPrevious) fs.renameSync(outDir, backupDir);
+  /** True when the previous snapshot was moved aside; false when it had to be deleted. */
+  let movedAside = false;
+  if (hadPrevious) {
+    try {
+      fs.renameSync(outDir, backupDir);
+      movedAside = true;
+    } catch (err) {
+      // Windows and OneDrive: an indexer, an antivirus or an editor holding a handle *inside*
+      // the directory makes the directory itself un-renameable, and the handle routinely
+      // outlives the retry budget — the reported failure was EPERM on
+      // `snapshot -> snapshot.backup-…` on a directory the user owned.
+      //
+      // The ownership guard already ran (`beforeSwap`) and proved this directory holds nothing
+      // but a snapshot this tool wrote, so deleting it is the same outcome by a route that
+      // does not need to move the directory. The new snapshot is complete in staging before
+      // the swap starts. Anything that is not a lock error is still rethrown.
+      if (!isLockError(err)) throw err;
+      fs.rmSync(outDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      process.stderr.write(
+        `⚠ ${outDir} could not be moved aside (${(err as Error).message}), so it was replaced ` +
+          "in place. Close anything holding the old snapshot open to avoid this next time.\n"
+      );
+    }
+  }
 
   try {
     try {
@@ -1825,9 +1891,16 @@ function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): 
     }
   } catch (err) {
     // Roll back so the previous snapshot survives a failed swap.
-    if (hadPrevious && fs.existsSync(backupDir)) {
+    if (hadPrevious && movedAside && fs.existsSync(backupDir)) {
       if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true, force: true });
       fs.renameSync(backupDir, outDir);
+    } else if (hadPrevious && !movedAside) {
+      // The previous snapshot is gone and the new one never landed. Staging still holds a
+      // complete snapshot, so name it rather than leaving the run with nothing to point at.
+      process.stderr.write(
+        `⚠ The previous snapshot at ${outDir} was removed and the new one could not be moved ` +
+          `into place. It is complete at ${stagingDir}.\n`
+      );
     }
     throw err;
   }
@@ -1854,6 +1927,18 @@ function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): 
       );
     }
   }
+}
+
+/**
+ * True when a filesystem call failed because something else holds the path open.
+ *
+ * Windows (and network or synced volumes) report EPERM or EBUSY where POSIX would succeed: a
+ * directory cannot be renamed while any handle inside it is open, and OneDrive's sync client
+ * keeps one for a while after a generate.
+ */
+function isLockError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EBUSY" || code === "EACCES";
 }
 
 /** Blocking sleep used between swap retries; `generate` is synchronous anyway. */
@@ -2081,16 +2166,10 @@ export function generateSnapshot(
   const skipped: SkipRecord[] = maskSkipRecords([...collection.skipped], config.secretRules);
   const secretFindings: SecretFinding[] = [];
   const warnings: string[] = [];
-  // A part budget below `largeFileBytes` is the configuration that cuts a file by
-  // the partitioner's byte budget while `isLarge` stays false, so nothing in the
-  // snapshot explains why the body is incomplete. Reported at the end of the run, and only when a
-  // file was actually cut by the part budget: several presets recommend a part budget below the
-  // default large-file threshold (node-lib is 120 KB against 200 KB), so warning on the
-  // configuration alone fired on every one of their repositories, truncation or not.
-  const budgetOrderCutsFiles = (): boolean => {
-    if (config.maxPartBytes >= config.largeFileBytes) return false;
-    return files.some((file) => file.isPreviewTruncated && !file.isLarge);
-  };
+  // `largeFileBytes` can no longer exceed `maxPartBytes` (resolveConfig refuses it), so the band
+  // this used to warn about — a file cut by the part budget while `isLarge` stayed false — cannot
+  // be configured at all. A per-layer budget can still be smaller than a file; that path records
+  // `truncationReason: "part-budget"` and its omitted ranges instead of only a warning.
   /** Files that were not plain UTF-8, grouped into one warning after the scan. */
   const encodingNotes: { path: string; encoding: TextEncoding; invalidBytes: number }[] = [];
   /**
@@ -2357,11 +2436,22 @@ export function generateSnapshot(
       inclusionMode: derivation.inclusionMode,
       isLarge: derivation.isLarge,
       isPreviewTruncated: derivation.isPreviewTruncated,
+      ...(derivation.truncationReason === undefined
+        ? {}
+        : { truncationReason: derivation.truncationReason }),
+      ...(derivation.omittedRanges.length === 0
+        ? {}
+        : { omittedRanges: derivation.omittedRanges }),
       originalLines: lineCount,
       includedLines: derivation.includedLines,
       includedBytes: Buffer.byteLength(derivation.finalContent, "utf8"),
       summary: derivation.summary,
       summaryQuality: derivation.summaryQuality,
+      // A summary skipped for size is not an absent summary: record it the same way the
+      // partitioner records one it had to drop, so a reader can tell the two apart.
+      ...(derivation.summarySkip === null
+        ? {}
+        : { summaryOmitted: true, summaryOmittedReason: derivation.summarySkip }),
       ...(decoded.encoding === "utf-8" ? {} : { encoding: decoded.encoding }),
       content: derivation.finalContent,
     });
@@ -2544,7 +2634,36 @@ export function generateSnapshot(
   // Byte-budget truncation happens inside the partitioner, so preview counts
   // must be derived from the final state of `files`, not from the scan loop.
   const truncatedPreviewCount = files.filter((file) => file.isPreviewTruncated).length;
-  const validationErrors = verifyInMemory(files, parts);
+  // Every file whose body is not the whole file, built from the entries themselves rather than
+  // counted separately: a consumer asking "was anything lost?" gets the list, not a number it
+  // has to reconcile against 400 entries.
+  const incomplete: IncompleteFile[] = files.flatMap((file) => {
+    if (file.truncationReason === undefined) return [];
+    const ranges = file.omittedRanges ?? [];
+    const omittedLines = ranges.reduce((total, [from, to]) => total + (to - from + 1), 0);
+    return [
+      {
+        relativePath: file.relativePath,
+        part: file.part,
+        reason: file.truncationReason,
+        omittedRanges: ranges,
+        omittedLines,
+        includedLines: file.includedLines,
+        lines: file.lines,
+      },
+    ];
+  });
+  // Every path the scan accepted must be accounted for: in the snapshot, or skipped with a
+  // reason. Comparisons go through the same masking the skip records use, because a
+  // credential-shaped path is recorded in its masked form and would otherwise look missing.
+  const accounted = new Set<string>([
+    ...files.map((file) => maskPathText(file.relativePath, config.secretRules)),
+    ...skipped.map((record) => record.path),
+  ]);
+  const unaccounted = candidateFiles
+    .map((candidate) => maskPathText(candidate, config.secretRules))
+    .filter((candidate) => !accounted.has(candidate));
+  const validationErrors = verifyInMemory(files, parts, unaccounted);
 
   const totalContentBytes = files.reduce((total, file) => total + file.includedBytes, 0);
 
@@ -2612,6 +2731,7 @@ export function generateSnapshot(
       skippedCount: skipped.length,
       largeFileCount,
       truncatedPreviewCount,
+      incompleteCount: incomplete.length,
     },
     totals: {
       candidateFiles: files.length + skipped.length,
@@ -2648,6 +2768,7 @@ export function generateSnapshot(
       return rest;
     }),
     skipped: maskSkipRecords(skipped, config.secretRules),
+    incomplete,
     warnings,
   };
 
@@ -2659,28 +2780,20 @@ export function generateSnapshot(
   manifest.totals.redactedLines = secretFindings.length;
   manifest.totals.warningCount = manifest.warnings.length;
 
-  // Reported here, where the truncation counts exist: the configuration alone is not enough to
-  // justify a warning (see `budgetOrderCutsFiles`).
-  if (budgetOrderCutsFiles()) {
-    manifest.warnings.push(
-      `maxPartBytes (${config.maxPartBytes} B) is below largeFileBytes (${config.largeFileBytes} B), ` +
-        "so files cut by the part budget are not marked as large previews. " +
-        "Increase maxPartBytes or lower largeFileBytes."
-    );
-    manifest.totals.warningCount = manifest.warnings.length;
-  }
 
-  // A preview threshold at or below the part budget means a file that would fit in one part is
-  // still emitted as head/tail only. That is the 0.9.16 report's 252 KB route module: 121 of 6,731
-  // lines, with `maxPartBytes` and `largeFileBytes` set to the same number. Naming the two
-  // settings is actionable; silently previewing is not.
+
+  // A threshold *below* the budget previews files that would have fitted a part, which is a loss
+  // the configuration asked for rather than a defect. It is still worth naming, because the two
+  // settings are the answer to one question and a reader of the manifest should not have to
+  // subtract one from the other. Equality is the default and is not a warning: a file at exactly
+  // the threshold still fits.
   if (
     files.some((file) => file.isPreviewTruncated) &&
-    config.largeFileBytes <= config.maxPartBytes
+    config.largeFileBytes < config.maxPartBytes
   ) {
     manifest.warnings.push(
       `${files.filter((file) => file.isPreviewTruncated).length} file(s) were previewed because ` +
-        `largeFileBytes (${config.largeFileBytes} B) is not above maxPartBytes ` +
+        `largeFileBytes (${config.largeFileBytes} B) is below maxPartBytes ` +
         `(${config.maxPartBytes} B). Raise largeFileBytes if a whole file is wanted.`
     );
     manifest.totals.warningCount = manifest.warnings.length;

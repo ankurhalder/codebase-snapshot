@@ -194,7 +194,8 @@ export default {
   // staged: true,             // only files staged for the next commit
   // withDependents: true,     // ...and the files that import them
   // skeleton: true,           // signatures instead of bodies (--skeleton); TS, JS, TSX and JSX
-  largeFileBytes: "200k",      // above this a file becomes a head/tail preview
+  largeFileBytes: "300k",      // above this a file becomes a head/tail preview; defaults to
+                               // maxPartBytes, and may not exceed it
   previewHeadLines: 80,
   previewTailLines: 40,
   budgets: {                   // optional per-layer overrides
@@ -422,7 +423,10 @@ const config = {
   // ── Size ─────────────────────────────────────────────────
   maxPartBytes: "300k",
   maxPartTokens: null,           // the same ceiling in tokens; narrows maxPartBytes
-  largeFileBytes: "200k",
+  largeFileBytes: "300k",
+  // ^ defaults to maxPartBytes. A threshold above the part budget is a config error: a file
+  //   between the two cannot fit a part, so it would be cut while the manifest called it a
+  //   preview by policy. Previewing exists for files that cannot be emitted whole.
   previewHeadLines: 80,
   previewTailLines: 40,
   budgets: { default: "300k", byLayer: {} },

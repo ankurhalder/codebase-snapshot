@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import { countLines, truncateToBytes } from "./preview.js";
 import { escapeControls, UNTRUSTED_CONTENT_NOTICE } from "../terminal.js";
 import { estimateTokens, formatTokens } from "../tokenize.js";
-import type { FileEntry, PartFileEntry, PartMetadata } from "../types.js";
+import type { FileEntry, PartFileEntry, PartMetadata, TruncationReason } from "../types.js";
 
 export interface PartitionedPart {
   filename: string;
@@ -247,7 +247,7 @@ export function partitionFilesForBuckets(
       section.file.originalLines
     );
     if (shrunk.isTruncated) {
-      applyTruncatedContent(section.file, shrunk.content);
+      applyTruncatedContent(section.file, shrunk.content, "part-budget");
       section.text = renderFileSection(section.file);
       section.byteSize = Buffer.byteLength(section.text, "utf8");
       assemblies.delete(group);
@@ -502,7 +502,7 @@ function prepareSection(
       file.originalLines
     );
     if (!truncated.isTruncated) return;
-    applyTruncatedContent(file, truncated.content);
+    applyTruncatedContent(file, truncated.content, "part-budget");
     text = renderFileSection(file);
     byteSize = Buffer.byteLength(text, "utf8");
   };
@@ -512,6 +512,7 @@ function prepareSection(
   if (byteSize > sectionBudget && file.summary) {
     file.summary = undefined;
     file.summaryOmitted = true;
+    file.summaryOmittedReason = "part-budget";
     text = renderFileSection(file);
     byteSize = Buffer.byteLength(text, "utf8");
     // Reclaim the room the summary was occupying.
@@ -529,9 +530,10 @@ function prepareSection(
     // Dropping the body instead keeps the section whole and readable, and marking the file first
     // is what makes the re-render honest: `- Meta:` says `preview`, the summary is dropped, and
     // the fence collapses to four backticks because there is no body left to outrun.
-    applyTruncatedContent(file, SECTION_TRUNCATION_NOTICE);
+    applyTruncatedContent(file, SECTION_TRUNCATION_NOTICE, "section-metadata");
     file.summary = undefined;
     file.summaryOmitted = true;
+    file.summaryOmittedReason = "part-budget";
     text = renderFileSection(file);
     byteSize = Buffer.byteLength(text, "utf8");
     if (byteSize > sectionBudget) {
@@ -607,10 +609,39 @@ function fenceIsOpen(text: string, fence: string): boolean {
   return open;
 }
 
-function applyTruncatedContent(file: FileEntry, content: string): void {
+/** Matches either omission notice, whichever route produced it. */
+const OMISSION_NOTICE_LINE = /^\.\.\. \[\d+ lines omitted: [^\]]*\] \.\.\.$/;
+
+/**
+ * Records a body the partitioner had to shorten, together with what it left out.
+ *
+ * The cut removes bytes from the end of a body that was already a prefix of the file, so every
+ * emitted line is a line of the source from the top: counting them gives the omitted range
+ * directly. Notice lines are not source lines, and counting them used to make the range start
+ * one line late. `reason` is recorded because `inclusionMode: preview` on its own cannot tell
+ * "large file, previewed by policy" from "did not fit the part".
+ */
+function applyTruncatedContent(
+  file: FileEntry,
+  content: string,
+  reason: TruncationReason
+): void {
+  const keptLines = content
+    .split("\n")
+    .filter((line) => !OMISSION_NOTICE_LINE.test(line)).length;
   file.content = content;
   file.isPreviewTruncated = true;
   file.inclusionMode = "preview";
+  file.truncationReason = reason;
+  // Lines not present **in full**. A byte cut can stop inside a line, which leaves no whole
+  // line missing while still losing part of the last one; naming that line is how a reader
+  // learns the body is short without the manifest pretending a clean prefix was emitted.
+  file.omittedRanges =
+    keptLines >= file.originalLines
+      ? file.originalLines > 0
+        ? [[file.originalLines, file.originalLines]]
+        : []
+      : [[keptLines + 1, file.originalLines]];
   file.includedBytes = Buffer.byteLength(content, "utf8");
   file.includedLines = countLines(content);
 }
@@ -845,7 +876,15 @@ function renderFileSection(file: FileEntry): string {
     compactMetadata(file),
     ...(file.summaryQuality ? [`- Summary Quality: ${file.summaryQuality}`] : []),
     ...renderSummary(file.summary, file.inclusionMode),
-    ...(file.summaryOmitted ? ["- Summary: (omitted: exceeds the part budget)"] : []),
+    ...(file.summaryOmitted
+      ? [
+          file.summaryOmittedReason === "preview"
+            ? "- Summary: (omitted: the file is a head/tail preview)"
+            : file.summaryOmittedReason === "oversize"
+              ? "- Summary: (omitted: the file is too large to parse)"
+              : "- Summary: (omitted: exceeds the part budget)",
+        ]
+      : []),
     "",
     file.inclusionMode === "preview" ? "#### Bounded Preview" : "#### Content",
     "",

@@ -3,6 +3,14 @@ export interface PreviewResult {
   isTruncated: boolean;
   originalLines: number;
   includedLines: number;
+  /**
+   * 1-based, inclusive source line ranges the preview does not contain.
+   *
+   * Empty when nothing was dropped. A head/tail preview drops exactly one contiguous run, so a
+   * reader can say which lines are missing instead of inferring it from a sentence in the middle
+   * of a part.
+   */
+  omittedRanges: Array<[number, number]>;
 }
 
 /**
@@ -83,6 +91,7 @@ export function truncatePreview(
       isTruncated: false,
       originalLines: total,
       includedLines: total,
+      omittedRanges: [],
     };
   }
 
@@ -100,6 +109,9 @@ export function truncatePreview(
     ...tail,
   ].join("\n");
 
+  const firstOmitted = head.length + 1;
+  const lastOmitted = total - tail.length;
+
   return {
     content: result,
     isTruncated: true,
@@ -107,5 +119,6 @@ export function truncatePreview(
     // Head + notice + tail is exactly what is emitted; counting the slice is
     // wrong when the source ended with a newline (the trailing "" issue above).
     includedLines: head.length + tail.length + 1,
+    omittedRanges: lastOmitted >= firstOmitted ? [[firstOmitted, lastOmitted]] : [],
   };
 }

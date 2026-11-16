@@ -188,9 +188,15 @@ test("parseByteSize accepts raw bytes and human-readable units", () => {
 
 test("resolveConfig accepts human-readable budgets and rejects nonsense", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bytes-"));
-  const config = resolveConfig({ cwd: dir, maxPartBytes: "120k", largeFileBytes: "1mb" });
+  const config = resolveConfig({ cwd: dir, maxPartBytes: "120k", largeFileBytes: "100k" });
   assert.equal(config.maxPartBytes, 122880);
-  assert.equal(config.largeFileBytes, 1048576);
+  assert.equal(config.largeFileBytes, 102400);
+  // The threshold may not sit above the budget: a file between the two cannot fit a part, so it
+  // would be cut to fit while the manifest called it a preview by policy.
+  assert.throws(
+    () => resolveConfig({ cwd: dir, maxPartBytes: "120k", largeFileBytes: "1mb" }),
+    /is larger than maxPartBytes/
+  );
   assert.equal(config.maxMonolithBytes, null);
 
   assert.throws(() => resolveConfig({ cwd: dir, maxPartBytes: "12x" }), /byte count/);

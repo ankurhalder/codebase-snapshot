@@ -84,7 +84,10 @@ test("preview: a newline-terminated source keeps its tail lines and the real omi
 test("part-budget clipping emits a marker naming the budget", (t) => {
   const dir = tempDir(t);
   write(dir, "package.json", '{"name":"budget-marker"}\n');
-  write(dir, "big.ts", "export const v = 1;\n".repeat(20_000));
+  // Very long lines: the head/tail preview is itself far over the part budget, so the budget
+  // still has to clip something. A complete file can no longer be clipped by the part budget —
+  // `largeFileBytes` may not exceed `maxPartBytes`, so a file that cannot fit is previewed first.
+  write(dir, "big.ts", `${"x".repeat(2000)}\n`.repeat(50));
 
   const manifest = generateSnapshot(
     resolveConfig({
@@ -92,12 +95,13 @@ test("part-budget clipping emits a marker naming the budget", (t) => {
       outDir: "snapshot",
       tmpDir: "snapshot.tmp",
       maxPartBytes: 4096,
-      largeFileBytes: 10_000_000,
+      largeFileBytes: 4096,
     })
   );
   const entry = manifest.files.find((file) => file.relativePath === "big.ts");
 
-  assert.equal(entry.isLarge, false, "the size threshold did not fire");
+  assert.equal(entry.isLarge, true, "the size threshold fired: the file cannot fit a part");
+  assert.equal(entry.truncationReason, "part-budget", "the second cut is the budget, and it says so");
   assert.equal(entry.isPreviewTruncated, true, "the part budget clipped the body");
   assert.equal(entry.inclusionMode, "preview");
 
@@ -152,7 +156,7 @@ test("a 3000-level directory tree completes and reports the depth cap", () => {
 test("the audit report shows part-budget truncation with bytes and lines", (t) => {
   const dir = tempDir(t);
   write(dir, "package.json", '{"name":"audit-fix"}\n');
-  write(dir, "big.ts", "export const v = 1;\n".repeat(20_000));
+  write(dir, "big.ts", `${"x".repeat(2000)}\n`.repeat(50));
 
   generateSnapshot(
     resolveConfig({
@@ -160,7 +164,7 @@ test("the audit report shows part-budget truncation with bytes and lines", (t) =
       outDir: "snapshot",
       tmpDir: "snapshot.tmp",
       maxPartBytes: 4096,
-      largeFileBytes: 10_000_000,
+      largeFileBytes: 4096,
     })
   );
   const audit = fs.readFileSync(path.join(dir, "snapshot", "reports", "audit.md"), "utf8");

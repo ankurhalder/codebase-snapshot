@@ -1056,6 +1056,9 @@ const readTool: McpTool = {
       structured: {
         path: entry.relativePath,
         part: entry.part,
+        // The window itself: a caller that wants to measure or re-send what it received should
+        // not have to strip the header and the paging note back off `text`.
+        body,
         layer: entry.layer,
         kind: entry.kind,
         language: entry.language,

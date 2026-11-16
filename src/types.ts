@@ -157,6 +157,23 @@ export interface FileEntry {
   inclusionMode: InclusionMode;
   isLarge: boolean;
   isPreviewTruncated: boolean;
+  /**
+   * Why the emitted body is shorter than the file on disk. Absent when nothing was dropped.
+   *
+   * `inclusionMode: "preview"` alone could mean "this file is large, so a head/tail preview is
+   * the policy" or "the partitioner cut it to fit a part", and `isLarge: false` beside
+   * `isPreviewTruncated: true` told a reader neither — the manifest recorded a preview-by-policy
+   * for a file whose missing 57 % nobody could find.
+   */
+  truncationReason?: TruncationReason;
+  /**
+   * 1-based, inclusive source line ranges that are not in the snapshot **in full**.
+   *
+   * A byte cut can end inside a line, which leaves that one line partly present; it is named
+   * here rather than omitted, because a range list that stays empty while bytes are missing
+   * would be the same silence this field exists to end.
+   */
+  omittedRanges?: Array<[number, number]>;
   /** Line count of the file on disk. */
   originalLines: number;
   /** Lines actually emitted into the snapshot. */
@@ -166,8 +183,13 @@ export interface FileEntry {
   summary?: SourceSummary | JsonSummary | MarkdownSummary;
   /** How the summary was produced. Absent when there is no summary. */
   summaryQuality?: SummaryQuality;
-  /** True when the summary alone was too large for the part budget and was dropped. */
+  /**
+   * True when a summary was not emitted for a size reason, rather than being unavailable for a
+   * language with no profile.
+   */
   summaryOmitted?: boolean;
+  /** Which size rule removed it. Present exactly when `summaryOmitted` is true. */
+  summaryOmittedReason?: "oversize" | "preview" | "part-budget";
   /**
    * How the file's bytes were decoded. Absent means plain UTF-8. Present when the file was
    * transcoded from UTF-16, or when it was not valid UTF-8 and lost bytes to U+FFFD.
@@ -356,6 +378,21 @@ export interface ManifestConfigSnapshot {
   kinds: string[];
 }
 
+/** Why a file's emitted body is shorter than the file itself. */
+export type TruncationReason = "large-file-budget" | "part-budget" | "section-metadata";
+
+/** One file the snapshot does not contain in full, and what was left out of it. */
+export interface IncompleteFile {
+  relativePath: string;
+  part: string;
+  reason: TruncationReason;
+  /** 1-based, inclusive. Sorted and non-overlapping. */
+  omittedRanges: Array<[number, number]>;
+  omittedLines: number;
+  includedLines: number;
+  lines: number;
+}
+
 export interface Manifest {
   schemaVersion: string;
   generatedAt: string;
@@ -389,6 +426,8 @@ export interface Manifest {
     skippedCount: number;
     largeFileCount: number;
     truncatedPreviewCount: number;
+    /** Length of `incomplete`; the number a run summary has to be able to quote. */
+    incompleteCount: number;
   };
   totals: ManifestTotals;
   fingerprint: string;
@@ -425,6 +464,15 @@ export interface Manifest {
   parts: PartMetadata[];
   files: FileEntry[];
   skipped: SkipRecord[];
+  /**
+   * Every included file whose emitted body is not the whole file.
+   *
+   * The same statement lives in `files[]`; this list exists so a consumer can ask "was anything
+   * lost?" without filtering four hundred entries, and so an omission cannot hide behind an
+   * `inclusionMode` that reads like policy. Empty is the normal case and is written as an empty
+   * array rather than omitted, because "no key" and "nothing lost" must not look alike.
+   */
+  incomplete: IncompleteFile[];
   warnings: string[];
 }
 

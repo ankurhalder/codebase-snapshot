@@ -92,7 +92,14 @@ test("a whole file just under the threshold keeps its summary", (t) => {
   write(dir, "package.json", '{"name":"fixture"}\n');
   write(dir, "src/medium.ts", bigSource("m", 40));
 
-  const manifest = generateSnapshot({ cwd: dir, outDir: "snapshot", largeFileBytes: 10_000_000 });
+  // Both knobs raised together: the threshold may not sit above the part budget, and this test
+  // wants a run where nothing is previewed at all.
+  const manifest = generateSnapshot({
+    cwd: dir,
+    outDir: "snapshot",
+    maxPartBytes: 10_000_000,
+    largeFileBytes: 10_000_000,
+  });
 
   const medium = entryFor(manifest, "src/medium.ts");
   assert.equal(medium.inclusionMode, "full");

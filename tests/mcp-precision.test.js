@@ -250,7 +250,7 @@ test("a part over the single-read limit is refused, not cut mid-line", async (t)
     "package.json": '{"name":"fixture","version":"1.0.0"}\n',
     // One part holding a single file larger than the resource limit: the only thing standing
     // between the client and a mid-line cut is the refusal.
-    "snapshot.config.json": JSON.stringify({ maxPartBytes: 700000, largeFileBytes: 1000000 }),
+    "snapshot.config.json": JSON.stringify({ maxPartBytes: 700000, largeFileBytes: 700000 }),
   });
   const body = [];
   for (let index = 0; index < 12000; index += 1) body.push("line " + index + " " + "x".repeat(40));

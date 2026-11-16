@@ -52,7 +52,7 @@ export const JS_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".nuxt", ".output"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "sveltekit",
@@ -75,7 +75,7 @@ export const JS_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".svelte-kit", ".vercel"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "remix",
@@ -90,7 +90,7 @@ export const JS_PRESETS: PresetDefinition[] = [
     ],
     kinds: [kindOf("route", "routes/"), ...commonKinds()],
     exclude: [".cache", "public/build"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "astro",
@@ -106,7 +106,7 @@ export const JS_PRESETS: PresetDefinition[] = [
     ],
     kinds: [suffixKind("page", ".astro"), kindOf("layout", "layouts/"), ...commonKinds()],
     exclude: [".astro", "dist"],
-    recommendedBudget: "150k",
+    recommendedBudget: "300k",
   },
   {
     name: "angular",
@@ -131,7 +131,7 @@ export const JS_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".angular", "dist"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "solid",
@@ -144,7 +144,7 @@ export const JS_PRESETS: PresetDefinition[] = [
     ],
     kinds: [kindOf("route", "routes/"), ...commonKinds()],
     exclude: [".solid", "dist"],
-    recommendedBudget: "120k",
+    recommendedBudget: "300k",
   },
   {
     name: "vue-vite",
@@ -178,7 +178,7 @@ export const JS_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".vite", "dist"],
-    recommendedBudget: "120k",
+    recommendedBudget: "300k",
   },
   {
     name: "react-vite",
@@ -193,7 +193,7 @@ export const JS_PRESETS: PresetDefinition[] = [
     layers: VITE_LAYERS,
     kinds: VITE_KINDS,
     exclude: [".vite", "dist"],
-    recommendedBudget: "120k",
+    recommendedBudget: "300k",
   },
   {
     name: "nest",
@@ -219,7 +219,7 @@ export const JS_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: ["dist", "node_modules"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "node-express",
@@ -228,7 +228,7 @@ export const JS_PRESETS: PresetDefinition[] = [
     layers: NODE_LAYERS,
     kinds: NODE_KINDS,
     exclude: ["dist"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "node-lib",
@@ -244,6 +244,6 @@ export const JS_PRESETS: PresetDefinition[] = [
     ],
     kinds: [suffixKind("type", ".d.ts"), ...commonKinds()],
     exclude: ["dist"],
-    recommendedBudget: "120k",
+    recommendedBudget: "300k",
   },
 ];

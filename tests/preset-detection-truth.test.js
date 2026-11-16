@@ -43,7 +43,7 @@ test("F1: a Next.js app one workspace level down detects as nextjs, not monorepo
 
   const detected = detect(dir);
   assert.equal(detected.presetName, "nextjs");
-  assert.equal(detected.recommendedBudget, "300k", "the nextjs budget is the preset's, not monorepo's 200k");
+  assert.equal(detected.recommendedBudget, "300k", "every preset recommends the one default");
 });
 
 test("F1: a workspace package with a Nuxt dependency detects as nuxt", (t) => {
@@ -63,7 +63,7 @@ test("F1 control: a pnpm workspace without a framework app stays monorepo", (t) 
 
   const detected = detect(dir);
   assert.equal(detected.presetName, "monorepo");
-  assert.equal(detected.recommendedBudget, "200k");
+  assert.equal(detected.recommendedBudget, "300k");
 });
 
 test("F1 control: a root next.config.js still detects nextjs", (t) => {
@@ -83,7 +83,7 @@ test("F2: markdown under docs/ counts towards the docs preset", (t) => {
 
   const detected = detect(dir);
   assert.equal(detected.presetName, "docs");
-  assert.equal(detected.recommendedBudget, "100k");
+  assert.equal(detected.recommendedBudget, "300k");
 });
 
 test("F2 control: fewer than three markdown files stays generic", (t) => {

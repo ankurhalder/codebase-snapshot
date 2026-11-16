@@ -54,6 +54,9 @@ function fixture() {
   );
   fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n");
   fs.writeFileSync(path.join(repo, "src", "big.ts"), BIG_FILE);
+  // A second large file so the whole-body run needs two parts while the preview run needs one:
+  // the comparison is about the payload, and the part count is part of it.
+  fs.writeFileSync(path.join(repo, "src", "second.ts"), BIG_FILE.slice(0, 400_000));
   const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "diff-payload-out-"));
   return { repo, outRoot };
 }
@@ -74,7 +77,8 @@ test("the same sources repacked as a full body instead of a preview are reported
   const full = path.join(fx.outRoot, "full");
   const preview = path.join(fx.outRoot, "preview");
   try {
-    generate(fx.repo, full, ["--large-file-bytes", "1mb"]);
+    // A whole 660 KB body needs a budget that can hold it, and the threshold may not exceed it.
+    generate(fx.repo, full, ["--max-part-bytes", "700k", "--large-file-bytes", "700k"]);
     generate(fx.repo, preview);
 
     const diff = diffJson(full, preview);
@@ -82,7 +86,7 @@ test("the same sources repacked as a full body instead of a preview are reported
     assert.equal(diff.added.length, 0);
     assert.equal(diff.removed.length, 0);
     assert.equal(diff.changed.length, 0);
-    assert.equal(diff.unchanged, 3);
+    assert.equal(diff.unchanged, 4);
     // ...but the payload block says the snapshot itself differs.
     assert.equal(diff.payload.sourceFilesIdentical, true);
     assert.equal(diff.payload.differs, true);
@@ -97,7 +101,7 @@ test("the same sources repacked as a full body instead of a preview are reported
     const text = diffText(full, preview);
     assert.match(text, /payload\/configuration differs:/);
     assert.match(text, /configuration digest/);
-    assert.match(text, /source files are identical \(3 unchanged\)/);
+    assert.match(text, /source files are identical \(4 unchanged\)/);
     assert.match(text, /0 changed/, "the per-file counts must stay in the output");
   } finally {
     cleanup(fx);
@@ -110,12 +114,12 @@ test("a budget change with identical sources is reported", () => {
   const narrow = path.join(fx.outRoot, "narrow");
   try {
     // Same sources and the same preview threshold; only the part budget differs.
-    generate(fx.repo, wide, ["--large-file-bytes", "1mb"]);
-    generate(fx.repo, narrow, ["--large-file-bytes", "1mb", "--max-part-bytes", "60k"]);
+    generate(fx.repo, wide, ["--max-part-bytes", "700k", "--large-file-bytes", "700k"]);
+    generate(fx.repo, narrow, ["--large-file-bytes", "60k", "--max-part-bytes", "60k"]);
 
     const diff = diffJson(wide, narrow);
     assert.equal(diff.changed.length, 0);
-    assert.equal(diff.unchanged, 3);
+    assert.equal(diff.unchanged, 4);
     assert.equal(diff.payload.sourceFilesIdentical, true);
     assert.equal(diff.payload.differs, true);
     assert.equal(diff.payload.configurationDiffers, true);
@@ -127,7 +131,7 @@ test("a budget change with identical sources is reported", () => {
 
     const text = diffText(wide, narrow);
     assert.match(text, /payload\/configuration differs:/);
-    assert.match(text, /source files are identical \(3 unchanged\)/);
+    assert.match(text, /source files are identical \(4 unchanged\)/);
     assert.match(text, /0 changed/, "the per-file counts must stay in the output");
   } finally {
     cleanup(fx);
@@ -144,7 +148,7 @@ test("identical snapshots stay silent about the payload", () => {
 
     const diff = diffJson(first, second);
     assert.equal(diff.added.length + diff.removed.length + diff.changed.length, 0);
-    assert.equal(diff.unchanged, 3);
+    assert.equal(diff.unchanged, 4);
     assert.equal(diff.payload.sourceFilesIdentical, true);
     assert.equal(diff.payload.differs, false);
     assert.equal(diff.payload.configurationDiffers, false);
@@ -155,7 +159,7 @@ test("identical snapshots stay silent about the payload", () => {
     assert.doesNotMatch(text, /payload\/configuration differs/);
     assert.doesNotMatch(text, /configuration not compared/);
     assert.match(text, /0 changed/);
-    assert.match(text, /3 unchanged/);
+    assert.match(text, /4 unchanged/);
   } finally {
     cleanup(fx);
   }
@@ -191,7 +195,7 @@ test("manifests without a config digest say the configuration was not compared",
   const full = path.join(fx.outRoot, "full");
   try {
     generate(fx.repo, current);
-    generate(fx.repo, full, ["--large-file-bytes", "1mb"]);
+    generate(fx.repo, full, ["--max-part-bytes", "700k", "--large-file-bytes", "700k"]);
 
     // Simulate a snapshot written before 4.0.5: same settings, no config.digest. A missing digest
     // is unverifiable, not malformed, so the shape guard accepts it and diff says so.

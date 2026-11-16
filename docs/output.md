@@ -101,7 +101,7 @@ diff the manifest only when you need to know that a run happened.
 | `git` | `{ branch, commit, isDirty }`. `branch` falls back to the configured branch on a detached HEAD and outside a repository; `commit` is `"unknown"` and `isDirty` is `false` when git cannot report. A `false` there means "not known to be dirty", not "clean tree" — check `commit` to tell the two apart. |
 | `budgets` | The effective byte limits for the run: `{ maxPartBytes, largeFileBytes }`. The per-layer overrides live at `config.budgets`, which is `{ default, byLayer }`. |
 | `config` | The resolved configuration actually used (preset, artifacts, sizing, scoping). |
-| `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount }`. |
+| `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount, incompleteCount }`. |
 | `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, sourceLines, emittedLines, estimatedTokens, partCount, warningCount, redactedLines }`. `sourceLines` is the source line count before previews and part budgets; `emittedLines` is what the parts actually carry. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
 | `fingerprint` | Stable hash of the snapshot content **and** the settings that shaped it. Two runs over unchanged input and unchanged settings produce the same value; changing the budget, a preset, a layer rule or the secret rules moves it, because the parts move too. It is recomputed by `validate` from `files[]` and `config.digest`, so an edited file list cannot keep the recorded value — and because the partitioner may change a file's `inclusionMode` after the fingerprint is taken, the mode is not part of the hash. |
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
@@ -110,7 +110,8 @@ diff the manifest only when you need to know that a run happened.
 | `indexes` | Cross-references: `routes`, `components`, `handlers`, `features`, `imports`, `directives`. |
 | `parts` | One entry per part (below). |
 | `files` | One entry per included file (below). |
-| `skipped` | One entry per excluded file (below). |
+| `skipped` | One entry per excluded file (below). Every scanned path appears in `files` or here: the generator asserts it, so a file cannot vanish between the two. |
+| `incomplete` | One entry per included file whose body is **not the whole file**: `{ relativePath, part, reason, omittedRanges, omittedLines, includedLines, lines }`. `reason` is `large-file-budget`, `part-budget` or `section-metadata`; `omittedRanges` are 1-based inclusive line ranges that are missing or partial. Empty is the normal case and is written as an empty array — a consumer asks "was anything lost?" without reading four hundred file entries. |
 | `warnings` | Non-fatal observations that may change how you read the snapshot — a disabled artifact, a file too large to parse, a transcoded file, a throwing `hooks.afterGenerate`. Masked values are **not** warnings: they are counted in `totals.redactedLines` and listed per line in `reports/audit.md`. |
 
 ### `parts[]`

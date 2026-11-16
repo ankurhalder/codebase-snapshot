@@ -33,7 +33,7 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
     ],
     kinds: commonKinds(),
     exclude: [".turbo", ".nx"],
-    recommendedBudget: "200k",
+    recommendedBudget: "300k",
   },
   {
     name: "infra",
@@ -56,7 +56,7 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
       ...commonKinds(),
     ],
     exclude: [".terraform", ".terragrunt-cache"],
-    recommendedBudget: "100k",
+    recommendedBudget: "300k",
   },
   {
     name: "docs",
@@ -73,7 +73,7 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
     ],
     kinds: commonKinds(),
     exclude: [".docusaurus", ".vitepress/dist", "site"],
-    recommendedBudget: "100k",
+    recommendedBudget: "300k",
   },
   {
     name: "generic",
@@ -85,6 +85,6 @@ export const SHAPE_PRESETS: PresetDefinition[] = [
     layers: DEFAULT_LAYERS,
     kinds: DEFAULT_KINDS,
     exclude: [],
-    recommendedBudget: "120k",
+    recommendedBudget: "300k",
   },
 ];

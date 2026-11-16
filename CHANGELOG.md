@@ -23,6 +23,76 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.9.19
+
+The 0.9.18 report had one real bug in it. A complete file could be cut down to fit a part budget
+and the run still exited 0: 1 241 of 2 883 lines emitted, a marker on line 1 300, and a manifest
+that recorded `inclusionMode: "preview"` beside `isLarge: false` — a shape that reads as policy
+whether the preview was chosen or 57 % of the file had been lost.
+
+### A file is not cut to fit a part
+
+The two ceilings answer one question — *can this file be emitted whole?* — so they are now
+resolved together and cannot disagree:
+
+- `largeFileBytes` defaults to `maxPartBytes`, and an explicit value **above** it is a config
+  error before anything is written. A file between the two cannot fit a part, so it would be cut
+  while the manifest called it a preview by policy.
+- Every preset recommends the same 300 KB budget. The old per-preset tuning went as low as
+  100 KB, which is exactly how a 197 KB file ended up gutted in a repository that had one.
+- A file above the threshold is a head/tail preview — the declared policy for something that
+  cannot fit — and the `isLarge: false` + `isPreviewTruncated: true` combination is now
+  unreachable.
+
+Nothing is lost silently either way: `manifest.json` gained a top-level `incomplete[]` naming
+every included file that is not present in full, with `reason` (`large-file-budget`,
+`part-budget`, `section-metadata`) and `omittedRanges`, 1-based inclusive source lines that are
+missing or partial. `files[]` carries the same two fields per entry, and `counts.incompleteCount`
+is the length of the list.
+
+A summary dropped for size now records *why* — `summaryOmittedReason` is `oversize`, `preview` or
+`part-budget` — and the part says which, instead of printing "exceeds the part budget" for a
+summary that was never built because the file was a preview.
+
+### The run summary says what it left out
+
+`Tracked files: 434` read as "the whole repository" when 155 tracked files had gone out the
+window. It now prints the coverage and the reasons that took the rest:
+
+```
+   - Tracked files: 434 included of 589 found — 155 skipped (binary 152, gitignore 18, sensitive-file 1); every one is listed in snapshot\reports\audit.md
+   - Incomplete:   2 file(s) — 1 large-file-budget, 1 part-budget; see manifest.json incomplete[]
+```
+
+The generator also asserts the invariant behind that line: every scanned path appears in
+`files[]` or in `skipped[]` with a reason, and a truncated file has both a reason and ranges. A
+run that fails the check reports `validation.status: "failed"` instead of a clean bill.
+
+### The output swap survives a held handle
+
+On Windows and OneDrive the second run failed with `EPERM: rename 'snapshot' ->
+'snapshot.backup-…'`: an indexer, an antivirus or a sync client holds a handle *inside* the
+directory, which makes the directory itself un-renameable, and the handle outlives the retry
+budget. When the retries end, the snapshot that the ownership guard has already proved is this
+tool's own is now removed and replaced in place, with a note on stderr naming the cause. Anything
+that is not a lock error, and any directory the guard has not cleared, still fails as before.
+
+### `setup` no longer installs into a directory that is not a package
+
+With no `package.json`, the install step answered `ENOENT` and npm left an empty
+`package-lock.json` at the repository root — a file nobody asked for, in a run that said nothing
+about it. The install is skipped, and the skip is stated.
+
+The run banner also names the generator and where it came from, because a snapshot whose
+behaviour depends on whichever `npx` cache or global install was first on `PATH` is what a
+pinned project dependency exists to prevent:
+
+```
+   Branch: main | Part budget: 300 KB | Generator: 0.9.19 (via npx)
+```
+
+The origin is printed and not written into an artefact: an artefact naming an absolute install
+path would stop being byte-identical across machines.
 ## 0.9.18
 
 A release about what the listing says. The generator is unchanged; what changed is every place
