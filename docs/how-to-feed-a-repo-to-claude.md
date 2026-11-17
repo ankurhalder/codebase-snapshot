@@ -125,7 +125,7 @@ that receives it.
 You do not have to write it. `snapshot/PROMPT.md` is the prompt, and being generated is what makes
 it worth pasting: it describes the snapshot you are actually sending. It is a brief, not a packing
 slip — the job, the system map the manifest can prove (layers, the modules with the most
-importers, entry points, which surfaces were indexed), the last ten commit subjects as claims to
+importers, entry points, which surfaces were indexed), the last ten commits (subject and body) as claims to
 verify rather than rediscover, the evidence bar, the coverage owed, and calibration examples of
 the defects that do not crash. Then the per-run apparatus: fingerprint, part inventory, partial
 files, skip tallies and the attachment arithmetic.

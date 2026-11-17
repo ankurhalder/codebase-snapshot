@@ -139,3 +139,27 @@ test("growing the budget leaves every file in a part", (t) => {
   assert.equal(manifest.validation.status, "passed");
   assert.equal(cli(["validate", "--max-part-bytes", "4k", "--max-parts", "3"], dir).code, 0);
 });
+
+test("the monolith keeps whole bodies when maxParts grows the budget", (t) => {
+  const dir = tempDir(t);
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"mono","version":"1.0.0"}\n', "utf8");
+  for (let index = 0; index < 8; index += 1) {
+    const body = Array.from({ length: 500 }, (_, line) => `export const v${index}_${line} = ${line};`).join("\n");
+    fs.writeFileSync(path.join(dir, "src", `f${index}.ts`), `${body}\n`, "utf8");
+  }
+
+  const generated = cli(
+    ["generate", "--max-part-bytes", "4k", "--max-parts", "2", "--include-monolith"],
+    dir
+  );
+  assert.equal(generated.code, 0, generated.out);
+  const manifest = manifestOf(dir);
+  assert.equal(manifest.validation.status, "passed");
+  assert.ok(manifest.files.some((file) => file.inclusionMode === "preview"), "the parts preview");
+
+  // The monolith is built from bodies captured before partitioning, so a grown budget that
+  // previews a file in the parts must not truncate it here.
+  const monolith = fs.readFileSync(path.join(dir, "snapshot", "full-codebase.md"), "utf8");
+  assert.ok(monolith.includes("export const v0_499 = 499;"), "the whole body is in the monolith");
+});

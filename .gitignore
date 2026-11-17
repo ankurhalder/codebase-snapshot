@@ -18,3 +18,11 @@ site/
 # are regenerable and are deliberately not.
 audit/poc/*/
 audit/poc/*.txt
+
+# Scratch probes at the repository root. `git add -A` swept four of these into a
+# release because the author forgot they were there; they are throwaway harnesses,
+# not tests (the tests they produced live in tests/).
+.fuzz-*.mjs
+.probe-*.mjs
+.docs-audit.*
+/.*.json

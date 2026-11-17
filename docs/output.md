@@ -46,31 +46,39 @@ embedded copy and a `selfReference` sentence points at `manifest.json`, which ca
 ## PROMPT.md
 
 The one artifact written for the model rather than for you, and the only one that is a *brief*
-rather than an index. Paste it with the payload. It has two halves:
+rather than an index. Paste it with the payload. It has three parts:
 
-**The brief** — what to do and how to be believed:
+**The brief** — what to do and how to be believed, in the order it is rendered:
 
-- **The job**: find what is still wrong or will break, with the method left to the reader and an
-  honest account of coverage owed in return. A narrower task in the closing slot wins, and the
-  standard still applies to it.
+- **The job**: `audit` finds what is still wrong or will break; `review` says what a change breaks;
+  `explain` says how a subsystem works. The method is the reader's, and an honest account of
+  coverage is owed in return. A narrower task in the closing slot wins, and the standard still
+  applies to it.
+- **Stakes** — when the owner brief supplies them.
+- **What you have**: the artifacts that were actually written, and what each one is for.
+- **What this is**: the `package.json` description, the first README paragraph and the two most
+  recent release headings, labelled as the project's own claims rather than evidence.
 - **The system**, from the manifest: layers and their file counts, the modules with the most
   importers (so a reader knows what a change reaches), entry points by convention, the routes,
   handlers and components the index found — or a plain statement that none were recorded, so a
   model does not go looking for a surface that is not there — the largest files, and the share of
   bytes that is tests.
-- **What came before**: the last ten commit subjects, labelled as claims rather than evidence,
-  with the instruction to verify a recorded fix holds instead of rediscovering it. When git
-  cannot be read the section says so; it is never invented.
+- **What came before**: the last ten commits — subject and body — labelled as claims rather than
+  evidence, with the instruction to verify a recorded fix holds instead of rediscovering it. When
+  git cannot be read the section says so; it is never invented.
 - **The bar**: quoted lines, the state that reaches them, why the apparent guard does not stop it;
   no style findings, no invented findings, a clean surface proven by quoting the guard.
 - **Coverage**: paths found, included and skipped with reasons, partial files with their missing
   line ranges, redactions, and "everything unseen is unread, never clean".
+- **What a useful answer contains**: the shape of a report that can be checked, opened by the
+  snapshot's fingerprint and closed by `Needed but not received:`.
 - **Calibration**: the classes of defect that do not crash — a guard at one call site and not its
   twin, a budget shorter than the work it guards, a success flag that means the call returned.
+- **Owner notes**: any heading in the brief the merge did not recognise, kept verbatim.
 
 **The owner half** — when `brief` is configured (see [configuration](configuration.md#the-brief-what-only-you-can-write)),
 the five judgement sections come from that file instead of the generic prose: what is at stake, the
-system in the owner`s words (with the measured facts still following under "What the index
+system in the owner's words (with the measured facts still following under "What the index
 records"), the history the owner has lived through, the bar this team applies, and the calibration
 examples from its own incidents. Each is marked as written by the project owner.
 

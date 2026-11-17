@@ -26,6 +26,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.6
+
+- **Four scratch harnesses were published.** `git add -A` in 0.12.5 swept the fuzz probes that
+  found the `maxParts` bug into the commit. The npm tarball was unaffected (its `files` list is a
+  whitelist and pack-check counted 38 entries), but the repository should not carry them: they are
+  removed, and `.gitignore` now covers root-level probe scripts so a future `git add -A` cannot
+  repeat it.
+- **`docs/output.md` described a brief that no longer exists.** It listed "two halves" and the
+  pre-0.12 sections: no Stakes, no What this is, no What a useful answer contains, no Owner notes,
+  and "the last ten commit subjects" where the brief now carries subjects and bodies. It matches
+  the rendered order now, and the how-to guide says the same.
+- New test: the monolith keeps whole bodies when `maxParts` grows the budget — the partitioner
+  captures them before partitioning, and the 0.12.5 rewrite had to keep that true.
+
+Verified: 1 182 tests, 1 174 pass, 0 fail, 8 host skips; lint 225 files; every gate clean at 0.12.6.
 ## 0.12.5
 
 A lost-file bug in the experimental `maxParts`, found by fuzzing part budgets rather than reading
