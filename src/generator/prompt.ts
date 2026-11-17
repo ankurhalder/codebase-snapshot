@@ -1,5 +1,7 @@
 import { DEFAULT_ATTACHMENT_SLOTS } from "../config.js";
-import type { Manifest, ResolvedArtifacts } from "../types.js";
+import type { ProjectOverview } from "./overview.js";
+import type { CommitRecord } from "../scanner/files.js";
+import type { Manifest, OwnerBrief, PromptTask, ResolvedArtifacts } from "../types.js";
 import { escapeControls, formatNumber, inlineCode } from "../terminal.js";
 
 /**
@@ -37,16 +39,34 @@ const ENTRY_POINT = /(^|\/)(index|cli|main|bin|server|app|mod)\.[cm]?[jt]sx?$/;
 const TEST_PATH = /(^|\/)(tests?|__tests__)\//;
 const TEST_FILE = /\.(test|spec)\.[^.]+$/;
 
+export interface PromptContext {
+  /** Files the destination accepts; `0` means no limit. */
+  slots?: number;
+  /** The job the brief is written for. */
+  task?: PromptTask;
+  /** The owner-written half, already masked. */
+  brief?: OwnerBrief;
+  /** The last commits, already masked, newest first. */
+  history?: readonly CommitRecord[];
+  /** What the repository says about itself, already masked. */
+  overview?: ProjectOverview;
+}
+
 export function generatePrompt(
   manifest: Manifest,
   artifacts?: ResolvedArtifacts,
-  attachmentSlots: number = DEFAULT_ATTACHMENT_SLOTS,
-  history: readonly string[] = []
+  context: PromptContext = {}
 ): string {
+  const slots = context.slots ?? DEFAULT_ATTACHMENT_SLOTS;
+  const task = context.task ?? "audit";
+  const history = context.history ?? [];
+  const overview = context.overview ?? { releases: [] };
+  const brief = context.brief;
   // A missing selection means "assume written", so the library call that predates it keeps
   // working and a caller that does not care about the selection still gets a full brief.
   const wrote = (name: keyof ResolvedArtifacts): boolean => artifacts?.[name] !== false;
   const code = (value: string): string => inlineCode(escapeControls(value));
+  const hasOwnerHistory = (brief?.history ?? "").trim().length > 0;
 
   const lines: string[] = [
     "# PROMPT.md",
@@ -63,37 +83,23 @@ export function generatePrompt(
     "You are working on a codebase you cannot clone, run or grep. Everything you know about it comes",
     "from the snapshot that follows this instruction. Where these notes and the snapshot disagree,",
     "the snapshot is what exists.",
-    "",
-    "## The job",
-    "",
-    "Find what is still wrong or will break. How you read the code is yours to decide - by",
-    "subsystem, by data flow, by the invariants you derive yourself. What you owe in return is an",
-    "honest account of what you covered and what you did not.",
-    "",
-    history.length > 0
-      ? "Another pass of the same findings is worth nothing. This repository carries a record of"
-      : "Another pass of the same findings is worth nothing, but no earlier round is readable here,",
-    history.length > 0
-      ? "what was already fixed, below. Verify that those fixes hold instead of rediscovering them,"
-      : "so you cannot tell what has already been tried. Do not assume this is the first attempt.",
-    history.length > 0
-      ? "and treat a variant of one at a different call site as a new finding."
-      : "Every finding you report has to stand on the code alone.",
-    "",
-    "If the task at the end asks for something narrower - explain a file, review a change, answer a",
-    "question - that task wins. The standard and the coverage duty below still apply to it.",
     ""
   ];
+  if (brief?.preamble !== undefined) lines.push(brief.preamble, "");
 
+  lines.push(...jobSection(task, history.length > 0 || hasOwnerHistory), "");
+  lines.push(...stakesSection(brief, code));
   lines.push(...haveSection(wrote), "");
-  lines.push(...systemSection(manifest, code), "");
-  lines.push(...historySection(history), "");
-  lines.push(...barSection(), "");
+  lines.push(...whatThisIsSection(overview), "");
+  lines.push(...systemSection(manifest, code, brief), "");
+  lines.push(...historySection(history, brief, code), "");
+  lines.push(...barSection(brief, code), "");
   lines.push(...coverageSection(manifest, code, wrote("audit")), "");
   lines.push(...answerSection(), "");
-  lines.push(...calibrationSection(), "");
+  lines.push(...calibrationSection(brief, code), "");
+  lines.push(...ownerNotesSection(brief, code));
   lines.push(...snapshotSection(manifest, code), "");
-  lines.push(...deliverySection(manifest, wrote("parts"), attachmentSlots));
+  lines.push(...deliverySection(manifest, wrote("parts"), slots));
 
   lines.push(
     "## Your task",
@@ -177,8 +183,15 @@ function haveSection(wrote: (name: keyof ResolvedArtifacts) => boolean): string[
 }
 
 /** The system as the index can prove it: layers, hubs, entry points, surfaces, size. */
-function systemSection(manifest: Manifest, code: (value: string) => string): string[] {
+function systemSection(
+  manifest: Manifest,
+  code: (value: string) => string,
+  brief: OwnerBrief | undefined
+): string[] {
   const out = ["## The system", ""];
+  if (brief?.system !== undefined) {
+    out.push(...ownerBlock(brief.system, brief.path, code), "", "What the index records:", "");
+  }
 
   const layers = Object.entries(manifest.layers).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (layers.length > 0) {
@@ -265,8 +278,13 @@ function systemSection(manifest: Manifest, code: (value: string) => string): str
 }
 
 /** The record of what was already fixed, which is the section that stops a repeat audit. */
-function historySection(history: readonly string[]): string[] {
+function historySection(
+  history: readonly CommitRecord[],
+  brief: OwnerBrief | undefined,
+  code: (value: string) => string
+): string[] {
   const out = ["## What came before", ""];
+  if (brief?.history !== undefined) out.push(...ownerBlock(brief.history, brief.path, code), "");
   if (history.length === 0) {
     out.push(
       "No history was readable: this is not a git checkout, or git could not be run. Nothing about",
@@ -275,17 +293,23 @@ function historySection(history: readonly string[]): string[] {
     return out;
   }
   out.push(
-    "Commit subjects, newest first. They are claims by whoever wrote them, not evidence - the code",
-    "beside them is the evidence. If one of these fixes looks incomplete, quote the lines and say",
-    "which call site it missed.",
+    "The last " + formatNumber(history.length) + " commit(s), newest first. Subjects and bodies are",
+    "claims by whoever wrote them, not evidence - the code beside them is the evidence. If one of",
+    "these fixes looks incomplete, quote the lines and say which call site it missed.",
     ""
   );
-  for (const subject of history) out.push("- " + subject);
+  for (const commit of history) {
+    out.push("- " + commit.subject);
+    if (commit.body.length > 0) out.push("  " + commit.body);
+  }
   return out;
 }
 
 /** The standard. Static on purpose: this is what a finding has to be, for any repository. */
-function barSection(): string[] {
+function barSection(brief: OwnerBrief | undefined, code: (value: string) => string): string[] {
+  if (brief?.bar !== undefined) {
+    return ["## The bar", "", ...ownerBlock(brief.bar, brief.path, code), ""];
+  }
   return [
     "## The bar",
     "",
@@ -364,7 +388,13 @@ function answerSection(): string[] {
  * They are generic on purpose: a repository-specific example would be invented, and an invented
  * example teaches the model to invent.
  */
-function calibrationSection(): string[] {
+function calibrationSection(
+  brief: OwnerBrief | undefined,
+  code: (value: string) => string
+): string[] {
+  if (brief?.calibration !== undefined) {
+    return ["## Calibration", "", ...ownerBlock(brief.calibration, brief.path, code), ""];
+  }
   return [
     "## Calibration",
     "",
@@ -378,6 +408,102 @@ function calibrationSection(): string[] {
     "",
     "None of these throw. All are invisible in a summary."
   ];
+}
+
+/** The job, which is the one section that changes with `promptTask`. */
+function jobSection(task: PromptTask, hasHistory: boolean): string[] {
+  const out = ["## The job", ""];
+  if (task === "audit") {
+    out.push(
+      "Find what is still wrong or will break. How you read the code is yours to decide - by",
+      "subsystem, by data flow, by the invariants you derive yourself. What you owe in return is an",
+      "honest account of what you covered and what you did not.",
+      ""
+    );
+    if (hasHistory) {
+      out.push(
+        "Another pass of the same findings is worth nothing. This repository carries a record of",
+        "what was already fixed, below. Verify that those fixes hold instead of rediscovering them,",
+        "and treat a variant of one at a different call site as a new finding."
+      );
+    } else {
+      out.push(
+        "Another pass of the same findings is worth nothing, but no earlier round is readable here,",
+        "so you cannot tell what has already been tried. Do not assume this is the first attempt."
+      );
+    }
+    out.push(
+      "",
+      "If the task at the end asks for something narrower - explain a file, review a change, answer",
+      "a question - that task wins. The standard and the coverage duty below still apply to it."
+    );
+  } else if (task === "review") {
+    out.push(
+      "Review the change or the area named in the task against this snapshot. Report what breaks,",
+      "what the change claims but does not do, and what a reader would believe that the code does",
+      "not support. Restating the diff is not a review; the standard and the coverage duty below",
+      "still apply."
+    );
+  } else {
+    out.push(
+      "Explain how the part of the system named in the task works: the data flow, the boundaries",
+      "and the invariants it depends on. Cite the lines. If the snapshot does not contain what you",
+      "need, say which file you need rather than reconstructing it from the shape of the names."
+    );
+  }
+  return out;
+}
+
+/** What is at stake, when the owner has said. It sits beside the job, not in an appendix. */
+function stakesSection(brief: OwnerBrief | undefined, code: (value: string) => string): string[] {
+  if (brief?.stakes === undefined) return [];
+  return ["## Stakes", "", ...ownerBlock(brief.stakes, brief.path, code), ""];
+}
+
+/** What the repository says about itself, when it says anything. */
+function whatThisIsSection(overview: ProjectOverview): string[] {
+  const body: string[] = [];
+  if (overview.description !== undefined) {
+    body.push("- Declared in `package.json`: " + overview.description);
+  }
+  if (overview.summary !== undefined) {
+    body.push("- From the `README.md` first paragraph: " + overview.summary);
+  }
+  if (overview.releases.length > 0) {
+    body.push("- Most recent releases: " + overview.releases.join("; ") + ".");
+  }
+  if (body.length === 0) return [];
+  return [
+    "## What this is",
+    "",
+    ...body,
+    "",
+    "Those are the project's own claims, not evidence about the code.",
+    ""
+  ];
+}
+
+/** Anything the owner wrote that the merge did not recognise. Never dropped. */
+function ownerNotesSection(
+  brief: OwnerBrief | undefined,
+  code: (value: string) => string
+): string[] {
+  if (brief === undefined || brief.notes.length === 0) return [];
+  const out: string[] = ["## Owner notes", ""];
+  for (const note of brief.notes) {
+    out.push("### " + note.heading, "", ...ownerBlock(note.body, brief.path, code), "");
+  }
+  return out;
+}
+
+/**
+ * One owner-written block, marked as such.
+ *
+ * The marker is the whole reason this is a function: a reader has to be able to tell an
+ * assertion by the owner from a measurement by the tool, in a document where both appear.
+ */
+function ownerBlock(text: string, path: string, code: (value: string) => string): string[] {
+  return ["> Written by the project owner in " + code(path) + ", not generated.", "", text];
 }
 
 /** The fingerprint and the counts, so the answer can name the state it describes. */

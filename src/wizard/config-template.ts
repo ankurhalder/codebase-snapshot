@@ -204,6 +204,10 @@ export function renderConfig(answers: WizardAnswers): string {
   // Experimental: grow the per-part budget until the snapshot fits this many parts, instead of
   // adding a part as the code grows. The plan in PROMPT.md becomes a fixed-length attachment list.
   // maxParts: 10,
+  // The owner-written half of PROMPT.md: Stakes, The system, What came before, The bar, Calibration.
+  // brief: "docs/brief.md",
+  // Which job the brief is written for: audit, review or explain.
+  // promptTask: "audit",
   // afterGenerate: (manifest) => { /* write your own artifact */ }
   hooks: {},
 };

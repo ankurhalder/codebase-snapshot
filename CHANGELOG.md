@@ -23,6 +23,48 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.0
+
+The brief stops being only generated. Facts can be proved from the repository; judgement cannot,
+and pretending otherwise produced a document that was accurate and generic.
+
+**The owner half (`brief`).** A markdown file with five recognised headings is merged at fixed
+slots:
+
+| Heading | Result |
+| :--- | :--- |
+| `## Stakes` | its own section, right after the job |
+| `## The system` | replaces the generated narrative; the measured facts still follow under "What the index records" |
+| `## What came before` | rendered above the generated commit ledger |
+| `## The bar` | replaces the standard |
+| `## Calibration` | replaces the example failures |
+
+Any other heading is kept verbatim under **Owner notes** — nothing is dropped because the merge
+did not recognise it. Every owner section is marked in the output as written by the project owner,
+so a reader can tell an assertion from a measurement. Three things are refused because they would
+make the document lie: a heading that redefines a measured section (`Coverage`, `This snapshot`,
+`Attaching this`, `The job`, `What you have`, `What a useful answer contains`, `Your task`), a
+`brief` path that cannot be read, and — indirectly — an edited brief, which no longer matches the
+digest the manifest recorded. A stale brief is the same failure as a stale snapshot.
+
+**More facts, for free.** The history section now carries commit bodies, not only subjects: the
+subject says what changed, the body usually says why, and the why is the part a reader can verify.
+A new "What this is" section quotes what the repository says about itself — the `package.json`
+description, the first README paragraph, the two most recent release headings — labelled as the
+project`s own claims rather than evidence. All of it is masked like every other reproduced string.
+
+**The job is a setting (`promptTask`).** `audit` (the default) asks for what is still wrong or
+will break, `review` for what a change breaks, `explain` for how a subsystem works. The standard
+and the coverage duty are the same in all three; only the opening section changes. An unknown
+value is a usage error, not a silent fall back.
+
+**Upgrading.** Nothing existing changes unless you set `brief` or `promptTask`: the default job is
+the one 0.11.0 shipped, and both settings are omitted from the config digest at their defaults, so
+a snapshot written before this release still validates. New `manifest.config.promptTask` and, when
+configured, `manifest.config.brief: { path, digest }`.
+
+Verified: 1 168 tests, 1 160 pass, 0 fail, 8 host skips; lint 225 files; sync-docs, site, link
+check, audit-site, readme-lint and pack-check clean at 0.12.0.
 ## 0.11.0
 
 A minor release: `generate` writes one new artifact and two settings are added. Nothing that

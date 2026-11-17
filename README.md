@@ -150,7 +150,8 @@ contain.
   the system map the manifest can prove (layers, load-bearing modules, entry points, indexed
   surfaces), the recent commit history as claims to verify rather than rediscover, the evidence bar,
   the coverage owed, and calibration examples. Then the apparatus — this run's parts, partial files
-  with their missing line ranges, fingerprint, and the attachment arithmetic. A prompt that names
+  with their missing line ranges, fingerprint, and the attachment arithmetic. The judgement half
+  can come from your own file (`brief`) and the job from `promptTask`. A prompt that names
   the wrong snapshot is a lie that reads as current, so it is an artifact with a recorded digest and
   `validate` fails when it is edited.
 - **Credential files are excluded by default** — `.env`, `*.pem`, `.npmrc`, `id_rsa`, `*.tfstate`
@@ -209,7 +210,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.11.0 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.12.0 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

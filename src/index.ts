@@ -48,12 +48,14 @@ import {
   resolveSpecifier,
   tsconfigPathsFor,
 } from "./scanner/dependents.js";
+import type { ProjectOverview } from "./generator/overview.js";
+import { readProjectOverview } from "./generator/overview.js";
 import {
   collectFiles,
   findSecretInPath,
   getGitInfo,
   maskSkipPaths,
-  recentCommitSubjects,
+  recentCommits,
 } from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
@@ -68,6 +70,7 @@ import type {
   ManifestArtifact,
   ManifestIndexes,
   MarkdownSummary,
+  OwnerBrief,
   ResolvedArtifacts,
   ResolvedBudgets,
   ResolvedSnapshotConfig,
@@ -729,6 +732,38 @@ function maskSummaryStrings(value: unknown, secretRules: readonly SecretRule[]):
 
 function maskPathText(value: string, secretRules?: readonly SecretRule[]): string {
   return findSecretInPath(value, secretRules)?.masked ?? value;
+}
+
+/** Masking for the owner brief, field by field: it is prose, and prose can carry a token. */
+function maskOwnerBrief(
+  brief: OwnerBrief | undefined,
+  secretRules?: readonly SecretRule[]
+): OwnerBrief | undefined {
+  if (brief === undefined) return undefined;
+  const mask = (value: string): string => maskPathText(value, secretRules);
+  return {
+    ...brief,
+    ...(brief.stakes === undefined ? {} : { stakes: mask(brief.stakes) }),
+    ...(brief.system === undefined ? {} : { system: mask(brief.system) }),
+    ...(brief.history === undefined ? {} : { history: mask(brief.history) }),
+    ...(brief.bar === undefined ? {} : { bar: mask(brief.bar) }),
+    ...(brief.calibration === undefined ? {} : { calibration: mask(brief.calibration) }),
+    ...(brief.preamble === undefined ? {} : { preamble: mask(brief.preamble) }),
+    notes: brief.notes.map((note) => ({ heading: note.heading, body: mask(note.body) })),
+  };
+}
+
+/** Masking for the project overview: the description, summary and release headings. */
+function maskOverview(
+  overview: ProjectOverview,
+  secretRules?: readonly SecretRule[]
+): ProjectOverview {
+  const mask = (value: string): string => maskPathText(value, secretRules);
+  return {
+    ...(overview.description === undefined ? {} : { description: mask(overview.description) }),
+    ...(overview.summary === undefined ? {} : { summary: mask(overview.summary) }),
+    releases: overview.releases.map(mask),
+  };
 }
 
 /**
@@ -2853,6 +2888,10 @@ export function generateSnapshot(
       // omitted from `digest` when it is off so an existing snapshot does not start reporting
       // configuration drift.
       maxParts: config.maxParts ?? null,
+      promptTask: config.promptTask,
+      ...(config.brief === undefined
+        ? {}
+        : { brief: { path: config.brief.path, digest: config.brief.digest } }),
       discovery: config.discovery ?? "auto",
       // A changed-files scope decides which files are in the snapshot, so the manifest that
       // describes the run has to name it.
@@ -3048,16 +3087,20 @@ export function generateSnapshot(
   if (readmeText !== null) manifest.artifacts.readme = artifactRecord(readmeText);
   // Rendered from the same manifest the reader gets, so the prompt cannot name a part, an
   // omission or a fingerprint that this run did not produce.
-  const promptText = artifacts.prompt
-    ? generatePrompt(
-        manifest,
-        artifacts,
-        config.attachmentSlots,
-        // Commit subjects are user input and reach an artifact, so they go through the same
-        // masking as every other name the run reproduces.
-        recentCommitSubjects(config.cwd).map((subject) => maskPathText(subject, config.secretRules))
-      )
-    : null;
+  // Everything the brief reproduces from outside the manifest - commits, the project summary,
+    // the owner file - is user input and goes through the same masking as any other name.
+    const promptText = artifacts.prompt
+      ? generatePrompt(manifest, artifacts, {
+          slots: config.attachmentSlots,
+          task: config.promptTask,
+          brief: maskOwnerBrief(config.brief, config.secretRules),
+          history: recentCommits(config.cwd).map((commit) => ({
+            subject: maskPathText(commit.subject, config.secretRules),
+            body: maskPathText(commit.body, config.secretRules),
+          })),
+          overview: maskOverview(readProjectOverview(config.cwd), config.secretRules),
+        })
+      : null;
   if (promptText !== null) manifest.artifacts.prompt = artifactRecord(promptText);
   if (projectTree !== null) manifest.artifacts.projectTree = artifactRecord(projectTree);
 

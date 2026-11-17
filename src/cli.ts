@@ -55,7 +55,14 @@ import {
 import { installPreCommitHook } from "./agent/hook.js";
 import type { CommandName } from "./agent/option-scope.js";
 import { COMMAND_OPTION_SCOPE, commandsForOption } from "./agent/option-scope.js";
-import type { CliOptions, Manifest, Mode, OutputFormat, ResolvedSnapshotConfig } from "./types.js";
+import type {
+  CliOptions,
+  Manifest,
+  Mode,
+  OutputFormat,
+  PromptTask,
+  ResolvedSnapshotConfig,
+} from "./types.js";
 import { escapeControls, formatNumber } from "./terminal.js";
 
 const VERSION = GENERATOR_VERSION;
@@ -111,6 +118,8 @@ export const CLI_OPTIONS = {
   "max-monolith-bytes": { type: "string" },
   "attachment-slots": { type: "string" },
   "max-parts": { type: "string" },
+  brief: { type: "string" },
+  "prompt-task": { type: "string" },
   "include-monolith": { type: "boolean" },
   "include-sensitive-files": { type: "boolean" },
   "skip-artifacts": { type: "string" },
@@ -191,6 +200,9 @@ Options:
                                 0 = no limit); PROMPT.md plans the delivery to fit
   --max-parts <n>               Experimental: grow the part budget until the snapshot has at
                                 most n parts, instead of adding parts as the code grows
+  --brief <path>                Owner-written half of PROMPT.md (stakes, system, history,
+                                bar, calibration); merged at fixed slots
+  --prompt-task <task>          audit | review | explain - which job the brief is for
   --skip-artifacts <names>      Comma-separated artifacts to omit
                                 (readme, manifest, parts, navigation,
                                  projectTree, audit, monolith)
@@ -282,6 +294,10 @@ interface ParsedInvocation {
   attachmentSlots?: number;
   /** `--max-parts`: the experimental part-count ceiling. */
   maxParts?: number;
+  /** `--brief`: path to the owner-written half of the brief. */
+  brief?: string;
+  /** `--prompt-task`: audit, review or explain. */
+  promptTask?: PromptTask;
   skipArtifacts?: string[];
   /**
    * The artifacts named by `--only-artifacts`, kept separately from the derived
@@ -375,6 +391,15 @@ export function parseCountOption(
     throw new UsageError(`--${optionName} must be at least ${minimum}, received "${raw}".`);
   }
   return value;
+}
+
+/** `--prompt-task`: an unknown job is a usage error, never a silent default. */
+function parsePromptTask(value: string | undefined): PromptTask | undefined {
+  if (value === undefined) return undefined;
+  if (value === "audit" || value === "review" || value === "explain") return value;
+  throw new UsageError(
+    '--prompt-task expects audit, review or explain, received "' + value + '".'
+  );
 }
 
 /** Parses and validates a comma-separated artifact list. */
@@ -727,6 +752,8 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       "attachment-slots"
     ),
     maxParts: parseCountOption(values["max-parts"] as string | undefined, "max-parts", 1),
+    brief: values.brief === undefined ? undefined : String(values.brief as string | boolean),
+    promptTask: parsePromptTask(values["prompt-task"] as string | undefined),
     skipArtifacts,
     onlyArtifacts,
     discovery: isDiscoveryMode(rawDiscovery) ? rawDiscovery : undefined,
@@ -1281,6 +1308,10 @@ async function runSetupCommand(
     if (invocation.maxParts !== undefined) {
       generateArgs.push("--max-parts", String(invocation.maxParts));
     }
+    if (invocation.brief !== undefined) generateArgs.push("--brief", invocation.brief);
+    if (invocation.promptTask !== undefined) {
+      generateArgs.push("--prompt-task", invocation.promptTask);
+    }
     if (invocation.skeleton === true) generateArgs.push("--skeleton");
     if (invocation.sarif === true) generateArgs.push("--sarif");
     // `main` runs the update check per invocation, so without this the nested `generate`
@@ -1641,6 +1672,8 @@ async function runCommand(argv: string[]): Promise<number> {
         maxMonolithBytes: invocation.maxMonolithBytes,
         attachmentSlots: invocation.attachmentSlots,
         maxParts: invocation.maxParts,
+        brief: invocation.brief,
+        promptTask: invocation.promptTask,
         skipArtifacts: invocation.skipArtifacts,
         // `--only-artifacts` is forwarded as itself, not only as the derived suppression list:
         // suppression cannot switch an artifact *on*, so a config that had turned one of the
@@ -2202,6 +2235,8 @@ async function runWatchLoop(
           maxMonolithBytes: invocation.maxMonolithBytes,
           attachmentSlots: invocation.attachmentSlots,
           maxParts: invocation.maxParts,
+          brief: invocation.brief,
+          promptTask: invocation.promptTask,
           skipArtifacts: invocation.skipArtifacts,
           onlyArtifacts: invocation.onlyArtifacts,
           discovery: invocation.discovery,

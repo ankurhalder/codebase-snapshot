@@ -474,6 +474,26 @@ export function buildAgentContract(): AgentContract {
           "that would merge them. It does not change the payload.",
       },
       {
+        flag: "--brief",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("brief"),
+        summary:
+          "Path to the owner-written half of PROMPT.md: Stakes, The system, What came before, The " +
+          "bar and Calibration replace or extend the generated prose; any other heading is kept as " +
+          "Owner notes. The measured headings cannot be redefined. A missing file is an error and " +
+          "an edited file is config drift.",
+      },
+      {
+        flag: "--prompt-task",
+        type: "string",
+        default: "audit",
+        appliesTo: optionAppliesTo("prompt-task"),
+        summary:
+          "Which job the brief is written for: audit (default), review or explain. It changes the " +
+          "opening section, not the standard.",
+      },
+      {
         flag: "--max-parts",
         type: "number",
         default: "unset",
@@ -721,6 +741,8 @@ export function buildAgentContract(): AgentContract {
         { key: "includeSensitiveFiles", type: "boolean", default: false, summary: "Emit .env / *.pem / credential files." },
         { key: "include", type: "string[]", default: "[]", summary: "Allow-list of globs; empty means everything." },
         { key: "excludePatterns", type: "string[]", default: "[]", summary: "Extra exclude globs." },
+        { key: "brief", type: "string", default: "unset", summary: "Path to the owner-written half of PROMPT.md. Recognised headings: Stakes, The system, What came before, The bar, Calibration; unknown headings are kept as Owner notes; measured headings are refused. The file is digested, so editing it is drift." },
+        { key: "promptTask", type: "string", default: "audit", summary: "Which job the brief is written for: audit, review or explain. The standard and the coverage duty are the same in all three." },
         { key: "maxParts", type: "number | null", default: null, summary: "Experimental: the most parts a snapshot may have. The per-part budget grows to fit, up to the run's own needs; the effective ceiling is recorded in manifest.budgets.maxPartBytes and may exceed maxPartBytes." },
         { key: "attachmentSlots", type: "number", default: 10, summary: "Files the destination accepts in one message (0 = no limit); PROMPT.md plans the delivery to fit. It does not change the payload, and it is not part of the config digest." },
         { key: "discovery", type: '"auto" | "git" | "walk"', default: "auto", summary: "How files are discovered; `walk` scans the tree and reads .gitignore directly when a .git directory cannot be listed." },

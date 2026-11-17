@@ -68,6 +68,12 @@ rather than an index. Paste it with the payload. It has two halves:
 - **Calibration**: the classes of defect that do not crash — a guard at one call site and not its
   twin, a budget shorter than the work it guards, a success flag that means the call returned.
 
+**The owner half** — when `brief` is configured (see [configuration](configuration.md#the-brief-what-only-you-can-write)),
+the five judgement sections come from that file instead of the generic prose: what is at stake, the
+system in the owner`s words (with the measured facts still following under "What the index
+records"), the history the owner has lived through, the bar this team applies, and the calibration
+examples from its own incidents. Each is marked as written by the project owner.
+
 **The apparatus** — this run only:
 
 - the fingerprint to quote back, the timestamp, the commit, whether the tree was dirty, and the

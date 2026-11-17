@@ -295,6 +295,61 @@ eleven parts next month.
 Treat it as experimental: `maxPartBytes` stays the honest control, and this is the knob for the
 case where the file count, not the byte count, is the binding constraint.
 
+## The brief: what only you can write
+
+`PROMPT.md` is generated, and half of it cannot be: what the software is *for*, what has already
+gone wrong, and which failures you would recognise. That is judgement, so it is supplied as a
+file and merged at fixed slots.
+
+```js
+export default {
+  brief: "docs/brief.md",   // relative to cwd; a missing file is an error
+  promptTask: "audit",      // audit | review | explain
+};
+```
+
+The file is plain markdown with five recognised headings:
+
+| Heading | What happens |
+| :--- | :--- |
+| `## Stakes` | rendered as its own section, right after the job |
+| `## The system` | replaces the generated narrative, and the index facts follow under "What the index records" |
+| `## What came before` | rendered above the generated commit ledger |
+| `## The bar` | replaces the standard |
+| `## Calibration` | replaces the example failures |
+
+```markdown
+<!-- docs/brief.md -->
+## Stakes
+Runs live production for one owner. A wrong cleanup deletes their data.
+
+## What came before
+Four rounds, 23 defects. The recurring shapes are a guard at the route but not the timer, and
+an ok flag that means the call returned.
+
+## Calibration
+- a grant signed for one recipe executing another recipe's deletions
+- a recipe that never worked, because its test supplied a number where the daemon sends a string
+```
+
+Any other `##` heading is kept, verbatim, under **Owner notes** — nothing is dropped because the
+merge did not recognise it. Every owner section is marked in the output as written by the project
+owner, so a reader can tell an assertion from a measurement.
+
+Three things are refused because they would make the document lie:
+
+- a heading that redefines a **measured** section (`Coverage`, `This snapshot`, `Attaching this`,
+  `The job`, `What you have`, `What a useful answer contains`, `Your task`) is a configuration
+  error, not an override;
+- a `brief` path that cannot be read is an error — a snapshot must not silently ship without the
+  half you wrote;
+- and the file is digested into the config digest, so editing the brief after generating makes
+  `validate` report drift. A stale brief is the same failure as a stale snapshot.
+
+`promptTask` changes only the opening section: `audit` (the default) asks for what is wrong or
+will break, `review` for what a change breaks, `explain` for how a subsystem works. The standard
+and the coverage duty are the same in all three.
+
 See [Snapshot output](output.md) for the layout and the manifest schema.
 
 ## Secrets: redaction

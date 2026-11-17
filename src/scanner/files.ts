@@ -937,18 +937,30 @@ export function defaultIgnoreReason(
   return null;
 }
 
+/** One commit, as the brief shows it: the subject and the why in the body. */
+export interface CommitRecord {
+  subject: string;
+  /** The body, whitespace collapsed and capped; empty when the commit had none. */
+  body: string;
+}
+
+const COMMIT_BODY_LIMIT = 400;
+
 /**
- * The last `limit` commit subjects, newest first; empty when git cannot answer.
+ * The last `limit` commits, newest first; empty when git cannot answer.
  *
- * Feeds the "what came before" section of `PROMPT.md`. A repository with no readable history
- * gets no history section rather than an invented one, so the caller is told whether the list
- * is empty and the prompt says so in words.
+ * Feeds the "what came before" section of `PROMPT.md`. The subject alone says what changed; the
+ * body usually says why, which is the part a reader can verify. A repository with no readable
+ * history gets no history section rather than an invented one, so the caller is told whether the
+ * list is empty and the brief says so in words.
  */
-export function recentCommitSubjects(cwd: string, limit = 10): string[] {
+export function recentCommits(cwd: string, limit = 10): CommitRecord[] {
   try {
     const stdout = childProcess.execFileSync(
       "git",
-      ["log", "-n", String(limit), "--pretty=%s", "--no-color"],
+      // \x1f between fields and \x1e between records: neither can appear in a commit message, so
+      // the parse cannot be confused by a message that contains a newline or a dash.
+      ["log", "-n", String(limit), "--pretty=format:%s%x1f%b%x1e", "--no-color"],
       {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
@@ -957,9 +969,24 @@ export function recentCommitSubjects(cwd: string, limit = 10): string[] {
       }
     );
     return stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+      .split("\x1e")
+      .map((record) => record.replace(/^\n+/, ""))
+      .filter((record) => record.length > 0)
+      .map((record) => {
+        const separator = record.indexOf("\x1f");
+        const subject = separator === -1 ? record : record.slice(0, separator);
+        const rawBody = separator === -1 ? "" : record.slice(separator + 1);
+        const body = rawBody
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .join(" ");
+        return {
+          subject: subject.trim(),
+          body: body.length > COMMIT_BODY_LIMIT ? body.slice(0, COMMIT_BODY_LIMIT - 1) + "…" : body,
+        };
+      })
+      .filter((commit) => commit.subject.length > 0);
   } catch {
     return [];
   }

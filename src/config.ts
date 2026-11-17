@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { stripJsonComments } from "./ast/structured.js";
+import { parseOwnerBrief } from "./generator/brief.js";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
 import {
   isDiscoveryMode,
@@ -21,6 +22,8 @@ import type {
   LayerRule,
   ResolvedArtifacts,
   ResolvedBudgets,
+  OwnerBrief,
+  PromptTask,
   ResolvedSnapshotConfig,
   SecretRuleInput,
   SnapshotConfig,
@@ -244,6 +247,8 @@ export function normalizeResolvedConfig(
     // is re-validated because the number reaches a rendered artifact.
     attachmentSlots: resolveAttachmentSlots(config.attachmentSlots),
     maxParts: resolveMaxParts(config.maxParts),
+    promptTask: resolvePromptTask(config.promptTask),
+    ...(config.brief === undefined ? {} : { brief: config.brief }),
     includeMonolith: artifacts.monolith,
     secretRules: compileSecretRules(config.secretRules),
     artifacts,
@@ -376,6 +381,7 @@ const CONFIG_KEY_NAMES = [
   "artifacts",
   "attachmentSlots",
   "branch",
+  "brief",
   "budgets",
   "changedSince",
   "cwd",
@@ -397,6 +403,7 @@ const CONFIG_KEY_NAMES = [
   "outDir",
   "preset",
   "previewHeadLines",
+  "promptTask",
   "staged",
   "previewTailLines",
   "secretRules",
@@ -931,6 +938,57 @@ function resolveMaxParts(value: unknown): number | null {
     );
   }
   return value;
+}
+
+/**
+ * Which job the brief is written for: `audit` (the default), `review` or `explain`.
+ *
+ * An unknown value is an error rather than a silent fall back to the default: the whole point of
+ * the setting is that the reader is told what to produce, and quietly producing the audit job for
+ * a request to explain a file would be the tool deciding something it was asked to decide.
+ */
+function resolvePromptTask(value: unknown): PromptTask {
+  if (value === undefined || value === null) return "audit";
+  if (value === "audit" || value === "review" || value === "explain") return value;
+  throw new Error(
+    'promptTask must be one of "audit", "review" or "explain" (received ' +
+      describeValue(value) +
+      ")."
+  );
+}
+
+/**
+ * Reads the owner brief and refuses one that cannot be merged.
+ *
+ * A path that does not exist is an error because the alternative is a snapshot whose brief
+ * silently lost the half the owner wrote. A reserved heading is an error because the merge would
+ * otherwise let prose overwrite a measured section.
+ */
+function readConfiguredBrief(cwd: string, value: unknown): OwnerBrief | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(
+      "brief must be a path to a markdown file (received " + describeValue(value) + ")."
+    );
+  }
+  const filePath = path.resolve(cwd, value);
+  let text: string;
+  try {
+    if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
+    text = fs.readFileSync(filePath, "utf8");
+  } catch {
+    throw new Error(
+      'brief "' + value + '" could not be read as a file; a snapshot must not ship without the ' +
+        "half of the brief the owner wrote."
+    );
+  }
+  const parsed = parseOwnerBrief(value, text);
+  if (parsed.problems.length > 0) {
+    throw new Error(
+      'brief "' + value + '" cannot be used:\n  - ' + parsed.problems.join("\n  - ")
+    );
+  }
+  return parsed.brief;
 }
 
 function strictPositiveInteger(value: unknown, fallback: number, label: string): number {
@@ -1534,6 +1592,13 @@ export function resolveConfig(
     "`includeSensitiveFiles`"
   );
 
+  // The owner-written half of the brief, read here so a missing or malformed file fails the
+  // run before a snapshot is written, and digested so a later edit is drift rather than silence.
+  const configuredBrief = readConfiguredBrief(
+    cwd,
+    cliOptions?.brief ?? userConfig?.brief
+  );
+
   // The resolved output directories are this tool's own artifacts, never source.
   // Leaving them in the scan made the fingerprint change on every run and made
   // `validate` report `modified:` for files `generate` had just written.
@@ -1563,6 +1628,8 @@ export function resolveConfig(
       cliOptions?.attachmentSlots ?? userConfig?.attachmentSlots
     ),
     maxParts: resolveMaxParts(cliOptions?.maxParts ?? userConfig?.maxParts),
+    promptTask: resolvePromptTask(cliOptions?.promptTask ?? userConfig?.promptTask),
+    ...(configuredBrief === undefined ? {} : { brief: configuredBrief }),
     ...(changedSince === undefined ? {} : { changedSince }),
     ...(staged ? { staged } : {}),
     ...(withDependents ? { withDependents } : {}),
@@ -1682,6 +1749,12 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     // Only when the experimental mode is on: `null` is the off switch, and writing it into the
     // material would change the digest of every snapshot taken before the setting existed.
     ...(config.maxParts === null ? {} : { maxParts: config.maxParts }),
+    // The default value is omitted for the same reason: a snapshot taken before the setting
+    // existed kept the audit job, so it must keep the digest it was written with.
+    ...(config.promptTask === "audit" ? {} : { promptTask: config.promptTask }),
+    // The owner brief is instruction, not payload, but it changes what the snapshot tells a
+    // reader to do, so a changed brief is drift exactly like a changed budget.
+    ...(config.brief === undefined ? {} : { brief: config.brief.digest }),
     artifacts: config.artifacts,
     include: config.include,
     excludePatterns: config.excludePatterns,

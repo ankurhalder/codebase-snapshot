@@ -384,6 +384,10 @@ export interface ManifestConfigSnapshot {
   attachmentSlots?: number;
   /** The part-count ceiling the run enforced, `null` when the experimental mode was off. */
   maxParts?: number | null;
+  /** Which job the brief was written for. */
+  promptTask?: PromptTask;
+  /** The owner brief this run was given, by path and digest. */
+  brief?: { path: string; digest: string };
   /** How files were discovered; `undefined` on manifests written before this was recorded. */
   discovery?: DiscoveryMode;
   /** The changed-files scope the snapshot was taken over, when one was used. */
@@ -526,6 +530,31 @@ export interface LayerRule {
  * is the one exception, because it duplicates the entire payload: it follows
  * `includeMonolith` (off by default) unless set here explicitly.
  */
+/**
+ * The job the brief is written for.
+ *
+ * The standard and the coverage duty are the same in all three; what changes is what the
+ * reader is asked to produce, in the opening section of the brief.
+ */
+export type PromptTask = "audit" | "review" | "explain";
+
+/** The owner-written half of the brief, parsed and hashed. */
+export interface OwnerBrief {
+  /** Path as the user wrote it, for provenance. */
+  path: string;
+  /** sha256 of the file as read, so changing it is configuration drift. */
+  digest: string;
+  stakes?: string;
+  system?: string;
+  history?: string;
+  bar?: string;
+  calibration?: string;
+  /** Headings the merge did not recognise, kept rather than dropped. */
+  notes: Array<{ heading: string; body: string }>;
+  /** Text before the first heading, when there is any. */
+  preamble?: string;
+}
+
 export interface ArtifactSelection {
   /** `README.md` — the orientation page for humans and models. */
   readme?: boolean;
@@ -616,6 +645,15 @@ export interface SnapshotConfig {
    */
   maxParts?: number | null;
   /**
+   * Path to the owner-written half of the brief, relative to `cwd`.
+   *
+   * The generated brief can state the job, the map and the standard; it cannot say what the
+   * software is for or what has already gone wrong. That is judgement, and it is supplied here.
+   */
+  brief?: string;
+  /** Which job the brief is written for. Defaults to `audit`. */
+  promptTask?: PromptTask;
+  /**
    * How files are discovered; `auto` picks git when it can list files and walks the tree
    * otherwise.
    *
@@ -692,6 +730,10 @@ export interface ResolvedSnapshotConfig {
   attachmentSlots: number;
   /** The part-count ceiling, or `null` when the experimental mode is off. */
   maxParts: number | null;
+  /** The job the brief is written for. */
+  promptTask: PromptTask;
+  /** The parsed owner brief, when one was configured. */
+  brief?: OwnerBrief;
   /**
    * How files are discovered; `auto` picks git when it can list files and walks the tree otherwise.
    * Optional because a resolved config can arrive from an older caller that never named it — every
@@ -742,6 +784,10 @@ export interface CliOptions {
   attachmentSlots?: number;
   /** `--max-parts`: the experimental part-count ceiling. */
   maxParts?: number | null;
+  /** `--brief`: path to the owner-written half of the brief. */
+  brief?: string;
+  /** `--prompt-task`: which job the brief is written for. */
+  promptTask?: PromptTask;
   maxPartBytes?: number;
   maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;
