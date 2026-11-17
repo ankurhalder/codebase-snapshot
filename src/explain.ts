@@ -376,6 +376,22 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     : undefined;
   result.part = entry?.part ?? null;
 
+  // A selection (`--slice`, `--budget-tokens`) drops files that pass every per-file rule, so the
+  // rules above cannot see it. The manifest is the record of that decision and is the only honest
+  // source: without it the answer was "not in the last snapshot", which is true and useless.
+  if (entry === undefined) {
+    const record = manifest?.skipped?.find((skip) => skip.path === relative);
+    if (record !== undefined && (record.reason === "not-selected" || record.reason === "unchanged")) {
+      result.included = false;
+      result.reason = record.reason;
+      result.detail =
+        record.detail ??
+        (record.reason === "not-selected"
+          ? "the snapshot was generated for a selection (--slice or --budget-tokens) that did not include this path"
+          : "the snapshot was generated with a changed-files scope that did not include this path");
+    }
+  }
+
   return result;
 }
 

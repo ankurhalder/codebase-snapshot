@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.61
+
+- **`explain` answers why a selection dropped a file.** On a slice or budget snapshot, a file that
+  passes every per-file rule was reported as "part: (not in the last snapshot; run generate)" — true
+  and useless. The manifest records the decision, so explain now reads it and answers
+  `included: no, reason: not-selected` with the detail the run wrote.
+- The same lookup covers `unchanged` for a snapshot that records a changed-files scope.
+
+Verified: on a slice snapshot, explaining a dropped file reports `not-selected` and names the
+selection; the six earlier slice tests still pass.
 ## 0.12.60
 
 - The version note at the top of this file still claimed there would be no `0.13` and that every

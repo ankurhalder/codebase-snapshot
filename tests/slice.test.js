@@ -93,3 +93,13 @@ test("a budget snapshot validates clean too", (t) => {
   assert.equal(run(["generate", "--budget-tokens", "800"], root).code, 0);
   assert.equal(run(["validate"], root).code, 0);
 });
+
+test("explain says a selection dropped the file", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--slice", "chargeCard"], root).code, 0);
+  const explained = run(["explain", "src/unrelated.ts"], root);
+  assert.equal(explained.code, 0, explained.out);
+  assert.match(explained.out, /included\s+no/);
+  assert.match(explained.out, /not-selected/);
+  assert.match(explained.out, /selection|slice/);
+});
