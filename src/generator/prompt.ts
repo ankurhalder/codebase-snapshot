@@ -101,6 +101,14 @@ export function generatePrompt(
     ""
   ];
   if (brief?.preamble !== undefined) lines.push(text(brief.preamble), "");
+  if (manifest.config.stripComments === true) {
+    lines.push(
+      "Comment text was removed from JavaScript and TypeScript bodies before emission. Line " +
+        "numbers did not move, so a citation is still a source line; the files record " +
+        "`inclusionMode: \"comments-stripped\"`.",
+      ""
+    );
+  }
   if (manifest.budget !== undefined) {
     lines.push(
       "This snapshot was fitted to a **token budget** of " +

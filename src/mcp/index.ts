@@ -10,6 +10,7 @@ export { createMcpServer } from "./server.js";
 export type { McpServer, McpServerOptions } from "./server.js";
 
 export { buildTools } from "./tools.js";
+export { stripComments, isCommentStrippable } from "../generator/comments.js";
 export { generateInWorker } from "./generate-worker.js";
 export type { GenerateSummary, WorkerResults } from "./generate-worker.js";
 // The part reader is part of the contract this module documents: a read is answered from

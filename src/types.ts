@@ -23,8 +23,10 @@ export type TextEncoding = "utf-8" | "utf-8-lossy" | "utf-16le" | "utf-16be";
  * How much of a file made it into the snapshot.
  * `full`    – the complete file body was emitted.
  * `preview` – the body was truncated (by lines and/or bytes) before emission.
+ * `signatures` – function and method bodies were collapsed to an empty block.
+ * `comments-stripped` – comment text was removed (line numbers preserved) before emission.
  */
-export type InclusionMode = "full" | "preview" | "signatures";
+export type InclusionMode = "full" | "preview" | "signatures" | "comments-stripped";
 
 export interface SourceSummary {
   directives: string[];
@@ -380,6 +382,8 @@ export interface ManifestConfigSnapshot {
    */
   maxMonolithBytes?: number | null;
   includeSensitiveFiles: boolean;
+  /** Whether comment text was stripped from JS/TS bodies in this run. */
+  stripComments?: boolean;
   /**
    * The file-slot ceiling `PROMPT.md` was planned for; `0` for no limit.
    *
@@ -766,6 +770,8 @@ export interface SnapshotConfig {
   sarif?: boolean;
   /** How many commits `reports/log.md` carries when it is enabled (default 20). */
   logCount?: number;
+  /** Remove comment text from JavaScript/TypeScript bodies (line numbers preserved). */
+  stripComments?: boolean;
   /**
    * Which single-file pack to write: `single` (markdown), `xml` or `json`.
    *
@@ -842,6 +848,8 @@ export interface ResolvedSnapshotConfig {
   sarif?: boolean;
   /** How many commits `reports/log.md` carries when it is enabled. */
   logCount: number;
+  /** Comment stripping for JS/TS bodies. */
+  stripComments: boolean;
   /** The chosen single-file pack, or null for the historical pair. */
   pack: "single" | "xml" | "json" | null;
   /** Also include the files that import a changed one. */
@@ -885,6 +893,8 @@ export interface CliOptions {
   includeLogs?: number;
   /** `--token-tree`: write reports/tokens.md. */
   tokenTree?: boolean;
+  /** `--strip-comments`: remove comment text from JS/TS bodies. */
+  stripComments?: boolean;
   maxPartBytes?: number;
   maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;

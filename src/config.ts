@@ -1686,6 +1686,11 @@ export function resolveConfig(
     ...(skeleton ? { skeleton } : {}),
     ...(sarif ? { sarif } : {}),
     pack,
+    stripComments: strictBoolean(
+      (cliOptions as { stripComments?: unknown } | undefined)?.stripComments ?? userConfig?.stripComments,
+      false,
+      "`stripComments`"
+    ),
     logCount: resolveLogCount(
       (cliOptions as { logCount?: unknown } | undefined)?.logCount ?? userConfig?.logCount
     ),

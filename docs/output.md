@@ -261,7 +261,9 @@ has several at once, and "within budget" cannot be answered without knowing whic
   line — the block as written. It is not a count of surviving source content, which is why
   `includedLines + omittedLines` is one more than `lines` for a preview and never a sum a reader
   should reconcile.
-- `inclusionMode` is `preview` exactly when `isPreviewTruncated` is `true`. There used to be two
+- `inclusionMode` is `preview` exactly when `isPreviewTruncated` is `true`. It is
+  `comments-stripped` when `--strip-comments` removed comment text from a JavaScript/TypeScript
+  body: the body is not the file verbatim, and the manifest says so instead of reporting `full`. There used to be two
   routes to it, and the second — a file *under* `largeFileBytes` but too big for its part, cut
   by the partitioner with `isLarge: false` — is what made the manifest unreadable: it looked
   like a preview chosen by policy while 57 % of the file was gone. That configuration is now a

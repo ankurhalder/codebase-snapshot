@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { importsOfFile } from "./ast/imports.js";
 import { classifyKind, classifyLayer, matchRule } from "./config.js";
 import { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
+import { isCommentStrippable, stripComments } from "./generator/comments.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
 import { resolveChangedScope } from "./scanner/changed.js";
@@ -338,9 +339,21 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
       const skeleton = skeletonizeTypeScript(text, relative);
       if (skeleton.collapsed > 0) inclusionMode = "signatures";
     }
+    if (
+      inclusionMode === "full" &&
+      config.stripComments === true &&
+      isCommentStrippable(relative) &&
+      stripComments(text, relative).removed > 0
+    ) {
+      inclusionMode = "comments-stripped";
+    }
     if (inclusionMode !== "signatures" && buffer.length > config.largeFileBytes) {
       const preview = truncatePreview(text, config.previewHeadLines, config.previewTailLines);
-      inclusionMode = preview.isTruncated ? "preview" : "full";
+      inclusionMode = preview.isTruncated
+        ? "preview"
+        : inclusionMode === "comments-stripped"
+          ? "comments-stripped"
+          : "full";
     }
     result.inclusionMode = inclusionMode;
   }

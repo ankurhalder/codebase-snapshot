@@ -450,7 +450,7 @@ export function describeManifestShapeProblem(value: unknown): string | null {
         return `a "files" entry "${key}" must be a non-negative integer`;
       }
     }
-    if (!["full", "preview", "signatures"].includes(String(fields.inclusionMode))) {
+    if (!["full", "preview", "signatures", "comments-stripped"].includes(String(fields.inclusionMode))) {
       return 'a "files" entry has an unknown "inclusionMode"';
     }
   }

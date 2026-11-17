@@ -27,6 +27,7 @@ import { generateMonolithJson, generateMonolithMarkdown } from "./generator/mono
 import { generateNavigation } from "./generator/navigation.js";
 import { planForQuestion } from "./mcp/retrieval.js";
 import { generateMonolithXml } from "./generator/monolith.js";
+import { isCommentStrippable, stripComments } from "./generator/comments.js";
 import { generateDiffReport } from "./generator/diff.js";
 import { generateLogReport } from "./generator/log.js";
 import { generateTokenTree } from "./generator/tokens.js";
@@ -270,7 +271,21 @@ function deriveFile(
   /** Computed once: the skeleton decision and the summary decision must use the same ceiling. */
   const oversizeForSummary =
     Buffer.byteLength(rawContent, "utf8") > SUMMARY_MAX_SOURCE_BYTES;
-  let finalContent = redacted;
+  /**
+   * What the body is built from. Comment stripping happens before the skeleton and preview
+   * decisions so those two measure what will actually be emitted, and it keeps newlines so every
+   * line number in the manifest still points at the same line of the source.
+   */
+  let bodySource = redacted;
+  let commentsStripped = false;
+  if (config.stripComments === true && isCommentStrippable(relativePath) && !oversizeForSummary) {
+    const stripped = stripComments(redacted, relativePath);
+    if (stripped.removed > 0) {
+      bodySource = stripped.text;
+      commentsStripped = true;
+    }
+  }
+  let finalContent = bodySource;
   let isPreviewTruncated = false;
   let truncationReason: TruncationReason | undefined;
   let omittedRanges: Array<[number, number]> = [];
@@ -287,7 +302,7 @@ function deriveFile(
   // guard below exists to avoid. A file this large is emitted as a preview, so a skeleton of it
   // would describe lines the snapshot does not contain anyway.
   if (config.skeleton === true && isSkeletonizable(relativePath) && !oversizeForSummary) {
-    const skeleton = skeletonizeTypeScript(redacted, relativePath);
+    const skeleton = skeletonizeTypeScript(bodySource, relativePath);
     if (skeleton.collapsed > 0) {
       finalContent = skeleton.text;
       inclusionMode = "signatures";
@@ -296,11 +311,11 @@ function deriveFile(
   }
 
   if (isLarge && inclusionMode !== "signatures") {
-    const preview = truncatePreview(redacted, config.previewHeadLines, config.previewTailLines);
+    const preview = truncatePreview(bodySource, config.previewHeadLines, config.previewTailLines);
     finalContent = preview.content;
     isPreviewTruncated = preview.isTruncated;
     includedLines = preview.includedLines;
-    inclusionMode = isPreviewTruncated ? "preview" : "full";
+    inclusionMode = isPreviewTruncated ? "preview" : commentsStripped ? "comments-stripped" : "full";
     if (isPreviewTruncated) {
       // A file over largeFileBytes, and resolveConfig refuses a largeFileBytes above
       // maxPartBytes, so this preview is the only shape the file could take. That is what
@@ -308,6 +323,12 @@ function deriveFile(
       truncationReason = "large-file-budget";
       omittedRanges = preview.omittedRanges;
     }
+  }
+
+  // An unstripped, unpreviewed body is `full`; a stripped one says so, because a reader
+  // comparing the snapshot against the file must be told what was removed.
+  if (!isPreviewTruncated && inclusionMode === "full" && commentsStripped) {
+    inclusionMode = "comments-stripped";
   }
 
   let summary: FileEntry["summary"];
@@ -3093,6 +3114,7 @@ export function generateSnapshot(
       // invisible in the manifest that is supposed to describe the run.
       maxMonolithBytes: config.maxMonolithBytes ?? null,
       includeSensitiveFiles: config.includeSensitiveFiles,
+      ...(config.stripComments === true ? { stripComments: true } : {}),
       // The destination the instructions were written for. Not part of `digest`: the payload is
       // identical whatever this says, and a new delivery preference must not make an existing
       // snapshot fail `validate` as configuration drift.

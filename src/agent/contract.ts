@@ -642,6 +642,17 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--strip-comments",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("strip-comments"),
+        summary:
+          "Remove comment text from JavaScript and TypeScript bodies before emission. Newlines are " +
+          "kept, so every line number in the manifest still points at the same source line, and " +
+          "the file records inclusionMode \"comments-stripped\". The scanner decides what is a " +
+          "comment, so `//` inside a string or template is left alone.",
+      },
+      {
         flag: "--workspace",
         type: "string",
         default: "unset",

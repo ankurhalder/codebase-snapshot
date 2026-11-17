@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.12.39 (project dependency ^0.12.39)
+   Branch: main | Part budget: 300 KB | Generator: 0.12.40 (project dependency ^0.12.40)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.39
+   Added devDependency: codebase-snapshot ^0.12.40
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.39
+   Added devDependency: codebase-snapshot ^0.12.40
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -484,6 +484,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--prompt-task <task>` | string | `audit` | generate, validate | `audit`, `review` or `explain` — which job the brief is written for. Changes the opening section, not the standard. |
 | `--budget-tokens <n>` | count | unset | generate | Fit the snapshot into n tokens by selecting whole files (entry points, then the most-imported). Records a `budget` block; the rest are `not-selected`. See [budget](budget.md). |
 | `--sign` | flag | off | generate | Sign `manifest.json` with Ed25519 and write `signature.json`. Key from `SNAPSHOT_SIGNING_KEY`, else generated (trust on first use). See [signing](signing.md). |
+| `--strip-comments` | flag | off | generate, validate | Remove comment text from JavaScript/TypeScript bodies. Newlines are kept, so line numbers do not move; files record `inclusionMode: "comments-stripped"`. |
 | `--workspace <a,b>` | list | unset | generate | One snapshot per member under `<outDir>/<name>`, plus `WORKSPACE.json`. Exits 1 if any member failed. See [workspaces](workspace.md). |
 | `--pack <mode>` | string | unset | generate, validate | Also write one full-repository file: `single` (markdown), `xml` or `json`. Unset keeps the `--include-monolith` pair. |
 | `--slice <question>` | string | unset | generate | Narrow the snapshot to what the retrieval planner picks for this question. Records a `slice` block and `skipped[]` reasons `not-selected`. See [slices](slice.md). |

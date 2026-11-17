@@ -179,6 +179,7 @@ export const CLI_OPTIONS = {
   sign: { type: "boolean" },
   "budget-tokens": { type: "string" },
   workspace: { type: "string" },
+  "strip-comments": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -240,6 +241,7 @@ Options:
   --sign                        Sign manifest.json (ed25519; SNAPSHOT_SIGNING_KEY or a fresh key)
   --budget-tokens <n>           Fit the snapshot into n tokens, highest value per token first
   --workspace <a,b>             One snapshot per member, plus WORKSPACE.json
+  --strip-comments              Remove comment text from JS/TS bodies (line numbers preserved)
   --pack <single|xml|json>      Also write one full-repository file in that shape
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
@@ -413,6 +415,8 @@ interface ParsedInvocation {
   budgetTokens?: number;
   /** `--workspace`: comma-separated members, one snapshot each plus WORKSPACE.json. */
   workspace?: string;
+  /** `--strip-comments`: remove comment text from JS/TS bodies. */
+  stripComments?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -877,6 +881,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     tokenTree: values["token-tree"] === true ? true : undefined,
     sign: values.sign === true ? true : undefined,
     workspace: values.workspace === undefined ? undefined : String(values.workspace),
+    stripComments: values["strip-comments"] === true ? true : undefined,
     budgetTokens:
       values["budget-tokens"] === undefined
         ? undefined
@@ -1955,6 +1960,7 @@ async function runCommand(argv: string[]): Promise<number> {
         ...(invocation.includeDiffs === true ? { includeDiffs: true } : {}),
         ...(invocation.includeLogs === undefined ? {} : { includeLogs: invocation.includeLogs }),
         ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
+        ...(invocation.stripComments === true ? { stripComments: true } : {}),
         ...(invocation.pack === undefined ? {} : { pack: invocation.pack }),
         brief: invocation.brief,
         promptTask: invocation.promptTask,

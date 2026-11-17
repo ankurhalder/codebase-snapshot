@@ -26,6 +26,28 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.40
+
+**`--strip-comments`: less prose, same line numbers.**
+
+- Removes comment text from JavaScript and TypeScript bodies before emission. The TypeScript
+  **parser** decides what is a comment, so a marker inside a string, a template literal, a regex
+  literal or JSX attribute is left alone — the case a regular expression gets wrong.
+- Newlines inside removed comments are kept, so every line number in the manifest still points at
+  the same source line. Files record `inclusionMode: "comments-stripped"` rather than `full`, and
+  the brief says comments were removed.
+- `--strip-comments` is accepted by `validate` (it changes the recorded configuration), and `explain`
+  reports the same mode `generate` would choose.
+
+Verified: a fixture with a URL, a template literal, a regex and block comments loses only the
+comments; line counts and `originalLines` are unchanged; markdown is untouched; health stays clean.
+
+## 0.12.39
+
+- The roadmap records what shipped, with the version that shipped it, rather than a wall of
+  `planned` rows that no longer describe the repository.
+- The workspace page title fits the site title budget that `audit-site` enforces.
+
 ## 0.12.38
 
 **`--workspace a,b`: several repositories, one deliverable.**
