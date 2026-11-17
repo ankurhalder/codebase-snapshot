@@ -180,7 +180,16 @@ export function buildResourceProvider(): ResourceProvider {
         },
       ];
 
+      // A resource in `resources/list` has to be readable. These reports are opt-in, so they are
+      // advertised only when the run wrote the file; listing all six made every read of an absent
+      // report an error the client could have avoided by asking what exists.
+      const workspace = await workspaceFor(context);
+      const reportsDir =
+        "error" in workspace ? null : path.resolve(workspace.root, workspace.config.outDir, "reports");
       for (const [uri, report] of REPORT_URIS) {
+        const present =
+          reportsDir !== null && fs.existsSync(path.join(reportsDir, report.file));
+        if (!present) continue;
         resources.push({
           uri,
           name: report.file.replace(/\.md$/, ""),
@@ -193,7 +202,6 @@ export function buildResourceProvider(): ResourceProvider {
         });
       }
 
-      const workspace = await workspaceFor(context);
       if ("error" in workspace) return resources;
 
       const read = readManifest(workspace);

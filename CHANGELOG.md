@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.62
+
+- **`resources/list` no longer advertises a report that was never written.** The three opt-in
+  reports were listed unconditionally, so a client that trusted the list got an error on every read
+  of a report the run did not produce. A resource in the list is now a promise that the read works;
+  asking for an absent report directly still explains why it is not there.
+- The reports directory is resolved against the repository root, so a relative `outDir` in the
+  configured project is found instead of being resolved against the process's working directory.
+
+Verified: a default snapshot lists `reports/audit` and not `reports/diff`; generating with
+`tokenTree: true` makes `reports/tokens` appear and readable.
 ## 0.12.61
 
 - **`explain` answers why a selection dropped a file.** On a slice or budget snapshot, a file that

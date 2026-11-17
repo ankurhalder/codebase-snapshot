@@ -346,9 +346,11 @@ test("an opt-in report is advertised, and its absence is explained", async (t) =
     );
   }
 
+  // `resources/list` is a promise that a read will work: a report that was not written is not
+  // advertised. Asking for it directly still gets the explanation above.
   const listed = (await provider.list(context)).map((resource) => resource.uri);
   for (const uri of ["snapshot://reports/diff", "snapshot://reports/log", "snapshot://reports/tokens"]) {
-    assert.ok(listed.includes(uri), uri + " is listed");
+    assert.ok(!listed.includes(uri), uri + " is not advertised when absent");
   }
 });
 
@@ -381,4 +383,22 @@ test("every tool states its cost, and tools/list reports it", async (t) => {
       tool.name + " states a cost"
     );
   }
+});
+
+test("a report resource is listed only when the run wrote it", async (t) => {
+  const root = makeFixture(t);
+  await call("snapshot_generate", {}, contextFor(root));
+  const context = contextFor(root);
+  const provider = buildResourceProvider();
+
+  const before = (await provider.list(context)).map((resource) => resource.uri);
+  assert.ok(before.includes("snapshot://reports/audit"), "a default report is listed");
+  assert.ok(!before.includes("snapshot://reports/diff"), "an opt-in report that was not written is not listed");
+  assert.ok(!before.includes("snapshot://reports/tokens"), "nor the token tree");
+
+  await call("snapshot_generate", { tokenTree: true }, context);
+  const after = (await provider.list(context)).map((resource) => resource.uri);
+  assert.ok(after.includes("snapshot://reports/tokens"), "the report this run wrote is listed");
+  const text = await provider.read("snapshot://reports/tokens", context);
+  assert.match(text.text, /Token/);
 });
