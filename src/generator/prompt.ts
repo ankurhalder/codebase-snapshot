@@ -186,6 +186,11 @@ export function generatePrompt(
   if (wrote("navigation")) accompanying.push("`reports/navigation.md`");
   if (wrote("projectTree")) accompanying.push("`reports/project-tree.md`");
   if (wrote("audit")) accompanying.push("`reports/audit.md`");
+  // The opt-in reports were written by this run and are not named by the rest of the brief, so
+  // the one list of "what else you were given" has to carry them or the reader never opens them.
+  if (manifest.artifacts?.diff !== undefined) accompanying.push("`reports/diff.md`");
+  if (manifest.artifacts?.log !== undefined) accompanying.push("`reports/log.md`");
+  if (manifest.artifacts?.tokenTree !== undefined) accompanying.push("`reports/tokens.md`");
   lines.push(...deliverySection(manifest, wrote("parts"), slots, accompanying));
 
   lines.push(

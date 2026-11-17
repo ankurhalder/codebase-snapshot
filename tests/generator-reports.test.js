@@ -103,3 +103,13 @@ test("deleting an opt-in report fails validation with its path", (t) => {
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /tokens\.md/);
 });
+
+test("the brief names the opt-in reports this run wrote", (t) => {
+  const root = makeRepo(t);
+  fs.appendFileSync(path.join(root, "src", "a.ts"), "export const changed = true;\n");
+  assert.equal(run(["generate", "--token-tree", "--include-diffs"], root).code, 0);
+  const prompt = fs.readFileSync(path.join(root, "snapshot", "PROMPT.md"), "utf8");
+  assert.match(prompt, /reports\/tokens\.md/);
+  assert.match(prompt, /reports\/diff\.md/);
+  assert.doesNotMatch(prompt, /reports\/log\.md/, "log was not requested");
+});

@@ -16,7 +16,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 7 | `snapshot_health` — audit a generated snapshot (see Phase 3) | shipped 0.12.15 |
 | 8 | Streamable HTTP transport (`--http`) with CORS, bearer token, loopback default | shipped 0.12.18 |
 | 9 | Legacy SSE transport for older clients | shipped 0.12.29 |
-| 10 | 20+ tools, namespaced, with a generated contract and per-tool cost estimates | 14 shipped; more planned |
+| 10 | 20+ tools, namespaced, with a generated contract and per-tool cost estimates | shipped 0.12.46: 21 tools; per-tool cost estimates still planned |
 
 ## Phase 2 — Remote repositories and the browser (0.13.x)
 
@@ -52,7 +52,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 26 | `--pack single|xml|json`: one file, as a mode, never the default | shipped 0.12.31 |
 | 27 | Comment and blank-line stripping (`--strip-comments`, `--strip-empty-lines`) | planned |
 | 28 | Multi-language structural parsers: Python, Go, Rust, Java, C#, Ruby, PHP | shipped before 0.12.15; pinned by `tests/languages.test.js` in 0.12.42 |
-| 29 | Base64/binary truncation policy | planned |
+| 29 | Base64/binary truncation policy | not applicable: binaries are skipped by extension and content, never base64-encoded |
 
 ## Phase 5 — Things neither product has (0.16.x)
 
@@ -60,10 +60,10 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | - | :--- | :--- |
 | 30 | Task-scoped slicing from the CLI (`--slice "question"`), sharing the MCP planner | shipped 0.12.26 |
 | 31 | Delta packs: what changed since a previous snapshot, with context | shipped 0.12.25 |
-| 32 | Multi-repo / monorepo workspace snapshots with cross-references | shipped 0.12.38 (per-member snapshots + WORKSPACE.json; cross-references still planned) |
+| 32 | Multi-repo / monorepo workspace snapshots with cross-references | shipped 0.12.38–0.12.45: per-member snapshots, WORKSPACE.json, cross-member import links |
 | 33 | Symbol-level packs with call-site evidence | planned |
 | 34 | Signed manifests (Ed25519) behind `--sign` | shipped 0.12.32 |
-| 35 | Budget planner: "fit this repo into N tokens" with a quality report | shipped 0.12.33 (selection + record; quality report planned) |
+| 35 | Budget planner: "fit this repo into N tokens" with a quality report | shipped 0.12.33 + coverage report in 0.12.44 |
 
 ## Phase 6 — Polish and proof (0.17.0)
 

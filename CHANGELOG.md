@@ -26,6 +26,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.48
+
+- **The brief names the opt-in reports this run wrote.** `PROMPT.md` has one list of "what else you
+  were given"; `reports/diff.md`, `reports/log.md` and `reports/tokens.md` were missing from it, so a
+  reader was never told to open a report the run had just produced. Each is listed when — and only
+  when — the manifest records it.
+- Roadmap statuses brought up to date: 21 tools, workspace cross-links, the budget coverage report,
+  and the binary files item closed as not applicable (binaries are skipped, never base64-encoded).
+
+Verified: a run with `--token-tree --include-diffs` names both reports and does not name the log it
+was not asked for; full `verify` green at 1279 tests, 1271 pass, 0 fail.
 ## 0.12.47
 
 - **`snapshot_plan_for` includes the callers of its strongest matches.** Dependencies alone answer
