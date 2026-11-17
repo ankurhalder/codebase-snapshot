@@ -43,6 +43,9 @@ when the command exits; `--keep-clone` keeps it and prints the path.
 
 `--allow-private` exists because "I know what I am doing" is a real answer. It is not a default.
 
+The same path backs the **browser page**: paste a URL into `serve` and it clones with these rules,
+generates into a temporary snapshot, and shows it. The clone is removed when the server exits.
+
 ## Private repositories
 
 Set `GITHUB_TOKEN` (or `GH_TOKEN`). The token is passed to git through the environment as an HTTP

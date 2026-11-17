@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { generateSnapshot } from "../index.js";
 import { createServer } from "../mcp/run.js";
+import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
+import type { Manifest } from "../types.js";
 import { writeZip } from "./zip.js";
 import { SERVE_PAGE } from "./ui.js";
 
@@ -27,6 +29,8 @@ export interface ServeOptions {
   host?: string;
   port?: number;
   token?: string | null;
+  /** Allow private addresses and file: URLs for remote sources (tests and air-gapped mirrors). */
+  allowPrivate?: boolean;
   log?: (line: string) => void;
 }
 
@@ -60,6 +64,8 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
     throw new Error("Refusing to serve " + host + " without a token.");
   }
   const mcp = createServer({ cwd: options.cwd, log });
+  /** Clones made by this process; removed when it closes, because the page can still be reading them. */
+  const temporaryClones = new Set<string>();
 
   const authorized = (request: http.IncomingMessage): boolean => {
     if (token === null) return true;
@@ -177,15 +183,35 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             send(400, { error: "source is empty" });
             return;
           }
-          if (/^https?:\/\//i.test(source)) {
-            send(400, {
-              error:
-                "Remote URLs are not enabled in this build. Clone the repository and use its local path, " +
-                "or wait for the remote ingestion release.",
-            });
-            return;
+          const isRemote = /^(https?|file):\/\//i.test(source);
+          let target: string;
+          let provenance: Manifest["source"];
+          if (isRemote) {
+            const parsed = parseRemoteSource(source, { allowPrivate: options.allowPrivate === true });
+            if (!parsed.ok) {
+              send(400, { error: parsed.message });
+              return;
+            }
+            try {
+              if (parsed.source.kind === "https") {
+                await assertPublicHost(parsed.source.host, options.allowPrivate === true);
+              }
+              const clone = await cloneRepository(parsed.source, {
+                dest: makeCloneDirectory(),
+                token: process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? null,
+                allowPrivate: options.allowPrivate === true,
+                log,
+              });
+              temporaryClones.add(clone.directory);
+              target = clone.directory;
+              provenance = clone.provenance;
+            } catch (error) {
+              send(400, { error: "Remote fetch failed: " + (error as Error).message });
+              return;
+            }
+          } else {
+            target = path.resolve(options.cwd, source);
           }
-          const target = path.resolve(options.cwd, source);
           let stat: fs.Stats;
           try {
             stat = fs.statSync(target);
@@ -199,10 +225,12 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           }
           const started = Date.now();
           try {
-            const manifest = generateSnapshot({ cwd: target });
+            const manifest = generateSnapshot({ cwd: target }, {
+              ...(provenance === undefined ? {} : { source: provenance }),
+            });
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
             send(200, {
-              path: target,
+              path: path.join(target, "snapshot"),
               files: manifest.counts.totalFiles,
               parts: manifest.counts.partsCount,
               tokens: manifest.totals.estimatedTokens ?? 0,
@@ -287,6 +315,16 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
     port: actualPort,
     host,
     token,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const directory of temporaryClones) {
+          try {
+            fs.rmSync(directory, { recursive: true, force: true });
+          } catch {
+            // A leftover temp tree is better than a crash on shutdown.
+          }
+        }
+        server.close(() => resolve());
+      }),
   };
 }

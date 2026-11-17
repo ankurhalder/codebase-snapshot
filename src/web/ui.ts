@@ -47,7 +47,7 @@ export const SERVE_PAGE = `<!doctype html>
     <button id="run" type="submit">Generate</button>
     <button id="download" type="button" disabled>Download .zip</button>
   </form>
-  <div id="status">Paste a repository path, or a public repository URL once remote ingestion is enabled.</div>
+  <div id="status">Paste an absolute path, or a repository URL (https://github.com/owner/repo). Remote fetches are shallow and public-only.</div>
   <div id="auth" hidden>
     <form id="token-form"><input id="token" type="password" placeholder="paste the token printed by snapshot serve" style="flex:1"><button type="submit">Use token</button></form>
   </div>

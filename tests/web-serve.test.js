@@ -9,6 +9,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { startWebServer } from "../dist/index.js";
 
 function fixture(t) {
@@ -75,18 +77,6 @@ test("generate, preview and download from the API", async (t) => {
   assert.match(String(zip.headers.get("content-type")), /application\/zip/);
 });
 
-test("a remote URL is refused with what is missing, not a fetch", async (t) => {
-  const root = fixture(t);
-  const server = await serve(t, root);
-  const response = await fetch(server.url + "api/generate", {
-    method: "POST",
-    headers: auth(server, { "content-type": "application/json" }),
-    body: JSON.stringify({ source: "https://github.com/owner/repo" }),
-  });
-  assert.equal(response.status, 400);
-  const body = await response.json();
-  assert.match(body.error, /not enabled in this build/);
-});
 
 test("the MCP endpoint answers with the same token", async (t) => {
   const root = fixture(t);
@@ -110,4 +100,47 @@ test("an unknown path is a 404, not a stack trace", async (t) => {
   assert.equal(response.status, 404);
   const body = await response.json();
   assert.match(body.error, /manifest/);
+});
+
+test("a remote source is cloned and generated with provenance", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "serve-remote-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, "source");
+  fs.mkdirSync(path.join(source, "src"), { recursive: true });
+  fs.writeFileSync(path.join(source, "package.json"), '{"name":"r","version":"1.0.0"}\n');
+  fs.writeFileSync(path.join(source, "src", "a.ts"), "export const a = 1;\n");
+  const git = (args) => spawnSync("git", args, { cwd: source, encoding: "utf8" });
+  if (git(["init", "-q"]).status !== 0) {
+    t.skip("git is not available");
+    return;
+  }
+  git(["-c", "user.email=t@e.c", "-c", "user.name=T", "add", "-A"]);
+  git(["-c", "user.email=t@e.c", "-c", "user.name=T", "commit", "-q", "-m", "one"]);
+
+  const server = await startWebServer({ cwd: root, port: 0, log: () => {}, allowPrivate: true });
+  t.after(() => server.close());
+  const response = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers: { authorization: "Bearer " + server.token, "content-type": "application/json" },
+    body: JSON.stringify({ source: pathToFileURL(source).href }),
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const summary = await response.json();
+  assert.match(summary.path, /snapshot$/);
+  assert.ok(fs.existsSync(path.join(summary.path, "manifest.json")));
+  const manifest = JSON.parse(fs.readFileSync(path.join(summary.path, "manifest.json"), "utf8"));
+  assert.equal(manifest.source.host, "file");
+});
+
+test("a private remote is refused unless the server allows it", async (t) => {
+  const root = fixture(t);
+  const server = await serve(t, root);
+  const response = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers: auth(server, { "content-type": "application/json" }),
+    body: JSON.stringify({ source: "https://127.0.0.1/o/r" }),
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /private address/);
 });

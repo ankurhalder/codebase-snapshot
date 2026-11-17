@@ -1726,6 +1726,7 @@ async function runCommand(argv: string[]): Promise<number> {
       ...(invocation.port === undefined ? {} : { port: invocation.port }),
       ...(invocation.noAuth === true ? { token: null } : {}),
       ...(invocation.token === undefined ? {} : { token: invocation.token }),
+      ...(invocation.allowPrivate === true ? { allowPrivate: true } : {}),
       log: (line) => warn(line),
     });
     info("Serving " + server.url);

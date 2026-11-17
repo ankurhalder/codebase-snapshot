@@ -26,6 +26,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.21
+
+- **The browser page accepts repository URLs.** `serve` uses the same parser, private-address
+  refusal and shallow clone as `generate --remote`, generates into a temporary snapshot, and keeps
+  the clone alive for the page until the server exits. `--allow-private` opts out deliberately;
+  without it a URL pointing at the local network is a 400 with the reason.
+- The API returns the snapshot directory (not the clone root), so preview and zip work on a remote
+  exactly as they do on a local path.
+
+Verified: a `file:` source clones through the API, the manifest carries the provenance, and
+`https://127.0.0.1` is refused with "private address".
 ## 0.12.20
 
 **`generate --remote`: a repository URL in, a traceable snapshot out.**

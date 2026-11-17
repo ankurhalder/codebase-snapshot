@@ -16,7 +16,9 @@ Serving http://127.0.0.1:4788/
 
 ## What it does
 
-1. **Generate.** Paste an absolute path to a repository and press Generate. The page calls the same
+1. **Generate.** Paste an absolute path or a public repository URL and press Generate. A URL is
+   cloned shallowly into a temporary directory (removed when the server exits) with the same
+   provenance record the CLI writes. The page calls the same
    `generateSnapshot` the CLI calls, with the default settings — the defaults are what a browser
    session can honestly promise, because a config file can run code and this process will not run
    repository code on a page's request. For a project config, use the CLI.
@@ -46,7 +48,7 @@ agent and a human look at the same snapshot.
 | Brief preview | first 64 KiB of `PROMPT.md` | Bounded response, always. |
 | File list | first 400 files in the page | The JSON carries every file; the page renders a window. |
 | CORS | loopback origins only | A page on another origin cannot read the repository. |
-| Remote URLs | refused, with the reason | Remote ingestion is its own release; the message says so. |
+| Remote URLs | https, public addresses only | The same shallow clone and SSRF guard as `generate --remote`; `serve --allow-private` opts out deliberately. |
 
 It writes nothing except the snapshot the Generate button asks for, and it never reads outside the
 path you typed.
