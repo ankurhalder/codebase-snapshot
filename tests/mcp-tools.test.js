@@ -86,10 +86,11 @@ async function call(name, args, context) {
   return tool.handler(args, context);
 }
 
-test("exposes exactly the 21 documented tools", () => {
+test("exposes exactly the 22 documented tools", () => {
   assert.deepEqual([...tools.keys()], [
     "snapshot_status",
     "snapshot_health",
+    "snapshot_workspace",
     "snapshot_entrypoints",
     "snapshot_neighbors",
     "snapshot_routes",
@@ -401,4 +402,38 @@ test("a report resource is listed only when the run wrote it", async (t) => {
   assert.ok(after.includes("snapshot://reports/tokens"), "the report this run wrote is listed");
   const text = await provider.read("snapshot://reports/tokens", context);
   assert.match(text.text, /Token/);
+});
+
+test("snapshot_workspace reads the index a workspace run wrote", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ws-tool-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const member of ["app", "shared"]) {
+    fs.mkdirSync(path.join(root, member, "src"), { recursive: true });
+    fs.writeFileSync(path.join(root, member, "package.json"), JSON.stringify({ name: member, version: "1.0.0" }) + "\n");
+  }
+  fs.writeFileSync(path.join(root, "shared", "src", "util.ts"), "export const util = 1;\n");
+  fs.writeFileSync(path.join(root, "app", "src", "index.ts"), 'import { util } from "../../shared/src/util.js";\nexport const app = util;\n');
+  fs.mkdirSync(path.join(root, "snapshot"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "snapshot", "WORKSPACE.json"),
+    JSON.stringify({
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      members: [
+        { name: "app", files: 2, tokens: 10, fingerprint: "a".repeat(64) },
+        { name: "shared", files: 2, tokens: 8, fingerprint: "b".repeat(64) },
+      ],
+      links: [{ from: "app", to: "shared", specifiers: 1, examples: ["src/index.ts"] }],
+    }) + "\n"
+  );
+
+  const context = contextFor(root);
+  const result = await call("snapshot_workspace", {}, context);
+  assert.equal(result.isError, undefined, result.text);
+  assert.equal(result.structured.members.length, 2);
+  assert.equal(result.structured.links[0].from, "app");
+  assert.match(result.text, /app -> shared/);
+
+  const missing = await call("snapshot_workspace", { outDir: "nope" }, context);
+  assert.equal(missing.isError, true);
+  assert.match(missing.text, /--workspace/);
 });

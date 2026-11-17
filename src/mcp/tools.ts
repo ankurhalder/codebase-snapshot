@@ -1,5 +1,5 @@
 /**
- * The 21 tools this server exposes.
+ * The 22 tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -68,7 +68,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the 21 tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the 22 tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -276,6 +276,61 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const workspaceTool: ToolSpec = {
+  name: "snapshot_workspace",
+  title: "Workspace index",
+  description:
+    "The members of a multi-repository workspace and the imports that cross between them, from " +
+    "WORKSPACE.json. Answers which member depends on which before a change. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      members: { type: "array", items: { type: "object" } },
+      links: { type: "array", items: { type: "object" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const root = path.resolve(context.cwd, typeof args.root === "string" ? args.root : ".");
+    const outDir = typeof args.outDir === "string" ? args.outDir : "snapshot";
+    const index = path.resolve(root, outDir, "WORKSPACE.json");
+    let text: string;
+    try {
+      text = fs.readFileSync(index, "utf8");
+    } catch {
+      return {
+        text:
+          "No workspace index at " + index + ". Generate one with " +
+          "`generate --workspace member-a,member-b`; a single snapshot has no members to list.",
+        isError: true,
+      };
+    }
+    const document = JSON.parse(text) as {
+      members?: Array<{ name?: string; files?: number; tokens?: number; fingerprint?: string }>;
+      links?: Array<{ from?: string; to?: string; specifiers?: number }>;
+    };
+    const members = document.members ?? [];
+    const links = document.links ?? [];
+    const lines = [
+      members.length + " member(s):",
+      ...members.map(
+        (member) =>
+          "  " + (member.name ?? "?") + " (" + (member.files ?? 0) + " files, " + (member.tokens ?? 0) + " tokens)"
+      ),
+      links.length === 0 ? "No cross-member import was found." : links.length + " cross-member link(s):",
+      ...links.map(
+        (link) => "  " + (link.from ?? "?") + " -> " + (link.to ?? "?") + " (" + (link.specifiers ?? 0) + " specifier(s))"
+      ),
+    ];
+    return { text: lines.join("\n"), structured: { members, links } };
+  },
+};
 
 const neighborsTool: ToolSpec = {
   name: "snapshot_neighbors",
@@ -2202,6 +2257,7 @@ type ToolSpec = Omit<McpTool, "cost">;
 const TOOL_COSTS: Record<string, ToolCost> = {
   snapshot_status: "cheap",
   snapshot_health: "expensive",
+  snapshot_workspace: "cheap",
   snapshot_entrypoints: "cheap",
   snapshot_neighbors: "medium",
   snapshot_routes: "cheap",
@@ -2227,6 +2283,7 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    workspaceTool,
     entrypointsTool,
     neighborsTool,
     routesTool,

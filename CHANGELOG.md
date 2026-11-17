@@ -30,6 +30,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.67
+
+- **`snapshot_workspace` joins the server: 22 tools.** It reads `WORKSPACE.json` and answers which
+  members exist and which imports cross between them — the first question on a monorepo. Without a
+  workspace index it says how to make one rather than returning an empty list.
+
+Verified: two members and an app→shared link are reported and printed; a missing index is an error
+that names `--workspace`.
 ## 0.12.66
 
 - `scripts/compare.mjs` is the one change: the file ends with a newline, and the lint gate is clean
