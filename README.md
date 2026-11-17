@@ -210,7 +210,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.12.18 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.12.19 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
@@ -270,6 +270,7 @@ others.
 | [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md) | Every setting, all 25 presets, budgets, hooks, secrets |
 | [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md) | Directory layout and the full manifest schema |
 | [Health audit](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/health.md) | Leak, integrity and token audit of a generated snapshot |
+| [In the browser](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/serve.md) | `serve`: a local page to generate, preview and download a snapshot |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
 | [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | twelve tools, resources, both protocol eras |

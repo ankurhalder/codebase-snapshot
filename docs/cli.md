@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.12.18 (project dependency ^0.12.18)
+   Branch: main | Part budget: 300 KB | Generator: 0.12.19 (project dependency ^0.12.19)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -151,6 +151,17 @@ reported as current. The shape guard also confines `incomplete[].relativePath` t
 like the two other path-bearing arrays.
 
 Exit `0` when the snapshot is current, `1` on any drift. It never writes anything.
+
+### `serve`
+
+```bash
+codebase-snapshot serve [--port 4788] [--host 127.0.0.1] [--token <value>] [--no-auth]
+```
+
+A browser UI on loopback: paste a path, generate, read the brief, download the snapshot as a
+zip. The same process serves MCP at `POST /mcp` with the same bearer token, generated on first
+run and printed once. The page asks for the token and keeps it in `localStorage`.
+See [the browser page](serve.md).
 
 ### `health`
 
@@ -207,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.18
+   Added devDependency: codebase-snapshot ^0.12.19
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -259,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.18
+   Added devDependency: codebase-snapshot ^0.12.19
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 

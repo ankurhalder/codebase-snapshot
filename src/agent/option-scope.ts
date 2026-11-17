@@ -23,7 +23,8 @@ export type CommandName =
   | "diff"
   | "describe"
   | "skill"
-  | "mcp";
+  | "mcp"
+  | "serve";
 
 /**
  * Every option `validate` accepts. `check` is an alias of `validate`; appliesTo names the
@@ -172,6 +173,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   skill: ["cwd", "format", "mode", "install", "target", "help", "version"],
   // `mcp` reads the repository, so it takes --cwd. It has no --format: stdout carries JSON-RPC
   // messages, and there is no second shape to choose, so offering the flag would be a lie.
+  serve: ["port", "host", "token", "no-auth", "cwd", "no-update-check", "help"],
   mcp: [
     "http",
     "port",
@@ -234,6 +236,7 @@ const COMMAND_ORDER: readonly CommandName[] = [
   "describe",
   "skill",
   "mcp",
+  "serve",
 ];
 
 /** The commands an option applies to, in the order `describe` lists them. */

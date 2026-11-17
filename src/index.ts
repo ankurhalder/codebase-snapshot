@@ -85,6 +85,10 @@ import type {
 } from "./types.js";
 
 export { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION } from "./version.js";
+export { startWebServer } from "./web/server.js";
+export type { ServeHandle, ServeOptions } from "./web/server.js";
+export { writeZip, crc32, walkFiles } from "./web/zip.js";
+export type { ZipEntry, ZipOptions } from "./web/zip.js";
 
 /**
  * The update check, exported because it is useful on its own: an embedder that wraps this package

@@ -46,6 +46,7 @@ import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skil
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
 import { startHttpTransport } from "./mcp/http.js";
+import { startWebServer } from "./web/server.js";
 import {
   cacheFilePath,
   checkForUpdate,
@@ -83,7 +84,8 @@ type Command =
   | "diff"
   | "describe"
   | "skill"
-  | "mcp";
+  | "mcp"
+  | "serve";
 
 const COMMAND_ALIASES = new Map<string, Command>([
   ["generate", "generate"],
@@ -98,6 +100,7 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["describe", "describe"],
   ["skill", "skill"],
   ["mcp", "mcp"],
+  ["serve", "serve"],
 ]);
 
 /** How many positional arguments each command accepts after its name. */
@@ -113,6 +116,7 @@ const COMMAND_ARITY: Record<Command, number> = {
   describe: 0,
   skill: 0,
   mcp: 0,
+  serve: 0,
 };
 
 export const CLI_OPTIONS = {
@@ -193,6 +197,7 @@ Commands:
   describe             Print the machine-readable contract (--format json for agents)
   skill                Print the bundled agent skill; --install writes it into the repo
   mcp                  Serve this repository to an MCP client (stdio, or --http for the web)
+  serve                Open a browser UI: generate, preview, download a zip; MCP at /mcp
 
 Options:
   --cwd <path>                  Target repository directory (default: current directory)
@@ -1697,6 +1702,31 @@ async function runCommand(argv: string[]): Promise<number> {
   // `mcp` speaks JSON-RPC on stdout and resolves the repository configuration per tool call, so it
   // starts before config discovery. A config that cannot be read must reach the client as a tool
   // error it can act on, not as a process that dies before it answers its first message.
+  if (invocation.command === "serve") {
+    const server = await startWebServer({
+      cwd: path.resolve(invocation.cwd),
+      ...(invocation.host === undefined ? {} : { host: invocation.host }),
+      ...(invocation.port === undefined ? {} : { port: invocation.port }),
+      ...(invocation.noAuth === true ? { token: null } : {}),
+      ...(invocation.token === undefined ? {} : { token: invocation.token }),
+      log: (line) => warn(line),
+    });
+    info("Serving " + server.url);
+    info("  MCP endpoint: " + server.url + "mcp");
+    if (server.token !== null) {
+      info("  Token: " + server.token);
+      info("  Open the page and paste the token once; it is kept in this browser only.");
+    } else {
+      warn("  WARNING: --no-auth is on. Any page on this machine can read the repository.");
+    }
+    await new Promise<void>((resolve) => {
+      const stop = (): void => { void server.close().then(resolve); };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return 0;
+  }
+
   if (invocation.command === "mcp") {
     if (invocation.http === true) {
       const transport = await startHttpTransport({

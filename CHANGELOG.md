@@ -26,6 +26,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.19
+
+**`snapshot serve`: the browser face.**
+
+- One process serves the page, the API it calls, and MCP at `POST /mcp`, all on loopback with one
+  bearer token, generated on first run and printed once. The page asks for the token and keeps it
+  in `localStorage`, so serving `/` can never leak the credential.
+- `POST /api/generate` runs the same `generateSnapshot` the CLI runs, with the defaults (a page
+  request must not execute repository config code); `GET /api/snapshot` returns the brief and the
+  file list from the written snapshot; `GET /api/snapshot.zip` returns the directory as a zip.
+- A store-only zip writer, no dependencies, with a parser test that reads the central directory back
+  and a manual check that Windows `Expand-Archive` opens it.
+- A remote URL is refused with the reason ("not enabled in this build") rather than a pretend fetch.
+
+Verified: page without token, API without token 401, generate → preview → zip round trip, the
+remote refusal, MCP on the same port, 404 for an unknown path.
 ## 0.12.18
 
 **MCP over HTTP, for the clients that cannot spawn a process.**

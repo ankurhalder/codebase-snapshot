@@ -401,10 +401,21 @@ export function buildAgentContract(): AgentContract {
         name: "mcp",
         aliases: [],
         summary:
-          "Serve this repository to an MCP client over stdio. The tools, resources and protocol " +
-          "versions it offers are listed in this contract's `mcp` block.",
+          "Serve this repository to an MCP client. stdio by default; --http serves Streamable " +
+          "HTTP at /mcp with a bearer token and a loopback bind by default. The tools, resources " +
+          "and protocol versions are listed in this contract's `mcp` block.",
         positionals: [],
         exits: [0, 2],
+      },
+      {
+        name: "serve",
+        aliases: [],
+        summary:
+          "A browser UI on loopback: paste a path, generate, read the brief, download the " +
+          "snapshot as a zip. The same process serves MCP at POST /mcp with the same bearer " +
+          "token, which is generated on first run and printed.",
+        positionals: [],
+        exits: [0, 1],
       },
     ],
     exitCodes: {
