@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.73 mcp
+npx -y codebase-snapshot@0.12.74 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.73", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.74", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.73 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.74 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.73 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.74 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -88,7 +88,7 @@ into logs and is documented as such. A heartbeat every 15 s keeps the connection
 shutdown ends the streams rather than waiting on them. Request bodies are capped at 2 MB, the rate is
 capped at 60 requests per 10 seconds per address, and every response is one bounded JSON document.
 
-## The 22 tools
+## The 23 tools
 
 Each tool has an entry with a ready-to-send call in the [tool reference](tools.md).
 
@@ -103,6 +103,7 @@ between them should not have to guess.
 | `snapshot_status` | Is there a snapshot, when was it built, what does it cover? | no |
 | `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? | no |
 | `snapshot_query` | Filter the index by layer, kind, path pattern or symbol | no |
+| `snapshot_tests` | The tests that import a file (or every test and what it covers) | no |
 | `snapshot_workspace` | The members of a multi-repository workspace and the imports that cross between them | no |
 | `snapshot_entrypoints` | The files a reader should start from, manifests first | no |
 | `snapshot_neighbors` | Both import directions for one path | no |

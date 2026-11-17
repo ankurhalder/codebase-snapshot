@@ -86,10 +86,11 @@ async function call(name, args, context) {
   return tool.handler(args, context);
 }
 
-test("exposes exactly the 22 documented tools", () => {
+test("exposes exactly the 23 documented tools", () => {
   assert.deepEqual([...tools.keys()], [
     "snapshot_status",
     "snapshot_health",
+    "snapshot_tests",
     "snapshot_workspace",
     "snapshot_entrypoints",
     "snapshot_neighbors",
@@ -452,3 +453,26 @@ test("review names the route methods a change touches", async (t) => {
   assert.deepEqual(result.structured.routes[0].methods, ["GET", "POST"]);
   assert.match(result.text, /Routes touched: GET\/POST src\/users\/route\.ts/);
 });
+
+test("snapshot_tests finds the test that imports a file", async (t) => {
+  const root = makeFixture(t);
+  fs.mkdirSync(path.join(root, "tests"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "tests", "user.test.ts"),
+    'import { user } from "../src/user.js";\nexport const t = user;\n'
+  );
+  await call("snapshot_generate", {}, contextFor(root));
+  const context = contextFor(root);
+
+  const forFile = await call("snapshot_tests", { path: "src/user.ts" }, context);
+  assert.equal(forFile.isError, undefined, forFile.text);
+  assert.ok(forFile.structured.tests.some((entry) => entry.path === "tests/user.test.ts"), forFile.text);
+
+  const all = await call("snapshot_tests", {}, context);
+  assert.ok(all.structured.tests.length >= 1);
+  assert.ok(all.structured.covered.includes("src/user.ts"));
+
+  const none = await call("snapshot_tests", { path: "src/auth.ts" }, context);
+  assert.match(none.text, /No test in the snapshot imports/);
+});
+

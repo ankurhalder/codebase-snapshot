@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.74
+
+- **`snapshot_tests`, the 23rd tool.** Given a path, the tests that import it — plus the ones named
+  after it, because a test file and the source it exercises often share a stem without importing
+  each other. With no path, every test file and the files it covers. "Which tests should I run?" is
+  the second question after "what changed".
+- Counts follow everywhere: README, the site description, `AGENTS.md`, the skill, the reference page
+  and the MCP tool table.
+
+Verified: a test importing `src/user.ts` is found by the path query and by the full listing; a path
+no test mentions says so instead of returning an empty list.
 ## 0.12.73
 
 - **The tool reference is checked against the real schemas.** Three examples on the new page were

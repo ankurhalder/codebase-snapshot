@@ -1,5 +1,5 @@
 /**
- * The 22 tools this server exposes.
+ * The 23 tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -68,7 +68,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the 22 tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the 23 tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -276,6 +276,78 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const testsTool: ToolSpec = {
+  name: "snapshot_tests",
+  title: "Tests that cover a file, and files a test covers",
+  description:
+    "The test side of the graph. Given a path, the tests that import it (plus the ones named " +
+    "after it); with no path, every test file and how many files it exercises. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Source or test path relative to the repository root." },
+      maxFiles: { type: "integer", description: "Cap on listed tests (default 50).", minimum: 1 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      tests: { type: "array", items: { type: "object" } },
+      covered: { type: "array", items: { type: "string" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const cap = Math.max(1, typeof args.maxFiles === "number" ? args.maxFiles : 50);
+    const isTest = (filePath: string): boolean =>
+      /(^|\/)(tests?|__tests__|spec)\//.test(filePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(filePath);
+    const byPath = new Map(read.manifest.files.map((file) => [file.relativePath, file]));
+    const resolver = buildImportResolver(read.manifest.files, {});
+    const testFiles = read.manifest.files.filter((file) => isTest(file.relativePath));
+    const importsOf = (filePath: string): string[] => {
+      const entry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === filePath);
+      return (entry?.imports ?? [])
+        .map((specifier) => resolveSpecifier(filePath, specifier, resolver))
+        .filter((target): target is string => target !== null && byPath.has(target));
+    };
+
+    const wanted = typeof args.path === "string" ? args.path.trim() : "";
+    const tests = [];
+    const covered = new Set();
+    for (const testFile of testFiles) {
+      const imports = importsOf(testFile.relativePath);
+      for (const target of imports) if (!isTest(target)) covered.add(target);
+      if (wanted !== "") {
+        const stem = wanted.replace(/\.[a-z0-9]+$/i, "");
+        const named = testFile.relativePath.replace(/\.[a-z0-9]+$/i, "").includes(stem);
+        if (!imports.includes(wanted) && !named) continue;
+      }
+      tests.push({ path: testFile.relativePath, part: testFile.part, covers: imports.filter((target) => !isTest(target)) });
+    }
+    tests.sort((left, right) => left.path.localeCompare(right.path));
+    const reported = tests.slice(0, cap);
+    const text =
+      reported.length === 0
+        ? wanted === ""
+          ? "No test file is in the snapshot."
+          : "No test in the snapshot imports " + wanted + " or is named after it."
+        : [
+            (wanted === "" ? reported.length + " test file(s):" : reported.length + " test(s) for " + wanted + ":"),
+            ...reported.map((testFile) =>
+              "  " + testFile.path + " (" + testFile.covers.length + " file(s) it imports)"
+            ),
+          ].join("\n");
+    return { text, structured: { tests: reported, covered: [...covered].sort() } };
+  },
+};
 
 const workspaceTool: ToolSpec = {
   name: "snapshot_workspace",
@@ -2272,6 +2344,7 @@ type ToolSpec = Omit<McpTool, "cost">;
 const TOOL_COSTS: Record<string, ToolCost> = {
   snapshot_status: "cheap",
   snapshot_health: "expensive",
+  snapshot_tests: "cheap",
   snapshot_workspace: "cheap",
   snapshot_entrypoints: "cheap",
   snapshot_neighbors: "medium",
@@ -2298,6 +2371,7 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    testsTool,
     workspaceTool,
     entrypointsTool,
     neighborsTool,
