@@ -26,6 +26,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.30
+
+**`snapshot_review`: three questions in one call.**
+
+- Returns whether the snapshot is current (validate), the health score with every failed check, and
+  the head window of the paths a change touched. A reviewer starts with one call instead of three.
+- Fifteen tools now; every count in the docs follows, enforced by the hygiene test.
+
+Verified: a current snapshot reviews clean with the requested body; an edited file makes the same
+call report stale while still returning the body.
 ## 0.12.29
 
 - **Legacy SSE transport** for clients that predate Streamable HTTP: `GET /sse` announces

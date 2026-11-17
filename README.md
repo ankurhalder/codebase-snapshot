@@ -210,13 +210,13 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.12.29 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.12.30 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
 workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-The MCP server exposes fourteen tools — status, health, symbol, diff_context, context, query, plan_for, plan, generate, validate, locate, dependents, read, explain — plus
+The MCP server exposes fifteen tools — status, health, review, symbol, diff_context, context, query, plan_for, plan, generate, validate, locate, dependents, read, explain — plus
 `snapshot://` resources and two prompts. Its reads come from the snapshot rather than the working
 tree, so an excluded file stays excluded and a redacted value stays redacted, and
 `snapshot_validate` answers the question an agent otherwise cannot ask: is the context I was given
@@ -276,7 +276,7 @@ others.
 | [Task slices](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/slice.md) | `--slice`: only what the planner picks for a question, at a token budget |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
-| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | fourteen tools, resources, both protocol eras |
+| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | fifteen tools, resources, both protocol eras |
 | [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md) | Every message and what to do about it |
 | [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md) | Release history and breaking changes |
 

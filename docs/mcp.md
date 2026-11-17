@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.29 mcp
+npx -y codebase-snapshot@0.12.30 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.29", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.30", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.29 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.30 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.29 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.30 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -88,13 +88,14 @@ into logs and is documented as such. A heartbeat every 15 s keeps the connection
 shutdown ends the streams rather than waiting on them. Request bodies are capped at 2 MB, the rate is
 capped at 60 requests per 10 seconds per address, and every response is one bounded JSON document.
 
-## The fourteen tools
+## The fifteen tools
 
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |
 | `snapshot_status` | Is there a snapshot, when was it built, what does it cover? | no |
 | `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? | no |
 | `snapshot_query` | Filter the index by layer, kind, path pattern or symbol | no |
+| `snapshot_review` | Currency, health and bounded bodies in one call, so a review can start | no |
 | `snapshot_symbol` | Where a function, class or constant is defined, with a window and a line number | no |
 | `snapshot_diff_context` | Bodies of the changed files plus the files that import them | no |
 | `snapshot_context` | One bounded context block from named files or symbols, read from the snapshot | no |

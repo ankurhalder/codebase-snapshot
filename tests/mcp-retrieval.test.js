@@ -205,3 +205,21 @@ test("a changed-file set returns its bodies and its dependents", async (t) => {
   const empty = await tool.handler({ paths: [] }, context);
   assert.equal(empty.isError, true);
 });
+
+test("a review combines currency, health and the requested bodies", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_review");
+  assert.ok(tool, "snapshot_review is served");
+  const result = await tool.handler({ paths: ["src/user.ts"], linesPerFile: 40 }, contextFor(root));
+  assert.equal(result.isError, undefined, result.text);
+  assert.equal(result.structured.current, true);
+  assert.ok(result.structured.score >= 0 && result.structured.score <= 100);
+  assert.deepEqual(result.structured.failed, []);
+  assert.match(result.text, /export function getUser/);
+
+  fs.appendFileSync(path.join(root, "src", "user.ts"), "export const changed = true;\n");
+  const stale = await tool.handler({ paths: ["src/user.ts"] }, contextFor(root));
+  assert.equal(stale.structured.current, false, "an edited file makes the snapshot stale");
+  assert.match(stale.text, /stale/);
+});

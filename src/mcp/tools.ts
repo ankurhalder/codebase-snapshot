@@ -1,5 +1,5 @@
 /**
- * The fourteen tools this server exposes.
+ * The fifteen tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -65,7 +65,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the fourteen tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the fifteen tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -273,6 +273,98 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const reviewTool: McpTool = {
+  name: "snapshot_review",
+  title: "Review a change set against the snapshot",
+  description:
+    "One call for a review: is the snapshot current, what does the health audit say, and what " +
+    "do the given paths contain? Combines validate, health and bounded reads so a reviewer does " +
+    "not have to ask three questions to start. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      paths: { type: "array", items: { type: "string" }, description: "Changed paths to include." },
+      linesPerFile: { type: "integer", description: "Head lines per path (default 60).", minimum: 10 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      current: { type: "boolean" },
+      score: { type: "integer" },
+      failed: { type: "array", items: { type: "string" } },
+      files: { type: "array", items: { type: "object" } },
+      missing: { type: "array", items: { type: "string" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const workspace = prepared.workspace;
+    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 60);
+    const read = readManifest(workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+
+    let validation;
+    try {
+      validation = validateSnapshot(workspace.config);
+    } catch (error) {
+      return { text: (error as Error).message, isError: true };
+    }
+    const report = auditSnapshot({
+      snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
+      repoDir: workspace.root,
+    });
+    const failed = report.checks.filter((check) => check.status === "fail").map((check) => check.id + ": " + check.detail);
+
+    const wanted = Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === "string") : [];
+    const byPath = new Map(read.manifest.files.map((file) => [file.relativePath.toLowerCase(), file]));
+    const files = [];
+    const missing: string[] = [];
+    const body: string[] = [];
+    for (const wantedPath of wanted) {
+      const file = byPath.get(wantedPath.toLowerCase());
+      if (file === undefined) {
+        missing.push(wantedPath);
+        continue;
+      }
+      const partPath = partPathFor(workspace, file.part);
+      if (partPath === null) {
+        missing.push(wantedPath + " (part missing)");
+        continue;
+      }
+      let section = null;
+      try {
+        section = findSection(parsePartSections(fs.readFileSync(partPath, "utf8")), file.relativePath);
+      } catch {
+        section = null;
+      }
+      if (section === null) {
+        missing.push(wantedPath + " (section not found)");
+        continue;
+      }
+      const window = windowText(section.body, 1, linesPerFile);
+      files.push({ path: file.relativePath, part: file.part, lines: window.text === "" ? 0 : window.text.split("\n").length });
+      body.push("### " + file.relativePath + " (" + file.part + ")", window.text);
+    }
+
+    const summary = [
+      validation.valid ? "Snapshot: current." : "Snapshot: stale; run snapshot_generate before trusting it.",
+      "Health: " + report.score + "/100 (" + report.counts.pass + " passed, " + report.counts.warn + " warning(s), " + report.counts.fail + " failed).",
+      ...failed.map((item) => "FAIL " + item),
+    ];
+    if (missing.length > 0) summary.push("Not in the snapshot: " + missing.join(", "));
+    return {
+      text: summary.join("\n") + (body.length === 0 ? "" : "\n\n" + body.join("\n\n")),
+      structured: { current: validation.valid, score: report.score, failed, files, missing },
+    };
+  },
+};
 
 const diffContextTool: McpTool = {
   name: "snapshot_diff_context",
@@ -1667,6 +1759,7 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    reviewTool,
     diffContextTool,
     symbolTool,
     contextTool,
