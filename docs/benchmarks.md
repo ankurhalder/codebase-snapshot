@@ -44,5 +44,37 @@ tokens in full.
   planner little to rank.
 - One machine, one run. The times are indicative, not a controlled benchmark; the token counts are
   deterministic for a fixed repository and configuration.
-- These are **our** modes, not a head-to-head against other tools. A comparison needs the same
-  repository, the same budget and both tools' own token accounting, and that is a separate exercise.
+- These are **our** modes. The head-to-head is below, with both tools' own accounting.
+
+## Head-to-head against repomix
+
+```bash
+node scripts/compare.mjs --repomix      # add --json for machine-readable output
+```
+
+repomix is fetched through `npx` at run time; it is never a dependency of this package. Measured on
+this repository at 0.12.65, repomix 1.19.0, same machine:
+
+| Tool / mode | Files | Content bytes | Tokens | vs full | Time |
+| :-- | --: | --: | --: | --: | --: |
+| codebase-snapshot (full) | 330 | 3,197,091 | 1,027,911 | 100% | 2.14 s |
+| codebase-snapshot (slice) | 4 | 239,395 | 66,653 | 6.5% | 2.13 s |
+| codebase-snapshot (budget 30,000) | 24 | 119,701 | 36,261 | 3.5% | 2.07 s |
+| repomix 1.19.0 | 329 | 3,386,284 | 854,178 | 83.1% | n/a |
+
+Read that honestly:
+
+- **repomix reports fewer tokens for a similar pack** (854k against our 1.03M, 83%). The cause is
+  the estimator, not the content: we count one token per four bytes, repomix uses a tokenizer.
+  Our number is conservative, which is the right direction for a budget — a plan that fits
+  1,027,911 tokens fits a tokenizer count of 854,178 far more often than the reverse.
+- **Our pack is smaller in bytes** (3.20 MB of file content against repomix's 3.39 MB of output,
+  which includes its own wrappers), and the file sets differ slightly: 330 against 329.
+- **The modes are what the other tool does not have.** repomix packs the repository; a slice and a
+  budget are the same snapshot narrowed after scanning, at 6.5% and 3.5% of the tokens.
+- **gitingest is not installed here** (`python -m gitingest` is missing). The harness supports it —
+  `--gitingest` — and reports its digest size, not a token count, because it does not publish one.
+
+The same caveats apply to any comparison: different ignore rules, different wrappers, different
+tokenizers. What is comparable is the shape — full packs are too large for a context window, and a
+selection is one to two orders of magnitude smaller.

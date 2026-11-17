@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.65
+
+**A measured head-to-head, not a claim.**
+
+- `scripts/compare.mjs` runs this tool's full, slice and budget packs and, with `--repomix`, repomix
+  through `npx` (never a dependency), in one run on one repository. `--gitingest` does the same for
+  gitingest when it is installed; a missing competitor is reported, not silently skipped into a
+  misleading table.
+- Measured here at 0.12.65 against repomix 1.19.0: 330 files / 1,027,911 estimated tokens for us,
+  329 files / 854,178 for repomix, with slice at 6.5% and budget at 3.5% of our full pack. The
+  difference is the estimator — we count one token per four bytes, repomix uses a tokenizer — and
+  the page says so, including that our number is the conservative one.
+- `docs/benchmarks.md` carries the table, the caveats and the exact command to reproduce it; a test
+  runs the harness on a fixture so it cannot rot.
 ## 0.12.64
 
 - The goal log records the 0.12.50-0.12.63 round: cancellation, the opt-in reports through MCP,
