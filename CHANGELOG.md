@@ -26,6 +26,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.22
+
+**Seven MCP prompts: two about order, five about a job.**
+
+- `audit` (health, drift, exclusions, findings), `review` (plan the reading for a change, name the
+  dependents), `explain` (why a path is here, what it does), `onboard` (a reading order for a new
+  contributor), `security-review` (authn/authz, secrets, injection, and what the snapshot cannot
+  see). `orient` and `keep-current` stay.
+- Every tool a prompt names is a tool the server serves, and a test holds the two lists together so
+  a prompt cannot point an agent at a name that does not exist.
+- The docs no longer claim there is no HTTP transport, because there is one.
+
+Verified: the seven prompts exist with descriptions, every `snapshot_*` name in every prompt is a
+served tool, required arguments reach the text, and a missing optional argument yields the base
+prompt.
 ## 0.12.21
 
 - **The browser page accepts repository URLs.** `serve` uses the same parser, private-address

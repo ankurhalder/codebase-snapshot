@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.21 mcp
+npx -y codebase-snapshot@0.12.22 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.21", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.22", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.21 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.22 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.21 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.22 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -167,9 +167,19 @@ refused rather than truncated.
 
 ## Prompts
 
-Two, both about order of operations rather than features: `orient` maps the repository before
-anything is read, and `keep-current` validates before trusting earlier context and again after
-making changes.
+Seven. Two are about order of operations, five are a job:
+
+| Prompt | What it does |
+| :--- | :--- |
+| `orient` | Map the repository before anything is read. |
+| `keep-current` | Validate before trusting earlier context, and again after changes. |
+| `audit` | Health, drift, exclusions, and the findings that matter — evidence, not impressions. |
+| `review` | Plan the reading for a change, read it, name the dependents and risks. |
+| `explain` | Why a path is in the snapshot, what it does, who depends on it. |
+| `onboard` | A guided tour with a reading order for someone who has never seen the repository. |
+| `security-review` | Authentication, authorization, secrets and injection, plus what the snapshot cannot see. |
+
+Every tool a prompt names is a tool the server serves; a test holds the two lists together.
 
 ## What it will not do
 
@@ -183,8 +193,8 @@ making changes.
   redaction applies to everything the client sees.
 - **Install or configure.** `snapshot_generate` writes the snapshot directory and nothing else. It
   never runs a package manager and never writes a config file.
-- **Touch the network.** The server itself makes no outbound connection, and there is no HTTP
-  transport. Module configs (`.mjs`, `.cjs`, `.ts`) are refused: importing one would run repository
+- **Touch the network.** The stdio server makes no outbound connection. `--http` binds a loopback
+  port and answers requests; it still contacts nothing. Module configs (`.mjs`, `.cjs`, `.ts`) are refused: importing one would run repository
   code with the user's privileges, so the server accepts only JSON configuration. The CLI still
   loads a module config, because there the user invoked the repository's own command.
 
