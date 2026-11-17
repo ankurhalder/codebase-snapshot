@@ -774,6 +774,12 @@ export function validateSnapshot(
         }
         continue;
       }
+      // `not-selected` is a `--slice` or `--budget-tokens` decision. Re-running the planner here
+      // would need the flags and the question, which the manifest does not carry, so validate does
+      // not second-guess the selection: the file is accounted for, and the result says the
+      // selection was not re-evaluated. Reporting every unselected source file as "new" failed a
+      // correct snapshot on every slice.
+      if (skipReason === "not-selected") continue;
       if (skipReason !== null && !wouldNowBeIncluded(config.cwd, diskFile)) continue;
       drift.missingInSnapshot.push(diskFile);
       continue;
@@ -1460,6 +1466,15 @@ export function validateSnapshot(
   if (drift.configMismatches.length > 0) {
     errors.push(
       `${drift.configMismatches.length} configuration mismatch(es) between the manifest and this run.`
+    );
+  }
+
+  if (manifest.slice !== undefined || manifest.budget !== undefined) {
+    warnings.push(
+      "This snapshot is a selection (" +
+        (manifest.slice !== undefined ? "--slice" : "--budget-tokens") +
+        "); validate checks what is present and does not re-run the planner, so a file the " +
+        "selection left out is not reported as missing.",
     );
   }
 

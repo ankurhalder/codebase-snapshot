@@ -73,3 +73,23 @@ test("--slice and --budget-tokens together are refused", (t) => {
   assert.notEqual(result.code, 0);
   assert.match(result.out, /both narrow|pass one/);
 });
+
+test("validate does not report a slice's unselected files as drift", (t) => {
+  const root = makeRepo(t);
+  const sliced = run(["generate", "--slice", "chargeCard"], root);
+  assert.equal(sliced.code, 0, sliced.out);
+  const valid = run(["validate"], root);
+  assert.equal(valid.code, 0, valid.out);
+  assert.match(valid.out, /selection/);
+
+  fs.appendFileSync(path.join(root, "src", "billing.ts"), "export const changed = true;\n");
+  const stale = run(["validate"], root);
+  assert.equal(stale.code, 1, "a changed selected file is still drift");
+  assert.match(stale.out, /billing\.ts/);
+});
+
+test("a budget snapshot validates clean too", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--budget-tokens", "800"], root).code, 0);
+  assert.equal(run(["validate"], root).code, 0);
+});

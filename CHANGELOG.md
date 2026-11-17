@@ -26,6 +26,19 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.56
+
+**`validate` no longer fails a correct slice or budget snapshot.**
+
+- Files a `--slice` or `--budget-tokens` run deliberately left out were reported as "new file …
+  missing from the snapshot", so `validate` exited 1 on a snapshot that was exactly right. They are
+  skipped with reason `not-selected`, and that is now treated as accounted for rather than drift.
+- `validate` cannot re-run the planner — the question and the budget are not in the manifest — so it
+  says so in a warning: it checks what is present and does not second-guess the selection. A changed
+  file that *is* in the snapshot is still drift, which the test pins.
+
+Verified: a slice validates clean, a budget snapshot validates clean, and editing a selected file
+still fails with its path.
 ## 0.12.55
 
 - **`--slice` and `--budget-tokens` together are refused.** Both narrow the selection, nothing defined
