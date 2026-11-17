@@ -51,7 +51,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 25 | `--token-tree`: per-file token counts in a table | shipped 0.12.24 |
 | 26 | `--pack single|xml|json`: one file, as a mode, never the default | shipped 0.12.31 |
 | 27 | Comment and blank-line stripping (`--strip-comments`, `--strip-empty-lines`) | planned |
-| 28 | Multi-language structural parsers: Python, Go, Rust, Java, C#, Ruby, PHP | planned |
+| 28 | Multi-language structural parsers: Python, Go, Rust, Java, C#, Ruby, PHP | shipped before 0.12.15; pinned by `tests/languages.test.js` in 0.12.42 |
 | 29 | Base64/binary truncation policy | planned |
 
 ## Phase 5 — Things neither product has (0.16.x)

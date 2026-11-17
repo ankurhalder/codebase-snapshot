@@ -26,6 +26,12 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.42
+
+- **The language profiles are pinned by a test.** Python, Go, Rust, Java, C#, Ruby and PHP each get a
+  fixture asserting what the docs claim: imports, top-level definitions and, for Python, route
+  decorators. The profiles predate this stretch; the test exists so a regression in the import graph
+  or `snapshot_locate` for those languages fails here instead of in a user's repository.
 ## 0.12.41
 
 **Two more tools: `snapshot_search` and `snapshot_stats`.**
