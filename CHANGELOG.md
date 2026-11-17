@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.82
+
+- The goal log records the 0.12.80-0.12.81 round: `health --all-members` and the workspace workflow
+  page.
 ## 0.12.81
 
 - **The workspace page now shows the whole workflow**, not just the generate call: the health audit

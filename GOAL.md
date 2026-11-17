@@ -274,3 +274,18 @@ Full `verify` at 0.12.78: 1302 tests, 1294 pass, 0 fail, 8 host skips; tarball 5
 
 Twenty-one sub-bumps to 0.12.99, then 0.13.0. The backlog for them: workspace-wide health, a
 docs page for the workspace workflow end to end, and the endgame checks GOAL.md lists before 0.17.0.
+
+### 0.12.80-0.12.82 - a workspace audited whole
+
+- 0.12.80 `health --all-members`: reads WORKSPACE.json and audits every member snapshot, one row
+  each, combined score = weakest member, a missing member is an error row. Registered in the parser,
+  the option-scope table and the contract, so `describe` and the parser agree.
+- 0.12.81 the workspace page shows the four commands end to end: generate, audit all members,
+  validate one member, serve the index through `snapshot_workspace`.
+
+Full `verify` at 0.12.81: 1304 tests, 1296 pass, 0 fail, 8 host skips; tarball 52 files; site 29
+pages, audit-site clean.
+
+Eighteen sub-bumps to 0.12.99, then 0.13.0. Next in the queue: the endgame checks GOAL.md lists, a
+pass over the troubleshooting page for the flags added since it was written, and a decision on
+whether incremental parsing is worth its invalidation risk before 0.13.0.
