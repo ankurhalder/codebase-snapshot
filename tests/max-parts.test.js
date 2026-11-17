@@ -163,3 +163,33 @@ test("the monolith keeps whole bodies when maxParts grows the budget", (t) => {
   const monolith = fs.readFileSync(path.join(dir, "snapshot", "full-codebase.md"), "utf8");
   assert.ok(monolith.includes("export const v0_499 = 499;"), "the whole body is in the monolith");
 });
+
+test("a ceiling below the per-layer bucket count says why it cannot be met", (t) => {
+  const dir = tempDir(t);
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "tests"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"layers","version":"1.0.0"}\n', "utf8");
+  for (let index = 0; index < 4; index += 1) {
+    fs.writeFileSync(path.join(dir, "src", `s${index}.ts`), "export const v = 1;\n", "utf8");
+    fs.writeFileSync(path.join(dir, "tests", `t${index}.test.js`), "test(\"t\", () => {});\n", "utf8");
+  }
+  fs.writeFileSync(
+    path.join(dir, "snapshot.config.mjs"),
+    'export default { budgets: { default: "16k", byLayer: { test: "8k" } }, maxParts: 1 };\n',
+    "utf8"
+  );
+
+  const refused = cli(["generate"], dir);
+  assert.notEqual(refused.code, 0, "one part cannot hold two separately packed layers");
+  assert.match(refused.out, /2 distinct part budgets/);
+  assert.match(refused.out, /Raise maxParts to at least 2/);
+
+  fs.writeFileSync(
+    path.join(dir, "snapshot.config.mjs"),
+    'export default { budgets: { default: "16k", byLayer: { test: "8k" } }, maxParts: 2 };\n',
+    "utf8"
+  );
+  const accepted = cli(["generate"], dir);
+  assert.equal(accepted.code, 0, accepted.out);
+  assert.ok(manifestOf(dir).parts.length <= 2);
+});

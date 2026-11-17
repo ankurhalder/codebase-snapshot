@@ -1,0 +1,51 @@
+
+> codebase-snapshot@0.12.6 pretest
+> npm run build
+
+
+> codebase-snapshot@0.12.7 build
+> tsup
+
+CLI Building entry: {"index":"src/index.ts","cli":"src/cli.ts","mcp":"src/mcp/index.ts"}
+CLI Using tsconfig: tsconfig.json
+CLI Building entry: {"bin":"src/bin.ts"}
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Using tsup config: C:\Users\ankur\OneDrive\Desktop\packages\codebase-snapshot\tsup.config.ts
+CLI tsup v8.5.1
+CLI Using tsup config: C:\Users\ankur\OneDrive\Desktop\packages\codebase-snapshot\tsup.config.ts
+CLI Target: node18
+CLI Target: node18
+ESM Build start
+CLI Cleaning output folder
+ESM Build start
+CJS Build start
+"fileURLToPath" is imported from external module "url" but never used in "dist/index.cjs".
+DTS Build start
+ESM dist\mcp.js            521.00 B
+ESM dist\index.js          1.94 KB
+ESM dist\cli.js            65.21 KB
+ESM dist\chunk-JMHZCSHM.js 131.27 KB
+ESM dist\chunk-AJBUL5TD.js 508.09 KB
+ESM ⚡️ Build success in 1131ms
+CJS dist\mcp.cjs   415.55 KB
+CJS dist\index.cjs 512.92 KB
+CJS dist\cli.cjs   705.69 KB
+CJS ⚡️ Build success in 1132ms
+ESM dist\bin.js 699.32 KB
+ESM ⚡️ Build success in 1147ms
+DTS ⚡️ Build success in 3837ms
+DTS dist\cli.d.ts                       15.42 KB
+DTS dist\index.d.ts                     63.52 KB
+DTS dist\mcp.d.ts                       21.52 KB
+DTS dist\types-c0tLF2WC.d.ts            32.19 KB
+DTS dist\generate-worker-BK4uJx7Z.d.ts  2.87 KB
+DTS dist\cli.d.cts                      15.42 KB
+DTS dist\index.d.cts                    63.52 KB
+DTS dist\mcp.d.cts                      21.52 KB
+DTS dist\types-c0tLF2WC.d.cts           32.19 KB
+DTS dist\generate-worker-BK4uJx7Z.d.cts 2.87 KB
+
+> codebase-snapshot@0.12.6 test
+> node scripts/test-run.mjs
+

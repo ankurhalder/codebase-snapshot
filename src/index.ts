@@ -2179,6 +2179,23 @@ function partitionByBudget(
     };
   }
 
+  // Each distinct per-layer budget is packed into its own bucket, and every non-empty bucket
+  // produces at least one part. A ceiling below the bucket count is unreachable, and the retry
+  // loop used to grow the budget six times and then advise "raise maxParts" without saying why:
+  // with `budgets.byLayer.test` and a default, `maxParts 1` can never be satisfied.
+  const buckets = new Set(
+    files.map((file) => config.budgets.byLayer[file.layer] ?? config.budgets.default)
+  );
+  if (limit < buckets.size) {
+    const layers = [...new Set(files.map((file) => file.layer))].sort().join(", ");
+    throw new Error(
+      `maxParts ${limit} cannot be met: this configuration has ${buckets.size} distinct part ` +
+        `budgets across ${layers}, and each is packed separately, so the snapshot cannot have ` +
+        `fewer than ${buckets.size} part(s). Raise maxParts to at least ${buckets.size}, or ` +
+        "remove the per-layer budgets."
+    );
+  }
+
   // The estimate below is the linear one plus the packing margin measured in
   // `generator/prompt.ts`; the retries cover the cases where greedy packing and per-layer
   // buckets leave it short.

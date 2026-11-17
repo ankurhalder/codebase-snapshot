@@ -26,6 +26,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.7
+
+- **A part ceiling below the per-layer bucket count could never be met, and the run said the wrong
+  thing about why.** With `budgets.byLayer.test` and a default, `maxParts 1` has two buckets and
+  each yields at least one part. The retry loop grew the budget six times (to 160 KB in the
+  reproduction) and then advised "raise maxParts" without naming the real constraint. It now fails
+  before the first probe: "maxParts 1 cannot be met: this configuration has 2 distinct part budgets
+  across config, root, src, test ... Raise maxParts to at least 2, or remove the per-layer budgets."
+
+Found by fuzzing per-layer budgets with a part ceiling. Verified: 1 183 tests, 1 175 pass, 0 fail,
+8 host skips; lint 225 files; every gate clean at 0.12.7.
 ## 0.12.6
 
 - **Four scratch harnesses were published.** `git add -A` in 0.12.5 swept the fuzz probes that
