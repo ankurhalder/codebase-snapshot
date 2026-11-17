@@ -26,6 +26,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.15
+
+**New command: `snapshot health`.** `validate` answers "did the code move?"; health answers the
+four questions a reader has before pasting a snapshot somewhere: did a secret survive into an
+artifact, can the claims be checked, is the token count real, does this machine leak into the text.
+
+- Checks: manifest shape, every part on disk and matching its hash, every file in exactly one part,
+  every recorded artifact present and unchanged, nothing unexpected in the directory, an
+  unmasked-secret scan of every written text file, a byte comparison against values from files
+  excluded as sensitive, host paths, the recorded token estimate, the published budget, skip
+  records and freshness.
+- A 0-100 score (critical -25, warning -5), severities, `--format json`, and `--strict` (exit 2 on
+  a critical failure). It never prints a secret it finds, and never writes.
+- `snapshot_health` over MCP returns the same report as structured output.
+
+Verified: the new suite covers a clean 100, a tampered part, a leaked secret (and that the value is
+not echoed), a host path as a warning, a missing artifact, a stale snapshot and both exit codes.
 ## 0.12.14
 
 - **A brief written without a manifest still pointed at one.** With `--skip-artifacts manifest`,

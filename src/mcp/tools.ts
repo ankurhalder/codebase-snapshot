@@ -1,5 +1,5 @@
 /**
- * The eight tools this server exposes.
+ * The nine tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -16,6 +16,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { auditSnapshot } from "../auditor/health.js";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
 import { buildImportResolver, resolveSpecifier } from "../index.js";
@@ -63,7 +64,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the eight tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the nine tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -258,6 +259,62 @@ async function prepare(
   if (!opened.ok) return { ok: false, outcome: failure(opened.message) };
   return { ok: true, workspace: opened.workspace };
 }
+
+const healthTool: McpTool = {
+  name: "snapshot_health",
+  title: "Snapshot health audit",
+  description:
+    "Audit the generated snapshot against the repository: manifest shape, part hashes, the " +
+    "artifacts it claims, unmasked secrets anywhere in the written text, values from files that " +
+    "were excluded as sensitive, host paths, the recorded token count and freshness. Returns a " +
+    "score and one entry per check. Read-only; it never regenerates anything.",
+  inputSchema: {
+    type: "object",
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      score: { type: "integer" },
+      counts: { type: "object" },
+      checks: { type: "array", items: { type: "object" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const workspace = prepared.workspace;
+    const report = auditSnapshot({
+      snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
+      repoDir: workspace.root,
+    });
+    const lines = [
+      "Health: " + report.score + "/100 (" + report.counts.pass + " passed, " +
+        report.counts.warn + " warning(s), " + report.counts.fail + " failed)",
+      ...report.checks.map(
+        (item) =>
+          (item.status === "fail" ? "FAIL " : item.status === "warn" ? "WARN " : "PASS ") +
+          item.id + ": " + item.detail
+      ),
+    ];
+    return {
+      text: lines.join("\n"),
+      structured: {
+        score: report.score,
+        counts: report.counts,
+        checks: report.checks.map((item) => ({
+          id: item.id,
+          title: item.title,
+          severity: item.severity,
+          status: item.status,
+          detail: item.detail,
+        })),
+      },
+    };
+  },
+};
 
 const statusTool: McpTool = {
   name: "snapshot_status",
@@ -1142,6 +1199,7 @@ const explainTool: McpTool = {
 export function buildTools(): McpTool[] {
   return [
     statusTool,
+    healthTool,
     planTool,
     generateTool,
     validateTool,

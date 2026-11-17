@@ -31,7 +31,7 @@ should paste the output of `skill`, so the commit belongs to that repository.
 The installable skill's canonical text lives in `src/agent/skill.ts` and is rendered by
 `codebase-snapshot skill` — do not hand-edit a generated copy.
 
-If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as eight
+If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as nine
 tools over stdio instead of shelling out. Reads come from the snapshot rather than the working
 tree, so excluded and redacted content stays out of context. See [docs/mcp.md](docs/mcp.md).
 
@@ -104,10 +104,14 @@ before it uploads — there is no separate CI matrix to wait for.
 
 ## Versions
 
-**The line stays `0.12.x`.** Every change ships as a patch: no `0.13`, and never `1.0.0`. A
-feature that would normally justify a minor bump is released as `0.12.<n+1>` with the same
-rigour — the number is not the promise, the changelog entry is. `sync-docs` keeps every marked
+**The line runs `0.12.x` to `0.17.0`, with literal sub-bumps.** Every change ships as its own
+version — `0.12.15`, `0.12.16`, … up to `0.12.99`, then `0.13.0` and the same ladder again. The
+number is not the promise; the changelog entry is. Never `1.0.0`. `sync-docs` keeps every marked
 surface at the same value, and `pack-check` fails when the lockfile disagrees.
+
+Tags are created for every version. GitHub releases are created for milestones (`0.13.0`,
+`0.14.0`, …) because five hundred release pages is noise; npm publication of a batch goes
+through the `publish-train` workflow, which publishes tagged versions sequentially.
 
 ## Conventions
 

@@ -1,0 +1,66 @@
+name: Publish train
+
+# Publishes a list of already-tagged versions in one job, sequentially.
+#
+# The release-event workflow stays for milestones. This exists because a concurrency group of
+# "npm-publish" cancels a *pending* run when a newer release arrives, so bulk sub-bumps cannot all
+# go through release events. One job, one npm publish per tag, no waits between runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: Comma-separated versions, e.g. 0.12.15,0.12.16
+        required: true
+      dry_run:
+        description: Build and verify without publishing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-train
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish each tagged version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSIONS: ${{ inputs.versions }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra LIST <<< "$VERSIONS"
+          for V in "${LIST[@]}"; do
+            V="$(echo "$V" | tr -d "[:space:]")"
+            [ -z "$V" ] && continue
+            TAG="v$V"
+            echo "::group::publishing $V"
+            git checkout --force "$TAG"
+            npm ci --no-audit --no-fund
+            npm run build
+            if npm view "codebase-snapshot@$V" version >/dev/null 2>&1; then
+              echo "codebase-snapshot@$V is already on the registry; skipping"
+            elif [ "$DRY_RUN" = "true" ]; then
+              echo "dry run: would publish $V"
+            else
+              npm publish --access public --provenance
+            fi
+            echo "::endgroup::"
+          done

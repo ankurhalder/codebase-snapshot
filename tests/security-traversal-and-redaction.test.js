@@ -268,8 +268,9 @@ test("no workflow interpolates a dispatch input into a shell script", () => {
     lines.forEach((line, index) => {
       if (!line.includes("${{ inputs.")) return;
       const trimmed = line.trim();
-      // The only acceptable place is an `env:` entry, which the shell never re-parses.
-      if (/^(SPEC|MESSAGE|CONFIRM):/.test(trimmed)) return;
+      // The only acceptable place is an `env:` entry, which the shell never re-parses. Any
+      // UPPER_CASE key qualifies; the point is that the value never reaches the script body.
+      if (/^[A-Z][A-Z0-9_]*:/.test(trimmed)) return;
       offenders.push(`${file}:${index + 1}: ${trimmed}`);
     });
   }

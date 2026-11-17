@@ -305,7 +305,7 @@ test("DH-21: no option's appliesTo is prose, and every token is a real command",
   assert.ok(format, "the contract must list --format");
   assert.equal(
     format.appliesTo,
-    "generate/validate/report/explain/init/setup/diff/describe/skill",
+    "generate/validate/health/report/explain/init/setup/diff/describe/skill",
     "--format applies to every command that renders a payload; mcp is excluded because its stdout carries JSON-RPC"
   );
 });

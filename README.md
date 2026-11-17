@@ -210,13 +210,13 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.12.14 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.12.15 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
 workflow, and produce a validated snapshot unaided — that path is covered by a test.
 
-The MCP server exposes eight tools — status, plan, generate, validate, locate, dependents, read, explain — plus
+The MCP server exposes nine tools — status, health, plan, generate, validate, locate, dependents, read, explain — plus
 `snapshot://` resources and two prompts. Its reads come from the snapshot rather than the working
 tree, so an excluded file stays excluded and a redacted value stays redacted, and
 `snapshot_validate` answers the question an agent otherwise cannot ask: is the context I was given
@@ -269,9 +269,10 @@ others.
 | [CLI reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/cli.md) | Commands, options, exit codes, examples |
 | [Configuration](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md) | Every setting, all 25 presets, budgets, hooks, secrets |
 | [Snapshot output](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/output.md) | Directory layout and the full manifest schema |
+| [Health audit](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/health.md) | Leak, integrity and token audit of a generated snapshot |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
-| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | Eight tools, resources, both protocol eras |
+| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | nine tools, resources, both protocol eras |
 | [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md) | Every message and what to do about it |
 | [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md) | Release history and breaking changes |
 

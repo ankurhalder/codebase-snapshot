@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.14 mcp
+npx -y codebase-snapshot@0.12.15 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.14", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.15", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,17 +34,18 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.14 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.15 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
 there, and clients that spawn without a shell cannot execute it directly.
 
-## The eight tools
+## The nine tools
 
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |
 | `snapshot_status` | Is there a snapshot, when was it built, what does it cover? | no |
+| `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? | no |
 | `snapshot_plan` | What would a generate at this budget include, and what would it leave out? | no |
 | `snapshot_generate` | Build it. | yes |
 | `snapshot_validate` | Is the context the agent was given still current? | no |

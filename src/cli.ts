@@ -63,6 +63,7 @@ import type {
   PromptTask,
   ResolvedSnapshotConfig,
 } from "./types.js";
+import { auditSnapshot, type HealthReport } from "./auditor/health.js";
 import { escapeControls, formatNumber } from "./terminal.js";
 
 const VERSION = GENERATOR_VERSION;
@@ -73,6 +74,7 @@ const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
 type Command =
   | "generate"
   | "validate"
+  | "health"
   | "report"
   | "init"
   | "setup"
@@ -86,6 +88,7 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["generate", "generate"],
   ["validate", "validate"],
   ["check", "validate"],
+  ["health", "health"],
   ["report", "report"],
   ["init", "init"],
   ["setup", "setup"],
@@ -100,6 +103,7 @@ const COMMAND_ALIASES = new Map<string, Command>([
 const COMMAND_ARITY: Record<Command, number> = {
   generate: 0,
   validate: 0,
+  health: 0,
   report: 0,
   init: 0,
   setup: 0,
@@ -147,6 +151,7 @@ export const CLI_OPTIONS = {
   staged: { type: "boolean" },
   skeleton: { type: "boolean" },
   sarif: { type: "boolean" },
+  strict: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -173,6 +178,7 @@ Commands:
   setup                Everything at once: config, scripts, dependency, install, generate
   generate (default)   Generate a complete partitioned codebase snapshot
   validate, check      Validate snapshot integrity and check for drift
+  health               Audit a snapshot for leaks, lies and wasted tokens (--strict, --format json)
   init                 Generate a starter snapshot.config file
   report               Print codebase health, layer metrics, and secret audit
   explain <path>       Show how one path would be treated: layer, kind, part, skips
@@ -325,6 +331,8 @@ interface ParsedInvocation {
   skeleton?: boolean;
   /** Also write reports/audit.sarif for a CI security gate. */
   sarif?: boolean;
+  /** `health`: treat warnings as failures and exit 2 on a critical check. */
+  strict?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -771,6 +779,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     withDependents: values["with-dependents"] === true ? true : undefined,
     skeleton: values.skeleton === true ? true : undefined,
     sarif: values.sarif === true ? true : undefined,
+    strict: values.strict === true ? true : undefined,
   };
 }
 
@@ -953,6 +962,34 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
       return fail(invocation.format, "Cancelled.");
     }
     return fail(invocation.format, (err as Error).message);
+  }
+}
+
+/**
+ * The health report, for a terminal.
+ *
+ * Every line names what was measured and the result, because a score without the checks behind it
+ * is a number nobody can act on. Failures come first.
+ */
+function renderHealthText(report: HealthReport): void {
+  const icon = (status: string): string =>
+    status === "pass" ? "✅" : status === "warn" ? "⚠️ " : status === "fail" ? "❌" : "•";
+  const order = { fail: 0, warn: 1, skip: 2, pass: 3 } as Record<string, number>;
+  const sorted = [...report.checks].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+  info(`🩺 Snapshot health: ${report.score}/100`);
+  info(`   ${report.counts.pass} passed, ${report.counts.warn} warning(s), ${report.counts.fail} failed, ${report.counts.skip} skipped`);
+  info("");
+  for (const item of sorted) {
+    info(`   ${icon(item.status)} ${item.title}`);
+    info(`      ${escapeControls(item.detail)}`);
+  }
+  info("");
+  if (report.counts.fail > 0) {
+    info("   A failed check means this snapshot is not safe to hand to a model as it stands.");
+  } else if (report.counts.warn > 0) {
+    info("   Warnings are judgement calls; read them before trusting the snapshot.");
+  } else {
+    info("   Nothing found: the snapshot matches its manifest and carries no unmasked secret.");
   }
 }
 
@@ -1723,6 +1760,15 @@ async function runCommand(argv: string[]): Promise<number> {
     const result = validateSnapshot(resolved);
     emit(invocation.format, result, () => renderValidateText(result));
     return result.valid ? 0 : 1;
+  }
+
+  if (invocation.command === "health") {
+    const snapshotDir = path.resolve(resolved.cwd, resolved.outDir);
+    const report = auditSnapshot({ snapshotDir, repoDir: resolved.cwd });
+    emit(invocation.format, report, () => renderHealthText(report));
+    if (report.counts.fail > 0) return invocation.strict === true ? 2 : 1;
+    if (invocation.strict === true && report.counts.warn > 0) return 1;
+    return 0;
   }
 
   if (invocation.command === "report") {

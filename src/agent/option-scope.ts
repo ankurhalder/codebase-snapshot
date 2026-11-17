@@ -15,6 +15,7 @@
 export type CommandName =
   | "generate"
   | "validate"
+  | "health"
   | "report"
   | "init"
   | "setup"
@@ -102,6 +103,9 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "help",
     "version",
   ],
+  // The health audit resolves the config only to find the output directory; --strict decides the
+  // exit code, and every other setting would be a promise the command does not keep.
+  health: ["cwd", "out-dir", "format", "strict", "no-update-check", "help"],
   validate: VALIDATE_OPTIONS,
   // `report` reads `manifest.json` and prints what is there; a generation setting would change
   // nothing. The seven generation flags used to be listed here and were accepted as silent no-ops
@@ -210,6 +214,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
 const COMMAND_ORDER: readonly CommandName[] = [
   "generate",
   "validate",
+  "health",
   "report",
   "explain",
   "init",

@@ -325,6 +325,17 @@ export function buildAgentContract(): AgentContract {
         exits: [0, 1],
       },
       {
+        name: "health",
+        aliases: [],
+        summary:
+          "Audit a generated snapshot against the repository it describes: manifest shape, part " +
+          "hashes, artifact claims, unmasked secrets in any artifact, values from excluded sensitive " +
+          "files, host paths, the recorded token count and freshness. Exits 0 clean, 1 when a check " +
+          "fails, 2 with --strict when a critical check fails.",
+        positionals: [],
+        exits: [0, 1, 2],
+      },
+      {
         name: "report",
         aliases: [],
         summary: "Print snapshot health, layer metrics and the secret audit.",
@@ -536,6 +547,15 @@ export function buildAgentContract(): AgentContract {
         summary:
           "Also write reports/audit.sarif (SARIF 2.1.0) so a CI security gate can read the redaction " +
           "findings. The matched value is never included.",
+      },
+      {
+        flag: "--strict",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("strict"),
+        summary:
+          "health only: exit 2 when a critical check fails, and 1 when a warning is the only thing " +
+          "left. Without it a critical check exits 1 and warnings exit 0.",
       },
       {
         flag: "--changed-since",
