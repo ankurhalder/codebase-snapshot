@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.63
+
+- Removed four `.probe-*.mjs` scratch scripts that an earlier `add -A` committed. They were
+  investigation scaffolding, not source, and they had no place in the tree.
+
 ## 0.12.62
 
 - **`resources/list` no longer advertises a report that was never written.** The three opt-in
