@@ -186,3 +186,23 @@ What is still open, in the order the next session should take it:
    both tools' own token accounting.
 5. The last three tools to reach twenty: candidates are a route/handler index, a dependency-cycle
    reporter, and a resource that serves the workspace index.
+
+### 0.12.44-0.12.48 - the last of the roadmap, and the proof
+
+- 0.12.44 budget coverage: per-layer kept/total, entry points, exported symbols, and a warning when
+  an entry point is lost.
+- 0.12.45 workspace cross-member links: a relative import that resolves into another member is
+  recorded with its specifier count and examples, and printed.
+- 0.12.46 four graph tools: entrypoints, neighbors, routes, cycles. 21 tools, which meets the
+  "20+" decision.
+- 0.12.47 plan_for pulls in the callers of its strongest matches, and resolves `.js` specifiers to
+  `.ts` files so a TypeScript repository has caller edges at all.
+- 0.12.48 the brief names the opt-in reports it wrote.
+
+Full `verify` at 0.12.47: 1279 tests, 1271 pass, 0 fail, 8 host skips; lint 257 files clean;
+tarball 46 files; site 28 pages; audit-site clean.
+
+Still open for the next rounds: head-to-head benchmarks against repomix and gitingest, cancellation
+for MCP calls (progress exists; an aborted call runs to completion and the docs say so), per-tool
+cost estimates in the contract, and the 0.13.0 milestone (the first publish under the clean-registry
+policy).
