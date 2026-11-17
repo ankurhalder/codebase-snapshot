@@ -6,6 +6,7 @@ import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { compileSecretRules, scanAndRedactSecrets } from "../security/redact.js";
 import { estimateTokens } from "../tokenize.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
+import { verifySnapshotSignature } from "../signing.js";
 import type { Manifest, SecretRule } from "../types.js";
 
 /**
@@ -324,6 +325,24 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
       : check("artifacts.extra", "Nothing unexpected in the snapshot directory", "warning", "warn",
           unexpected.length + " unexpected path(s): " + sample(unexpected))
   );
+
+  // A signature is optional; when present it must prove the manifest it names.
+  const signaturePath = path.join(snapshotDir, "signature.json");
+  if (fs.existsSync(signaturePath)) {
+    const outcome = verifySnapshotSignature(snapshotDir);
+    checks.push(
+      outcome.ok
+        ? check("signature", "The manifest signature verifies", "critical", "pass",
+            "signed " + outcome.record.signedAt + " (key: " + outcome.record.keyOrigin + ", " +
+              outcome.record.fingerprint.slice(0, 12) + ")")
+        : check("signature", "The manifest signature verifies", "critical", "fail", outcome.reason)
+    );
+  } else {
+    checks.push(
+      check("signature", "The manifest is signed", "warning", "skip",
+        "No signature.json; the snapshot cannot prove who produced it.")
+    );
+  }
 
   // Leaks
   const rules = [...compileSecretRules(DEFAULT_SECRET_PATTERNS), ...(options.secretRules ?? [])];

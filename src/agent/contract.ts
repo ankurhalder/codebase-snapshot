@@ -642,6 +642,17 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--sign",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("sign"),
+        summary:
+          "Sign manifest.json with Ed25519 and write signature.json beside it. The key comes from " +
+          "SNAPSHOT_SIGNING_KEY (PEM); with none set, a fresh key is generated and its public half " +
+          "is written in the record, which the file states as trust on first use. health verifies " +
+          "a signature when one is present.",
+      },
+      {
         flag: "--pack",
         type: "string",
         default: "unset",

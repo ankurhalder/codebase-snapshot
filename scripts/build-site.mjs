@@ -139,6 +139,9 @@ const DESCRIPTIONS = {
   slice:
     "Build a snapshot for one question: the retrieval planner picks the files within a token " +
     "budget, and every unselected path is recorded.",
+  signing:
+    "Sign the manifest with Ed25519 so a reader can prove who produced a snapshot and that it " +
+    "has not changed since. health verifies it.",
   "how-to-feed-a-repo-to-claude":
     "Hand a whole codebase to ChatGPT, Claude or Cursor: generate a snapshot locally, pick a " +
     "budget that fits the window, and tell the model what it is reading.",

@@ -26,6 +26,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.32
+
+**Signed snapshots (`--sign`).**
+
+- Signs the exact bytes of `manifest.json` with Ed25519 and writes `signature.json` beside it:
+  algorithm, fingerprint, `manifestSha256`, public key, signature, and whether the key was
+  configured or generated. One signature covers every part and artifact through the manifest digests.
+- The key comes from `SNAPSHOT_SIGNING_KEY` (PEM). With none set, a fresh key is generated and its
+  public half is written in the record — trust on first use, stated as such in the file and the docs.
+- `snapshot health` verifies a signature when present: a manifest changed after signing is a
+  critical failure; no signature is a skip, because absence is not tampering.
+
+Verified: a generated signature verifies and health agrees; a tampered manifest fails with
+"changed after it was signed"; a configured key produces a record the matching public key verifies;
+an unsigned snapshot skips the check.
 ## 0.12.31
 
 **`--pack single|xml|json`: one full-repository file, in the shape you asked for.**

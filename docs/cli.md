@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.12.31 (project dependency ^0.12.31)
+   Branch: main | Part budget: 300 KB | Generator: 0.12.32 (project dependency ^0.12.32)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.31
+   Added devDependency: codebase-snapshot ^0.12.32
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.31
+   Added devDependency: codebase-snapshot ^0.12.32
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -482,6 +482,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--allow-private` | flag | off | generate | With `--remote`: allow private addresses and `file:` URLs. Refused by default. |
 | `--keep-clone` | flag | off | generate | With `--remote`: keep the temporary clone and print where it is. |
 | `--prompt-task <task>` | string | `audit` | generate, validate | `audit`, `review` or `explain` — which job the brief is written for. Changes the opening section, not the standard. |
+| `--sign` | flag | off | generate | Sign `manifest.json` with Ed25519 and write `signature.json`. Key from `SNAPSHOT_SIGNING_KEY`, else generated (trust on first use). See [signing](signing.md). |
 | `--pack <mode>` | string | unset | generate, validate | Also write one full-repository file: `single` (markdown), `xml` or `json`. Unset keeps the `--include-monolith` pair. |
 | `--slice <question>` | string | unset | generate | Narrow the snapshot to what the retrieval planner picks for this question. Records a `slice` block and `skipped[]` reasons `not-selected`. See [slices](slice.md). |
 | `--slice-tokens <n>` | count | `30000` | generate | The token budget for `--slice`. |

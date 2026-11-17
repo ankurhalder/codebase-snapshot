@@ -47,6 +47,7 @@ import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
 import { startHttpTransport } from "./mcp/http.js";
 import { startWebServer } from "./web/server.js";
+import { loadSigningKey, signManifest, writeSignature } from "./signing.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "./remote/source.js";
 import {
   cacheFilePath,
@@ -175,6 +176,7 @@ export const CLI_OPTIONS = {
   slice: { type: "string" },
   "slice-tokens": { type: "string" },
   pack: { type: "string" },
+  sign: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -233,6 +235,7 @@ Options:
   --slice <question>            Keep only what the planner picks for this question
   --slice-tokens <n>            Budget for --slice (default 30000)
   --delta <path>                Only what changed since this snapshot (plus its importers)
+  --sign                        Sign manifest.json (ed25519; SNAPSHOT_SIGNING_KEY or a fresh key)
   --pack <single|xml|json>      Also write one full-repository file in that shape
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
@@ -400,6 +403,8 @@ interface ParsedInvocation {
   sliceTokens?: number;
   /** `--pack`: single | xml | json. */
   pack?: "single" | "xml" | "json";
+  /** `--sign`: sign the manifest with Ed25519. */
+  sign?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -862,6 +867,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
         ? undefined
         : parsePositiveInteger(values["include-logs"] as string, "include-logs", 1),
     tokenTree: values["token-tree"] === true ? true : undefined,
+    sign: values.sign === true ? true : undefined,
     delta: values.delta === undefined ? undefined : String(values.delta),
     slice: values.slice === undefined ? undefined : String(values.slice),
     pack:
@@ -2126,6 +2132,16 @@ async function runCommand(argv: string[]): Promise<number> {
             },
           }),
     });
+    if (invocation.sign === true && !invocation.dryRun) {
+      const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
+      try {
+        const record = signManifest(manifestPath, { key: loadSigningKey() });
+        writeSignature(path.dirname(manifestPath), record);
+        info("   Signature: ed25519, " + record.keyOrigin + " key, " + record.fingerprint.slice(0, 12));
+      } catch (error) {
+        return fail(invocation.format, "Signing failed: " + (error as Error).message);
+      }
+    }
     const elapsed = ((performance.now() - started) / 1000).toFixed(2);
 
     if (invocation.dryRun) {

@@ -27,6 +27,7 @@ npx codebase-snapshot health --format json  # the report, for a dashboard
 | Every part honours the published budget | warning | A part larger than the ceiling the manifest advertises is reported. |
 | Every excluded path has a reason | critical | `skipped[]` is complete and the totals agree. |
 | The snapshot still describes the repository | warning | HEAD is compared with the recorded commit. |
+| The manifest signature verifies | critical | When `signature.json` exists: the manifest bytes match `manifestSha256` and the Ed25519 signature checks out. Absent signature is a skip, not a failure. |
 
 ## Reading the result
 
