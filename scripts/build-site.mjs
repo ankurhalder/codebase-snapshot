@@ -145,6 +145,9 @@ const DESCRIPTIONS = {
   benchmarks:
     "Reproducible token and time numbers for the full snapshot, a task slice and a token " +
     "budget, on this repository, with the script that produced them.",
+  deploy:
+    "Run it as a service: a container that refuses to start without a token, a compose file, " +
+    "and a systemd timer that gates on validate.",
   "security-review":
     "The threat model of the CLI, the HTTP server, the browser page and remote ingestion, " +
     "the controls, the tests and the residual risks stated plainly.",

@@ -1,0 +1,11 @@
+node_modules
+.git
+tests
+src
+docs
+site
+snapshot
+snapshot-*
+*.log
+.github
+scripts/*.mjs

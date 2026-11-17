@@ -26,6 +26,15 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.35
+
+- **A Dockerfile, entrypoint and deploy page.** The image copies the built bundle and runs as the
+  `node` user; the entrypoint **refuses to start without `SNAPSHOT_TOKEN`**, because `serve` on
+  `0.0.0.0` without one would expose the repository. Compose and systemd examples are on the page.
+- The packaging suite pins the mistakes that make a Dockerfile rot: a `COPY` of a path that no
+  longer exists, a floating `latest` base, an entrypoint that starts without a token, and a
+  `.dockerignore` that stops excluding repository state. The build itself is not exercised here
+  because Docker is not available in this environment, and the page says the image is not published.
 ## 0.12.34
 
 - **`scripts/benchmark.mjs` and a benchmarks page.** Three modes on this repository: full 987,750
