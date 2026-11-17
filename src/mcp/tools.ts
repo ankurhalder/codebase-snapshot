@@ -1450,7 +1450,15 @@ const healthTool: ToolSpec = {
     "score and one entry per check. Read-only; it never regenerates anything.",
   inputSchema: {
     type: "object",
-    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
+    properties: {
+      maxScanBytes: {
+        type: "integer",
+        minimum: 1024,
+        description: "Cap on the text the secret and host-path scans read (default 8 MB).",
+      },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
     additionalProperties: false,
   },
   outputSchema: {
@@ -1469,6 +1477,7 @@ const healthTool: ToolSpec = {
     const report = auditSnapshot({
       snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
       repoDir: workspace.root,
+      ...(typeof args.maxScanBytes === "number" ? { maxScanBytes: args.maxScanBytes } : {}),
     });
     const lines = [
       "Health: " + report.score + "/100 (" + report.counts.pass + " passed, " +

@@ -130,7 +130,7 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 - **`snapshot_health`** — expensive, read-only. The full audit: hashes, missing parts, secrets, host
   paths, token accounting, freshness, signature. Score out of 100, severities, failed check ids.
   ```json
-  { "name": "snapshot_health", "arguments": {} }
+  { "name": "snapshot_health", "arguments": { "maxScanBytes": 2000000 } }
   ```
 - **`snapshot_generate`** — expensive, **writes**. Builds the snapshot in a worker. Accepts
   `includeDiffs`, `includeLogs`, `tokenTree`, `stripComments`, and reports progress and cancellation.

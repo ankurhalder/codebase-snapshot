@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.78
+
+- **`snapshot_health` takes `maxScanBytes`.** The audit reads text to look for secrets and host
+  paths; on a multi-gigabyte snapshot that is the expensive half, and a client may want the structural
+  checks without it. The bound is stated in the result like every other audit cap.
+- A test now compares `docs/mcp.md`'s tool table with the served set, so a tool added without its
+  row — or a row left behind — fails the suite. It and the argument check from 0.12.73 keep the two
+  MCP pages from drifting apart.
+
+Verified: 26 MCP/docs tests pass, including the new page parity check and the `maxScanBytes` example.
 ## 0.12.77
 
 - **`snapshot_history`, the 24th tool.** The commits behind the snapshot, read from

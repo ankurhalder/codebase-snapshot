@@ -80,3 +80,9 @@ test("every documented call names the tool it is for, with arguments the tool ac
     }
   }
 });
+
+test("the MCP page names every tool, and no others", () => {
+  const page = fs.readFileSync(path.join(ROOT, "docs", "mcp.md"), "utf8");
+  const named = new Set([...page.matchAll(/^\| `(snapshot_[a-z_]+)`/gm)].map((match) => match[1]));
+  assert.deepEqual([...named].sort(), [...tools.keys()].sort());
+});

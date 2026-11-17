@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.77 mcp
+npx -y codebase-snapshot@0.12.78 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.77", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.78", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.77 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.78 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.77 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.78 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -101,7 +101,7 @@ between them should not have to guess.
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |
 | `snapshot_status` | Is there a snapshot, when was it built, what does it cover? | no |
-| `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? | no |
+| `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? `maxScanBytes` bounds the text scan. | no |
 | `snapshot_query` | Filter the index by layer, kind, path pattern or symbol | no |
 | `snapshot_history` | The commits the snapshot was built from (reads `reports/log.md`) | no |
 | `snapshot_tests` | The tests that import a file (or every test and what it covers) | no |
