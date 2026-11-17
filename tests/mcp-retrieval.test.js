@@ -260,3 +260,69 @@ test("stats agree with the manifest", async (t) => {
   assert.equal(result.structured.tokens, manifest.totals.estimatedTokens);
   assert.ok(result.structured.heaviest.length > 0);
 });
+
+test("routes come from the summaries", async (t) => {
+  const root = fixture(t);
+  fs.writeFileSync(
+    path.join(root, "src", "api.ts"),
+    "export function listUsers() { return []; }\n"
+  );
+  await generate(root);
+  const tool = tools.get("snapshot_routes");
+  assert.ok(tool, "snapshot_routes is served");
+  const result = await tool.handler({}, contextFor(root));
+  assert.equal(result.isError, undefined, result.text);
+  assert.equal(typeof result.structured.total, "number");
+});
+
+test("cycles finds a two-file loop and none in a clean tree", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_cycles");
+  assert.ok(tool, "snapshot_cycles is served");
+  const context = contextFor(root);
+
+  const clean = await tool.handler({}, context);
+  assert.equal(clean.structured.components.length, 0, "the fixture has no cycle");
+
+  const a = path.join(root, "src", "a.ts");
+  const b = path.join(root, "src", "b.ts");
+  fs.writeFileSync(a, 'import { b } from "./b.js";\nexport const a = b;\n');
+  fs.writeFileSync(b, 'import { a } from "./a.js";\nexport const b = a;\n');
+  await generate(root);
+
+  const cyclic = await tool.handler({}, context);
+  assert.ok(cyclic.structured.components.length >= 1, cyclic.text);
+  assert.ok(cyclic.structured.filesInCycles >= 2);
+  assert.match(cyclic.text, /src\/a\.ts/);
+  assert.match(cyclic.text, /src\/b\.ts/);
+});
+
+test("neighbors answers both directions of the graph", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_neighbors");
+  assert.ok(tool, "snapshot_neighbors is served");
+  const context = contextFor(root);
+
+  const user = await tool.handler({ path: "src/user.ts" }, context);
+  assert.equal(user.isError, undefined, user.text);
+  assert.ok(user.structured.importedBy.some((item) => item.path === "src/auth.ts"), "the importer is named");
+
+  const auth = await tool.handler({ path: "src/auth.ts" }, context);
+  assert.ok(auth.structured.imports.some((item) => item.path === "src/user.ts" && item.part !== null));
+
+  const missing = await tool.handler({ path: "nope.ts" }, context);
+  assert.equal(missing.isError, true);
+});
+
+test("entry points list manifests first", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_entrypoints");
+  assert.ok(tool, "snapshot_entrypoints is served");
+  const result = await tool.handler({}, contextFor(root));
+  assert.equal(result.isError, undefined, result.text);
+  assert.ok(result.structured.entries.length > 0);
+  assert.equal(result.structured.entries[0].manifest, true, "the manifest sorts first");
+});

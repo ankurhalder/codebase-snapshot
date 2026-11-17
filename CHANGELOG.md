@@ -26,6 +26,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.46
+
+**Four graph tools: 21 in total.**
+
+- `snapshot_entrypoints`: the files a reader should start from (manifests first, then `index`/`main`/
+  `app`/`server`/`cli`), with importer counts and token costs. The same heuristic the budget planner
+  uses, exposed so an agent can start where a maintainer would.
+- `snapshot_neighbors`: both directions of the import graph for one path — what it imports and what
+  imports it, resolved against the snapshot and listed with their parts.
+- `snapshot_routes`: every route a summary recorded, with the file and part. A project without
+  framework routes reports none rather than an empty table with no explanation.
+- `snapshot_cycles`: strongly connected components in the import graph, computed with the same
+  resolver the generator uses, so a reported cycle is one the snapshot really has.
+- `docs/mcp.md` lists all 21, and the hygiene test holds the count.
+
+Verified: a two-file loop is found and a clean tree reports none; neighbors names both directions;
+entry points sort manifests first; routes reports a count even when it is zero.
 ## 0.12.45
 
 - **Workspaces record cross-member imports.** A relative import in one member that resolves inside

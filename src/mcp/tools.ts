@@ -1,5 +1,5 @@
 /**
- * The seventeen tools this server exposes.
+ * The 21 tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -68,7 +68,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the seventeen tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the 21 tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -276,6 +276,264 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const neighborsTool: McpTool = {
+  name: "snapshot_neighbors",
+  title: "Imports and importers of a file",
+  description:
+    "Both directions of the import graph for one path: what it imports and what imports it, " +
+    "resolved against the snapshot and listed with their parts. The question a change asks first. " +
+    "Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path relative to the repository root." },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      imports: { type: "array", items: { type: "object" } },
+      importedBy: { type: "array", items: { type: "object" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const wanted = typeof args.path === "string" ? args.path : "";
+    const file = read.manifest.files.find((candidate) => candidate.relativePath === wanted) ??
+      read.manifest.files.find((candidate) => candidate.relativePath.toLowerCase() === wanted.toLowerCase());
+    if (file === undefined) return { text: wanted + " is not in the snapshot; snapshot_explain says why.", isError: true };
+
+    const byPath = new Map(read.manifest.files.map((candidate) => [candidate.relativePath, candidate]));
+    const resolver = buildImportResolver(read.manifest.files, {});
+    const entry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === file.relativePath);
+    const imports: Array<{ path: string; part: string | null; resolved: boolean }> = [];
+    for (const specifier of entry?.imports ?? []) {
+      const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
+      const target = resolved === null ? undefined : byPath.get(resolved);
+      imports.push({ path: resolved ?? specifier, part: target?.part ?? null, resolved: target !== undefined });
+    }
+    const importedBy: Array<{ path: string; part: string }> = [];
+    for (const other of read.manifest.files) {
+      if (other.relativePath === file.relativePath) continue;
+      const otherEntry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === other.relativePath);
+      if (otherEntry === undefined) continue;
+      for (const specifier of otherEntry.imports) {
+        if (resolveSpecifier(other.relativePath, specifier, resolver) === file.relativePath) {
+          importedBy.push({ path: other.relativePath, part: other.part });
+          break;
+        }
+      }
+    }
+
+    const lines = [
+      file.relativePath + " (" + file.part + ")",
+      "Imports: " + (imports.length === 0 ? "none recorded" : ""),
+      ...imports.map((item) => "  -> " + item.path + (item.part === null ? " (outside the snapshot)" : " (" + item.part + ")")),
+      "Imported by: " + (importedBy.length === 0 ? "nothing in the snapshot" : ""),
+      ...importedBy.map((item) => "  <- " + item.path + " (" + item.part + ")"),
+    ];
+    return { text: lines.join("\n"), structured: { imports, importedBy } };
+  },
+};
+
+const entrypointsTool: McpTool = {
+  name: "snapshot_entrypoints",
+  title: "Likely entry points",
+  description:
+    "The files a reader should start from: conventional entry points (index, main, app, server, " +
+    "cli) and manifests, with their importer counts. The same heuristic the token-budget planner " +
+    "uses, exposed so an agent can start where a maintainer would. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: { entries: { type: "array", items: { type: "object" } } },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const pattern = /(^|\/)(index|main|app|server|cli)\.(ts|tsx|js|mjs|cjs|py|go|rs|java|cs|rb|php)$/;
+    const manifests = new Set(["package.json", "pyproject.toml", "go.mod", "Cargo.toml", "composer.json", "Gemfile"]);
+    const centrality = new Map(read.manifest.indexes.imports.centralFiles.map((item) => [item.path, item.importedByCount]));
+    const entries = read.manifest.files
+      .filter((file) => pattern.test(file.relativePath) || manifests.has(file.relativePath))
+      .map((file) => ({
+        path: file.relativePath,
+        part: file.part,
+        importedBy: centrality.get(file.relativePath) ?? 0,
+        tokens: Math.ceil(file.includedBytes / 4),
+        manifest: manifests.has(file.relativePath),
+      }))
+      .sort((left, right) => Number(right.manifest) - Number(left.manifest) || right.importedBy - left.importedBy);
+    const lines =
+      entries.length === 0
+        ? ["No conventional entry point was found; start from snapshot_stats and the largest files."]
+        : [
+            entries.length + " candidate entry point(s):",
+            ...entries.map((item) => "  " + item.path + " (" + item.part + ", " + item.importedBy + " importer(s), " + item.tokens + " tokens)"),
+          ];
+    return { text: lines.join("\n"), structured: { entries } };
+  },
+};
+
+const routesTool: McpTool = {
+  name: "snapshot_routes",
+  title: "Routes and handlers",
+  description:
+    "Every route a summary recorded - HTTP methods from decorators, framework attributes and " +
+    "route tables - with the file and part that declare it. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      pattern: { type: "string", description: "Only routes whose text matches this regular expression." },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: { total: { type: "integer" }, routes: { type: "array", items: { type: "object" } } },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    let filter: RegExp | null = null;
+    if (typeof args.pattern === "string") {
+      try {
+        filter = new RegExp(args.pattern, "i");
+      } catch (error) {
+        return { text: "pattern is not a valid regular expression: " + (error as Error).message, isError: true };
+      }
+    }
+    const routes: Array<{ route: string; path: string; part: string }> = [];
+    for (const file of read.manifest.files) {
+      const summary = file.summary as { routeHandlers?: unknown } | undefined;
+      if (summary === undefined || !Array.isArray(summary.routeHandlers)) continue;
+      for (const route of summary.routeHandlers as string[]) {
+        if (filter !== null && !filter.test(route) && !filter.test(file.relativePath)) continue;
+        routes.push({ route, path: file.relativePath, part: file.part });
+      }
+    }
+    routes.sort((left, right) => left.path.localeCompare(right.path) || left.route.localeCompare(right.route));
+    const text =
+      routes.length === 0
+        ? "No route was recorded. Routes come from decorators, framework attributes and route tables."
+        : [
+            routes.length + " route(s):",
+            ...routes.map((route) => route.route + "  (" + route.path + ", " + route.part + ")"),
+          ].join("\n");
+    return { text, structured: { total: routes.length, routes } };
+  },
+};
+
+const cyclesTool: McpTool = {
+  name: "snapshot_cycles",
+  title: "Import cycles",
+  description:
+    "Strongly connected components in the import graph: files that import each other in a loop. " +
+    "Computed with the same resolver the generator uses, so a reported cycle is one the snapshot " +
+    "really has. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      maxComponents: { type: "integer", description: "Cap on reported components (default 20).", minimum: 1 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      components: { type: "array", items: { type: "object" } },
+      filesInCycles: { type: "integer" },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const cap = Math.max(1, typeof args.maxComponents === "number" ? args.maxComponents : 20);
+    const byPath = new Map(read.manifest.files.map((file) => [file.relativePath, file]));
+    const resolver = buildImportResolver(read.manifest.files, {});
+    const edges = new Map<string, string[]>();
+    for (const path of byPath.keys()) edges.set(path, []);
+    for (const entry of read.manifest.indexes.imports.byFile) {
+      const targets = edges.get(entry.path);
+      if (targets === undefined) continue;
+      for (const specifier of entry.imports) {
+        const resolved = resolveSpecifier(entry.path, specifier, resolver);
+        if (resolved !== null && byPath.has(resolved) && !targets.includes(resolved)) targets.push(resolved);
+      }
+    }
+
+    let index = 0;
+    const indices = new Map<string, number>();
+    const low = new Map<string, number>();
+    const onStack = new Set<string>();
+    const stack: string[] = [];
+    const components: string[][] = [];
+    const strongConnect = (node: string): void => {
+      indices.set(node, index);
+      low.set(node, index);
+      index += 1;
+      stack.push(node);
+      onStack.add(node);
+      for (const target of edges.get(node) ?? []) {
+        if (!indices.has(target)) {
+          strongConnect(target);
+          low.set(node, Math.min(low.get(node) as number, low.get(target) as number));
+        } else if (onStack.has(target)) {
+          low.set(node, Math.min(low.get(node) as number, indices.get(target) as number));
+        }
+      }
+      if (low.get(node) === indices.get(node)) {
+        const component: string[] = [];
+        for (;;) {
+          const member = stack.pop() as string;
+          onStack.delete(member);
+          component.push(member);
+          if (member === node) break;
+        }
+        if (component.length > 1 || (edges.get(node) ?? []).includes(node)) components.push(component.sort());
+      }
+    };
+    for (const node of byPath.keys()) if (!indices.has(node)) strongConnect(node);
+
+    components.sort((left, right) => right.length - left.length || left[0].localeCompare(right[0]));
+    const reported = components.slice(0, cap).map((component) => ({ size: component.length, files: component }));
+    const filesInCycles = components.reduce((total, component) => total + component.length, 0);
+    const text =
+      components.length === 0
+        ? "No import cycle was found."
+        : [
+            components.length + " cycle(s), " + filesInCycles + " file(s):",
+            ...reported.map((component, position) => position + 1 + ". " + component.files.join(" -> ")),
+          ].join("\n");
+    return { text, structured: { components: reported, filesInCycles } };
+  },
+};
 
 const searchTool: McpTool = {
   name: "snapshot_search",
@@ -1911,6 +2169,10 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    entrypointsTool,
+    neighborsTool,
+    routesTool,
+    cyclesTool,
     searchTool,
     statsTool,
     reviewTool,
