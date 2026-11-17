@@ -59,3 +59,26 @@ test("health stays clean on a stripped snapshot", (t) => {
   const health = run(["health"], root);
   assert.equal(health.code, 0, health.out);
 });
+
+test("--remove-empty-lines drops blank lines and says the line numbers moved", (t) => {
+  const root = makeRepo(t);
+  fs.writeFileSync(
+    path.join(root, "src", "spaced.ts"),
+    "export const a = 1;\n\n\n// gap\nexport const b = 2;\n   \nexport const c = 3;\n"
+  );
+  assert.equal(run(["generate", "--remove-empty-lines"], root).code, 0);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  const entry = manifest.files.find((file) => file.relativePath === "src/spaced.ts");
+  assert.equal(entry.emptyLinesRemoved, true, "the file records the transform");
+  assert.equal(entry.inclusionMode, "full", "the mode still describes the body rule");
+  const part = fs.readFileSync(path.join(root, "snapshot", "parts", entry.part), "utf8");
+  const fence = part.slice(part.indexOf("````typescript"));
+  const body = fence.slice(0, fence.indexOf("````", 4));
+  assert.doesNotMatch(body, /\n\s*\n/, "no blank line survives in the body");
+  const brief = fs.readFileSync(path.join(root, "snapshot", "PROMPT.md"), "utf8");
+  assert.match(brief, /Blank lines were removed/);
+  // validate compares the digest, so it must be given the same setting; without it the run reports
+  // configuration drift, which is the point of putting the setting in the digest.
+  assert.equal(run(["validate", "--remove-empty-lines"], root).code, 0, "the digest covers the setting");
+  assert.notEqual(run(["validate"], root).code, 0, "without the flag the setting is drift");
+});

@@ -161,6 +161,8 @@ interface Derivation {
   truncationReason: TruncationReason | undefined;
   omittedRanges: Array<[number, number]>;
   includedLines: number;
+  /** Blank lines were dropped from the emitted body; line numbers no longer match the source. */
+  emptyLinesRemoved: boolean;
   isLarge: boolean;
   summary: FileEntry["summary"];
   summaryQuality: SummaryQuality | undefined;
@@ -258,6 +260,15 @@ function derivationSettings(config: ResolvedSnapshotConfig): string {
  * rather than pushed, because the caller has to be able to drop them again when a changed-files
  * scope removes the file.
  */
+/** Drops blank and whitespace-only lines, keeping everything else byte for byte. */
+function collapseBlankLines(text: string): { text: string; removed: number } {
+  const lines = text.split("\n");
+  const kept = lines.filter((line) => line.trim() !== "");
+  const removed = lines.length - kept.length;
+  if (removed === 0) return { text, removed: 0 };
+  return { text: kept.join("\n"), removed };
+}
+
 function deriveFile(
   relativePath: string,
   rawContent: string,
@@ -331,6 +342,20 @@ function deriveFile(
     inclusionMode = "comments-stripped";
   }
 
+  // `--remove-empty-lines` drops blank and whitespace-only lines from the emitted body. It is the
+  // one transform that moves line numbers: a reader who asks for source line 40 gets the body's
+  // line 40, not the file's. That is recorded per file (`emptyLinesRemoved`) and said in the brief,
+  // because a silent renumbering is exactly the kind of quiet lie the project refuses.
+  let emptyLinesRemoved = false;
+  if (config.removeEmptyLines === true && !isPreviewTruncated) {
+    const collapsed = collapseBlankLines(finalContent);
+    if (collapsed.removed > 0) {
+      finalContent = collapsed.text;
+      includedLines = countLines(finalContent);
+      emptyLinesRemoved = true;
+    }
+  }
+
   let summary: FileEntry["summary"];
   let summaryQuality: SummaryQuality | undefined;
   let summarySkip: "oversize" | "preview" | null = null;
@@ -393,6 +418,7 @@ function deriveFile(
     truncationReason,
     omittedRanges,
     includedLines,
+    emptyLinesRemoved,
     isLarge,
     summary,
     summaryQuality,
@@ -2690,6 +2716,7 @@ export function generateSnapshot(
       kind,
       language,
       inclusionMode: derivation.inclusionMode,
+      ...(derivation.emptyLinesRemoved ? { emptyLinesRemoved: true as const } : {}),
       isLarge: derivation.isLarge,
       isPreviewTruncated: derivation.isPreviewTruncated,
       ...(derivation.truncationReason === undefined

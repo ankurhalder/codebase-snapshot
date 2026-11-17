@@ -1695,6 +1695,9 @@ export function resolveConfig(
     // the count, and it used to be read from `logCount` alone — so `--include-logs 3` wrote the
     // default twenty and said three. The number is the request; a request that is accepted and
     // dropped is the silent fallback this project forbids.
+    removeEmptyLines:
+      cliOptions?.removeEmptyLines === true ||
+      strictBoolean(userConfig?.removeEmptyLines, false, "`removeEmptyLines`"),
     logCount: resolveLogCount(
       (cliOptions as { logCount?: unknown } | undefined)?.logCount ??
         (cliOptions as { includeLogs?: unknown } | undefined)?.includeLogs ??
@@ -1795,6 +1798,7 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     // digest it was recorded with, and only a snapshot that really used one of these has a
     // different one.
     ...(config.stripComments === true ? { stripComments: true } : {}),
+    ...(config.removeEmptyLines === true ? { removeEmptyLines: true } : {}),
     ...(config.pack === null ? {} : { pack: config.pack }),
     // The count decides how much of `reports/log.md` is written, so 3 and 20 are different
     // snapshots; 20 is the documented default and is omitted for the same compatibility reason.

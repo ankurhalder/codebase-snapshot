@@ -172,6 +172,7 @@ export interface WorkspaceCliOptions {
   includeLogs?: number;
   tokenTree?: true;
   stripComments?: true;
+  removeEmptyLines?: true;
 }
 
 /**

@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.85
+
+**`--remove-empty-lines`: the last parity flag.**
+
+- Blank and whitespace-only lines are dropped from emitted bodies, on the CLI and through
+  `snapshot_generate { removeEmptyLines: true }`. It is the one transform that moves line numbers,
+  so every affected file records `emptyLinesRemoved: true`, the brief states how many files were
+  renumbered and tells the reader not to cite a line number for them, and the config digest covers
+  the setting.
+- Because the digest now covers it, `validate` must be given the same flag: without it the run
+  reports configuration drift, which is the same contract `--strip-comments` has had since 0.12.84.
+
+Verified: a body with blank lines is emitted without them, the file entry carries the marker, the
+brief says so, `validate --remove-empty-lines` passes and `validate` without it reports drift.
 ## 0.12.84
 
 **`validate` compared a digest that did not cover three settings that change the bytes.**

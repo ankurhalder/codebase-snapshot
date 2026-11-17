@@ -180,6 +180,7 @@ export const CLI_OPTIONS = {
   "budget-tokens": { type: "string" },
   workspace: { type: "string" },
   "strip-comments": { type: "boolean" },
+  "remove-empty-lines": { type: "boolean" },
   "all-members": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -418,6 +419,8 @@ interface ParsedInvocation {
   workspace?: string;
   /** `--strip-comments`: remove comment text from JS/TS bodies. */
   stripComments?: boolean;
+  /** `--remove-empty-lines`: drop blank lines from emitted bodies (line numbers move). */
+  removeEmptyLines?: boolean;
   /** `--all-members` (health): audit every snapshot a `--workspace` run wrote. */
   allMembers?: boolean;
 }
@@ -885,6 +888,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     sign: values.sign === true ? true : undefined,
     workspace: values.workspace === undefined ? undefined : String(values.workspace),
     stripComments: values["strip-comments"] === true ? true : undefined,
+    removeEmptyLines: values["remove-empty-lines"] === true ? true : undefined,
     allMembers: values["all-members"] === true ? true : undefined,
     budgetTokens:
       values["budget-tokens"] === undefined
@@ -1965,6 +1969,7 @@ async function runCommand(argv: string[]): Promise<number> {
         ...(invocation.includeLogs === undefined ? {} : { includeLogs: invocation.includeLogs }),
         ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
         ...(invocation.stripComments === true ? { stripComments: true } : {}),
+        ...(invocation.removeEmptyLines === true ? { removeEmptyLines: true } : {}),
         ...(invocation.pack === undefined ? {} : { pack: invocation.pack }),
         brief: invocation.brief,
         promptTask: invocation.promptTask,

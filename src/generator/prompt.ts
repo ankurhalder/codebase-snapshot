@@ -188,6 +188,15 @@ export function generatePrompt(
   if (wrote("audit")) accompanying.push("`reports/audit.md`");
   // The opt-in reports were written by this run and are not named by the rest of the brief, so
   // the one list of "what else you were given" has to carry them or the reader never opens them.
+  const blankLinesRemoved = manifest.files.filter((file) => file.emptyLinesRemoved === true).length;
+  if (blankLinesRemoved > 0) {
+    lines.push(
+      "Blank lines were removed from " + blankLinesRemoved + " file(s) (`--remove-empty-lines`), so " +
+        "line numbers in those bodies do not match the source file. The manifest marks each with " +
+        "`emptyLinesRemoved: true`; do not cite a line number for them without saying so.",
+      ""
+    );
+  }
   if (manifest.artifacts?.diff !== undefined) accompanying.push("`reports/diff.md`");
   if (manifest.artifacts?.log !== undefined) accompanying.push("`reports/log.md`");
   if (manifest.artifacts?.tokenTree !== undefined) accompanying.push("`reports/tokens.md`");

@@ -42,6 +42,7 @@ export type CommandName =
 const VALIDATE_OPTIONS = [
   "sarif",
   "strip-comments",
+  "remove-empty-lines",
   "pack",
   // The opt-in reports change the artifact selection the manifest records, so validate must accept
   // them to compare like with like: without the flags it reports the selection as drift.
@@ -81,6 +82,7 @@ const VALIDATE_OPTIONS = [
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
     "strip-comments",
+    "remove-empty-lines",
     "workspace",
     "budget-tokens",
     "sign",

@@ -1708,6 +1708,10 @@ const generateTool: ToolSpec = {
         type: "boolean",
         description: "Remove comment text from JavaScript/TypeScript bodies (line numbers kept).",
       },
+      removeEmptyLines: {
+        type: "boolean",
+        description: "Drop blank lines from emitted bodies (line numbers move; recorded per file).",
+      },
       ...SCOPE_PROPERTIES,
     },
     additionalProperties: false,
@@ -1739,6 +1743,7 @@ const generateTool: ToolSpec = {
       ...(typeof args.includeLogs === "number" ? { includeLogs: args.includeLogs } : {}),
       ...(args.tokenTree === true ? { tokenTree: true as const } : {}),
       ...(args.stripComments === true ? { stripComments: true as const } : {}),
+      ...(args.removeEmptyLines === true ? { removeEmptyLines: true as const } : {}),
     };
     const result = await generateInWorker(
       workspace.root,

@@ -645,7 +645,13 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
-        flag: "--all-members",
+        flag: "--remove-empty-lines",
+  type: "boolean",
+  summary: "Drop blank and whitespace-only lines from emitted bodies; line numbers no longer match the source.",
+  appliesTo: optionAppliesTo("remove-empty-lines"),
+},
+{
+  flag: "--all-members",
   type: "boolean",
   summary: "Audit every snapshot a --workspace run wrote, not only the one at outDir.",
   appliesTo: optionAppliesTo("all-members"),

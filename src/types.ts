@@ -185,6 +185,14 @@ export interface FileEntry {
    * would be the same silence this field exists to end.
    */
   omittedRanges?: Array<[number, number]>;
+  /**
+   * Blank lines were dropped from this body, so its line numbers do not match the source.
+   *
+   * Only `--remove-empty-lines` sets it. It is a separate field rather than an `inclusionMode`
+   * because the two describe different things: the mode says how the body was produced (full,
+   * preview, signatures) and this says the numbering moved.
+   */
+  emptyLinesRemoved?: true;
   /** Line count of the file on disk. */
   originalLines: number;
   /** Lines actually emitted into the snapshot. */
@@ -779,6 +787,13 @@ export interface SnapshotConfig {
   /** Remove comment text from JavaScript/TypeScript bodies (line numbers preserved). */
   stripComments?: boolean;
   /**
+   * Drop blank and whitespace-only lines from emitted bodies.
+   *
+   * Unlike `stripComments`, this moves line numbers: the body no longer lines up with the source.
+   * Each affected file records `emptyLinesRemoved: true`, and the brief says so.
+   */
+  removeEmptyLines?: boolean;
+  /**
    * Which single-file pack to write: `single` (markdown), `xml` or `json`.
    *
    * Unset keeps the historical `--include-monolith` behaviour: markdown and JSON together.
@@ -856,6 +871,7 @@ export interface ResolvedSnapshotConfig {
   logCount: number;
   /** Comment stripping for JS/TS bodies. */
   stripComments: boolean;
+  removeEmptyLines: boolean;
   /** The chosen single-file pack, or null for the historical pair. */
   pack: "single" | "xml" | "json" | null;
   /** Also include the files that import a changed one. */
@@ -901,6 +917,8 @@ export interface CliOptions {
   tokenTree?: boolean;
   /** `--strip-comments`: remove comment text from JS/TS bodies. */
   stripComments?: boolean;
+  /** `--remove-empty-lines`: drop blank lines from emitted bodies. */
+  removeEmptyLines?: boolean;
   maxPartBytes?: number;
   maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;
