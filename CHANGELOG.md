@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.73
+
+- **The tool reference is checked against the real schemas.** Three examples on the new page were
+  wrong — `snapshot_locate` takes `query`/`by`, not `path`; `snapshot_context` takes `files`, not
+  `paths`; `snapshot_dependents` takes `direction`/`limit`, not `depth` — and a reader who sent them
+  would have got an error from the page that promised they worked. The examples are fixed, and
+  `tests/docs-tools.test.js` now parses the page and fails when a documented tool does not exist, an
+  argument is not in its schema, a type disagrees, or a required argument is missing.
+
+Verified: both checks pass over all 22 documented tools.
 ## 0.12.72
 
 **A tool reference page: all 22 tools, with a call you can send.**

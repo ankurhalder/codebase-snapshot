@@ -50,7 +50,7 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```
 - **`snapshot_locate`** — cheap, read-only. Which part holds a path or symbol, and where in it.
   ```json
-  { "name": "snapshot_locate", "arguments": { "path": "src/mcp/tools.ts" } }
+  { "name": "snapshot_locate", "arguments": { "query": "src/mcp/tools.ts", "by": "path" } }
   ```
 - **`snapshot_symbol`** — medium, read-only. A symbol by name: defining file, kind, signature and
   the exports that reference it.
@@ -72,7 +72,7 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 - **`snapshot_context`** — medium, read-only. Whole bodies for the files that fit a token budget, in
   the order the planner ranks them.
   ```json
-  { "name": "snapshot_context", "arguments": { "paths": ["src/mcp/retrieval.ts"], "maxTokens": 12000 } }
+  { "name": "snapshot_context", "arguments": { "files": ["src/mcp/retrieval.ts"], "maxTokens": 12000 } }
   ```
 
 ## The planner
@@ -103,7 +103,7 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```
 - **`snapshot_dependents`** — cheap, read-only. What imports this path, one or more hops out.
   ```json
-  { "name": "snapshot_dependents", "arguments": { "path": "src/mcp/server.ts", "depth": 2 } }
+  { "name": "snapshot_dependents", "arguments": { "path": "src/mcp/server.ts", "direction": "imported-by", "limit": 50 } }
   ```
 - **`snapshot_neighbors`** — medium, read-only. Both directions of the import graph for one path.
   ```json
