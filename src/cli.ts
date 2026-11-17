@@ -2100,6 +2100,12 @@ async function runCommand(argv: string[]): Promise<number> {
   if (invocation.slice !== undefined && invocation.delta !== undefined) {
     return fail(invocation.format, "--slice and --delta narrow in two different directions; pass one.");
   }
+  if (invocation.slice !== undefined && invocation.budgetTokens !== undefined) {
+    return fail(
+      invocation.format,
+      "--slice and --budget-tokens both narrow the selection; pass one, or use --slice-tokens for the slice budget."
+    );
+  }
 
   if (invocation.watch) {
     const problem = watchSupportProblem();

@@ -26,6 +26,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.55
+
+- **`--slice` and `--budget-tokens` together are refused.** Both narrow the selection, nothing defined
+  which should win, and the combination produced an empty snapshot in testing. The error points at
+  `--slice-tokens` for the slice's own budget. `--delta` still composes with a budget, which is
+  defined: narrow to the change, then fit it.
+
+Verified: the combination exits non-zero with the reason; the slice tests still pass.
 ## 0.12.54
 
 - **The page audits what it just wrote.** `POST /api/generate` returns a health summary (score,

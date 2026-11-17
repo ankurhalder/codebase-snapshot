@@ -55,4 +55,5 @@ drop count, so a reader knows what they are missing.
 - A first pass over an unfamiliar repository, before deciding what to read next.
 - Pair it with `--delta` to spend the budget only on what changed.
 
-It is not a replacement for `--slice`: a slice answers a question, a budget answers a limit.
+It is not a replacement for `--slice`: a slice answers a question, a budget answers a limit, and
+the CLI refuses both at once rather than guessing which narrowing you meant.

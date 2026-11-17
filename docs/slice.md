@@ -44,8 +44,9 @@ snapshot is a slice, quotes the question, and warns that unselected paths are no
   cannot make them selected.
 - It does not promise the answer is complete. A slice is a budgeted guess at what a reader needs,
   and the brief says so.
-- It does not combine with `--delta`; the two narrow in different directions and the CLI refuses
-  both at once.
+- It does not combine with `--delta` or `--budget-tokens`; all three narrow the selection and the
+  CLI refuses a pair rather than guessing which should win. Use `--slice-tokens` for the slice's own
+  budget.
 
 ## When to use it
 

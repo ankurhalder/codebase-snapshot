@@ -66,3 +66,10 @@ test("--slice and --delta together are refused", (t) => {
   assert.notEqual(result.code, 0);
   assert.match(result.out, /two different directions/);
 });
+
+test("--slice and --budget-tokens together are refused", (t) => {
+  const root = makeRepo(t);
+  const result = run(["generate", "--slice", "billing", "--budget-tokens", "4000"], root);
+  assert.notEqual(result.code, 0);
+  assert.match(result.out, /both narrow|pass one/);
+});
