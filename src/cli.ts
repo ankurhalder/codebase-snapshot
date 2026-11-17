@@ -168,6 +168,9 @@ export const CLI_OPTIONS = {
   ref: { type: "string" },
   "allow-private": { type: "boolean" },
   "keep-clone": { type: "boolean" },
+  "include-diffs": { type: "boolean" },
+  "include-logs": { type: "string" },
+  "token-tree": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -223,6 +226,9 @@ Options:
                                 0 = no limit); PROMPT.md plans the delivery to fit
   --max-parts <n>               Experimental: grow the part budget until the snapshot has at
                                 most n parts, instead of adding parts as the code grows
+  --include-diffs               Write reports/diff.md from the uncommitted diff
+  --include-logs <n>            Write reports/log.md with the last n commits (1-500)
+  --token-tree                  Write reports/tokens.md with per-file token estimates
   --brief <path>                Owner-written half of PROMPT.md (stakes, system, history,
                                 bar, calibration); merged at fixed slots
   --prompt-task <task>          audit | review | explain - which job the brief is for
@@ -372,6 +378,12 @@ interface ParsedInvocation {
   allowPrivate?: boolean;
   /** `--remote`: keep the clone after the run. */
   keepClone?: boolean;
+  /** `--include-diffs`: write reports/diff.md. */
+  includeDiffs?: boolean;
+  /** `--include-logs <n>`: write reports/log.md with the last n commits. */
+  includeLogs?: number;
+  /** `--token-tree`: write reports/tokens.md. */
+  tokenTree?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -828,6 +840,12 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     ref: values.ref === undefined ? undefined : String(values.ref),
     allowPrivate: values["allow-private"] === true ? true : undefined,
     keepClone: values["keep-clone"] === true ? true : undefined,
+    includeDiffs: values["include-diffs"] === true ? true : undefined,
+    includeLogs:
+      values["include-logs"] === undefined
+        ? undefined
+        : parsePositiveInteger(values["include-logs"] as string, "include-logs", 1),
+    tokenTree: values["token-tree"] === true ? true : undefined,
     allowOrigins:
       values["allow-origin"] === undefined
         ? undefined
@@ -1885,6 +1903,9 @@ async function runCommand(argv: string[]): Promise<number> {
         maxMonolithBytes: invocation.maxMonolithBytes,
         attachmentSlots: invocation.attachmentSlots,
         maxParts: invocation.maxParts,
+        ...(invocation.includeDiffs === true ? { includeDiffs: true } : {}),
+        ...(invocation.includeLogs === undefined ? {} : { includeLogs: invocation.includeLogs }),
+        ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
         brief: invocation.brief,
         promptTask: invocation.promptTask,
         skipArtifacts: invocation.skipArtifacts,

@@ -25,6 +25,9 @@ import { generateAuditReport } from "./generator/audit.js";
 import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
+import { generateDiffReport } from "./generator/diff.js";
+import { generateLogReport } from "./generator/log.js";
+import { generateTokenTree } from "./generator/tokens.js";
 import { generatePrompt } from "./generator/prompt.js";
 import { formatNumber } from "./terminal.js";
 import { generateReadme } from "./generator/readme.js";
@@ -3135,6 +3138,14 @@ export function generateSnapshot(
     ? generateAuditReport(manifest, secretFindings, config.secretRules)
     : null;
   if (auditText !== null) manifest.artifacts.audit = artifactRecord(auditText);
+  const diffReport = artifacts.diff ? generateDiffReport(config.cwd) : null;
+  if (diffReport !== null) manifest.artifacts.diff = artifactRecord(diffReport.text);
+  const logReport = artifacts.log
+    ? generateLogReport(config.cwd, { count: config.logCount })
+    : null;
+  if (logReport !== null) manifest.artifacts.log = artifactRecord(logReport.text);
+  const tokenTree = artifacts.tokenTree ? generateTokenTree(manifest) : null;
+  if (tokenTree !== null) manifest.artifacts.tokenTree = artifactRecord(tokenTree.text);
   const readmeText = artifacts.readme ? generateReadme(manifest, artifacts) : null;
   if (readmeText !== null) manifest.artifacts.readme = artifactRecord(readmeText);
   // Rendered from the same manifest the reader gets, so the prompt cannot name a part, an
@@ -3313,7 +3324,15 @@ export function generateSnapshot(
     const partsDir = path.join(stagingDir, "parts");
     const reportsDir = path.join(stagingDir, "reports");
     if (artifacts.parts) fs.mkdirSync(partsDir, { recursive: true });
-    if (artifacts.navigation || artifacts.projectTree || artifacts.audit || config.sarif === true) {
+    if (
+      artifacts.navigation ||
+      artifacts.projectTree ||
+      artifacts.audit ||
+      artifacts.diff ||
+      artifacts.log ||
+      artifacts.tokenTree ||
+      config.sarif === true
+    ) {
       fs.mkdirSync(reportsDir, { recursive: true });
     }
 
@@ -3363,6 +3382,15 @@ export function generateSnapshot(
     }
     if (auditText !== null) {
       writeArtifact(reportsDir, "audit.md", auditText);
+    }
+    if (diffReport !== null) {
+      writeArtifact(reportsDir, "diff.md", diffReport.text);
+    }
+    if (logReport !== null) {
+      writeArtifact(reportsDir, "log.md", logReport.text);
+    }
+    if (tokenTree !== null) {
+      writeArtifact(reportsDir, "tokens.md", tokenTree.text);
     }
     if (sarifText !== null) {
       // Written beside audit.md rather than instead of it: a human reads one and a CI gate

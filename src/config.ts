@@ -795,6 +795,9 @@ export const ARTIFACT_NAMES = [
   "navigation",
   "projectTree",
   "audit",
+  "diff",
+  "log",
+  "tokenTree",
   "monolith",
 ] as const;
 
@@ -809,6 +812,10 @@ const DEFAULT_ARTIFACTS: ResolvedArtifacts = {
   navigation: true,
   projectTree: true,
   audit: true,
+  // Opt-in: a diff and a log describe a moment, and most readers of a snapshot want the tree.
+  diff: false,
+  log: false,
+  tokenTree: false,
   monolith: false,
 };
 
@@ -829,6 +836,14 @@ function isArtifactName(value: string): value is ArtifactName {
  * `skipped`, and a config that had turned one of the requested artifacts off therefore left the
  * run with every artifact disabled and nothing written.
  */
+function resolveLogCount(value: unknown): number {
+  if (value === undefined || value === null) return 20;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 500) {
+    throw new Error(`\`logCount\` must be an integer from 1 to 500 (received ${describeValue(value)}).`);
+  }
+  return value;
+}
+
 function resolveArtifacts(
   requested: SnapshotConfig["artifacts"] | undefined,
   skipped: string[] | undefined,
@@ -1475,8 +1490,17 @@ export function resolveConfig(
   const cliMonolith = cliOptions?.includeMonolith;
   const includeMonolith =
     cliMonolith ?? strictBoolean(userConfig?.includeMonolith, false, "`includeMonolith`");
+  // The three opt-in reports are CLI switches as well as config keys, so they are merged into
+  // the request before resolution: `--skip-artifacts` still wins, which is the documented
+  // precedence (an explicit skip outranks a request).
+  const requestedArtifacts = {
+    ...(userConfig?.artifacts ?? {}),
+    ...(cliOptions?.includeDiffs === true ? { diff: true } : {}),
+    ...(cliOptions?.includeLogs !== undefined ? { log: true } : {}),
+    ...(cliOptions?.tokenTree === true ? { tokenTree: true } : {}),
+  };
   const artifacts = resolveArtifacts(
-    userConfig?.artifacts,
+    Object.keys(requestedArtifacts).length === 0 ? undefined : requestedArtifacts,
     cliOptions?.skipArtifacts,
     includeMonolith,
     cliMonolith,
@@ -1647,6 +1671,9 @@ export function resolveConfig(
     ...(withDependents ? { withDependents } : {}),
     ...(skeleton ? { skeleton } : {}),
     ...(sarif ? { sarif } : {}),
+    logCount: resolveLogCount(
+      (cliOptions as { logCount?: unknown } | undefined)?.logCount ?? userConfig?.logCount
+    ),
     include: resolveInclude(userConfig?.include),
     preset: preset.presetName,
     presetExclude,

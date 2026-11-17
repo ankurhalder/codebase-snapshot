@@ -19,7 +19,10 @@ snapshot/
 └── reports/
     ├── project-tree.md         directory tree of included files
     ├── navigation.md           links between layers, kinds and parts
-    └── audit.md                secrets, large files, parse diagnostics, git state
+    ├── audit.md                secrets, large files, parse diagnostics, git state
+    ├── diff.md                 uncommitted changes (--include-diffs)
+    ├── log.md                  recent commits (--include-logs <n>)
+    └── tokens.md               per-file token estimates (--token-tree)
 ```
 
 With `--include-monolith` you also get `full-codebase.json` and `full-codebase.md` — the

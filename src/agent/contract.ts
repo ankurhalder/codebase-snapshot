@@ -642,6 +642,32 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--include-diffs",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("include-diffs"),
+        summary:
+          "Also write reports/diff.md: the unstaged and staged diff, with the command that produced " +
+          "each, bounded to 200 KiB and truncated with a note. Absent when there is no change.",
+      },
+      {
+        flag: "--include-logs",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("include-logs"),
+        summary:
+          "Also write reports/log.md: the last n commits (1-500), one line each, newest first.",
+      },
+      {
+        flag: "--token-tree",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("token-tree"),
+        summary:
+          "Also write reports/tokens.md: per-file token estimates sorted by cost, with directory " +
+          "rollups. The same estimate the manifest carries, broken down.",
+      },
+      {
         flag: "--strict",
         type: "boolean",
         default: false,

@@ -73,6 +73,9 @@ const VALIDATE_OPTIONS = [
  */
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
+    "include-diffs",
+    "include-logs",
+    "token-tree",
     "remote",
     "ref",
     "allow-private",

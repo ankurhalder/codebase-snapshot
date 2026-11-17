@@ -26,6 +26,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.24
+
+**Three opt-in reports: the diff, the log, the token tree.**
+
+- `--include-diffs` writes `reports/diff.md` from the unstaged and staged diff, names the git
+  command, is bounded to 200 KiB with a truncation note, and is **absent when the tree is clean** —
+  an empty report is noise. It records `artifacts.diff` in the manifest.
+- `--include-logs <n>` writes `reports/log.md` with the last n commits (1–500, one line each). An
+  invalid n is a usage error, not a silent default.
+- `--token-tree` writes `reports/tokens.md`: per-file estimates sorted by cost with directory
+  rollups, using the same estimate the manifest carries, and the rows add up to the stated total.
+- All three are also config keys (`artifacts.diff`, `artifacts.log`, `artifacts.tokenTree`,
+  `logCount`), default off, and `--skip-artifacts` still wins.
+
+Verified: a clean tree produces no diff artifact and a changed one contains the change and the
+command; the log names its range and the commit; the token rows sum to the stated total; a bad
+`--include-logs` value is refused.
 ## 0.12.23
 
 **Two more retrieval tools, aimed at the questions an agent actually asks.**

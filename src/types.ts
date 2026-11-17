@@ -503,6 +503,12 @@ export interface Manifest {
     navigation?: ManifestArtifact;
     projectTree?: ManifestArtifact;
     audit?: ManifestArtifact;
+    /** `reports/diff.md`, when `diff` was requested and the repository had changes. */
+    diff?: ManifestArtifact;
+    /** `reports/log.md`, when `log` was requested and the repository had commits. */
+    log?: ManifestArtifact;
+    /** `reports/tokens.md`, when `tokenTree` was requested. */
+    tokenTree?: ManifestArtifact;
     fullJson: ManifestArtifact | null;
     fullMarkdown: ManifestArtifact | null;
     /**
@@ -585,6 +591,12 @@ export interface ArtifactSelection {
   projectTree?: boolean;
   /** `reports/audit.md` — security, layer, kind and skip findings. */
   audit?: boolean;
+  /** `reports/diff.md` — the uncommitted diff, when the repository has one. */
+  diff?: boolean;
+  /** `reports/log.md` — recent commits. */
+  log?: boolean;
+  /** `reports/tokens.md` — per-file token estimates. */
+  tokenTree?: boolean;
   /** `full-codebase.{json,md}` — one file per format, the whole payload again. */
   monolith?: boolean;
 }
@@ -700,6 +712,8 @@ export interface SnapshotConfig {
   skeleton?: boolean;
   /** Also write `reports/audit.sarif` so a CI security gate can read the findings. */
   sarif?: boolean;
+  /** How many commits `reports/log.md` carries when it is enabled (default 20). */
+  logCount?: number;
   /**
    * With `changedSince` or `staged`, also include the files that import a changed one.
    *
@@ -768,6 +782,8 @@ export interface ResolvedSnapshotConfig {
    * ingest is a finding nobody's build can act on.
    */
   sarif?: boolean;
+  /** How many commits `reports/log.md` carries when it is enabled. */
+  logCount: number;
   /** Also include the files that import a changed one. */
   withDependents?: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */
@@ -803,6 +819,12 @@ export interface CliOptions {
   brief?: string;
   /** `--prompt-task`: which job the brief is written for. */
   promptTask?: PromptTask;
+  /** `--include-diffs`: write reports/diff.md from the uncommitted diff. */
+  includeDiffs?: boolean;
+  /** `--include-logs <n>`: write reports/log.md with the last n commits. */
+  includeLogs?: number;
+  /** `--token-tree`: write reports/tokens.md. */
+  tokenTree?: boolean;
   maxPartBytes?: number;
   maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;
