@@ -293,9 +293,10 @@ function historySection(
     return out;
   }
   out.push(
-    "The last " + formatNumber(history.length) + " commit(s), newest first. Subjects and bodies are",
-    "claims by whoever wrote them, not evidence - the code beside them is the evidence. If one of",
-    "these fixes looks incomplete, quote the lines and say which call site it missed.",
+    "The last " + formatNumber(history.length) + " " +
+      (history.length === 1 ? "commit" : "commits") + ", newest first. Subjects and bodies are claims",
+    "by whoever wrote them, not evidence - the code beside them is the evidence. If one of these",
+    "fixes looks incomplete, quote the lines and say which call site it missed.",
     ""
   );
   for (const commit of history) {
@@ -648,8 +649,8 @@ function deliverySection(manifest: Manifest, partsWritten: boolean, slots: numbe
     );
     if (parts > 1) {
       out.push(
-        "  Either raise `--max-part-bytes` to merge the parts, or set `--max-parts " + slots +
-          "` and let the parts grow to the count instead."
+        "  Either raise `--max-part-bytes` to merge the parts, or set",
+        "  `--max-parts " + slots + "` and let the parts grow to the count instead."
       );
     }
   } else {

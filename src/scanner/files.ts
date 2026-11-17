@@ -947,6 +947,23 @@ export interface CommitRecord {
 const COMMIT_BODY_LIMIT = 400;
 
 /**
+ * Cuts prose at a sentence boundary, never mid-word.
+ *
+ * The first cut used `slice` and produced bodies ending in "…and the bui…", which reads as a
+ * truncated file rather than an edited quotation. Falls back to the last space, and only then
+ * to a hard cut, so a single long token cannot defeat it.
+ */
+function truncateAtSentence(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const window = text.slice(0, limit);
+  const sentence = Math.max(window.lastIndexOf(". "), window.lastIndexOf("; "));
+  if (sentence > limit / 3) return window.slice(0, sentence + 1).trim();
+  const space = window.lastIndexOf(" ");
+  if (space > limit / 3) return window.slice(0, space).trim() + "…";
+  return window.trim() + "…";
+}
+
+/**
  * The last `limit` commits, newest first; empty when git cannot answer.
  *
  * Feeds the "what came before" section of `PROMPT.md`. The subject alone says what changed; the
@@ -980,10 +997,15 @@ export function recentCommits(cwd: string, limit = 10): CommitRecord[] {
           .split("\n")
           .map((line) => line.trim())
           .filter((line) => line.length > 0)
-          .join(" ");
+          .join(" ")
+          // A commit body can quote a markdown table; its pipes are noise in prose and read as
+          // syntax the brief does not otherwise use.
+          .replace(/\s*\|\s*/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
         return {
           subject: subject.trim(),
-          body: body.length > COMMIT_BODY_LIMIT ? body.slice(0, COMMIT_BODY_LIMIT - 1) + "…" : body,
+          body: truncateAtSentence(body, COMMIT_BODY_LIMIT),
         };
       })
       .filter((commit) => commit.subject.length > 0);

@@ -8,8 +8,11 @@ All notable changes to `codebase-snapshot`.
 
 This package started its public life as `@ankurhalder/codebase-snapshot`, which reached 4.4.1. It
 moved to the unscoped name and **restarted at 0.9.0**, so the numbers below are not a continuation of
-the old line — `0.9.0` is newer than `4.4.1`, not older. 1.0.0 is reserved for when the CLI surface
-is settled.
+the old line — `0.9.0` is newer than `4.4.1`, not older.
+
+The line stays at **`0.12.x`**. Every change ships as a patch release: there is no `0.13`, and
+`1.0.0` is not planned. A feature that would normally justify a minor bump is released as
+`0.12.<n+1>` with the same rigour; the number is not the promise, the entry below is.
 
 Two versions exist on the registry that are not releases, and both are deprecated:
 
@@ -23,6 +26,27 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.1
+
+Three defects in the facts 0.12.0 printed about a project, found by reading the artifact as the
+model that receives it:
+
+- **The README summary leaked markup.** A centred header wraps the first prose in `<p>` with `<br>`
+  and `<code>` inside it, and the brief printed the tags. Markup is now removed before the paragraph
+  is found, and heading elements are removed whole — after stripping tags, `<h1>Demo</h1>` became
+  the line "Demo", which read as the first paragraph and then ended it at the next blank line, so
+  the summary of every such README was its own title.
+- **"Most recent releases" listed prose headings.** `CHANGELOG.md` has a `## A note on version
+  numbers`; the brief called it a release. Only version-shaped headings count now.
+- **Commit bodies were cut mid-word.** A 400-character `slice` produced bodies ending in "…and the
+  bui…", which reads as a truncated file rather than an edited quotation. They are cut at a sentence
+  boundary, fall back to a word boundary, and no longer carry the pipes of a quoted markdown table.
+
+Also: "The last 1 commits" is "commit", and two lines that wrapped past 100 columns were reflowed.
+
+Nothing else changes; no setting, artifact or manifest field is different.
+
+Verified: 1 171 tests, 1 163 pass, 0 fail, 8 host skips; lint 225 files; every gate clean at 0.12.1.
 ## 0.12.0
 
 The brief stops being only generated. Facts can be proved from the repository; judgement cannot,

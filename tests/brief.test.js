@@ -214,3 +214,52 @@ test("an empty brief is allowed and changes nothing but the digest", (t) => {
   assert.equal(manifest.config.brief.digest.length, 64, "and its digest");
   assert.match(promptOf(dir), /## The job/, "the brief still renders");
 });
+
+test("the project summary carries no HTML from the README", (t) => {
+  const dir = makeRepo(t);
+  fs.writeFileSync(
+    path.join(dir, "README.md"),
+    "<div>\n  <h1>Demo</h1>\n\n  <p><b>Bold.</b><br> A <code>command</code> that fails when the code moves.</p>\n</div>\n",
+    "utf8"
+  );
+  assert.equal(cli(["generate"], dir).code, 0);
+  const prompt = promptOf(dir);
+  assert.match(prompt, /A command that fails when the code moves/, "the prose survives");
+  assert.doesNotMatch(prompt, /<code>|<br>/, "no inline markup reaches the brief");
+  assert.equal(prompt.includes("</p>"), false, "and no closing tag either");
+});
+
+test("only version headings count as releases", (t) => {
+  const dir = makeRepo(t);
+  fs.writeFileSync(
+    path.join(dir, "CHANGELOG.md"),
+    "# Changelog\n\n## A note on version numbers\n\nText.\n\n## 1.2.0\n\nFixed.\n\n## 0.9.0\n\nOlder.\n",
+    "utf8"
+  );
+  assert.equal(cli(["generate"], dir).code, 0);
+  const prompt = promptOf(dir);
+  assert.match(prompt, /Most recent releases: 1\.2\.0; 0\.9\.0\./, "the versions are quoted");
+  assert.doesNotMatch(prompt, /A note on version numbers/, "a prose heading is not a release");
+});
+
+test("a commit body is cut at a sentence, not mid-word", (t) => {
+  const dir = makeRepo(t);
+  const git = (args) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  if (git(["init", "-q"]).status !== 0) {
+    t.skip("git is not available");
+    return;
+  }
+  const long = "The guard existed on the route. ".repeat(40);
+  git(["add", "-A"]);
+  const committed = spawnSync(
+    "git",
+    ["-c", "user.email=t@e.c", "-c", "user.name=T", "commit", "-q", "-m", "fix: a long body", "-m", long],
+    { cwd: dir, encoding: "utf8" }
+  );
+  assert.equal(committed.status, 0, committed.stderr);
+  assert.equal(cli(["generate"], dir).code, 0);
+  const body = promptOf(dir).split("\n").find((line) => line.startsWith("  The guard existed"));
+  assert.ok(body, "the body is present");
+  assert.match(body, /The guard existed on the route\.$/, "cut on a sentence boundary");
+  assert.doesNotMatch(body, /bui…|\w…$/, "and never mid-word");
+});

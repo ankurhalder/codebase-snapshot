@@ -265,7 +265,7 @@ test("the brief carries the repository history as claims, not evidence", (t) => 
   const prompt = readSnapshot(dir, "PROMPT.md");
   assert.match(prompt, /## What came before/, "a history section is present");
   assert.match(prompt, /fix: a prior round found this/, "and carries the subject");
-  assert.match(prompt, /are\s+claims by whoever wrote them, not evidence/, "labelled as claims");
+  assert.match(prompt, /are\s+claims\s+by whoever wrote them, not evidence/, "labelled as claims");
   assert.match(prompt, /Verify that those fixes hold instead of rediscovering them/, "the job says what to do with them");
 });
 

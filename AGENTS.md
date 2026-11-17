@@ -102,6 +102,13 @@ before it uploads — there is no separate CI matrix to wait for.
 **Windows note.** The repository ships `.gitattributes` with `eol=lf`; a checkout with
 `core.autocrlf=true` will otherwise fail the lint rule on untouched files.
 
+## Versions
+
+**The line stays `0.12.x`.** Every change ships as a patch: no `0.13`, and never `1.0.0`. A
+feature that would normally justify a minor bump is released as `0.12.<n+1>` with the same
+rigour — the number is not the promise, the changelog entry is. `sync-docs` keeps every marked
+surface at the same value, and `pack-check` fails when the lockfile disagrees.
+
 ## Conventions
 
 - Commits: `type: summary` (`feat`, `fix`, `docs`, `ci`, `chore`), with a body explaining the

@@ -54,14 +54,31 @@ function readDescription(cwd: string): { description?: string } {
 function readSummary(cwd: string): { summary?: string } {
   const raw = readText(path.join(cwd, "README.md"));
   if (raw === null) return {};
-  const lines = raw.split(/\r?\n/);
+  // Markup is removed before the paragraph is found, not after. A centred header puts the first
+  // prose inside `<p>` with `<br>` and `<code>` in it: skipping HTML lines would lose the summary
+  // entirely, and leaving them in printed tags into the brief.
+  const text = raw
+    // Heading elements are removed whole: after stripping tags `<h1>Demo</h1>` becomes the line
+    // "Demo", which reads as the first prose paragraph and then ends the paragraph at the next
+    // blank line - the summary of every centred README became its own title.
+    .replace(/<h[1-6][^>]*>[\s\S]*?<\/h[1-6]>/gi, "\n")
+    // Block boundaries become line breaks, so `<p>` prose starts its own paragraph.
+    .replace(/<\/(p|div|section|header|footer|li)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
   const paragraph: string[] = [];
-  for (const line of lines) {
+  for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
-    // Skip the title, badges, HTML and rules: the summary is the first prose paragraph.
+    // Skip the title, badges and rules: the summary is the first prose paragraph.
     if (paragraph.length === 0) {
       if (trimmed.length === 0) continue;
-      if (/^#/.test(trimmed) || /^!\[/.test(trimmed) || /^</.test(trimmed) || /^[-*|]/.test(trimmed)) continue;
+      if (/^#/.test(trimmed) || /^!\[/.test(trimmed) || /^[-*|]/.test(trimmed)) continue;
       if (/^\[[^\]]+\]:/.test(trimmed)) continue;
     } else if (trimmed.length === 0 || /^#/.test(trimmed)) {
       break;
@@ -70,15 +87,25 @@ function readSummary(cwd: string): { summary?: string } {
   }
   const summary = paragraph.join(" ").replace(/\s+/g, " ").trim();
   if (summary.length === 0) return {};
-  return { summary: summary.length > SUMMARY_LIMIT ? summary.slice(0, SUMMARY_LIMIT - 1) + "…" : summary };
+  return { summary: truncate(summary, SUMMARY_LIMIT) };
+}
+
+/** Cuts at a word boundary, so a summary does not end mid-word. */
+function truncate(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const window = text.slice(0, limit);
+  const space = window.lastIndexOf(" ");
+  return (space > limit / 2 ? window.slice(0, space) : window).trim() + "…";
 }
 
 function readReleases(cwd: string): string[] {
   const raw = readText(path.join(cwd, "CHANGELOG.md"));
   if (raw === null) return [];
+  // A changelog has other `##` headings ("A note on version numbers"); calling them releases
+  // makes the brief claim a release history that does not exist.
   const headings = raw
     .split(/\r?\n/)
-    .filter((line) => /^##\s+\S/.test(line))
-    .map((line) => line.replace(/^##\s+/, "").trim());
+    .map((line) => /^##\s+(.+?)\s*$/.exec(line)?.[1]?.trim())
+    .filter((heading): heading is string => heading !== undefined && /^v?\d+\.\d+/.test(heading));
   return headings.slice(0, MAX_RELEASES);
 }
