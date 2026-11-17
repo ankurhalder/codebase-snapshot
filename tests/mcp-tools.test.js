@@ -475,4 +475,3 @@ test("snapshot_tests finds the test that imports a file", async (t) => {
   const none = await call("snapshot_tests", { path: "src/auth.ts" }, context);
   assert.match(none.text, /No test in the snapshot imports/);
 });
-

@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.75
+
+- `tests/mcp-tools.test.js` ended with two newlines after the new test was appended; the lint gate
+  caught it, and it is one newline again.
 ## 0.12.74
 
 - **`snapshot_tests`, the 23rd tool.** Given a path, the tests that import it — plus the ones named
