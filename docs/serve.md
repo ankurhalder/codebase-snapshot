@@ -27,7 +27,9 @@ Serving http://127.0.0.1:4788/
    repository code on a page's request. For a project config, use the CLI.
 3. **Preview.** The brief (`PROMPT.md`) and the file list come back from the written snapshot, not
    from the working tree. If the snapshot is wrong, the page shows the wrongness.
-4. **Download.** The zip is the snapshot directory, stored entries, no compression — the same bytes
+4. **See the health score.** The page audits what it just wrote and shows the score, with the
+   failed checks named. `GET /api/health?path=…` re-runs the audit for the snapshot on screen.
+5. **Download.** The zip is the snapshot directory, stored entries, no compression — the same bytes
    the agent would read.
 
 ## The token

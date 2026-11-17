@@ -59,7 +59,7 @@ export const SERVE_PAGE = `<!doctype html>
     <form id="token-form"><input id="token" type="password" placeholder="paste the token printed by snapshot serve" style="flex:1"><button type="submit">Use token</button></form>
   </div>
   <div class="row">
-    <section><h2>Brief <span id="fingerprint"></span></h2><pre id="brief">No snapshot loaded.</pre></section>
+    <section><h2>Brief <span id="fingerprint"></span> <span id="health"></span></h2><pre id="brief">No snapshot loaded.</pre></section>
     <section><h2>Files <span id="counts"></span></h2><ul id="files"></ul></section>
   </div>
 </main>
@@ -112,6 +112,7 @@ export const SERVE_PAGE = `<!doctype html>
         "Generated " + result.files + " files (" + (result.mode || "full") + ") in " + result.seconds + "s, " +
           result.parts + " part(s), " + result.tokens + " estimated tokens." +
           (result.dropped === undefined ? "" : " " + result.dropped + " path(s) not selected.") +
+          (result.health ? " Health " + result.health.score + "/100" + (result.health.failed.length > 0 ? " (failed: " + result.health.failed.join(", ") + ")" : "") + "." : "") +
           (result.warning ? " " + result.warning : ""),
         result.warning ? "warn" : "ok"
       );
@@ -125,6 +126,13 @@ export const SERVE_PAGE = `<!doctype html>
   async function load() {
     const info = await (await api("/api/snapshot?path=" + encodeURIComponent(snapshotPath))).json();
     $("fingerprint").textContent = info.fingerprint.slice(0, 12);
+    try {
+      const health = await (await api("/api/health?path=" + encodeURIComponent(snapshotPath))).json();
+      $("health").textContent = "health " + health.score + "/100";
+      $("health").className = health.counts.fail > 0 ? "bad" : health.counts.warn > 0 ? "warn" : "ok";
+    } catch {
+      $("health").textContent = "";
+    }
     $("brief").textContent = info.prompt;
     $("counts").textContent = info.included + " included / " + info.skipped + " skipped";
     $("files").innerHTML = "";

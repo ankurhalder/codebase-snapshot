@@ -183,3 +183,27 @@ test("the page can slice and budget, not only generate everything", async (t) =>
   });
   assert.equal(badBudget.status, 400);
 });
+
+test("the page reports the health of what it generated", async (t) => {
+  const root = fixture(t);
+  const server = await serve(t, root);
+  const repo = path.join(root, "repo");
+  const generated = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers: { authorization: "Bearer " + server.token, "content-type": "application/json" },
+    body: JSON.stringify({ source: repo }),
+  });
+  assert.equal(generated.status, 200);
+  const summary = await generated.json();
+  assert.ok(summary.health, "a health summary is returned");
+  assert.equal(typeof summary.health.score, "number");
+  assert.ok(Array.isArray(summary.health.failed));
+
+  const audited = await fetch(server.url + "api/health?path=" + encodeURIComponent(summary.path), {
+    headers: { authorization: "Bearer " + server.token },
+  });
+  assert.equal(audited.status, 200);
+  const report = await audited.json();
+  assert.equal(report.score, summary.health.score);
+  assert.ok(Array.isArray(report.checks));
+});

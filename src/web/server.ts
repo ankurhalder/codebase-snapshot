@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { generateSnapshot } from "../index.js";
 import { createServer } from "../mcp/run.js";
+import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
 import type { Manifest } from "../types.js";
 import { writeZip } from "./zip.js";
@@ -250,8 +251,17 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
               ...(mode === "budget" && budgetTokens !== undefined ? { budgetTokens } : {}),
             });
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
+            const snapshotDir = path.join(target, "snapshot");
+            // The audit runs on what was just written, so the page shows whether the artifact is
+            // safe to hand over rather than only how big it is.
+            const health = auditSnapshot({ snapshotDir, repoDir: target });
             send(200, {
-              path: path.join(target, "snapshot"),
+              path: snapshotDir,
+              health: {
+                score: health.score,
+                failed: health.checks.filter((check) => check.status === "fail").map((check) => check.id),
+                warnings: health.counts.warn,
+              },
               files: manifest.counts.totalFiles,
               parts: manifest.counts.partsCount,
               tokens: manifest.totals.estimatedTokens ?? 0,
@@ -267,6 +277,17 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           }
         })();
       });
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/api/health?") === true) {
+      const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
+      if (!fs.existsSync(path.join(target, "manifest.json"))) {
+        send(404, { error: "no manifest.json under " + target });
+        return;
+      }
+      const report = auditSnapshot({ snapshotDir: target, repoDir: path.dirname(target) });
+      send(200, { score: report.score, counts: report.counts, checks: report.checks });
       return;
     }
 

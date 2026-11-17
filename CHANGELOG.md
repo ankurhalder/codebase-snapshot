@@ -26,6 +26,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.54
+
+- **The page audits what it just wrote.** `POST /api/generate` returns a health summary (score,
+  failed check ids, warning count) and the page shows it beside the fingerprint. `GET /api/health?path=`
+  re-runs the audit for the snapshot on screen.
+- A page that can produce a snapshot and not say whether it is safe to hand over was only half a
+  tool; the health service was already there, and now it is on the surface.
+
+Verified: generation returns a score, the standalone endpoint returns the same score with the full
+check list, and the eight serve tests pass.
 ## 0.12.53
 
 - **The browser page can slice and budget, not only dump everything.** A mode selector offers *whole
