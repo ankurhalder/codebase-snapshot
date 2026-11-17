@@ -7,6 +7,7 @@
  * readable, a symbol that only the AST summary knows about, and a directory outside the root.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -86,10 +87,11 @@ async function call(name, args, context) {
   return tool.handler(args, context);
 }
 
-test("exposes exactly the 23 documented tools", () => {
+test("exposes exactly the 24 documented tools", () => {
   assert.deepEqual([...tools.keys()], [
     "snapshot_status",
     "snapshot_health",
+    "snapshot_history",
     "snapshot_tests",
     "snapshot_workspace",
     "snapshot_entrypoints",
@@ -474,4 +476,37 @@ test("snapshot_tests finds the test that imports a file", async (t) => {
 
   const none = await call("snapshot_tests", { path: "src/auth.ts" }, context);
   assert.match(none.text, /No test in the snapshot imports/);
+});
+
+test("snapshot_history reads the log report, and says how to make one", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  // The report is `git log`; a fixture that is not a repository has no history to record.
+  const steps = [
+    ["init", "-q"],
+    ["add", "-A"],
+    ["-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "-m", "one"],
+  ];
+  for (const step of steps) {
+    const result = spawnSync("git", step, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+
+  const missing = await call("snapshot_history", {}, context);
+  assert.equal(missing.isError, true);
+  assert.match(missing.text, /includeLogs/);
+
+  const generated = await call("snapshot_generate", { includeLogs: 3 }, context);
+  assert.equal(generated.isError, undefined, generated.text);
+
+  const history = await call("snapshot_history", { limit: 2 }, context);
+  assert.equal(history.isError, undefined, history.text);
+  assert.ok(history.structured.commits.length > 0, history.text);
+  assert.ok(history.structured.recorded >= history.structured.commits.length);
+  for (const commit of history.structured.commits) {
+    assert.match(commit.hash, /^[0-9a-f]+$/);
+    assert.match(commit.date, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(commit.subject.length > 0);
+  }
 });

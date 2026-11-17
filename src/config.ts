@@ -1691,8 +1691,14 @@ export function resolveConfig(
       false,
       "`stripComments`"
     ),
+    // `--include-logs <n>` and `--include-logs` (no value) both turn the report on; the number is
+    // the count, and it used to be read from `logCount` alone — so `--include-logs 3` wrote the
+    // default twenty and said three. The number is the request; a request that is accepted and
+    // dropped is the silent fallback this project forbids.
     logCount: resolveLogCount(
-      (cliOptions as { logCount?: unknown } | undefined)?.logCount ?? userConfig?.logCount
+      (cliOptions as { logCount?: unknown } | undefined)?.logCount ??
+        (cliOptions as { includeLogs?: unknown } | undefined)?.includeLogs ??
+        userConfig?.logCount
     ),
     include: resolveInclude(userConfig?.include),
     preset: preset.presetName,

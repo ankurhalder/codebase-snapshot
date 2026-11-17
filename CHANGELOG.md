@@ -30,6 +30,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.77
+
+- **`snapshot_history`, the 24th tool.** The commits behind the snapshot, read from
+  `reports/log.md`: hash, date, subject. When the report was not written it says how to make one
+  (`includeLogs`) instead of returning an empty list.
+- **`--include-logs <n>` was ignored.** The flag turned the report on, but the count was read from
+  `logCount` alone, so `--include-logs 3` wrote the default twenty and told nobody. A request that
+  is accepted and dropped is exactly the silent fallback this project forbids; the number is now
+  the count, for the CLI and for `snapshot_generate { includeLogs: n }` alike.
+
+Verified: a generated log report is parsed into commits with a hash, a date and a subject; the
+count from the flag is the count in the file; a snapshot without the report says how to make one.
 ## 0.12.76
 
 - The goal log records the 0.12.72-0.12.75 round: the tool reference and the test that guards it,

@@ -1,6 +1,6 @@
 # MCP tools
 
-The server exposes 23 tools. This page is the reference: what each answers, what it costs, and one
+The server exposes 24 tools. This page is the reference: what each answers, what it costs, and one
 call you can send as it stands. [MCP](mcp.md) covers the transports and the protocol; this page is
 the catalogue.
 
@@ -64,6 +64,11 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 
 ## Reading
 
+- **`snapshot_history`** — cheap, read-only. The commits behind the snapshot, from
+  `reports/log.md`; says how to generate the report when it is absent.
+  ```json
+  { "name": "snapshot_history", "arguments": { "limit": 10 } }
+  ```
 - **`snapshot_tests`** — cheap, read-only. The test side of the graph: given a path, the tests
   that import it or are named after it; with no path, every test file and what it covers.
   ```json

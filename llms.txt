@@ -3,7 +3,7 @@
 > Turn any repository into an LLM-ready snapshot: code packed into size-budgeted markdown
 > parts, indexed by a JSON manifest that records every included file and every skipped one with
 > the reason, with secret redaction, and a `validate` command that fails when the code has moved.
-> The MCP server serves that snapshot as 23 tools. Works on TypeScript, JavaScript, Python, Go,
+> The MCP server serves that snapshot as 24 tools. Works on TypeScript, JavaScript, Python, Go,
 > Rust, Java/Kotlin, C#/.NET, PHP, Ruby, C/C++, Vue, Svelte and Astro.
 
 `codebase-snapshot` is a Node.js CLI and MCP server (Node >= 18, one runtime dependency:

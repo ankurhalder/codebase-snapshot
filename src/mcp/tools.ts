@@ -1,5 +1,5 @@
 /**
- * The 23 tools this server exposes.
+ * The 24 tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -68,7 +68,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the 23 tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the 24 tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -276,6 +276,77 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+/** One commit as `reports/log.md` records it: short hash, date, subject. */
+interface HistoryEntry {
+  hash: string;
+  date: string;
+  subject: string;
+}
+
+function parseHistoryReport(text: string): HistoryEntry[] {
+  const fence = /```text\n([\s\S]*?)```/.exec(text);
+  if (fence === null) return [];
+  const entries: HistoryEntry[] = [];
+  for (const line of fence[1].split("\n")) {
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    entries.push({ hash: parts[0].trim(), date: parts[1].trim(), subject: parts.slice(2).join("\t").trim() });
+  }
+  return entries;
+}
+
+const historyTool: ToolSpec = {
+  name: "snapshot_history",
+  title: "Recent commits behind the snapshot",
+  description:
+    "The commits the snapshot was built from, from reports/log.md. Answers \"when was this " +
+    "written and why\" without leaving the snapshot. Generate the report with includeLogs. " +
+    "Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      limit: { type: "integer", description: "Most recent commits to return (default 20).", minimum: 1, maximum: 200 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      commits: { type: "array", items: { type: "object" } },
+      recorded: { type: "integer" },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const reportPath = path.resolve(prepared.workspace.root, prepared.workspace.config.outDir, "reports", "log.md");
+    let text: string;
+    try {
+      text = fs.readFileSync(reportPath, "utf8");
+    } catch {
+      return {
+        text:
+          "This snapshot has no reports/log.md. Generate it with " +
+          "`snapshot_generate { includeLogs: 20 }`, or `generate --include-logs 20` on the command line; " +
+          "the report is opt-in because the commit subjects are repository content.",
+        isError: true,
+      };
+    }
+    const limit = Math.max(1, typeof args.limit === "number" ? args.limit : 20);
+    const commits = parseHistoryReport(text).slice(0, limit);
+    return {
+      text:
+        commits.length === 0
+          ? "reports/log.md holds no commit line; regenerate it with includeLogs."
+          : [commits.length + " commit(s), newest first:", ...commits.map((commit) => "  " + commit.hash + "  " + commit.date + "  " + commit.subject)].join("\n"),
+      structured: { commits, recorded: parseHistoryReport(text).length },
+    };
+  },
+};
 
 const testsTool: ToolSpec = {
   name: "snapshot_tests",
@@ -2344,6 +2415,7 @@ type ToolSpec = Omit<McpTool, "cost">;
 const TOOL_COSTS: Record<string, ToolCost> = {
   snapshot_status: "cheap",
   snapshot_health: "expensive",
+  snapshot_history: "cheap",
   snapshot_tests: "cheap",
   snapshot_workspace: "cheap",
   snapshot_entrypoints: "cheap",
@@ -2371,6 +2443,7 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    historyTool,
     testsTool,
     workspaceTool,
     entrypointsTool,
