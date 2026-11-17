@@ -30,6 +30,12 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.64
+
+- The goal log records the 0.12.50-0.12.63 round: cancellation, the opt-in reports through MCP,
+  tool cost classes, the page's slice/budget modes and health score, and the five correctness fixes
+  the probes found (selection validate, signature and report expectations, explain, resources).
+
 ## 0.12.63
 
 - Removed four `.probe-*.mjs` scratch scripts that an earlier `add -A` committed. They were

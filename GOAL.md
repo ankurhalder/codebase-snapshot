@@ -206,3 +206,24 @@ Still open for the next rounds: head-to-head benchmarks against repomix and giti
 for MCP calls (progress exists; an aborted call runs to completion and the docs say so), per-tool
 cost estimates in the contract, and the 0.13.0 milestone (the first publish under the clean-registry
 policy).
+
+### 0.12.50-0.12.63 - protocol polish, and the bugs the probes found
+
+- 0.12.50 cancellation: `notifications/cancelled` runs a callback the call registered; a generate
+  terminates its worker and says so. 0.12.51 lets `snapshot_generate` write the opt-in reports.
+  0.12.52 adds per-tool cost classes to `tools/list` and `describe`.
+- 0.12.53-0.12.54 the browser page gained slice/budget modes and a health score for what it wrote.
+- 0.12.55-0.12.56 correctness: `--slice` with `--budget-tokens` is refused; `validate` no longer
+  reports a selection's unselected files as drift.
+- 0.12.57-0.12.58 the health audit expected neither `signature.json` nor the opt-in report files;
+  both now come from what the manifest records.
+- 0.12.59-0.12.63 docs: the workspace page named a `health --cwd api` that cannot work; the
+  changelog preamble still denied the 0.13 ladder; explain now reads `not-selected` from the
+  manifest; `resources/list` advertises only reports that exist; scratch probe scripts removed.
+
+Full `verify` at 0.12.60: 1291 tests, 1283 pass, 0 fail, 8 host skips. Every release has a tag;
+`main` is clean after each.
+
+Still open for the next rounds: head-to-head benchmarks against repomix and gitingest, a
+per-tool cost estimate measured rather than classified, cancellation for HTTP (stdio only today),
+and 0.13.0, the first publish under the clean-registry policy.
