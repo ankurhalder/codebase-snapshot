@@ -642,6 +642,17 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--delta",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("delta"),
+        summary:
+          "generate: narrow the snapshot to the files that changed since a base snapshot, plus " +
+          "the one-hop dependents of the changed files. Compares content hashes, records a `delta` " +
+          "block with added/changed/removed/unchanged, and lists every unchanged file in skipped[] " +
+          "with reason \"unchanged\".",
+      },
+      {
         flag: "--include-diffs",
         type: "boolean",
         default: false,

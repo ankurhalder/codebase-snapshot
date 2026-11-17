@@ -101,6 +101,26 @@ export function generatePrompt(
     ""
   ];
   if (brief?.preamble !== undefined) lines.push(text(brief.preamble), "");
+  if (manifest.delta !== undefined) {
+    const delta = manifest.delta;
+    lines.push(
+      "This snapshot is a **delta** against `" +
+        code(delta.base.path) +
+        "` (fingerprint `" +
+        code(delta.base.fingerprint.slice(0, 12)) +
+        "`): " +
+        delta.changed.length +
+        " changed, " +
+        delta.added.length +
+        " added, " +
+        delta.removed.length +
+        " removed, and " +
+        delta.unchanged.length +
+        " unchanged files are not in the parts. The unchanged paths are listed in `delta.unchanged` " +
+        "and in `skipped[]` with reason \"unchanged\"; do not describe them from memory.",
+      ""
+    );
+  }
 
   lines.push(...jobSection(task, history.length > 0 || hasOwnerHistory), "");
   lines.push(...stakesSection(brief, code, text));

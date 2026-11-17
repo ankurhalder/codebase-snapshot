@@ -171,6 +171,7 @@ export const CLI_OPTIONS = {
   "include-diffs": { type: "boolean" },
   "include-logs": { type: "string" },
   "token-tree": { type: "boolean" },
+  delta: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -226,6 +227,7 @@ Options:
                                 0 = no limit); PROMPT.md plans the delivery to fit
   --max-parts <n>               Experimental: grow the part budget until the snapshot has at
                                 most n parts, instead of adding parts as the code grows
+  --delta <path>                Only what changed since this snapshot (plus its importers)
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
   --token-tree                  Write reports/tokens.md with per-file token estimates
@@ -384,6 +386,8 @@ interface ParsedInvocation {
   includeLogs?: number;
   /** `--token-tree`: write reports/tokens.md. */
   tokenTree?: boolean;
+  /** `--delta`: base snapshot directory or manifest.json. */
+  delta?: string;
 }
 
 export function parsePositiveInteger(
@@ -846,6 +850,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
         ? undefined
         : parsePositiveInteger(values["include-logs"] as string, "include-logs", 1),
     tokenTree: values["token-tree"] === true ? true : undefined,
+    delta: values.delta === undefined ? undefined : String(values.delta),
     allowOrigins:
       values["allow-origin"] === undefined
         ? undefined
@@ -2054,9 +2059,32 @@ async function runCommand(argv: string[]): Promise<number> {
   );
 
   try {
+    let deltaBase: { manifest: Manifest; path: string } | undefined;
+    if (invocation.delta !== undefined) {
+      const basePath = path.resolve(invocation.cwd, invocation.delta);
+      const manifestPath = fs.existsSync(basePath) && fs.statSync(basePath).isDirectory()
+        ? path.join(basePath, "manifest.json")
+        : basePath;
+      if (!fs.existsSync(manifestPath)) {
+        return fail(invocation.format, "No manifest at " + manifestPath + ". Point --delta at a snapshot directory or its manifest.json.");
+      }
+      let base: Manifest;
+      try {
+        base = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Manifest;
+      } catch (error) {
+        return fail(invocation.format, "Could not read " + manifestPath + ": " + (error as Error).message);
+      }
+      const shape = describeManifestShapeProblem(base);
+      if (shape !== null) {
+        return fail(invocation.format, manifestPath + " is not a snapshot manifest: " + shape);
+      }
+      deltaBase = { manifest: base, path: manifestPath };
+      info("   Delta base: " + manifestPath + " (" + base.files.length + " files, fingerprint " + base.fingerprint.slice(0, 12) + ")");
+    }
     const manifest = generateSnapshot(resolved, {
       dryRun: invocation.dryRun,
       ...(sourceProvenance === undefined ? {} : { source: sourceProvenance }),
+      ...(deltaBase === undefined ? {} : { deltaBase }),
     });
     const elapsed = ((performance.now() - started) / 1000).toFixed(2);
 

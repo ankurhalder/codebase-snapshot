@@ -520,6 +520,21 @@ export interface Manifest {
      */
     sarif?: ManifestArtifact;
   };
+  /**
+   * What this snapshot contains relative to a base snapshot (`--delta`).
+   *
+   * Present only when a base was given. `files[]` then contains the changed and added files and
+   * their one-hop dependents; every unchanged file is accounted in `delta.unchanged` and in
+   * `skipped[]` with reason "unchanged", so nothing disappears without a record.
+   */
+  delta?: {
+    base: { path: string; fingerprint: string; generatedAt: string };
+    added: string[];
+    changed: string[];
+    removed: string[];
+    /** Paths present in both snapshots with the same hash; omitted from parts, listed here. */
+    unchanged: string[];
+  };
   layers: Record<string, number>;
   kinds: Record<string, number>;
   indexes: ManifestIndexes;

@@ -389,6 +389,8 @@ export interface GenerateOptions {
   dryRun?: boolean;
   /** Provenance for a tree fetched from a remote, recorded in the manifest and the brief. */
   source?: Manifest["source"];
+  /** Base snapshot for `--delta`: only what changed since it is written, with its dependents. */
+  deltaBase?: { manifest: Manifest; path: string };
 }
 
 const TS_EXTENSIONS = [
@@ -2684,11 +2686,48 @@ export function generateSnapshot(
     });
   }
 
+  /**
+   * Drops every file outside `keep` and puts back what the scan accumulated for it.
+   *
+   * `--with-dependents` and `--delta` both narrow after the scan, for the same reason: the
+   * decision needs parsed imports. The undo has to be complete — totals, layer and kind counts,
+   * the large-file count, redaction findings, warnings and the monolith bodies — or the snapshot
+   * reports the statistics of files it does not contain.
+   */
+  const narrowTo = (keep: Set<string>): void => {
+    for (const file of files) {
+      if (!keep.has(file.relativePath)) unchangedPaths.push(file.relativePath);
+    }
+
+    const kept = files.filter((file) => keep.has(file.relativePath));
+    files.length = 0;
+    files.push(...kept);
+
+    totalLines = files.reduce((total, file) => total + file.lines, 0);
+    totalSizeBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
+    largeFileCount = 0;
+    for (const key of Object.keys(layerCounts)) delete layerCounts[key];
+    for (const key of Object.keys(kindCounts)) delete kindCounts[key];
+    for (const file of files) {
+      bump(layerCounts, file.layer);
+      bump(kindCounts, file.kind);
+      if (file.isLarge) largeFileCount += 1;
+    }
+    retain(secretFindings, (finding) => finding.path === undefined || keep.has(finding.path));
+    retain(encodingNotes, (note) => keep.has(note.path));
+    retain(oversizeSummaryPaths, (path) => keep.has(path));
+    retain(previewSummaryPaths, (path) => keep.has(path));
+    retain(fileWarnings, (warning) => keep.has(warning.path));
+    for (const path of [...monolithBodies.keys()]) {
+      if (!keep.has(path)) monolithBodies.delete(path);
+    }
+    for (const path of [...skippedSummaryImports.keys()]) {
+      if (!keep.has(path)) skippedSummaryImports.delete(path);
+    }
+  };
+
   // `--with-dependents` can only be decided once every import has been parsed, so its filter
-  // stays after the scan — and everything the scan accumulated for a dropped file is undone
-  // with it. Totals were recomputed here already; the layer and kind counts, the large-file
-  // count, the redaction findings and the warning lists were not, so a two-file snapshot
-  // reported the layer distribution and the secret count of the whole repository.
+  // stays after the scan.
   if (changedScope !== null && changedPaths !== null && config.withDependents === true) {
     const keep = new Set(changedPaths);
     const resolver = buildImportResolver(files, {
@@ -2707,51 +2746,63 @@ export function generateSnapshot(
       }
     }
 
-    for (const file of files) {
-      if (!keep.has(file.relativePath)) unchangedPaths.push(file.relativePath);
-    }
+    narrowTo(keep);
+  }
 
-    const kept = files.filter((file) => keep.has(file.relativePath));
-    files.length = 0;
-    files.push(...kept);
-
-    // The totals describe the snapshot, not the scan, so they are recomputed from what survived.
-    totalLines = files.reduce((total, file) => total + file.lines, 0);
-    totalSizeBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
-    largeFileCount = 0;
-    for (const key of Object.keys(layerCounts)) delete layerCounts[key];
-    for (const key of Object.keys(kindCounts)) delete kindCounts[key];
+  // `--delta` narrows to what changed since a base snapshot, plus the one-hop dependents of the
+  // changed files. The base is evidence, not a promise: it is compared by content hash, so a
+  // file that only changed its mtime stays out, and a base from another repository simply
+  // matches nothing and the whole repository is the delta.
+  let deltaBlock: Manifest["delta"] | undefined;
+  if (options?.deltaBase !== undefined) {
+    const base = options.deltaBase.manifest;
+    const baseHashes = new Map(base.files.map((file) => [file.relativePath, file.hashSha256]));
+    const currentPaths = new Set(files.map((file) => file.relativePath));
+    const added = files.filter((file) => !baseHashes.has(file.relativePath)).map((file) => file.relativePath);
+    const changed = files
+      .filter((file) => baseHashes.has(file.relativePath) && baseHashes.get(file.relativePath) !== file.hashSha256)
+      .map((file) => file.relativePath);
+    const removed = [...baseHashes.keys()].filter((relativePath) => !currentPaths.has(relativePath)).sort();
+    const touched = new Set([...added, ...changed]);
+    const resolver = buildImportResolver(files, { tsconfig: tsconfigPathsFor(config.cwd) });
+    const keep = new Set(touched);
     for (const file of files) {
-      bump(layerCounts, file.layer);
-      bump(kindCounts, file.kind);
-      if (file.isLarge) largeFileCount += 1;
+      const fileImports = isSourceSummary(file.summary)
+        ? file.summary.imports
+        : (skippedSummaryImports.get(file.relativePath) ?? []);
+      if (fileImports.length === 0) continue;
+      if (importsChangedFile(file.relativePath, fileImports, touched, resolver)) keep.add(file.relativePath);
     }
-    retain(
-      secretFindings,
-      (finding) => finding.path === undefined || keep.has(finding.path)
-    );
-    retain(encodingNotes, (note) => keep.has(note.path));
-    retain(oversizeSummaryPaths, (path) => keep.has(path));
-    retain(previewSummaryPaths, (path) => keep.has(path));
-    retain(fileWarnings, (warning) => keep.has(warning.path));
-    for (const path of [...monolithBodies.keys()]) {
-      if (!keep.has(path)) monolithBodies.delete(path);
-    }
-    for (const path of [...skippedSummaryImports.keys()]) {
-      if (!keep.has(path)) skippedSummaryImports.delete(path);
+    const unchanged = files.filter((file) => !keep.has(file.relativePath)).map((file) => file.relativePath);
+    narrowTo(keep);
+    deltaBlock = {
+      base: {
+        path: options.deltaBase.path,
+        fingerprint: base.fingerprint,
+        generatedAt: base.generatedAt,
+      },
+      added: added.sort(),
+      changed: changed.sort(),
+      removed,
+      unchanged: unchanged.sort(),
+    };
+    if (touched.size === 0) {
+      warnings.push(
+        "No file changed since the base snapshot, so the snapshot describes nothing new.",
+      );
     }
   }
 
   // Files the scope removed are recorded the same way whether they were filtered before the scan
   // or after it. `unchanged` is deliberately a different statement from `excluded`: the file is
   // includable and simply did not move.
-  if (changedScope !== null) {
+  if (changedScope !== null || options?.deltaBase !== undefined) {
+    const detail =
+      changedScope !== null
+        ? `not ${changedScope.detail}`
+        : "identical to the base snapshot given with --delta";
     for (const relativePath of unchangedPaths) {
-      skipped.push({
-        path: relativePath,
-        reason: "unchanged",
-        detail: `not ${changedScope.detail}`,
-      });
+      skipped.push({ path: relativePath, reason: "unchanged", detail });
     }
   }
 
@@ -2911,6 +2962,7 @@ export function generateSnapshot(
     // the README and the audit report.
     git: { ...gitInfo, branch: maskPathText(gitInfo.branch, config.secretRules) },
     ...(options?.source === undefined ? {} : { source: options.source }),
+    ...(deltaBlock === undefined ? {} : { delta: deltaBlock }),
     budgets: {
       // The ceiling the parts actually honour. It equals the configured one unless `maxParts`
       // grew it; `config.maxPartBytes` below keeps the configured value, because that is what

@@ -26,6 +26,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.25
+
+**Delta packs: `--delta <base>`.**
+
+- The snapshot contains only the files that changed since a base snapshot (compared by content
+  hash, not mtime), plus the one-hop importers of those files. For a change review, that is the new
+  bytes and the callers that might break, and nothing else.
+- Nothing is dropped silently. Unchanged files go into `skipped[]` with reason `unchanged` **and**
+  into `delta.unchanged`; the manifest records `base { path, fingerprint, generatedAt }` and the
+  added/changed/removed lists.
+- `PROMPT.md` states the delta at the top with the counts and the warning that unchanged files are
+  not in the parts, so a reader cannot describe them from memory.
+- The shared narrowing is now one function (`narrowTo`): totals, layer/kind counts, findings,
+  warnings and monolith bodies are undone together, which `--with-dependents` and `--delta` both use.
+
+Verified: changed file plus its importer are in the parts and the unrelated file is not; an added
+and a removed file are classified; a missing base is an error that names the path.
 ## 0.12.24
 
 **Three opt-in reports: the diff, the log, the token tree.**
