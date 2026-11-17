@@ -1468,6 +1468,24 @@ const generateTool: McpTool = {
         description:
           'Byte budget per part, for example 307200 or "300k". Defaults to the project configuration.',
       },
+      includeDiffs: {
+        type: "boolean",
+        description: "Also write reports/diff.md from the uncommitted diff.",
+      },
+      includeLogs: {
+        type: "integer",
+        minimum: 1,
+        maximum: 500,
+        description: "Also write reports/log.md with this many recent commits.",
+      },
+      tokenTree: {
+        type: "boolean",
+        description: "Also write reports/tokens.md with per-file token estimates.",
+      },
+      stripComments: {
+        type: "boolean",
+        description: "Remove comment text from JavaScript/TypeScript bodies (line numbers kept).",
+      },
       ...SCOPE_PROPERTIES,
     },
     additionalProperties: false,
@@ -1494,7 +1512,17 @@ const generateTool: McpTool = {
     context.notify?.({ message: "generating", progress: 1, total: 2 });
     const controller = new AbortController();
     context.onCancel?.(() => controller.abort());
-    const result = await generateInWorker(workspace.root, workspace.cliOptions, { signal: controller.signal });
+    const reportOptions = {
+      ...(args.includeDiffs === true ? { includeDiffs: true as const } : {}),
+      ...(typeof args.includeLogs === "number" ? { includeLogs: args.includeLogs } : {}),
+      ...(args.tokenTree === true ? { tokenTree: true as const } : {}),
+      ...(args.stripComments === true ? { stripComments: true as const } : {}),
+    };
+    const result = await generateInWorker(
+      workspace.root,
+      { ...workspace.cliOptions, ...reportOptions },
+      { signal: controller.signal }
+    );
     if (!result.ok) return failure(result.message);
     context.notify?.({ message: "writing the snapshot", progress: 2, total: 2 });
     const summary = result.summary;

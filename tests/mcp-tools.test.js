@@ -351,3 +351,13 @@ test("an opt-in report is advertised, and its absence is explained", async (t) =
     assert.ok(listed.includes(uri), uri + " is listed");
   }
 });
+
+test("snapshot_generate can write the opt-in reports", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  const result = await call("snapshot_generate", { tokenTree: true, includeLogs: 3 }, context);
+  assert.equal(result.isError, undefined, result.text);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.ok(manifest.artifacts.tokenTree, "tokens.md was written");
+  assert.ok(fs.existsSync(path.join(root, "snapshot", "reports", "tokens.md")));
+});

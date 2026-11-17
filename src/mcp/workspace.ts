@@ -167,6 +167,11 @@ export interface WorkspaceCliOptions {
   staged?: true;
   withDependents?: true;
   changedSince?: string;
+  /** Opt-in reports a client can ask for by name; absent means "whatever the configuration says". */
+  includeDiffs?: true;
+  includeLogs?: number;
+  tokenTree?: true;
+  stripComments?: true;
 }
 
 /**

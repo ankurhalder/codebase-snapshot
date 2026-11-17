@@ -26,6 +26,15 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.51
+
+- **`snapshot_generate` can write the opt-in reports.** `includeDiffs`, `includeLogs <n>`,
+  `tokenTree` and `stripComments` are tool arguments now, so a client can ask for the diff, the log,
+  the token tree or comment stripping without shelling out to the CLI. The options travel to the
+  worker exactly as the CLI passes them, and `--skip-artifacts` semantics are unchanged.
+
+Verified: generating with `tokenTree: true` writes `reports/tokens.md` and records it in
+`artifacts.tokenTree`.
 ## 0.12.50
 
 **Cancellation reaches the tool.**

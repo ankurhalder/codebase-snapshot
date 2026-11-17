@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.50 mcp
+npx -y codebase-snapshot@0.12.51 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.50", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.51", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.50 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.51 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.50 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.51 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -107,7 +107,7 @@ capped at 60 requests per 10 seconds per address, and every response is one boun
 | `snapshot_context` | One bounded context block from named files or symbols, read from the snapshot | no |
 | `snapshot_plan_for` | Given a question and a token budget, the smallest set of files that answer it, in reading order | no |
 | `snapshot_plan` | What would a generate at this budget include, and what would it leave out? | no |
-| `snapshot_generate` | Build it. | yes |
+| `snapshot_generate` | Build it. Accepts `includeDiffs`, `includeLogs`, `tokenTree` and `stripComments`, so a client can ask for the opt-in reports the CLI has. | yes |
 | `snapshot_validate` | Is the context the agent was given still current? | no |
 | `snapshot_locate` | Which part holds this symbol, route or file? | no |
 | `snapshot_dependents` | What does this file import, and what imports it? | no |
