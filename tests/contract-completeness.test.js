@@ -16,8 +16,20 @@ import { CONFIG_KEYS } from "../dist/index.js";
 /** Flags the contract has never listed: they are handled before option parsing. */
 const NOT_CONTRACT_OPTIONS = new Set(["help", "version"]);
 
-/** Keys that are config-file aliases rather than documented settings. */
-const NOT_SETTINGS = new Set(["exclude", "secretRules", "cwd"]);
+/**
+ * Keys that are config-file aliases rather than documented settings, with the reason each is
+ * exempt.
+ *
+ * This was a bare set, and a set cannot tell an alias from a key somebody forgot: `secretRules`
+ * sat here while `config-digest-and-keys.test.js` asserted it *is* a documented spelling — so the
+ * contract omitted a key a config file may carry, and the one test that looked at it agreed with
+ * the omission. Each entry now has to justify itself, and the test below proves every name here is
+ * a key the loader really accepts.
+ */
+const ALIAS_SETTINGS = new Map([
+  ["exclude", "the flag spelling of excludePatterns; documented under that key"],
+  ["cwd", "carried by config files, but `describe` documents it as an invocation path, not a setting"],
+]);
 
 const contract = buildAgentContract();
 const contractedFlags = new Set(contract.options.map((option) => option.flag.replace(/^--/, "")));
@@ -48,10 +60,19 @@ test("every option in the contract is one the parser accepts", () => {
 test("every config key the loader accepts is in the contract", () => {
   const documented = new Set(contract.config.settings.map((setting) => setting.key));
   const undocumented = [...CONFIG_KEYS]
-    .filter((key) => !NOT_SETTINGS.has(key))
+    .filter((key) => !ALIAS_SETTINGS.has(key))
     .filter((key) => !documented.has(key));
 
   assert.deepEqual(undocumented, [], `\`describe\` omits config keys: ${undocumented.join(", ")}`);
+});
+
+test("every carve-out is a key the loader genuinely accepts", () => {
+  const invented = [...ALIAS_SETTINGS.keys()].filter((key) => !CONFIG_KEYS.has(key));
+  assert.deepEqual(
+    invented,
+    [],
+    `these names are exempted from the contract but are not config keys: ${invented.join(", ")}`
+  );
 });
 
 test("every setting in the contract is a config key the loader accepts", () => {

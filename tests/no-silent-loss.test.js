@@ -134,7 +134,7 @@ test("P1: the run summary prints included, found and skipped with reasons", (t) 
   });
   assert.equal(result.status, 0, result.stderr);
   const text = `${result.stdout}${result.stderr}`;
-  assert.match(text, /Tracked files: 2 included of 3 found — 1 skipped/);
+  assert.match(text, /Tracked files: 2 included of 3 paths found — 1 skipped/);
   assert.match(text, /binary 1/, "the reason that took each file is named");
 });
 test("P3: setup does not run a package manager where there is no package.json", (t) => {

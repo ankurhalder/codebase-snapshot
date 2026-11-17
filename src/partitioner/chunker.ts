@@ -18,6 +18,18 @@ export interface PartitionedPart {
  */
 const HEADER_RESERVE_BYTES = 2048 + Buffer.byteLength(UNTRUSTED_CONTENT_NOTICE, "utf8") + 8;
 const MIN_SECTION_BUDGET_BYTES = 512;
+
+/**
+ * The smallest budget this module can honour.
+ *
+ * A part always carries its header — path, layer, kind, language, size, the untrusted-content
+ * notice and a code fence — plus at least one line of content. Below this the header alone is
+ * larger than the budget, so the partitioner used to clamp the value up: budgets of 20, 46, 100,
+ * 1 000 and 2 600 B all produced parts around 2.6 kB, up to 130× what the caller asked for, with
+ * no error. Every configuration surface already rejects a budget under 4096; this is the same
+ * rule for the public `partitionFiles`.
+ */
+export const MIN_PART_BUDGET_BYTES = MIN_SECTION_BUDGET_BYTES + HEADER_RESERVE_BYTES;
 const MAX_SPLIT_PASSES = 64;
 
 /** Bytes reserved for the `[N lines omitted]` notice a budget-cut body must carry. */
@@ -161,10 +173,21 @@ export function partitionFilesForBuckets(
   const groups: RenderGroup[] = [];
   for (const bucket of buckets) {
     if (bucket.files.length === 0) continue;
-    const budget = Math.max(
-      MIN_SECTION_BUDGET_BYTES + HEADER_RESERVE_BYTES,
-      bucket.budgetBytes
-    );
+    // No silent clamp: a budget this function cannot honour is a usage error, the same way it is
+    // at every configuration surface (4096 B). `Math.max` here turned 20 B into ~2.6 kB.
+    if (!Number.isFinite(bucket.budgetBytes)) {
+      throw new Error(
+        `A part budget must be a finite number of bytes; received ${String(bucket.budgetBytes)}.`
+      );
+    }
+    if (bucket.budgetBytes < MIN_PART_BUDGET_BYTES) {
+      throw new Error(
+        `A part budget of ${bucket.budgetBytes} B is below the ${MIN_PART_BUDGET_BYTES} B minimum: ` +
+          "the header every part must carry is larger than that, so the budget could not be " +
+          "honoured. Use a budget of at least 4096 B."
+      );
+    }
+    const budget = bucket.budgetBytes;
     const sectionBudget = budget - HEADER_RESERVE_BYTES;
     const prepared = bucket.files.map((file) => prepareSection(file, sectionBudget, budget));
     for (const sections of greedyGroups(prepared, budget)) groups.push({ sections, budget });
@@ -283,14 +306,6 @@ export function partitionFilesForBuckets(
   );
 }
 
-/** Hard-clips any part that is still above `budget`, re-hashing what it wrote. */
-/**
- * Hard-clips any part that is still above `budget`, re-hashing what it wrote.
- *
- * Exported so the clip path can be tested at all: the partitioner splits oversized sections
- * rather than clipping them, so no ordinary fixture reaches this branch, and the stale token
- * count it used to leave behind was therefore invisible to every end-to-end test.
- */
 /** Appended to a part that had to be cut because it could not fit its budget. */
 const TRUNCATION_MARKER = "\n... [part truncated: cannot fit budget] ...\n";
 
@@ -441,15 +456,14 @@ function capValue(value: string, max: number): string {
 const capMetadata = (value: string): string => capValue(escapeControls(value), METADATA_VALUE_MAX);
 
 /**
+ * The form of a path that is written into a part.
+ *
  * Paths reach the `## Files` list, the `### FILE:` heading and the navigation
  * index, so a control character in a name is rendered as `\uXXXX` instead of
  * being emitted raw: a bidi override visually reorders the line, a C1 CSI drives
  * the terminal, and a newline would break the line-oriented layout. Escaping
  * also keeps the `## Files` fence safe (see {@link fenceForText}). Paths are
  * legal UTF-8, so this is reachable with an ordinary `git mv`.
- */
-/**
- * The form of a path that is written into a part.
  *
  * Exported because the reader has to compare against it: a section heading holds this
  * form, not the manifest's `relativePath`, and the two differ for any path with a

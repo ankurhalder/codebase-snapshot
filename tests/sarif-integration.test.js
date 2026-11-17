@@ -186,3 +186,48 @@ test("built-in rule ids are three digits and custom ids are eight hex digits", (
   }
   assert.equal(new Set(ids).size, ids.length, "ids are unique");
 });
+
+test("results are ordered by code unit, not by the host locale", () => {
+  // `en` collation puts `ab` before `aB` (lowercase wins a case-insensitive tie); a code-unit
+  // comparison puts `aB` first because `B` is 66 and `b` is 98. `localeCompare` therefore made
+  // the same commit produce different SARIF bytes on different machines — the same failure this
+  // file already fixed for rule ids, and that `tree.ts` fixed for tree order.
+  const findings = [
+    { rules: ["credential-assignment"], line: 1, path: "src/ab.ts" },
+    { rules: ["credential-assignment"], line: 1, path: "src/aB.ts" },
+  ];
+  const log = JSON.parse(
+    generateSarifReport({ fingerprint: "f" }, findings, DEFAULT_SECRET_PATTERNS, "0.0.0")
+  );
+  const order = log.runs[0].results.map(
+    (result) => result.locations[0].physicalLocation.artifactLocation.uri
+  );
+
+  assert.deepEqual(order, ["src/aB.ts", "src/ab.ts"]);
+  assert.deepEqual(
+    order,
+    [...order].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+    "the order is exactly a code-unit sort"
+  );
+});
+
+test("the order does not depend on the default locale", () => {
+  const findings = [
+    { rules: ["credential-assignment"], line: 1, path: "src/ab.ts" },
+    { rules: ["credential-assignment"], line: 1, path: "src/aB.ts" },
+  ];
+  const uris = () =>
+    JSON.parse(generateSarifReport({ fingerprint: "f" }, findings, DEFAULT_SECRET_PATTERNS, "0.0.0"))
+      .runs[0].results.map((result) => result.locations[0].physicalLocation.artifactLocation.uri);
+
+  const previous = process.env.LANG;
+  try {
+    process.env.LANG = "sv_SE.UTF-8";
+    const swedish = uris();
+    process.env.LANG = "en_US.UTF-8";
+    assert.deepEqual(swedish, uris());
+  } finally {
+    if (previous === undefined) delete process.env.LANG;
+    else process.env.LANG = previous;
+  }
+});

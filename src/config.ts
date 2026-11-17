@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { stripJsonComments } from "./ast/structured.js";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
 import {
   isDiscoveryMode,
@@ -322,94 +323,13 @@ export function supportsTypeScriptImports(): boolean {
 }
 
 /**
- * Strips `//` and block comments from JSON-with-comments, plus trailing commas.
+ * Parses a config file as JSONC.
  *
- * The previous implementation was two regular expressions, and
- * `(^|[^:"'\\])\/\/.*$` treated a `//` inside a *string* as a comment: a valid
- * `package.json` containing `"build": "tsc && echo done//ok"` was truncated,
- * became unparseable, and every command then exited 1. A single pass that
- * tracks string state and escapes is the only correct way to do this.
+ * `stripJsonComments` comes from `ast/structured.ts`. This file carried a second, hand-copied
+ * reader, and a fix to one copy did not reach the other: the shared one keeps `\r`-only line
+ * endings and trailing commas while the copy here silently kept the old behaviour for
+ * `package.json`. One implementation, one set of fixed edge cases.
  */
-function stripJsonComments(raw: string): string {
-  const text = raw.replace(/^\uFEFF/, "");
-  let out = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (inString) {
-      out += char;
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      out += char;
-      continue;
-    }
-
-    if (char === "/" && text[index + 1] === "/") {
-      while (index < text.length && text[index] !== "\n" && text[index] !== "\r") index += 1;
-      index -= 1; // let the loop emit the terminator
-      continue;
-    }
-
-    if (char === "/" && text[index + 1] === "*") {
-      index += 2;
-      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) {
-        if (text[index] === "\n" || text[index] === "\r") out += text[index];
-        index += 1;
-      }
-      index += 1; // skip the closing "/"
-      continue;
-    }
-
-    out += char;
-  }
-
-  return stripTrailingCommas(out);
-}
-
-/** Removes `,` before `}`/`]`, which JSONC allows and JSON.parse rejects. */
-function stripTrailingCommas(text: string): string {
-  let out = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-
-    if (inString) {
-      out += char;
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      out += char;
-      continue;
-    }
-
-    if (char === ",") {
-      let next = index + 1;
-      while (next < text.length && /\s/.test(text[next])) next += 1;
-      if (text[next] === "}" || text[next] === "]") continue;
-    }
-
-    out += char;
-  }
-
-  return out;
-}
-
 function parseJsonish(raw: string, file: string): SnapshotConfig {
   try {
     return JSON.parse(stripJsonComments(raw)) as SnapshotConfig;
@@ -438,13 +358,17 @@ const isThenable = (value: object): boolean =>
 /**
  * Every key a configuration file may carry.
  *
- * This is `SnapshotConfig` plus the spellings that are read through casts: `discovery`
- * (validated separately), `exclude` (the flag spelling of `excludePatterns`) and
- * `secretRules` (the library spelling of a rule list, accepted by `resolveConfig` and
- * therefore needed here too — omitting it made a config file that used it fail with
- * "unknown setting(s): secretRules" while the same key worked when passed in code).
+ * This is `SnapshotConfig` plus the two spellings that are read through casts: `exclude` (the
+ * flag spelling of `excludePatterns`) and `secretRules` (the library spelling of a rule list,
+ * accepted by `resolveConfig` and therefore needed here too — omitting it made a config file
+ * that used it fail with "unknown setting(s): secretRules" while the same key worked when
+ * passed in code). `discovery` was on this list too until it was added to `SnapshotConfig`,
+ * where it belonged: a TypeScript config containing it was TS2353.
+ *
+ * The array is `as const` so the tuple below can prove the two cannot drift. Every test in
+ * this repository is `.js`, so no test can see a type; the compiler is the test.
  */
-export const CONFIG_KEYS: ReadonlySet<string> = new Set([
+const CONFIG_KEY_NAMES = [
   "artifacts",
   "branch",
   "budgets",
@@ -475,7 +399,20 @@ export const CONFIG_KEYS: ReadonlySet<string> = new Set([
   "skeleton",
   "tmpDir",
   "withDependents",
-]);
+] as const;
+
+export const CONFIG_KEYS: ReadonlySet<string> = new Set(CONFIG_KEY_NAMES);
+
+/**
+ * Compile-time proof that every key the loader accepts is a key of `SnapshotConfig`.
+ *
+ * The condition is `never` when a name in `CONFIG_KEY_NAMES` is missing from the interface,
+ * and `true` is not assignable to `never` — so the missing name stops the build instead of
+ * becoming a setting a user can write but a TypeScript config cannot spell.
+ */
+void (true as [Exclude<(typeof CONFIG_KEY_NAMES)[number], keyof SnapshotConfig>] extends [never]
+  ? true
+  : never);
 
 /**
  * Rejects a setting the tool does not have, naming it.
@@ -606,13 +543,6 @@ async function importConfigModule(
 }
 
 /**
- * Loads the first usable config file from `cwd`.
- *
- * Every failure is reported through `warnings` instead of being swallowed by an
- * empty `catch`: a syntax error in a user's config used to be indistinguishable
- * from having no config at all.
- */
-/**
  * Remembers the directory a config was loaded from, so `resolveConfig` can use it.
  *
  * Attached here rather than in `loadConfigFile`, because `loadConfigFileDetailed` is the loader
@@ -632,6 +562,13 @@ function attachConfigDir(config: SnapshotConfig, filePath: string): SnapshotConf
   return config;
 }
 
+/**
+ * Loads the first usable config file from `cwd`.
+ *
+ * Every failure is reported through `warnings` instead of being swallowed by an
+ * empty `catch`: a syntax error in a user's config used to be indistinguishable
+ * from having no config at all.
+ */
 export async function loadConfigFileDetailed(
   cwd: string,
   options: { allowExecutableConfig?: boolean } = {}
@@ -1536,7 +1473,8 @@ export function resolveConfig(
       "`withDependents` widens a changed-files scope, so it needs `changedSince` or `staged` " +
         "(with neither, every file is already included)."
     );
-  }  const tmpDir = strictString(userConfig?.tmpDir, "snapshot.tmp", "`tmpDir`");
+  }
+  const tmpDir = strictString(userConfig?.tmpDir, "snapshot.tmp", "`tmpDir`");
   const branch = strictString(userConfig?.branch, "main", "`branch`");
   const configuredSensitiveFiles = strictBoolean(
     userConfig?.includeSensitiveFiles,

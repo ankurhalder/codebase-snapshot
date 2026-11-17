@@ -31,6 +31,15 @@ visibility weekly, and `deprecate.yml`/`unpublish.yml` are manual release operat
 them adds a check `verify` does not run, so there is no matrix to wait for, and nothing a pull
 request can fail that you could not have caught on your own machine.
 
+## Test headers and the version line
+
+Some test files carry headers like "4.0.9 regression cover". Those numbers belong to the
+**retired** `@ankurhalder/codebase-snapshot` line, which reached 4.4.1; the package was renamed
+and restarted at 0.9.0, so `4.x` is *older* than `0.9.x` (see the note at the top of
+`CHANGELOG.md`). A header names the audit that produced the fix, not the release it shipped in:
+those fixes were carried into the 0.9.x line as a batch, so the only way to date one is to find
+the behaviour in `audit/reports/`.
+
 ## What makes a good change here
 
 **Narrow and tested.** A fix with a regression test beats a refactor without one. If you change

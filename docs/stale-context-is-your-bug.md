@@ -49,11 +49,15 @@ codebase-snapshot validate
 ```
 
 ```text
-✖ Snapshot does not match the repository:
-   - modified: src/parser/partition.ts
-   - added:    src/presets/evidence.ts
-   - removed:  src/legacy/old-partitioner.ts
+❌ Snapshot validation failed:
+  - 1 file(s) have been modified since the snapshot was generated.
+  - modified: src/parser/partition.ts
+  - new file: src/presets/evidence.ts
+  - deleted: src/legacy/old-partitioner.ts
 ```
+
+The first line is the count; the lines after it name each path. `new file` is a file on disk
+the snapshot does not contain, and `deleted` is the opposite.
 
 That is the difference between a copy and an artefact. A copy is trusted; an artefact is
 checked.

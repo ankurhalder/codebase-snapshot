@@ -156,3 +156,26 @@ test("a clipped part reports the token count of the text it actually holds", () 
     "and the header states the same number the metadata records"
   );
 });
+
+test("a file with only ES exports records exportsKind \"esm\"", () => {
+  // `exportsKind` was assigned only on the CommonJS branch, so the value `esm` in the type was
+  // unreachable and absence meant "this file had no exports" — false for every ES module.
+  const esm = summarizeTypeScriptSource(
+    "src/a.ts",
+    "export const a = 1;\nexport function b() { return a; }\n"
+  );
+  assert.equal(esm.exportsKind, "esm");
+  assert.deepEqual(esm.exports, ["a", "b"]);
+
+  const empty = summarizeTypeScriptSource("src/empty.ts", "const local = 1;\n");
+  assert.equal(empty.exportsKind, undefined, "no exports at all is the only meaning of absence");
+
+  const cjs = summarizeTypeScriptSource("src/c.cjs", "module.exports = { a: 1 };\n");
+  assert.equal(cjs.exportsKind, "cjs");
+
+  const mixed = summarizeTypeScriptSource(
+    "src/m.ts",
+    "export const a = 1;\nmodule.exports.b = 2;\n"
+  );
+  assert.equal(mixed.exportsKind, "mixed");
+});

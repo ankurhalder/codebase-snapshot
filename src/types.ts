@@ -46,9 +46,11 @@ export interface SourceSummary {
   /**
    * Which module system's exports are recorded here.
    *
-   * Absent means the file had no exports at all. `cjs` means the names came from
-   * `module.exports`/`exports.*` — a shape the ES-module walk used to miss entirely, leaving a
-   * CommonJS module's public surface empty in the manifest.
+   * Absent means the file had no exports at all — no ES `export` and no
+   * `module.exports`/`exports.*`. `esm` means every name came from an ES `export`;
+   * `cjs` means they came from `module.exports`/`exports.*` — a shape the ES-module walk used to
+   * miss entirely, leaving a CommonJS module's public surface empty in the manifest; `mixed`
+   * means both kinds are present.
    */
   exportsKind?: "esm" | "cjs" | "mixed";
 }
@@ -329,7 +331,20 @@ export interface ManifestIndexes {
   handlers: Array<{ path: string; exports: string[]; part: string }>;
   features: Array<{ name: string; files: number }>;
   imports: {
-    byFile: Array<{ path: string; imports: string[]; exports: string[] }>;
+    /**
+     * One entry per file whose import edges are known.
+     *
+     * A previewed or oversized file has no structural summary, but its import specifiers are
+     * still extracted — they are what makes it a dependent — so it appears here. Its
+     * `exports` list was never read, and `exportsOmitted` says so instead of leaving an empty
+     * array that reads as "this file exports nothing".
+     */
+    byFile: Array<{
+      path: string;
+      imports: string[];
+      exports: string[];
+      exportsOmitted?: true;
+    }>;
     centralFiles: Array<{ path: string; importedByCount: number }>;
   };
   directives: Array<{ path: string; directives: string[] }>;
@@ -384,12 +399,22 @@ export type TruncationReason = "large-file-budget" | "part-budget" | "section-me
 /** One file the snapshot does not contain in full, and what was left out of it. */
 export interface IncompleteFile {
   relativePath: string;
+  /** The part this file was written to, so the omission can be found on disk. */
   part: string;
   reason: TruncationReason;
   /** 1-based, inclusive. Sorted and non-overlapping. */
   omittedRanges: Array<[number, number]>;
+  /** Source lines the ranges cover — the sum of their lengths. */
   omittedLines: number;
+  /**
+   * Lines in the emitted block, **including an omission notice line when one is written**.
+   *
+   * It counts what the fenced block holds, not the source lines that survived, so a preview
+   * records head + tail + the notice. `includedLines + omittedLines` is therefore not `lines`
+   * and no consumer should expect it to be.
+   */
   includedLines: number;
+  /** Lines in the source file. */
   lines: number;
 }
 
@@ -556,8 +581,18 @@ export interface SnapshotConfig {
   previewTailLines?: number;
   includeMonolith?: boolean;
   maxMonolithBytes?: ByteSize | null;
-  /** Opt in to emitting `.env`/`*.pem`/`.npmrc`/credential files. Default false. */
+  /** Opt in to emitting `.env`/`*.pem`/`.npmrc`/`credential files. Default false. */
   includeSensitiveFiles?: boolean;
+  /**
+   * How files are discovered; `auto` picks git when it can list files and walks the tree
+   * otherwise.
+   *
+   * Present here because this is the type a user writes against — `defineConfig` and
+   * `resolveConfig` both take it — and it was missing while `ResolvedSnapshotConfig`,
+   * `CliOptions` and `CONFIG_KEYS` all carried it. A TypeScript config containing
+   * `discovery: "walk"` was TS2353 in exactly the format `init` recommends.
+   */
+  discovery?: DiscoveryMode;
   /** Allow-list of globs. When non-empty, only matching files are included. */
   include?: string[];
   /** Force a preset by name instead of auto-detecting one. */

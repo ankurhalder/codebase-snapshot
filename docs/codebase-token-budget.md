@@ -16,14 +16,17 @@ This repository, measured rather than estimated:
 
 | | |
 | :--- | ---: |
-| TypeScript files under `src/` | 57 |
-| Lines | 14,626 |
-| Bytes | 603,420 |
-| **Estimated tokens** | **≈ 165,000** |
+| TypeScript files under `src/` | 88 |
+| Lines | 28,992 |
+| Bytes | 1,191,949 |
+| **Estimated tokens** | **≈ 340,000** |
 
-That single number decides the whole conversation. 165k tokens does not fit in an 8k window, it
-almost exactly fills a 200k window leaving nothing for the question or the answer, and it fits
-in a 1M window without effort.
+That single number decides the whole conversation. 340k tokens does not fit in an 8k window, it
+does not fit a 200k window at all — it is the whole window and two thirds of another — and it fits
+in a 1M window with room for the question. Measured on 2026-11-17 with `git ls-files src` plus the
+tool's own `countLines`, over the files present that day. The count moves with every commit — the
+order of magnitude does not, which is what the number is for; run `codebase-snapshot report` on a
+snapshot of this repository to re-measure a checkout.
 
 ## What the default part budget means
 
@@ -61,7 +64,7 @@ budget of any single part.
 
 ## When the repository does not fit
 
-It usually does not. 165k tokens is a small library; a real application is five to twenty times
+It usually does not. 340k tokens is a small library; a real application is five to twenty times
 that. In order of preference:
 
 1. **Scope the run, not the budget.** `include`/`exclude` patterns, or the wizard's "only

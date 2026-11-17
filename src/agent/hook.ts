@@ -25,13 +25,6 @@ import { GENERATOR_NAME } from "../version.js";
 /** Marks a hook this tool wrote, so a re-run may replace it and a user can recognise it. */
 export const HOOK_MARKER = `# ${GENERATOR_NAME}: pre-commit snapshot check`;
 
-/**
- * The hook body.
- *
- * It runs `npx <package> validate`, which exits non-zero when the snapshot no longer matches
- * the tree, and it counts anything unexpected as a failure to check rather than a pass: a
- * gate that fails open is not a gate.
- */
 /** Escapes a value for use inside a POSIX double-quoted shell word. */
 function shellQuote(value: string): string {
   return value.replace(/[\\"`$]/g, (character) => `\\${character}`);

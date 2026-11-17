@@ -2,18 +2,6 @@ import type { LanguageProfile } from "./shared.js";
 import { eachLine, emptySummary, finalizeSummary, isPublicName, isTopLevel } from "./shared.js";
 
 /**
- * Swift: types, functions, properties and imports.
- *
- * The declaration keywords are usually preceded by modifiers (`public final class`,
- * `fileprivate struct`, `@objc protocol`), so the pattern consumes any run of attribute and
- * modifier words before the keyword. `protocol` is Swift's interface, and `actor` is a
- * concurrency-constrained class — both are classes to a reader who wants an outline.
- *
- * Visibility is explicit in Swift: only `public` and `open` leave the module, so only those
- * are recorded as exports. A `internal` (the default) declaration is not an export and
- * saying it is would make the index lie about the API.
- */
-/**
  * Declaration modifiers, including attributes with arguments (`@available(iOS 15, *)`).
  *
  * `class` is deliberately *not* in this list even though `class func` exists: consuming it as
@@ -28,6 +16,18 @@ const FUNC = new RegExp(`^${MODIFIERS}func\\s+([A-Za-z_]\\w*)`);
 const PROPERTY = new RegExp(`^${MODIFIERS}(?:let|var)\\s+([A-Za-z_]\\w*)`);
 const IMPORT = /^import\s+([A-Za-z_][\w.]*)/;
 
+/**
+ * Swift: types, functions, properties and imports.
+ *
+ * The declaration keywords are usually preceded by modifiers (`public final class`,
+ * `fileprivate struct`, `@objc protocol`), so the pattern consumes any run of attribute and
+ * modifier words before the keyword. `protocol` is Swift's interface, and `actor` is a
+ * concurrency-constrained class — both are classes to a reader who wants an outline.
+ *
+ * Visibility is explicit in Swift: only `public` and `open` leave the module, so only those
+ * are recorded as exports. A `internal` (the default) declaration is not an export and
+ * saying it is would make the index lie about the API.
+ */
 export const swiftProfile: LanguageProfile = {
   id: "swift",
   extensions: [".swift"],

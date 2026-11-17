@@ -340,6 +340,27 @@ test("C4: the monolith contains full file bodies, not previews", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("C4: a monolith entry that says \`full\` carries no truncation fields", () => {
+  const dir = repo({ "src/big.ts": "export const big = 'x';\n".repeat(2000) });
+
+  generate(dir, { includeMonolith: true, largeFileBytes: 1024 });
+
+  const manifest = JSON.parse(read(dir, "snapshot/manifest.json"));
+  const entry = manifest.files.find((file) => file.relativePath === "src/big.ts");
+  assert.equal(entry.inclusionMode, "preview", "the parts carry a preview");
+  assert.equal(entry.truncationReason, "large-file-budget");
+  assert.ok(manifest.incomplete.some((record) => record.relativePath === "src/big.ts"));
+
+  const monolith = JSON.parse(read(dir, "snapshot/full-codebase.json"));
+  const shipped = monolith.files.find((file) => file.relativePath === "src/big.ts");
+  assert.equal(shipped.inclusionMode, "full", "the monolith carries the whole body");
+  // One object saying both things is a lie in one of its fields: a consumer filtering on
+  // `inclusionMode` read a complete file, a consumer reading the reason read a preview.
+  assert.equal(shipped.truncationReason, undefined, "and records no truncation reason");
+  assert.equal(shipped.omittedRanges, undefined, "and no omitted ranges");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("C4: maxMonolithBytes still skips the monolith and says so", () => {
   const dir = repo({ "src/big.ts": "export const big = 'x';\n".repeat(2000) });
   const manifest = generate(dir, { includeMonolith: true, maxMonolithBytes: 200 });
@@ -545,13 +566,13 @@ test("F1: an unusable manifest is rejected with a reason, never `undefined`", as
   } catch (err) {
     message = err.message;
   }
-  assert.match(message, /not a usable snapshot manifest/);
+  assert.match(message, /is not a snapshot manifest/);
   assert.match(message, /counts\.totalFiles/);
   assert.doesNotMatch(message, /undefined/);
 
   const result = await runCli(["diff", path.join(dir, "bad.json"), path.join(dir, "bad.json")]);
   assert.equal(result.code, 1, `diff must exit non-zero: ${result.stdout}${result.stderr}`);
-  assert.match(result.stderr, /not a usable snapshot manifest/);
+  assert.match(result.stderr, /is not a snapshot manifest/);
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /undefined/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

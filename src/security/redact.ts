@@ -468,18 +468,6 @@ function redactPemSpan(
 
 
 /**
- * Redacts secrets from `content`.
- *
- * - Replaces only the matched span, so unrelated code sharing the line survives
- *   (the previous implementation discarded the whole line).
- * - When a rule declares `valueGroup`, only that capture group is masked, so
- *   `dbPassword: "…"` keeps its key and stays parseable.
- * - Masks PEM private-key blocks as a unit; per-line rules can only see the
- *   `BEGIN` header, which left every body line of a real key in the output.
- * - Records `{ rule, line, path }` only. No excerpt of the source is retained,
- *   because that excerpt was being written verbatim into `reports/audit.md`.
- */
-/**
  * One compiled form per rule, reused across files.
  *
  * `toGlobal` builds a new `RegExp` for every rule on every file, and this runs on every file the
@@ -503,6 +491,18 @@ function compiledRuleFor(rule: SecretRule): CompiledRule {
   return compiled;
 }
 
+/**
+ * Redacts secrets from `content`.
+ *
+ * - Replaces only the matched span, so unrelated code sharing the line survives
+ *   (the previous implementation discarded the whole line).
+ * - When a rule declares `valueGroup`, only that capture group is masked, so
+ *   `dbPassword: "…"` keeps its key and stays parseable.
+ * - Masks PEM private-key blocks as a unit; per-line rules can only see the
+ *   `BEGIN` header, which left every body line of a real key in the output.
+ * - Records `{ rule, line, path }` only. No excerpt of the source is retained,
+ *   because that excerpt was being written verbatim into `reports/audit.md`.
+ */
 export function scanAndRedactSecrets(
   content: string,
   rules: SecretRule[],
@@ -749,11 +749,17 @@ export function scanAndRedactSecrets(
         const maskedLine = applySpans(line, spans);
         // Belt and braces for a span that still crosses a literal boundary: if the original line
         // was balanced and the mask made it unbalanced, the mask describes a program that is not
-        // the source. Leave the line untouched rather than emit broken code.
-        if (!quotesAreBalanced(line) || quotesAreBalanced(maskedLine)) {
-          recordFinding(lineNumber, matchedRules);
-          segments[index] = maskedLine;
-        }
+        // the source. Do not emit broken code — but do not leave the credential in clear either:
+        // mask around the delimiters, which cannot change the balance the check measures.
+        //
+        // Leaving the line untouched and recording nothing was the behaviour this replaces. It
+        // was silent exactly where silence is most expensive: the run reported zero findings and
+        // emitted the value.
+        recordFinding(lineNumber, matchedRules);
+        segments[index] =
+          !quotesAreBalanced(line) || quotesAreBalanced(maskedLine)
+            ? maskedLine
+            : applySpansKeepingQuotes(line, spans);
       }
     }
 
@@ -1233,14 +1239,6 @@ function quotesAreBalanced(text: string): boolean {
   return double % 2 === 0 && single % 2 === 0 && backtick % 2 === 0;
 }
 
-/**
- * True when the matched value is **not** quoted, and therefore may be code rather than data.
- *
- * `dbPassword: "…"` is a literal in every file type. A bare `dbPassword: …` is a literal in
- * `.env`, YAML and compose — the formats the unquoted rules exist for — but an expression in
- * a source file. This only classifies the value; what to do about it is `isDeclaredBinding`.
- */
-
 /** How the value at a match position relates to the text before it. */
 interface ValueAssignment {
   /** The separator when the value is a right-hand side, `null` otherwise. */
@@ -1302,6 +1300,13 @@ function tokenEnd(line: string, start: number): number {
   return end;
 }
 
+/**
+ * True when the matched value is **not** quoted, and therefore may be code rather than data.
+ *
+ * `dbPassword: "…"` is a literal in every file type. A bare `dbPassword: …` is a literal in
+ * `.env`, YAML and compose — the formats the unquoted rules exist for — but an expression in
+ * a source file. This only classifies the value; what to do about it is `isDeclaredBinding`.
+ */
 function isUnquotedValue(line: string, start: number): boolean {
   const before = start > 0 ? line[start - 1] : "";
   return before !== '"' && before !== "'" && before !== "`";
@@ -1396,6 +1401,19 @@ function isDeclaredBinding(line: string, matchIndex: number, filePath?: string):
  * was emitted as `"[REDACTED…]stu"`.
  */
 function applySpans(line: string, spans: Span[]): string {
+  let out = "";
+  let cursor = 0;
+  for (const span of mergedSpans(line, spans)) {
+    out += line.slice(cursor, span.start);
+    out += REDACTION_MARKER;
+    cursor = span.end;
+  }
+  out += line.slice(cursor);
+  return out;
+}
+
+/** Clamped, token-expanded spans, merged so overlapping matches mask their union once. */
+function mergedSpans(line: string, spans: Span[]): Array<{ start: number; end: number }> {
   const ordered = [...spans].sort((a, b) => a.start - b.start || a.end - b.end);
 
   const merged: Array<{ start: number; end: number }> = [];
@@ -1407,12 +1425,41 @@ function applySpans(line: string, spans: Span[]): string {
     if (last && start <= last.end) last.end = Math.max(last.end, end);
     else merged.push({ start, end });
   }
+  return merged;
+}
 
+/**
+ * Replaces the characters in each span that the quote-balance test does **not** count.
+ *
+ * The check below refuses a mask that turns a balanced line into an unbalanced one, because such a
+ * mask describes a program the source does not contain. Refusing the whole rewrite left the
+ * credential in the artefact and recorded no finding — a silent leak, which is the worse trade.
+ *
+ * Every quote and every backslash is copied through unchanged, so the parity the balance test
+ * measures is identical to the original line's: a backslash and the quote it escapes stay
+ * adjacent, and nothing else in this function can change a count. The value is still masked —
+ * one marker per run of non-quote characters — so the credential does not survive the run.
+ *
+ * The default rules never reach this path (their spans are values, not delimiters); a custom
+ * pattern that matches across a literal boundary does.
+ */
+function applySpansKeepingQuotes(line: string, spans: Span[]): string {
   let out = "";
   let cursor = 0;
-  for (const span of merged) {
+  for (const span of mergedSpans(line, spans)) {
     out += line.slice(cursor, span.start);
-    out += REDACTION_MARKER;
+    let run = false;
+    for (let index = span.start; index < span.end; index += 1) {
+      const char = line[index];
+      if (char === '"' || char === "'" || char === "`" || char === "\\") {
+        if (run) out += REDACTION_MARKER;
+        run = false;
+        out += char;
+        continue;
+      }
+      run = true;
+    }
+    if (run) out += REDACTION_MARKER;
     cursor = span.end;
   }
   out += line.slice(cursor);

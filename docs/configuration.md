@@ -277,7 +277,7 @@ makes an audit entry mean something.
   disable redaction itself, and it applies to **paths** as well as to content, so a
   credential-shaped file name is no longer skipped by a rule you switched off.
 
-Redaction is **fail-closed**, so a placeholder is indistinguishable from a secret: a
+Redaction is **fail-closed**, so most placeholders are indistinguishable from secrets: a
 `.env.example` whose line reads `JWT_SECRET=replace-with-base64url-48-bytes` is masked like a
 live key would be, and a test fixture literal such as `process.env.X_SECRET = "test-value"` is
 masked too. That is the intended trade-off — the alternative is guessing which values are
@@ -285,7 +285,23 @@ throwaway — and it is worth knowing before you hand the snapshot to a model an
 less readable than the original. To narrow it, remove a rule by name with
 `disableDefaultPatterns: true` plus your own `customPatterns`.
 
-The one shape that is *not* masked is a value that is a single `${…}` reference and nothing else —
+The exception is a **whole value** that is one of the conventional placeholder shapes. The list
+is exhaustive and lives in `PLACEHOLDER_PATTERNS` in `src/security/redact.ts`:
+
+| Value is exactly… | Example that survives |
+| :--- | :--- |
+| `replace-me` / `change-me`, optionally followed by more words | `replace-me-with-the-read-tier-key` |
+| `your-…` / `your_…` | `your-api-key-here`, `your_api_key` |
+| `example` / `sample`, optionally followed by more words | `example-token`, `sample-value` |
+| a single `<…>` (the closing bracket may be missing) | `<fine-grained PAT>`, `<missing-bracket` |
+| three or more dots | `...`, `sk-...` |
+| four or more `x`, `X` or `*` | `xxxx`, `****` |
+
+Everything else is masked, including `replace-with-…` — the rule keys on the `-me` — and any real
+credential that merely contains the word "example". This list is the only exemption; there is no
+entropy heuristic behind it.
+
+A second shape that is *not* masked is a value that is a single `${…}` reference and nothing else —
 `password: "${DB_PASSWORD}"`, `` `${process.env.TOKEN}` `` — because that is an expression and
 masking it rewrites a program (or an assertion message) rather than hiding a credential. Anything
 inside the braces that is not a plain reference settles it the other way:

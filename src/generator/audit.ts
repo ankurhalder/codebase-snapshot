@@ -144,10 +144,16 @@ export function generateAuditReport(
       const status = file.isPreviewTruncated ? "Truncated" : "Full";
       // `isLarge` is set by the size threshold before partitioning; anything false there was cut
       // by the part budget. A large file can additionally be clipped by the part budget.
+      //
       // The cause is the setting that actually removed the bytes. `isLarge` alone said
-    // `largeFileBytes` even when the part budget then cut the preview in half, which sent the
-    // reader to raise the wrong number.
-    const cutBy = file.truncationReason === "part-budget" ? "maxPartBytes" : "largeFileBytes";
+      // `largeFileBytes` even when the part budget then cut the preview in half, which sent the
+      // reader to raise the wrong number. The wording matches the marker in the block and the
+      // `truncationReason` code in the manifest — one cause, one name — with the setting in
+      // parentheses so it is still obvious what to change.
+      const cutBy =
+        file.truncationReason === "part-budget"
+          ? "part budget (maxPartBytes)"
+          : "large-file budget (largeFileBytes)";
       lines.push(
         `| ${code(file.relativePath)} | ${file.sizeBytes} | ${file.lines} | ${file.includedBytes} | ${file.includedLines} | ${status} | ${cutBy} |`
       );

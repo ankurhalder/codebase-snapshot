@@ -195,3 +195,34 @@ test("the config digest does not depend on the order of budgets.byLayer keys", (
   );
   assert.notEqual(configDigest(one), configDigest(changed));
 });
+
+test("one JSONC reader: CRLF, a // inside a string and a trailing comma all parse", async (t) => {
+  // `config.ts` carried a private copy of the JSONC reader alongside the exported one in
+  // `ast/structured.ts`. Two copies of a parser are two sets of fixed edge cases, and a fix to
+  // one does not reach the other. This fixture exercises the shared reader through the config
+  // loader with every edge both copies had to handle.
+  const dir = makeRepo(t, {
+    "snapshot.config.json":
+      '{\r\n' +
+      '  // a line comment\r\n' +
+      '  "outDir": "ctx",\r\n' +
+      '  "excludePatterns": ["a//b", "c/*.ts",],\r\n' +
+      '  "includeMonolith": false,\r\n' +
+      '}\r\n',
+  });
+
+  const loaded = await loadConfigFileDetailed(dir);
+  assert.deepEqual(loaded.errors, []);
+  assert.deepEqual(loaded.warnings, []);
+  assert.equal(loaded.config.outDir, "ctx");
+  assert.deepEqual(loaded.config.excludePatterns, ["a//b", "c/*.ts"], "the // inside a string survives");
+});
+
+test("a byte-order mark in a JSON config is not a parse error", async (t) => {
+  const dir = makeRepo(t, {
+    "snapshot.config.json": '\uFEFF{ "outDir": "ctx" }\n',
+  });
+  const loaded = await loadConfigFileDetailed(dir);
+  assert.deepEqual(loaded.errors, []);
+  assert.equal(loaded.config.outDir, "ctx");
+});

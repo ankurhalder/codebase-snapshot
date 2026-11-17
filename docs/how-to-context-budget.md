@@ -73,7 +73,7 @@ before you spend it on a model call.
 1. Generate with a ceiling that matches the destination.
 2. Run `report`; look at the per-layer breakdown.
 3. Cut the largest layer that does not answer your question.
-4. Re-generate and compare `manifest.totals.events` and the part count.
+4. Re-generate and compare `manifest.totals.emittedLines` and `manifest.counts.partsCount`.
 5. Keep the settings that produced a snapshot you actually used — the config is the durable artifact,
    not the output.
 

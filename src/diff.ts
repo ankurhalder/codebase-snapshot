@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { findSecretInPath } from "./scanner/files.js";
 import { describeManifestShapeProblem } from "./validator/validate.js";
-import type { Manifest } from "./types.js";
+import type { Manifest, SecretRule } from "./types.js";
 
 export interface ManifestDiff {
   before: DiffSide;
@@ -59,6 +59,15 @@ export interface PayloadDiff {
   layers: { before: Record<string, number>; after: Record<string, number> };
   /** Human-readable statements, rendered by the terminal form. */
   reasons: string[];
+  /**
+   * A stable code per statement in `reasons`, in the same order.
+   *
+   * `reasons` is prose for a human; a program reading `diff --format json` had to match on that
+   * prose to decide what changed. The codes are the vocabulary: `schema-version`,
+   * `config-digest`, `config-digest-missing`, `generator`, `fingerprint`, `parts-count` and
+   * `layer-changed`.
+   */
+  codes: string[];
 }
 
 interface DiffSide {
@@ -85,7 +94,8 @@ function shortDigest(value: string | null): string {
 /** `layer "api": 2 file(s) → 3 file(s)` for every layer whose count moved. */
 function describeLayerChanges(
   before: Record<string, number>,
-  after: Record<string, number>
+  after: Record<string, number>,
+  secretRules?: readonly SecretRule[]
 ): string[] {
   const names = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
   const changes: string[] = [];
@@ -94,7 +104,7 @@ function describeLayerChanges(
     const now = after[name] ?? 0;
     if (was === now) continue;
     // A layer name is config-supplied and lands in every artifact; mask it like a path.
-    const label = findSecretInPath(name)?.masked ?? name;
+    const label = findSecretInPath(name, secretRules)?.masked ?? name;
     changes.push(`layer "${label}": ${was} file(s) → ${now} file(s)`);
   }
   return changes;
@@ -112,7 +122,8 @@ type PartMetadata = Manifest["parts"][number];
  */
 function describePartChanges(
   before: readonly PartMetadata[],
-  after: readonly PartMetadata[]
+  after: readonly PartMetadata[],
+  secretRules?: readonly SecretRule[]
 ): string[] {
   const index = (parts: readonly PartMetadata[]): Map<string, PartMetadata> => {
     const map = new Map<string, PartMetadata>();
@@ -123,7 +134,8 @@ function describePartChanges(
   };
   const left = index(before);
   const right = index(after);
-  const label = (filename: string): string => findSecretInPath(filename)?.masked ?? filename;
+  const label = (filename: string): string =>
+    findSecretInPath(filename, secretRules)?.masked ?? filename;
   const changes: string[] = [];
 
   for (const [filename, part] of right) {
@@ -154,6 +166,24 @@ function describePartChanges(
 }
 
 /**
+ * The layer counts with credential-shaped names masked.
+ *
+ * `Object.fromEntries` rather than assignment: a layer called `__proto__` is a legal name, and
+ * `out["__proto__"] = n` would set the prototype instead of an own key.
+ */
+function maskLayerNames(
+  layers: Record<string, number> | undefined,
+  secretRules?: readonly SecretRule[]
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(layers ?? {}).map(([name, count]) => [
+      findSecretInPath(name, secretRules)?.masked ?? name,
+      count,
+    ])
+  );
+}
+
+/**
  * Builds the payload/configuration block.
  *
  * `differs` is true when the settings or the generator differ, or when the source
@@ -165,7 +195,8 @@ function describePartChanges(
 function describePayloadDiff(
   before: Manifest,
   after: Manifest,
-  sourceFilesIdentical: boolean
+  sourceFilesIdentical: boolean,
+  secretRules?: readonly SecretRule[]
 ): PayloadDiff {
   const generatorBefore = before.generator?.version ?? "unknown";
   const generatorAfter = after.generator?.version ?? "unknown";
@@ -184,16 +215,19 @@ function describePayloadDiff(
 
   const fingerprintDiffers = before.fingerprint !== after.fingerprint;
   const partsDiffer = before.counts.partsCount !== after.counts.partsCount;
-  const partChanges = describePartChanges(before.parts ?? [], after.parts ?? []);
-  const layerChanges = describeLayerChanges(before.layers ?? {}, after.layers ?? {});
+  const partChanges = describePartChanges(before.parts ?? [], after.parts ?? [], secretRules);
+  const layerChanges = describeLayerChanges(before.layers ?? {}, after.layers ?? {}, secretRules);
 
   const reasons: string[] = [];
+  const codes: string[] = [];
   if (schemaDiffers) {
+    codes.push("schema-version");
     reasons.push(
       `schema version ${schemaBefore} → ${schemaAfter} (the two manifests describe different formats)`
     );
   }
   if (digestDiffers) {
+    codes.push("config-digest");
     reasons.push(
       `configuration digest ${shortDigest(digestBefore)} → ${shortDigest(digestAfter)} ` +
         "(budgets, preview thresholds, redaction rules and artifact selection all count)"
@@ -204,23 +238,28 @@ function describePayloadDiff(
       : digestAfter === null && digestBefore !== null
         ? "after"
         : "both";
+    codes.push("config-digest-missing");
     reasons.push(
       `configuration digest not recorded on the ${missing} side (manifest written before 4.0.5); ` +
         "compared the content fingerprint and part count instead"
     );
   }
   if (generatorDiffers) {
+    codes.push("generator");
     reasons.push(`generator ${generatorBefore} → ${generatorAfter}`);
   }
   if (fingerprintDiffers && (sourceFilesIdentical || configurationDiffers)) {
+    codes.push("fingerprint");
     reasons.push(
       `content fingerprint ${shortDigest(before.fingerprint)} → ${shortDigest(after.fingerprint)}` +
         (sourceFilesIdentical ? " (same source files, packed or configured differently)" : "")
     );
   }
   if (partsDiffer) {
+    codes.push("parts-count");
     reasons.push(`${before.counts.partsCount} part(s) → ${after.counts.partsCount} part(s)`);
   }
+  for (let index = 0; index < layerChanges.length; index += 1) codes.push("layer-changed");
   reasons.push(...layerChanges);
 
   return {
@@ -235,8 +274,12 @@ function describePayloadDiff(
     partsCount: { before: before.counts.partsCount, after: after.counts.partsCount },
     schemaVersion: { before: schemaBefore, after: schemaAfter },
     partsManifest: { differs: partChanges.length > 0, changes: partChanges },
-    layers: { before: { ...(before.layers ?? {}) }, after: { ...(after.layers ?? {}) } },
+    // The layer maps are printed and serialized, so a layer named after a project token leaks the
+    // token here even though every reason line above is masked. Found while testing the rules
+    // parameter: masking the prose and not the data it describes is the same bug one layer down.
+    layers: { before: maskLayerNames(before.layers, secretRules), after: maskLayerNames(after.layers, secretRules) },
     reasons,
+    codes,
   };
 }
 
@@ -290,12 +333,24 @@ function comparableProblem(value: unknown): string | null {
 function assertUsableManifest(value: unknown, label: string): asserts value is Manifest {
   const problem = comparableProblem(value);
   if (problem) {
-    throw new Error(`The ${label} manifest is not a snapshot manifest this tool wrote: ${problem}.`);
+    throw new Error(`The ${label} manifest is not a snapshot manifest: ${problem}.`);
   }
 }
 
-/** Compares two manifests file by file. */
-export function compareManifests(before: Manifest, after: Manifest): ManifestDiff {
+/**
+ * Compares two manifests file by file.
+ *
+ * `secretRules` is the resolved rule list of the caller (`config.secretRules` — built-ins plus
+ * `secrets.customPatterns`, or only the custom ones when the defaults are disabled). Without it
+ * every masking call in this file used the built-ins alone, so a token a repository had declared
+ * in `secretRules` — the reason the setting exists — was printed in clear by `diff` while
+ * `generate`, `validate`, `explain` and the MCP server all masked it.
+ */
+export function compareManifests(
+  before: Manifest,
+  after: Manifest,
+  secretRules?: readonly SecretRule[]
+): ManifestDiff {
   // Validated here as well as in `loadManifest`, so a caller that builds its own
   // objects gets a clear error naming the side instead of `undefined` in output.
   assertUsableManifest(before, "before");
@@ -323,13 +378,13 @@ export function compareManifests(before: Manifest, after: Manifest): ManifestDif
     values.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   const sourceFilesIdentical = added.length === 0 && removed.length === 0 && changed.length === 0;
-  const payload = describePayloadDiff(before, after, sourceFilesIdentical);
+  const payload = describePayloadDiff(before, after, sourceFilesIdentical, secretRules);
 
   // `diff` prints these paths and `--format json` ships them: a token in a
   // filename must not come back out of the comparison. Default rules plus the
   // rules `resolveConfig` registered apply.
   const mask = (values: string[]): string[] =>
-    values.map((value) => findSecretInPath(value)?.masked ?? value);
+    values.map((value) => findSecretInPath(value, secretRules)?.masked ?? value);
 
   return {
     before: side(before),
@@ -374,8 +429,10 @@ export function loadManifest(target: string): Manifest {
   // before the comparison can report "+0 -0 ~0 =N unchanged" for it.
   const problem = describeManifestShapeProblem(parsed);
   if (problem) {
+    // The same sentence `validate` and `report` use, so one malformed manifest reads the same in
+    // all three commands. It used to say "usable … this tool wrote", a fourth phrasing of one fact.
     throw new Error(
-      `${manifestPath} is not a usable snapshot manifest: ${problem}. ` +
+      `${manifestPath} is not a snapshot manifest: ${problem}. ` +
         `Point diff at a manifest.json written by \`generate\` (or at the directory that holds it).`
     );
   }

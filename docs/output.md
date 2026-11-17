@@ -112,7 +112,7 @@ diff the manifest only when you need to know that a run happened.
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
 | `artifacts` | A digest of every artifact the run wrote: `readme`, `navigation`, `projectTree`, `audit`, `fullJson`, `fullMarkdown` and `sarif` when present, each `{ byteSize, sha256 }`. `validate` requires each recorded file to exist and match, so deleting the README or the navigation index is a failure rather than a silent omission. Monolith entries are `null` when the file was not written; a key absent for an older manifest is not drift. |
 | `layers`, `kinds` | File counts per layer and per kind. |
-| `indexes` | Cross-references: `routes`, `components`, `handlers`, `features`, `imports`, `directives`. |
+| `indexes` | Cross-references: `routes`, `components`, `handlers`, `features`, `imports`, `directives`. `imports.byFile` holds one entry per file whose import edges are known — including a previewed or oversized file, whose specifiers are still extracted because they are what makes it a dependent. Such an entry has `exportsOmitted: true`: its `exports` list was never read, and an empty array there would claim "no exports". |
 | `parts` | One entry per part (below). |
 | `files` | One entry per included file (below). |
 | `skipped` | One entry per excluded file (below). Every scanned path appears in `files` or here: the generator asserts it, so a file cannot vanish between the two. |
@@ -186,10 +186,13 @@ has several at once, and "within budget" cannot be answered without knowing whic
   than inlined whole.
 - `isPreviewTruncated` is a fact about what was written: the body in this snapshot is **not**
   the whole file, because lines were dropped.
-- `includedLines` counts content lines after CRLF normalisation and without a trailing empty
-  element, which is what the fenced block holds. An empty file therefore records `0` while the
-  fence shows one empty line, and a file ending in a blank line records one fewer than a reader
-  counts — the number describes content, not rendering.
+- `includedLines` counts the lines of the fenced block: content lines after CRLF normalisation
+  and without a trailing empty element, **plus the omission notice when one is written**. An
+  empty file therefore records `0` while the fence shows one empty line, and a file ending in a
+  blank line records one fewer than a reader counts. A preview records head + tail + the notice
+  line — the block as written. It is not a count of surviving source content, which is why
+  `includedLines + omittedLines` is one more than `lines` for a preview and never a sum a reader
+  should reconcile.
 - `inclusionMode` is `preview` exactly when `isPreviewTruncated` is `true`. There used to be two
   routes to it, and the second — a file *under* `largeFileBytes` but too big for its part, cut
   by the partitioner with `isLarge: false` — is what made the manifest unreadable: it looked

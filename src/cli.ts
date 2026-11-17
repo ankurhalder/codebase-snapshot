@@ -815,7 +815,8 @@ function presetSummary(init: { preset: string; reason: string | null }): string 
   return init.reason === null ? `preset: ${init.preset}` : `preset: ${init.preset}, because ${init.reason}`;
 }
 
-async function runInitCommand(invocation: ParsedInvocation): Promise<number> {  try {
+async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
+  try {
     const result = await runInit({
       cwd: invocation.cwd,
       preset: invocation.preset,
@@ -884,12 +885,6 @@ interface PackageManager {
 }
 
 /**
- * The package manager this repository already uses, read from its lockfile.
- *
- * A lockfile is the only honest signal: running `npm install` inside a pnpm workspace rewrites a
- * lockfile the project's own tooling owns, and the snapshot is not worth that.
- */
-/**
  * How this binary was reached, for the run banner.
  *
  * The generator version alone does not say whether the snapshot came from the project's own pin
@@ -900,7 +895,13 @@ interface PackageManager {
  */
 function generatorOrigin(cwd: string): string {
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as {
+    // `stripJsonComments` first, for the same reason `nextStepHint` does it 115 lines above: a
+    // UTF-8 BOM is a valid way to save `package.json` and an invalid first byte for `JSON.parse`.
+    // The bare parse threw, the catch below swallowed it, and a project that pins this package
+    // was told it had a "global or direct install" — the exact warning a pin exists to prevent.
+    const pkg = JSON.parse(
+      stripJsonComments(fs.readFileSync(path.join(cwd, "package.json"), "utf8"))
+    ) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
@@ -913,6 +914,12 @@ function generatorOrigin(cwd: string): string {
   if (entry.includes("_npx") || entry.includes(`${path.sep}npx${path.sep}`)) return "via npx";
   return "global or direct install";
 }
+/**
+ * The package manager this repository already uses, read from its lockfile.
+ *
+ * A lockfile is the only honest signal: running `npm install` inside a pnpm workspace rewrites a
+ * lockfile the project's own tooling owns, and the snapshot is not worth that.
+ */
 function detectPackageManager(cwd: string): PackageManager {
   const has = (name: string): boolean => fs.existsSync(path.join(cwd, name));
   if (has("bun.lockb") || has("bun.lock")) return { name: "bun", command: "bun", args: ["install"] };
@@ -930,16 +937,6 @@ interface InstallOutcome {
   detail: string;
 }
 
-/**
- * The environment a nested package-manager run gets: the caller's, minus npm's own config.
- *
- * Running `setup` through `npx`/`npm exec` puts the parent npm's resolved config into
- * `npm_config_*` variables, and a child that inherits them is not the `npm install` a user would
- * type — with an npm that supports an `allowScripts` switch, the child aborted with
- * `EALLOWSCRIPTS: --allow-scripts is not allowed in project-scoped installs`. Stripping them makes
- * the child read the project's own `.npmrc` and flags, which is the whole point of using the
- * project's package manager.
- */
 /**
  * npm settings a child install may inherit.
  *
@@ -959,6 +956,16 @@ const INHERITED_NPM_SETTINGS = new Set([
   "npm_config_strict_ssl",
 ]);
 
+/**
+ * The environment a nested package-manager run gets: the caller's, minus npm's own config.
+ *
+ * Running `setup` through `npx`/`npm exec` puts the parent npm's resolved config into
+ * `npm_config_*` variables, and a child that inherits them is not the `npm install` a user would
+ * type — with an npm that supports an `allowScripts` switch, the child aborted with
+ * `EALLOWSCRIPTS: --allow-scripts is not allowed in project-scoped installs`. Stripping them makes
+ * the child read the project's own `.npmrc` and flags, which is the whole point of using the
+ * project's package manager.
+ */
 export function cleanInstallEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const cleaned: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
@@ -1362,8 +1369,18 @@ function runSkillCommand(invocation: ParsedInvocation): number {
   }
 }
 
-function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {  if (result.valid) {
+function renderValidateText(result: ReturnType<typeof validateSnapshot>): void {
+  if (result.valid) {
     info("✅ Snapshot is valid and up to date with disk.");
+  } else if (
+    result.errors.length === 1 &&
+    result.errors[0].includes(" is not a snapshot manifest: ")
+  ) {
+    // A manifest that is not a snapshot manifest is a refusal, not a drift report. It was
+    // printed as the first bullet under a generic header, so the same malformed file read
+    // `❌ <path> is not a snapshot manifest: …` from `report` and `diff`, and `  - <path> …`
+    // from `validate`. One sentence, one prefix, in all three.
+    warn(`❌ ${result.errors[0]}`);
   } else {
     warn("❌ Snapshot validation failed:");
     for (const error of result.errors) warn(`  - ${error}`);
@@ -1678,7 +1695,15 @@ async function runCommand(argv: string[]): Promise<number> {
     // and importing one would execute repository code to answer a question about files.
     try {
       const [beforePath, afterPath] = invocation.args;
-      const diff = compareManifests(loadManifest(beforePath), loadManifest(afterPath));
+      // The resolved rules are passed even though `diff` deliberately does not read the project
+      // configuration: a caller that supplies rules gets them applied to both manifests, and this
+      // call site cannot drift from the rest of the tool if that decision ever changes. Without
+      // the config the list is the built-ins — which is why `docs/cli.md` says so.
+      const diff = compareManifests(
+        loadManifest(beforePath),
+        loadManifest(afterPath),
+        resolved.secretRules
+      );
       emit(invocation.format, diff, () => info(renderDiffText(diff)));
       return 0;
     } catch (err) {
@@ -1751,12 +1776,15 @@ async function runCommand(argv: string[]): Promise<number> {
         skipBreakdown.length > shownReasons.length
           ? `${shownReasons.join(", ")}, +${skipBreakdown.length - shownReasons.length} more`
           : shownReasons.join(", ");
+      // "found" is the number of **paths** the scan accounted for, and a skipped directory is one
+      // of them: the line used to call them files, so a repository with gitignored directories
+      // reported more files than it contains. The count is right; the noun was not.
       const candidates = manifest.counts.totalFiles + manifest.counts.skippedCount;
       info(
         manifest.counts.skippedCount === 0
           ? `   - Tracked files: ${formatNumber(manifest.counts.totalFiles)}`
           : `   - Tracked files: ${formatNumber(manifest.counts.totalFiles)} included of ` +
-              `${formatNumber(candidates)} found — ${formatNumber(manifest.counts.skippedCount)} skipped ` +
+              `${formatNumber(candidates)} paths found — ${formatNumber(manifest.counts.skippedCount)} skipped ` +
               `(${reasons}); every one is listed in ` +
               `${displayOutPath(resolved.cwd, resolved.outDir, "reports/audit.md")}`
       );
@@ -1988,14 +2016,6 @@ export function decideWatchEvent(
 }
 
 /**
- * Re-generates on every change under `cwd`.
- *
- * Events inside the resolved output and temporary directories are ignored, so
- * writing a snapshot cannot feed the watcher. A source event that arrives while
- * a run is in flight sets a pending flag and gets exactly one follow-up run;
- * the settle window only suppresses unattributed events.
- */
-/**
  * The directories the watcher must ignore, derived from a resolved config.
  *
  * A function rather than an inline literal because the loop now recomputes it after every config
@@ -2039,6 +2059,14 @@ export function watchSupportProblem(
   );
 }
 
+/**
+ * Re-generates on every change under `cwd`.
+ *
+ * Events inside the resolved output and temporary directories are ignored, so
+ * writing a snapshot cannot feed the watcher. A source event that arrives while
+ * a run is in flight sets a pending flag and gets exactly one follow-up run;
+ * the settle window only suppresses unattributed events.
+ */
 async function runWatchLoop(
   invocation: ParsedInvocation,
   resolved: ResolvedSnapshotConfig,

@@ -119,12 +119,20 @@ export function generateSarifReport(
         },
       };
     })
-    .sort(
-      (a, b) =>
-        a.locations[0].physicalLocation.artifactLocation.uri.localeCompare(
-          b.locations[0].physicalLocation.artifactLocation.uri
-        ) || a.locations[0].physicalLocation.region.startLine - b.locations[0].physicalLocation.region.startLine
-    );
+    // Code-unit order, never `localeCompare`: the same commit has to produce the same SARIF
+    // bytes on every machine, and `localeCompare` orders `a-b.ts` against `A.B.ts` differently
+    // under `en` and `sv`. Three neighbours already compare code units for this reason —
+    // `tree.ts`, `terminal.ts` and `tokenize.ts` — and rule-id stability in this file was
+    // solved the same way.
+    .sort((a, b) => {
+      const left = a.locations[0].physicalLocation.artifactLocation.uri;
+      const right = b.locations[0].physicalLocation.artifactLocation.uri;
+      return (
+        (left < right ? -1 : left > right ? 1 : 0) ||
+        a.locations[0].physicalLocation.region.startLine -
+          b.locations[0].physicalLocation.region.startLine
+      );
+    });
 
   const log = {
     $schema: SARIF_SCHEMA,

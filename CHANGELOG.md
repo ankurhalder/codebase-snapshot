@@ -23,6 +23,76 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.10.2
+
+Every finding from the 0.10.1 deep analysis, fixed and verified. The report that produced the list
+is `audit/reports/0.10.1-code-analysis.md`; the finding-to-fix mapping is `audit/work/fix-log.md`.
+
+This is a patch release, but three of the fixes change something a script can observe. They are
+listed first rather than buried, because each is the point of its fix.
+
+**Upgrading.** `validate` now fails a manifest whose `incomplete[]` and `files[]` disagree — a
+hand-edited or foreign `manifest.json` that used to report "valid and up to date" is refused, which
+is the point. `partitionFiles` (a library export) now throws for a byte budget below the 2 610 B a
+part header needs, instead of silently clamping it to that size. A new built-in secret rule, the
+32nd, masks a quoted value whose closing quote is missing, so a snapshot that used to emit such a
+line now carries the marker — and one more line in `totals.redactedLines`. No option was added or
+removed, and no existing manifest field changed meaning.
+
+**Security**
+
+- A quoted assignment whose closing quote is not on the line (`API_KEY="value` in a truncated file,
+  a hand-edited `.env`, or a string that continues on the next line) matched no rule at all: it was
+  emitted in clear and the run reported zero redactions. `credential-assignment-unterminated` now
+  masks it and records a finding. When a mask would unbalance an otherwise balanced line, the value
+  is now masked around its quotes instead of being left untouched with no finding at all.
+- `diff` applies the caller's `secretRules`. `compareManifests` gained the parameter, every masking
+  call in `diff.ts` passes it through, and the payload block's `layers` maps are masked too — they
+  were printed verbatim while every line of prose beside them was masked.
+- `validate` verifies the completeness contract. `incomplete[]`, `counts.incompleteCount`,
+  `omittedRanges`, `omittedLines`, `includedLines` and `incomplete[].relativePath` are checked against
+  each other and against `files[]`; `relativePath` was the only unconfined member of the three
+  path-bearing arrays. Ten tampered variants of a real record used to report "valid and up to date".
+
+**Correctness**
+
+- The monolith entries no longer carry a `truncationReason` or `omittedRanges` beside
+  `inclusionMode: "full"` — one object said "complete file" and "large-file-budget" at once.
+- A previewed or oversized importer is in `indexes.imports.byFile`, so `snapshot_dependents` no
+  longer answers "0 importer(s)" for a file that has one. Its `exports` list says `exportsOmitted`.
+- `snapshot_plan` runs on the worker thread, like `snapshot_generate`: a dry run parses the whole
+  repository and blocked the JSON-RPC loop for as long as a generate did.
+- `discovery` is a member of `SnapshotConfig`, so a TypeScript config containing it compiles; a
+  compile-time proof on `CONFIG_KEY_NAMES` keeps the parsed key list from drifting from the
+  interface again — `CONFIG_KEYS` is built from that tuple, so both follow it.
+- SARIF results are ordered by code unit, not `localeCompare`: the same commit produced different
+  bytes under different host locales.
+- `generatorOrigin` reads a `package.json` behind a byte-order mark, so a pinned project is no
+  longer told it has a "global or direct install".
+- A nested `.DS_Store` is Finder noise in the ownership check, compared by basename like the other
+  four sites; `reports/.DS_Store` used to make the tool refuse a directory it had just written.
+- `init --out-dir .context` ignores `/.context/` rather than `/snapshot/`, so the snapshot it
+  generates is actually untracked; a nested or out-of-tree outDir is handled.
+- `exportsKind: "esm"` is produced for a file whose exports are all ES exports, so absence means
+  "no exports" again.
+- Both project-tree caps (lines and depth) are recorded as manifest warnings; only the depth cap was.
+- `diff --format json` carries a stable `payload.codes` array — one code per prose reason.
+
+**Documentation**
+
+- The published site no longer requests two 404s: `docs/assets/*` is rewritten to the `assets/`
+  copy the build writes, and the link gate now checks `src` as well as `href`.
+- `docs/configuration.md` lists the placeholder shapes that survive redaction, exhaustively, with a
+  test that pins the list to `PLACEHOLDER_PATTERNS`; the "a placeholder is indistinguishable from a
+  secret" claim it contradicted is gone.
+- Three surfaces that disagreed with the binary are corrected: the `.gitignore` entries in
+  `docs/cli.md` (they are anchored), `validate`'s actual output in
+  `docs/stale-context-is-your-bug.md`, and `explain`'s `{ rules, line }` shape.
+- `codebase-token-budget.md`'s measured example is re-measured; `how-to-context-budget.md` no
+  longer cites a `manifest.totals.events` field that does not exist.
+- Eight test failure messages interpolate their variables; on a security failure they printed the
+  literal `${…}`.
+
 ## 0.10.1
 
 Documentation only. The build is 0.10.0 with the documentation that describes it — no behaviour,

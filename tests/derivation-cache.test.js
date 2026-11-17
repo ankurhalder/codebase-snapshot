@@ -125,7 +125,7 @@ test("a changed setting invalidates the derivation", (t) => {
 
 test("a warm run does a fraction of a cold run's work", (t) => {
   // The point of the cache, measured in **CPU time** rather than wall clock. Twenty files of 4 000
-  // lines each: almost all of the cold cost is per line — the masking pass runs 31 rules over every
+  // lines each: almost all of the cold cost is per line — the masking pass runs 32 rules over every
   // line, and the parser builds an AST for the whole file — while almost all of the warm cost is
   // per byte, which is reading, hashing and partitioning.
   //

@@ -359,7 +359,14 @@ function readSources() {
  */
 export function renderPages() {
   return readSources().map((source) => {
-    const localised = source.markdown.split(RAW).join("");
+    // An image under `docs/assets/` is copied to `assets/` by `buildSite`, so an absolute raw
+    // URL to one has to land on that copy. Stripping only `RAW` left `docs/assets/favicon.svg`,
+    // a path this site does not serve: every page then requested two 404s (the favicon and the
+    // "how it works" diagram) and the only gate that could have seen it checked `href`, never
+    // `src`.
+    const localised = source.markdown
+      .split(`${RAW}docs/assets/`).join("assets/")
+      .split(RAW).join("");
     return {
       slug: source.slug,
       markdown: source.markdown,

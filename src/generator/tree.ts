@@ -104,3 +104,32 @@ export function generateProjectTree(filePaths: string[]): string {
   const fence = fenceForText(lines.join("\n"), 3);
   return ["# Project Tree", "", `${fence}text`, ...lines, fence, ""].join("\n");
 }
+
+/**
+ * A manifest warning for each cap the rendered tree reports.
+ *
+ * The tree carries its own marker, but a reader of the manifest learns nothing from an artifact
+ * they did not open — so the truncation is also a warning. Only the depth form was matched: a tree
+ * cut at the 20 000-line cap said so in the artifact and nothing in the manifest, and the two views
+ * of one fact disagreed.
+ *
+ * Exported so the mapping is testable without building a 20 000-file repository.
+ */
+export function treeTruncationWarnings(treeText: string): string[] {
+  const warnings: string[] = [];
+  const depth = /\[tree truncated at (\d+) levels\]/.exec(treeText);
+  if (depth) {
+    warnings.push(
+      `reports/project-tree.md was truncated at the ${depth[1]}-level depth cap: ` +
+        "deeper directories are not listed there."
+    );
+  }
+  const lines = /\[tree truncated at (\d+) lines\]/.exec(treeText);
+  if (lines) {
+    warnings.push(
+      `reports/project-tree.md was truncated at the ${lines[1]}-line cap: ` +
+        "the rest of the tree is not listed there."
+    );
+  }
+  return warnings;
+}

@@ -174,6 +174,10 @@ export function renderConfig(answers: WizardAnswers): string {
     // Set true to drop the built-in rules above and keep only customPatterns.
     disableDefaultPatterns: false,
   },
+  // The library spelling of the same list, accepted here too so a config file can
+  // express what a caller passes in code: an array of { rule, pattern } or a bare
+  // RegExp. Use \`secrets.customPatterns\` above unless you are porting code.
+  // secretRules: [],
 
   // ── Artifacts ──────────────────────────────────────────────────────────
   artifacts: {

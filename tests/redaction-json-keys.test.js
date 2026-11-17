@@ -18,21 +18,21 @@ const scan = (content, filePath = "config.json") =>
 
 const assertMaskedKeepingKey = (line, secret, key, filePath) => {
   const { redacted, findings } = scan(line, filePath);
-  assert.ok(findings.length > 0, "${JSON.stringify(line)}: a finding is expected");
+  assert.ok(findings.length > 0, `${JSON.stringify(line)}: a finding is expected`);
   assert.equal(
     redacted.includes(secret),
     false,
-    "${JSON.stringify(line)}: the value must not survive: ${JSON.stringify(redacted)}"
+    `${JSON.stringify(line)}: the value must not survive: ${JSON.stringify(redacted)}`
   );
   assert.ok(
     redacted.includes(key),
-    "${JSON.stringify(line)}: the key is readable context and must be kept"
+    `${JSON.stringify(line)}: the key is readable context and must be kept`
   );
 };
 
 const assertUntouched = (line, filePath = "config.json") => {
   const { redacted } = scan(line, filePath);
-  assert.equal(redacted, line, "${JSON.stringify(line)} must survive verbatim");
+  assert.equal(redacted, line, `${JSON.stringify(line)} must survive verbatim`);
 };
 
 test("a quoted camelCase key with a quoted value is masked, and the key survives", () => {
@@ -71,10 +71,10 @@ test("an indented JSON object loses every credential value and keeps its keys", 
     "opaqueSessionKey12345",
     "opaqueJwtSecretValue",
   ]) {
-    assert.equal(redacted.includes(secret), false, "${secret} must not survive:\n${redacted}");
+    assert.equal(redacted.includes(secret), false, `${secret} must not survive:\n${redacted}`);
   }
   for (const key of ['"dbPassword"', '"discordToken"', '"awsSecret"', '"sessionKey"', '"jwtSecret"']) {
-    assert.ok(redacted.includes(key), "${key} must stay readable:\n${redacted}");
+    assert.ok(redacted.includes(key), `${key} must stay readable:\n${redacted}`);
   }
 });
 

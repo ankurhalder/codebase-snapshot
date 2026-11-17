@@ -6,6 +6,8 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { compareManifests } from "../dist/index.js";
+
 /**
  * `diff` compares `relativePath + hashSha256`, so it used to report "0 changed,
  * N unchanged" for a run that repacked the same sources differently
@@ -228,4 +230,88 @@ test("manifests without a config digest say the configuration was not compared",
   } finally {
     cleanup(fx);
   }
+});
+
+test("every payload reason carries a stable code alongside its prose", () => {
+  const { repo, outRoot } = fixture();
+  try {
+    const first = path.join(outRoot, "one");
+    const second = path.join(outRoot, "two");
+    generate(repo, first);
+    generate(repo, second, ["--max-part-bytes", "120k"]);
+
+    const payload = diffJson(path.join(first, "manifest.json"), path.join(second, "manifest.json"))
+      .payload;
+    assert.ok(payload.reasons.length > 0, "this comparison really produces reasons");
+    assert.equal(
+      payload.codes.length,
+      payload.reasons.length,
+      "one code per statement, in the same order"
+    );
+    // A program reading `--format json` had to match on English prose to decide what changed.
+    for (const code of payload.codes) {
+      assert.match(code, /^[a-z][a-z-]*$/, `a code is a stable token, not a sentence: ${code}`);
+    }
+    assert.ok(
+      payload.codes.includes("config-digest"),
+      `a budget change is a configuration change: ${JSON.stringify(payload.codes)}`
+    );
+  } finally {
+    cleanup({ repo, outRoot });
+  }
+});
+
+test("compareManifests applies the caller's secret rules to paths and layers", () => {
+  // `ACME-[A-Z0-9]{8}` is this project's own token shape, declared in `secretRules` — the
+  // setting exists for exactly this. Without the rules parameter every masking call in `diff.ts`
+  // used the built-ins, so the token was printed in clear by `diff` while `generate`,
+  // `validate`, `explain` and the MCP server all masked it.
+  const custom = { rule: "acme-key", pattern: /ACME-[A-Z0-9]{8}/ };
+  const entry = (relativePath, hash) => ({
+    relativePath,
+    sizeBytes: 1,
+    lines: 1,
+    hashSha256: hash,
+    part: "part-001.md",
+    layer: "src",
+    kind: "source",
+    language: "typescript",
+    inclusionMode: "full",
+    isLarge: false,
+    isPreviewTruncated: false,
+    originalLines: 1,
+    includedLines: 1,
+    includedBytes: 1,
+  });
+  const manifest = (files, layer) => ({
+    schemaVersion: "3.0.0",
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    generator: { name: "codebase-snapshot", version: "0.10.1" },
+    git: { branch: "main", commit: "0", isDirty: false },
+    budgets: { maxPartBytes: 4096, largeFileBytes: 4096 },
+    config: { maxPartBytes: 4096, largeFileBytes: 4096, previewHeadLines: 1, previewTailLines: 1, includeMonolith: false, includeSensitiveFiles: false, artifacts: {}, include: [], preset: "typescript", layersMode: "merge", budgets: { default: 4096, byLayer: {} }, excludePatterns: [], layers: [], kinds: [] },
+    counts: { totalFiles: files.length, totalSizeBytes: 1, totalLines: 1, partsCount: 1, skippedCount: 0, largeFileCount: 0, truncatedPreviewCount: 0, incompleteCount: 0 },
+    totals: { candidateFiles: files.length, includedFiles: files.length, fullFiles: files.length, previewFiles: 0, skippedFiles: 0, totalSourceBytes: 1, totalContentBytes: 1, redactedLines: 0, partCount: 1, warningCount: 0 },
+    fingerprint: "a".repeat(64),
+    validation: { status: "passed", errors: [] },
+    artifacts: {},
+    layers: { [layer]: files.length },
+    kinds: { source: files.length },
+    indexes: { routes: [], components: [], handlers: [], features: [], imports: { byFile: [], centralFiles: [] }, directives: [] },
+    parts: [],
+    files,
+    skipped: [],
+    incomplete: [],
+    warnings: [],
+  });
+
+  const before = manifest([entry("src/a.ts", "b".repeat(64))], "src");
+  const after = manifest([entry("src/ACME-7F3K9QZ2.ts", "c".repeat(64))], "ACME-7F3K9QZ2");
+
+  const without = compareManifests(before, after);
+  assert.match(without.added[0], /ACME-7F3K9QZ2/, "without rules the token is printed (the old bug)");
+
+  const withRules = compareManifests(before, after, [custom]);
+  assert.doesNotMatch(JSON.stringify(withRules), /ACME-7F3K9QZ2/, "the caller's rule masks every surface");
+  assert.match(JSON.stringify(withRules), /REDACTED/);
 });

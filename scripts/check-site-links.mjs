@@ -90,9 +90,12 @@ function checkSite() {
   }
 
   for (const [name, html] of pages) {
-    for (const match of html.matchAll(/href="([^"]+)"/g)) {
+    // `src` as well as `href`: the two dead assets on the published site were both `src`
+    // attributes, and an existence check that only reads links cannot see them. Fragments are
+    // an `href` concept and are handled by `findAnchorProblems` below.
+    for (const match of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
       const href = match[1];
-      if (/^(?:https?:|mailto:|#)/.test(href)) continue;
+      if (/^(?:https?:|mailto:|data:|#)/.test(href)) continue;
       checked += 1;
       // Origin-absolute paths (`/llms.txt`) are served from the site root once
       // deployed, so they resolve against the same directory as relative ones.

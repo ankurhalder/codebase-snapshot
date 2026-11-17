@@ -60,6 +60,14 @@ export interface InitOptions {
   /** Render the config without writing anything. */
   dryRun?: boolean;
   outDir?: string;
+  /**
+   * The scratch directory the written configuration will use.
+   *
+   * Only `setup` knows it: it resolves the configuration it found and passes the effective
+   * `tmpDir` here so the `.gitignore` entries match what the next run will actually write.
+   * `init` has no configuration to read, so it assumes the default.
+   */
+  tmpDir?: string;
   io?: PromptIO;
 }
 
@@ -447,15 +455,37 @@ function updatePackageJson(cwd: string, notes: string[]): PackageJsonUpdate {
 }
 
 /**
- * The directories `init` keeps out of git.
+ * The directories this configuration keeps out of git.
  *
  * The snapshot itself and the scratch copy it is swapped from. Both are build output, and leaving
  * them untracked is what makes `init` produce two file changes rather than a dirty tree.
+ *
+ * Derived from the **effective** `outDir` and `tmpDir` rather than hardcoded: the constant
+ * form ignored `/snapshot/` while generating into `.context`, so `git status` showed the whole
+ * snapshot as untracked — the one thing the entries exist to prevent. The pattern is anchored
+ * (a leading `/`) because an unanchored `snapshot/` ignores a directory of that name at any
+ * depth, so a fixture or package called `snapshot` disappeared from git.
  */
-// Anchored: an unanchored `snapshot/` ignores a directory of that name at any depth, so a
-// fixture or package called `snapshot` disappeared from git. Only the repository-root
-// output and staging directories are this tool's.
-const GITIGNORE_ENTRIES = ["/snapshot/", "/snapshot.tmp/"];
+function gitignoreEntriesFor(
+  cwd: string,
+  outDir: string,
+  tmpDir: string | null
+): string[] {
+  const entries: string[] = [];
+  for (const directory of [outDir, tmpDir]) {
+    // `null` means "not known": `setup` keeps a config it did not write, and this function will
+    // not claim a directory is ignored when it could not read which one that config names.
+    if (directory === null) continue;
+    const relative = path.relative(cwd, path.resolve(cwd, directory)).replace(/\\/g, "/");
+    // Outside the repository (an absolute `--out-dir`) or the repository itself ("./") is not
+    // something `.gitignore` can or should describe.
+    if (relative === "" || relative === "." || relative.startsWith("..") || path.isAbsolute(relative)) {
+      continue;
+    }
+    entries.push(`/${relative}/`);
+  }
+  return [...new Set(entries)];
+}
 
 /**
  * One entry in the preset list.
@@ -832,7 +862,12 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
 
   if (!reused) writeFileOrExplain(configPath, configText);
   const { scripts, dependency } = updatePackageJson(options.cwd, notes);
-  const ignore = appendGitignoreEntries(options.cwd, GITIGNORE_ENTRIES);
+  // A config this run writes names no `tmpDir`, so the default is the effective one. A config
+  // that is *kept* may name one this function cannot see, so only the outDir entry is claimed.
+  const ignore = appendGitignoreEntries(
+    options.cwd,
+    gitignoreEntriesFor(options.cwd, answers.outDir, options.tmpDir ?? (reused ? null : "snapshot.tmp"))
+  );
   if (ignore.note !== null) notes.push(ignore.note);
 
   return {

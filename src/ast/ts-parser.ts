@@ -451,9 +451,16 @@ export function summarizeTypeScriptSource(
 
   // CommonJS exports are recorded alongside ESM ones, and `exportsKind` says which module
   // system the reader is looking at. A mixed file keeps both and is called `mixed`.
+  //
+  // `esm` used to be unreachable: the only assignment was the CommonJS branch, so a file with
+  // nothing but `export` declarations had no `exportsKind` at all — and the documented meaning of
+  // absence ("the file had no exports") was false for every ES module. The type said the value
+  // existed; nothing produced it.
   if (cjsExports.length > 0) {
     summary.exportsKind = summary.exports.length > 0 ? "mixed" : "cjs";
     summary.exports.push(...cjsExports);
+  } else if (summary.exports.length > 0) {
+    summary.exportsKind = "esm";
   }
 
   const dedupeSorted = (values: string[]): string[] =>

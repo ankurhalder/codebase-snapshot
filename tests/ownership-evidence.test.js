@@ -96,6 +96,36 @@ test(".DS_Store is still tolerated: Finder noise is not user data", (t) => {
   assert.ok(!fs.existsSync(path.join(dir, "snapshot", ".DS_Store")), "the noise file is gone");
 });
 
+test("a nested .DS_Store does not make the tool refuse its own output directory", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  generate(dir);
+
+  // What `open snapshot/` in Finder writes: the noise file lands in whatever directory the user
+  // opened, so it appears at any depth. The ownership check compared the *full relative path*
+  // against a set of basenames, so `reports/.DS_Store` read as a foreign entry and the next run
+  // refused a directory this generator had written itself.
+  write(dir, "snapshot/reports/.DS_Store", "noise");
+  write(dir, "snapshot/parts/.DS_Store", "noise");
+
+  const second = generate(dir);
+
+  assert.ok(second.files.some((file) => file.relativePath === "app.ts"));
+  assert.ok(!fs.existsSync(path.join(dir, "snapshot", "reports", ".DS_Store")));
+  assert.ok(!fs.existsSync(path.join(dir, "snapshot", "parts", ".DS_Store")));
+});
+
+test("a foreign file at any depth is still refused, and named", (t) => {
+  const dir = tempDir(t);
+  write(dir, "app.ts", "export const a = 1;\n");
+  generate(dir);
+
+  // The basename rule tolerates Finder noise, not a user's file that happens to sit one level down.
+  write(dir, "snapshot/reports/notes.md", "mine");
+  assert.throws(() => generate(dir), /Refusing to replace outDir/);
+  assert.ok(fs.existsSync(path.join(dir, "snapshot", "reports", "notes.md")));
+});
+
 test("a complete snapshot this build wrote is still replaced without complaint", (t) => {
   const dir = tempDir(t);
   write(dir, "app.ts", "export const a = 1;\n");

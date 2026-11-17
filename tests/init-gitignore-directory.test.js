@@ -58,3 +58,56 @@ test("init still updates a normal .gitignore", (t) => {
   assert.match(ignore, /snapshot\//, "the snapshot directory is added");
   assert.match(ignore, /snapshot\.tmp\//);
 });
+
+test("a custom --out-dir is the directory that gets ignored", (t) => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"fixture","version":"1.0.0"}\n', "utf8");
+
+  const result = spawnSync(process.execPath, [BIN, "init", "--yes", "--out-dir", ".context"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  // The entries were a constant ("/snapshot/", "/snapshot.tmp/") appended regardless of the
+  // directory the config names, so `init --out-dir .context` generated into `.context` and
+  // ignored `snapshot`: `git status` showed the whole snapshot as untracked, which is the one
+  // thing the entries exist to prevent.
+  const ignore = fs.readFileSync(path.join(dir, ".gitignore"), "utf8");
+  assert.match(ignore, /^\/\.context\/$/m, "the configured outDir is ignored, anchored at the root");
+  assert.doesNotMatch(ignore, /^\/snapshot\/$/m, "a directory this run does not write is not claimed");
+});
+
+test("a nested custom outDir is anchored at the repository root", (t) => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"fixture","version":"1.0.0"}\n', "utf8");
+
+  const result = spawnSync(process.execPath, [BIN, "init", "--yes", "--out-dir", "docs/context"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+
+  const ignore = fs.readFileSync(path.join(dir, ".gitignore"), "utf8");
+  assert.match(ignore, /^\/docs\/context\/$/m);
+});
+
+test("an outDir outside the repository is not written into .gitignore", (t) => {
+  const dir = tempDir(t);
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"fixture","version":"1.0.0"}\n', "utf8");
+  const outside = path.join(dir, "..", `outside-${path.basename(dir)}`);
+  try {
+    const result = spawnSync(process.execPath, [BIN, "init", "--yes", "--out-dir", outside], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    const ignore = fs.existsSync(path.join(dir, ".gitignore"))
+      ? fs.readFileSync(path.join(dir, ".gitignore"), "utf8")
+      : "";
+    assert.doesNotMatch(ignore, /^\/snapshot\/$/m, "nothing inside the repository was claimed");
+    assert.doesNotMatch(ignore, /\.\.$|\.\.[/\\]/m, "no path above the root is written");
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});

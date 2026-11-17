@@ -67,17 +67,6 @@ const NOT_A_LITERAL_VALUE =
   "await|async|new|this|typeof|delete|yield|function|return|process\\.env|Buffer|Record|object)\\b)";
 
 /**
- * An unquoted value must be a literal, not an expression: `hunter2` is a
- * credential, while `req.body.password`, `getToken()` and `process.env.SECRET`
- * are references to one and must survive untouched — rewriting those made the
- * emitted statement (and its AST summary) wrong.
- *
- * A STRONG name (above) carries no length floor: `POSTGRES_PASSWORD: hunter2`
- * is a password whether or not it is long. Only the ambiguous WEAK names get the
- * eight-character, non-digit floor, because that is what keeps `pass: 3` and
- * `id-token: write` readable.
- */
-/**
  * The value must **begin** with a word character.
  *
  * `[A-Za-z0-9_+=/%:~-]` includes `/`, so a regex literal assigned to a name ending in
@@ -144,6 +133,17 @@ const UNQUOTED_VALUE_END = String.raw`[A-Za-z0-9_+=/%:.~$!@#^*?-]`;
  * in a data/shell file because in source code the same shape is an expression.
  */
 const UNQUOTED_VALUE_START = String.raw`[$!@#%^&*~+]`;
+/**
+ * An unquoted value must be a literal, not an expression: `hunter2` is a
+ * credential, while `req.body.password`, `getToken()` and `process.env.SECRET`
+ * are references to one and must survive untouched — rewriting those made the
+ * emitted statement (and its AST summary) wrong.
+ *
+ * A STRONG name (above) carries no length floor: `POSTGRES_PASSWORD: hunter2`
+ * is a password whether or not it is long. Only the ambiguous WEAK names get the
+ * eight-character, non-digit floor, because that is what keeps `pass: 3` and
+ * `id-token: write` readable.
+ */
 const UNQUOTED_LITERAL =
   String.raw`(` + // one capture, whichever branch matched: valueGroup is 1
     String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))[A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{${UNQUOTED_MIN_LENGTH - 1},511}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
@@ -201,25 +201,6 @@ const NOT_A_NAMESPACED_IDENTIFIER = String.raw`(?![a-z][a-z0-9]*(?:\.[a-z][a-z0-
  */
 const QUOTED_CREDENTIAL_KEY = `["'](?!id[-_]token["'])[A-Za-z0-9_$-]{0,64}${STRONG_CREDENTIAL_NAME}["']`;
 
-/**
- * The value of a quoted assignment, escaped pairs included.
- *
- * `[^"'\n]{1,512}` stopped at the first backslash, so
- * `{"password": "p\"ssw0rd"}` was masked to `"[REDACTED…]"ssw0rd"` — most of the value left in
- * clear, and the line left syntactically broken. `\\.` consumes the escaped pair, so the match
- * ends at the real closing quote.
- *
- * **Doubly-escaped quote.** One case defeats `\\.`: a quoted value *inside* a quoted string,
- * which is how every test fixture and every code sample that embeds JSON is written —
- * `JSON.parse('{"password": "p@\\"ssw0rd"}' )`. There the backslash before the inner quote is
- * itself escaped, so `\\.` consumes `\\` and the `"` that follows reads as the closing quote.
- * The value was emitted as `"[REDACTED…]"ssw0rdINVENTED"`: a fragment of the credential in
- * clear, and a line that no longer parses. A run of two backslashes followed by a quote that
- * is followed by a value character is an escaped quote inside a deeper literal, not the end of
- * this one, so it is consumed as three characters and the match continues to the real close.
- * `password: "C:\\temp"` and `password: "abc\\"` are unaffected: there the quote after `\\`
- * is followed by end-of-line, `,` or `}`, not by another value character.
- */
 /**
  * The value of a quoted assignment, escaped pairs included, bounded by its own delimiter.
  *
@@ -450,6 +431,24 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     rule: "credential-assignment",
     pattern: new RegExp(
       `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}(?<!id[-_])${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_NAMESPACED_IDENTIFIER}(["'\`])${QUOTED_VALUE}\\1`,
+      "i"
+    ),
+    valueGroup: 2,
+  },
+  {
+    // A quoted assignment whose closing quote is **not on this line**.
+    //
+    // The rule above requires `\1`, so an unterminated literal never matched it and the
+    // credential reached the artefact in clear with no finding at all. That is the shape a
+    // truncated file, a hand-edited `.env` and a string that continues on the next line all
+    // produce, and it was the only branch of the redaction pass that was silent.
+    //
+    // The value runs to the end of the line on purpose — there is no delimiter to stop at — and
+    // a later quote of the same kind disables the rule (`(?!\1)`), so a balanced literal is
+    // never matched here: `password: "abc" and "def"` belongs to the rule above.
+    rule: "credential-assignment-unterminated",
+    pattern: new RegExp(
+      `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}(?<!id[-_])${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}(["'\`])((?:(?!\\1)[^\\\\\\n]|\\\\.){1,512})$`,
       "i"
     ),
     valueGroup: 2,

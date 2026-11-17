@@ -142,3 +142,45 @@ test("a previewed JSON file is not summarised either", (t) => {
     "the omission must be visible"
   );
 });
+
+test("a summary dropped for size says so, and a missing one does not", (t) => {
+  const dir = tempDir(t);
+  write(dir, "package.json", '{"name":"fixture"}\n');
+  write(dir, "src/big.ts", bigSource("bulk", 4000));
+  write(dir, "logs/huge.log", "line\n".repeat(20_000));
+
+  const manifest = generateSnapshot({ cwd: dir, outDir: "snapshot", largeFileBytes: 4096 });
+
+  // `summary` absent means different things for these two files: one had a structural summary
+  // that a size rule removed, the other never had one. The fields that tell them apart were set,
+  // documented twice, and asserted nowhere.
+  const big = entryFor(manifest, "src/big.ts");
+  assert.equal(big.summaryOmitted, true, "a previewed source file records the omission");
+  assert.equal(big.summaryOmittedReason, "preview", "and names the size rule that removed it");
+
+  const log = entryFor(manifest, "logs/huge.log");
+  assert.equal(log.summaryOmitted, undefined, "a language with no profile never had a summary");
+  assert.equal(log.summaryOmittedReason, undefined);
+
+  // The documented invariant, checked on every entry rather than on the two above.
+  for (const file of manifest.files) {
+    assert.equal(
+      file.summaryOmittedReason === undefined,
+      file.summaryOmitted !== true,
+      `${file.relativePath}: summaryOmittedReason is present exactly when summaryOmitted is true`
+    );
+  }
+});
+
+test("the contract text and the manifest agree about summaryOmitted", (t) => {
+  const dir = tempDir(t);
+  write(dir, "package.json", '{"name":"fixture"}\n');
+  write(dir, "src/big.ts", bigSource("bulk", 4000));
+  const manifest = generateSnapshot({ cwd: dir, outDir: "snapshot", largeFileBytes: 4096 });
+
+  assert.equal(
+    manifest.files.some((file) => file.summaryOmitted === true),
+    true,
+    "a run with a previewed source file must exercise the field"
+  );
+});

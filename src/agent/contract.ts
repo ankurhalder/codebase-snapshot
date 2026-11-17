@@ -699,6 +699,7 @@ export function buildAgentContract(): AgentContract {
         { key: "layers", type: "array", default: "preset layers", summary: "Custom layer rules (glob or RegExp)." },
         { key: "kinds", type: "array", default: "preset kinds", summary: "Custom kind rules." },
         { key: "secrets", type: "object", default: "{}", summary: "Custom secret patterns, or disable the defaults." },
+        { key: "secretRules", type: "array", default: "[]", summary: "Full secret-rule list: the library spelling of secrets.customPatterns. The built-ins are prepended unless secrets.disableDefaultPatterns is set." },
         { key: "hooks", type: "object", default: "{}", summary: "afterGenerate(manifest) runs after a successful generate." },
       ],
     },
@@ -715,6 +716,8 @@ export function buildAgentContract(): AgentContract {
       notes: [
         "Parts are ordered and budget-limited; a file that cannot fit one part is emitted as a head/tail preview, and every file not present in full is listed in manifest.json incomplete[] with the missing line ranges.",
         "manifest.json.files[] carries relativePath, layer, kind, language, part, inclusionMode, truncationReason, omittedRanges and hash; manifest.json.incomplete[] lists every file not present in full; `summary` is conditional — it is absent for languages with no structural summary, and `summaryOmitted: true` marks a summary dropped to fit the part budget; encoding appears when the file was not plain UTF-8.",
+        "indexes.imports.byFile includes previewed files (their import specifiers are still extracted); such an entry carries `exportsOmitted: true` instead of pretending it exports nothing.",
+        "validate re-checks manifest.incomplete[] against files[] and refuses a manifest whose two statements of what is missing disagree.",
         "manifest.skipped[] carries the path and the exact reason it was excluded.",
         `The output directory is replaced atomically; ${MIN_MAX_PART_BYTES} bytes is the smallest legal budget.`,
       ],

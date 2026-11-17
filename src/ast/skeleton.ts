@@ -29,12 +29,6 @@ function hasCollapsibleBody(node: ts.Node): node is ts.Node & { body: ts.Block }
 }
 
 /**
- * Replaces the body of every function-like node, innermost-first, by text span.
- *
- * Spans are collected and then applied from the end of the file backwards so that an earlier
- * replacement never invalidates a later span's offsets.
- */
-/**
  * True when a filename is JavaScript-with-JSX, in any letter case.
  *
  * One function for one question, because two spellings of it is exactly how `.TSX` came to be
@@ -67,6 +61,12 @@ function scriptKindFor(fileName: string): ts.ScriptKind {
   return ts.ScriptKind.TS;
 }
 
+/**
+ * Replaces the body of every function-like node, innermost-first, by text span.
+ *
+ * Spans are collected and then applied from the end of the file backwards so that an earlier
+ * replacement never invalidates a later span's offsets.
+ */
 export function skeletonizeTypeScript(source: string, fileName = "file.ts"): SkeletonResult {
   const sourceFile = ts.createSourceFile(
     fileName,

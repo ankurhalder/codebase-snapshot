@@ -980,26 +980,6 @@ function hasSnapshotMarker(target: string): boolean {
   }
 }
 
-/**
- * True when a path belongs to this tool's own output rather than to the user.
- *
- * A run used to record its own output directory in `skipped[]` — run 1 skipped
- * nothing, run 2 skipped `snapshot` — so two identical runs produced different
- * manifests, and the monolith (which embeds the manifest) changed size with
- * them. A `--max-monolith-bytes` picked from run 1 could then flip a file off on
- * run 2. Output and crash leftovers are therefore excluded without a `skipped[]`
- * record, *provided the directory actually carries this tool's marker*, so two
- * identical runs stay identical.
- *
- * The name alone is not enough, and used to be treated as though it were. Every
- * directory called `snapshot`, `snapshot.tmp` or `snapshot.backup-*` was dropped
- * at any depth, so a directory the user committed under that name vanished from
- * the snapshot with nothing recorded anywhere — the opposite lie to the one the
- * `skipped[]` record exists to prevent. A directory with no marker is now an
- * ordinary directory: its contents are scanned like any others, unless it is the
- * configured output directory or the top-level `outDir`/`tmpDir` this run is
- * about to write (`toolOwnedPaths`), which cannot carry a marker on a first run.
- */
 /** Entries an operating system leaves behind; the marker does not record them either. */
 const IGNORABLE_DIRECTORY_ENTRIES = new Set([".DS_Store"]);
 
@@ -1061,6 +1041,26 @@ function isToolOwnedDirectory(dir: string): boolean {
   );
 }
 
+/**
+ * True when a path belongs to this tool's own output rather than to the user.
+ *
+ * A run used to record its own output directory in `skipped[]` — run 1 skipped
+ * nothing, run 2 skipped `snapshot` — so two identical runs produced different
+ * manifests, and the monolith (which embeds the manifest) changed size with
+ * them. A `--max-monolith-bytes` picked from run 1 could then flip a file off on
+ * run 2. Output and crash leftovers are therefore excluded without a `skipped[]`
+ * record, *provided the directory actually carries this tool's marker*, so two
+ * identical runs stay identical.
+ *
+ * The name alone is not enough, and used to be treated as though it were. Every
+ * directory called `snapshot`, `snapshot.tmp` or `snapshot.backup-*` was dropped
+ * at any depth, so a directory the user committed under that name vanished from
+ * the snapshot with nothing recorded anywhere — the opposite lie to the one the
+ * `skipped[]` record exists to prevent. A directory with no marker is now an
+ * ordinary directory: its contents are scanned like any others, unless it is the
+ * configured output directory or the top-level `outDir`/`tmpDir` this run is
+ * about to write (`toolOwnedPaths`), which cannot carry a marker on a first run.
+ */
 function makeToolOwnedDecider(
   cwd: string,
   toolOwnedPaths: readonly string[]

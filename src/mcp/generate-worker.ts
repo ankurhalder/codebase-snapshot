@@ -32,7 +32,18 @@ export interface GenerateSummary {
   skippedCount: number;
   partsCount: number;
   parts: Array<{ filename: string; byteSize: number }>;
+  totalSizeBytes: number;
   totalContentBytes: number;
+  preset: string;
+  layers: Record<string, number>;
+  /**
+   * The most common skip reasons, ranked.
+   *
+   * `snapshot_plan` prints these, and it now runs off-thread too — so the ranking is computed
+   * where the manifest is, and the whole `skipped[]` array (one record per path, thousands of
+   * them) does not cross the thread boundary to be counted here.
+   */
+  skipReasons: Array<{ reason: string; count: number }>;
   warnings: string[];
 }
 
@@ -40,13 +51,6 @@ export type WorkerResults =
   | { ok: true; summary: GenerateSummary }
   | { ok: false; message: string };
 
-/**
- * The absolute path of the package entry this process is running from.
- *
- * `__dirname` exists in the CJS build and `import.meta.url` in the ESM one, and `typeof` on an
- * undeclared identifier does not throw — so this resolves correctly in both without a build-time
- * substitution.
- */
 /**
  * Where the worker finds this package's entry: the path, and the URL the worker imports.
  *
@@ -97,7 +101,20 @@ const { parentPort, workerData } = require("node:worker_threads");
     // so the run is the documented MCP run rather than the CLI run with one setting removed.
     const base = loaded.config ? { ...loaded.config, hooks: {} } : null;
     const config = mod.resolveConfig(base, workerData.cliOptions, workerData.cwd);
-    const manifest = mod.generateSnapshot(config);
+    const manifest = mod.generateSnapshot(config, { dryRun: workerData.dryRun === true });
+    const skipCounts = new Map();
+    for (const record of manifest.skipped) {
+      skipCounts.set(record.reason, (skipCounts.get(record.reason) || 0) + 1);
+    }
+    const skipReasons = Array.from(skipCounts.entries())
+      .sort(function (a, b) {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+      })
+      .slice(0, 8)
+      .map(function (entry) {
+        return { reason: entry[0], count: entry[1] };
+      });
     parentPort.postMessage({
       ok: true,
       summary: {
@@ -106,7 +123,11 @@ const { parentPort, workerData } = require("node:worker_threads");
         skippedCount: manifest.counts.skippedCount,
         partsCount: manifest.counts.partsCount,
         parts: manifest.parts.map((part) => ({ filename: part.filename, byteSize: part.byteSize })),
+        totalSizeBytes: manifest.counts.totalSizeBytes,
         totalContentBytes: manifest.totals.totalContentBytes,
+        preset: manifest.config.preset,
+        layers: manifest.layers,
+        skipReasons: skipReasons,
         warnings: manifest.warnings,
       },
     });
@@ -128,7 +149,8 @@ const { parentPort, workerData } = require("node:worker_threads");
  */
 export function generateInWorker(
   cwd: string,
-  cliOptions: WorkspaceCliOptions
+  cliOptions: WorkspaceCliOptions,
+  options: { dryRun?: boolean } = {}
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
     let settled = false;
@@ -153,6 +175,7 @@ export function generateInWorker(
           entryUrl: workerEntry(directory, isCjs).url,
           cwd,
           cliOptions,
+          dryRun: options.dryRun === true,
         },
       });
     } catch (error) {

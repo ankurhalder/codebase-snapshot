@@ -85,27 +85,22 @@ test("validate, report and diff reject the same malformed manifests", async (t) 
     await t.test(`diff rejects ${label}`, () => {
       const result = cli(repo, ["diff", path.join(repo, "snapshot"), base.manifestPath]);
       assert.equal(result.code, 1, `diff accepted ${label}: ${result.stdout}${result.stderr}`);
-      assert.match(result.stderr, /is not a usable snapshot manifest/);
+      assert.match(result.stderr, /is not a snapshot manifest/);
       assert.match(result.stderr, field);
       assert.equal(result.stdout.trim(), "", "no partial diff output");
     });
 
-    await t.test(`report rejects ${label}`, (subtest) => {
+    await t.test(`report rejects ${label}`, () => {
       const result = cli(repo, ["report", "--cwd", repo]);
-      if (result.code === 0) {
-        // `report` reads its own copy of the guard in cli.ts. Until that copy is
-        // replaced by the shared one, the CLI prints `undefined` for the field —
-        // this subtest documents the wiring instead of pinning the old answer.
-        subtest.skip(
-          "report still uses cli.ts's private shape guard; it must import " +
-            "describeManifestShapeProblem from ./validator/validate.js"
-        );
-        return;
-      }
-      assert.equal(result.code, 1);
+      // This subtest used to skip: `report` had its own copy of the shape guard. It now imports
+      // the shared one, and the skip made a real answer unreachable — the file reported "skipped
+      // 0" while still containing a branch that could never run.
+      assert.equal(result.code, 1, `report accepted ${label}: ${result.stdout}${result.stderr}`);
       assert.match(result.stderr, /is not a snapshot manifest/);
       assert.match(result.stderr, field);
       assert.doesNotMatch(result.stdout, /Snapshot Report/);
+      // The sentence is the same one `validate` and `diff` print for the same file.
+      assert.match(result.stderr, /❌ /);
     });
   }
 });

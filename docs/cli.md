@@ -97,10 +97,10 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.10.1 (project dependency ^0.10.1)
+   Branch: main | Part budget: 300 KB | Generator: 0.10.2 (project dependency ^0.10.2)
 
 ✅ Snapshot generated in 0.14s:
-   - Tracked files: 121 included of 128 found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
+   - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
    - Total lines:   9,431
    - Total size:    0.41 MB
    - Parts written: 3 under snapshot/parts/
@@ -140,6 +140,14 @@ An **unreadable** file is one that exists but that this process may not read or 
 filesystem-permission problem. It is a class of its own because the fix is different: filing it
 as "deleted" sent the reader looking for a file that is still there. Text mode lists each path
 as `unreadable: <path>`; `--format json` carries them in `drift.unreadable`.
+
+It also verifies the **completeness contract**: `incomplete[]` is checked against `files[]` entry by
+entry (same part, same reason, same ranges, same line counts), `counts.incompleteCount` against the
+length of the list, and every `omittedRanges` pair against the file's own line count. A manifest is
+an input — `generate` proves this contract when it writes one, but once the file is on disk nothing
+else re-derives it — so a hand-edited or foreign `manifest.json` is refused here rather than
+reported as current. The shape guard also confines `incomplete[].relativePath` to the repository,
+like the two other path-bearing arrays.
 
 Exit `0` when the snapshot is current, `1` on any drift. It never writes anything.
 
@@ -183,8 +191,8 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.10.1
-   Added to .gitignore: snapshot/, snapshot.tmp/
+   Added devDependency: codebase-snapshot ^0.10.2
+   Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
 ✅ Snapshot generated in 0.16s:
@@ -235,8 +243,8 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.10.1
-   Added to .gitignore: snapshot/, snapshot.tmp/
+   Added devDependency: codebase-snapshot ^0.10.2
+   Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
 - `scripts.snapshot` and `scripts.snapshot:validate` are added to `package.json` if those keys
@@ -246,7 +254,9 @@ It also has three side effects on files you own, and it says so when it does the
   declares it yet. That is what puts a real copy in `node_modules` and stops `npm run
   snapshot` from resolving `@latest` out of the registry on every run. A range you already
   declared — including a pin to an older version — is never overwritten.
-- `snapshot/` and `snapshot.tmp/` are appended to `.gitignore` if they are not already listed;
+- `/<outDir>/` and `/<tmpDir>/` are appended to `.gitignore` if they are not already listed —
+  anchored at the repository root, and naming the directories the config actually uses, so
+  `--out-dir .context` ignores `/.context/` rather than `/snapshot/`;
   the file is created if missing, and entries already present are not duplicated.
 
 ### Going back
@@ -322,7 +332,7 @@ With `--format json` the same answer is one object on stdout, with only the keys
 | `layerMatch`, `kindMatch` | Which rule chose the layer or kind. A glob is printed as written (`src/api/**`); a `RegExp` as its literal form (`/\.tsx$/i`); a function matcher, which is what the presets use, as `function (custom predicate)`. Absent when no rule matched and the `other` fallback was used. |
 | `bytes`, `lines` | Size of the file on disk. |
 | `encoding` | Present only when the file is not plain UTF-8 — `utf-16le`, `utf-16be` or `utf-8-lossy`. |
-| `secretCount`, `secrets` | How many secret rules fire, and the first 20 as `{ rule, line }` — never the matched text. |
+| `secretCount`, `secrets` | How many secret rules fire, and the first 20 as `{ rules, line }` — `rules` is every rule that matched that line, never the matched text. |
 | `part` | The part filename from the last written manifest, or `null` when it is not in that snapshot. |
 | `inclusionMode` | `full` or `preview`, when a part entry exists. |
 
@@ -353,6 +363,17 @@ under `payload` in `--format json`.
 Manifests written before 4.0.5 have no `config.digest`. In that case `diff` compares the
 content fingerprint and the part count only, and prints `configuration not compared: a
 manifest has no config digest (written before 4.0.5).` rather than implying the settings match.
+
+In `--format json` each statement in `payload.reasons` has a stable `payload.codes` entry beside
+it — `schema-version`, `config-digest`, `config-digest-missing`, `generator`, `fingerprint`,
+`parts-count`, `layer-changed` — so a program can branch on what changed without matching English.
+
+`diff` deliberately does **not** read the project configuration: it answers a question about two
+files and importing a config would execute repository code to do it. The paths it prints are masked
+with the built-in rules (the library form, `compareManifests(before, after, secretRules)`, takes
+your resolved rules). A project-specific token that a manifest recorded *before* you declared it in
+`secretRules` can therefore still appear in a comparison of that old manifest — regenerate it, and
+every later manifest carries the masked path.
 
 ### `describe`
 

@@ -114,3 +114,59 @@ test("the resolver agrees with the generator's own graph", async (t) => {
     "the tool and the manifest count the same edges"
   );
 });
+
+test("a previewed importer is still an importer", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-dependents-preview-"));
+  const write = (relative, content) => {
+    const target = path.join(root, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content, "utf8");
+  };
+  write("package.json", '{"name":"fixture","version":"1.0.0"}\n');
+  // A preview threshold low enough that the importer is emitted as a head/tail excerpt — and a
+  // previewed file has no structural summary, which is exactly the case that used to vanish from
+  // the import index.
+  write("snapshot.config.json", '{ "outDir": "snapshot", "largeFileBytes": 1024 }\n');
+  write("src/changed.ts", "export const changed = 1;\n");
+  write(
+    "src/big-consumer.ts",
+    'import { changed } from "./changed.js";\n' +
+      // Long enough that the head/tail window (80 + 40 lines) cannot hold it: a file that fits
+      // those windows is emitted whole even above the threshold.
+      Array.from({ length: 200 }, (_, index) => `export const value${index} = changed + ${index};`).join("\n") +
+      "\n"
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const context = contextFor(root);
+  const generated = await call("snapshot_generate", {}, context);
+  assert.ok(!generated.isError, generated.text);
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  const consumer = manifest.files.find((file) => file.relativePath === "src/big-consumer.ts");
+  assert.equal(consumer.inclusionMode, "preview", "the importer really is previewed");
+  assert.equal(consumer.summary, undefined, "and has no structural summary");
+
+  const entry = manifest.indexes.imports.byFile.find((file) => file.path === "src/big-consumer.ts");
+  assert.ok(entry, "the previewed importer is in indexes.imports.byFile");
+  assert.deepEqual(entry.imports, ["./changed.js"]);
+  assert.equal(entry.exportsOmitted, true, "its export list says it was not read");
+
+  const central = manifest.indexes.imports.centralFiles.find((file) => file.path === "src/changed.ts");
+  assert.ok(central, "the imported file is ranked in centralFiles");
+  assert.equal(central.importedByCount, 1);
+
+  // The tool reads `byFile`; before the index included previewed files, this answered
+  // "0 importer(s)" for a file that has one — while the file was in the snapshot *because* it
+  // imports that file.
+  const answer = await call(
+    "snapshot_dependents",
+    { path: "src/changed.ts", direction: "imported-by" },
+    context
+  );
+  assert.ok(!answer.isError, answer.text);
+  assert.deepEqual(
+    answer.structured.importedBy.map((item) => item.path),
+    ["src/big-consumer.ts"]
+  );
+});

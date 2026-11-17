@@ -294,8 +294,8 @@ test("the equals form follows the file type, like the colon form", () => {
   ]) {
     for (const filePath of ["app.ini", "app.properties", "app.conf"]) {
       const data = scanAndRedactSecrets(line, DEFAULT_SECRET_PATTERNS, filePath).redacted;
-      assert.equal(data.includes(value), false, "${filePath}: the value must not survive: ${data}");
-      assert.ok(data.includes("="), "${filePath}: the key and separator stay readable: ${data}");
+      assert.equal(data.includes(value), false, `${filePath}: the value must not survive: ${data}`);
+      assert.ok(data.includes("="), `${filePath}: the key and separator stay readable: ${data}`);
     }
   }
   for (const line of ["token=a<b", "client_secret=x|y"]) {

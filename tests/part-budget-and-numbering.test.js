@@ -180,3 +180,35 @@ test("partitionFiles alone still numbers from one and honours its budget", () =>
   // The single-bucket entry point is unchanged in behaviour, and it is what a library caller has.
   assert.deepEqual(partitionFiles([], 8192), [], "no files, no parts");
 });
+
+test("partitionFiles refuses a budget it cannot honour instead of clamping it", () => {
+  // `Math.max(MIN_SECTION + HEADER, budget)` turned every budget below ~2.6 kB into that same
+  // 2.6 kB, so a direct caller asking for 20 B got parts up to 130× larger with no error. Every
+  // configuration surface already rejects a budget below 4096; the public function now does too.
+  const entry = {
+    relativePath: "src/a.ts",
+    sizeBytes: 12,
+    lines: 1,
+    hashSha256: "a".repeat(64),
+    part: "part-001.md",
+    layer: "src",
+    kind: "source",
+    language: "typescript",
+    inclusionMode: "full",
+    isLarge: false,
+    isPreviewTruncated: false,
+    originalLines: 1,
+    includedLines: 1,
+    includedBytes: 12,
+    content: "export const a = 1;\n",
+  };
+  for (const budget of [20, 46, 100, 1000, 2600]) {
+    assert.throws(
+      () => partitionFiles([entry], budget),
+      /below the \d+ B minimum/,
+      `a budget of ${budget} B must be refused`
+    );
+  }
+  assert.throws(() => partitionFiles([entry], Number.POSITIVE_INFINITY), /finite number of bytes/);
+  assert.equal(partitionFiles([entry], 8192).length, 1, "a legal budget still partitions");
+});

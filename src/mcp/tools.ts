@@ -18,14 +18,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
-import { buildImportResolver, generateSnapshot, resolveSpecifier } from "../index.js";
+import { buildImportResolver, resolveSpecifier } from "../index.js";
 import { truncateToBytes } from "../partitioner/preview.js";
 import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
 import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import type { JsonObject, JsonSchema } from "./protocol.js";
-import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
+import type { FileEntry, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolOutcome } from "./types.js";
 import { forgetManifest, manifestPathFor, openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
 import type { Workspace, WorkspaceOverrides } from "./workspace.js";
@@ -383,53 +383,46 @@ const planTool: McpTool = {
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
-    let manifest: Manifest;
-    try {
-      manifest = generateSnapshot(workspace.config, { dryRun: true });
-    } catch (error) {
-      return failure(error instanceof Error ? error.message : String(error));
-    }
-
-    const reasons = new Map<string, number>();
-    for (const record of manifest.skipped) {
-      reasons.set(record.reason, (reasons.get(record.reason) ?? 0) + 1);
-    }
-    const topReasons = [...reasons.entries()]
-      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-      .slice(0, 8)
-      .map(([reason, count]) => ({ reason, count }));
+    // Off the JSON-RPC thread, for the same reason `snapshot_generate` is: a dry run reads and
+    // parses every file in the repository, so a synchronous one stops this server answering
+    // `ping` for seconds — the failure the worker was added to fix. It was applied to one of the
+    // two generate call sites.
+    const result = await generateInWorker(workspace.root, workspace.cliOptions, { dryRun: true });
+    if (!result.ok) return failure(result.message);
+    const summary = result.summary;
+    const topReasons = summary.skipReasons;
 
     const lines = [
       "Dry run — nothing was written.",
-      `Preset: ${manifest.config.preset}`,
-      `Would include ${plural(manifest.counts.totalFiles, "file")} in ` +
-        `${plural(manifest.counts.partsCount, "part")} (${formatBytes(manifest.counts.totalSizeBytes)} of source, ` +
-        `${formatBytes(manifest.totals.totalContentBytes)} emitted).`,
-      `Would skip ${plural(manifest.counts.skippedCount, "file")}.`,
+      `Preset: ${summary.preset}`,
+      `Would include ${plural(summary.totalFiles, "file")} in ` +
+        `${plural(summary.partsCount, "part")} (${formatBytes(summary.totalSizeBytes)} of source, ` +
+        `${formatBytes(summary.totalContentBytes)} emitted).`,
+      `Would skip ${plural(summary.skippedCount, "file")}.`,
     ];
     if (topReasons.length > 0) {
       lines.push("Top skip reasons:");
       for (const entry of topReasons) lines.push(`  - ${entry.reason} (${entry.count})`);
     }
-    if (manifest.warnings.length > 0) {
-      lines.push(`Warnings (${manifest.warnings.length}):`);
-      for (const warning of manifest.warnings.slice(0, 5)) lines.push(`  - ${warning}`);
+    if (summary.warnings.length > 0) {
+      lines.push(`Warnings (${summary.warnings.length}):`);
+      for (const warning of summary.warnings.slice(0, 5)) lines.push(`  - ${warning}`);
     }
 
     return {
       text: lines.join("\n"),
       structured: {
-        files: manifest.counts.totalFiles,
-        skipped: manifest.counts.skippedCount,
-        parts: manifest.counts.partsCount,
-        sourceBytes: manifest.counts.totalSizeBytes,
-        emittedBytes: manifest.totals.totalContentBytes,
-        preset: manifest.config.preset,
-        maxPartBytes: manifest.budgets.maxPartBytes,
-        layers: manifest.layers,
+        files: summary.totalFiles,
+        skipped: summary.skippedCount,
+        parts: summary.partsCount,
+        sourceBytes: summary.totalSizeBytes,
+        emittedBytes: summary.totalContentBytes,
+        preset: summary.preset,
+        maxPartBytes: workspace.config.maxPartBytes,
+        layers: summary.layers,
         skipReasons: topReasons,
-        warnings: manifest.warnings.slice(0, 5),
-        warningCount: manifest.warnings.length,
+        warnings: summary.warnings.slice(0, 5),
+        warningCount: summary.warnings.length,
       },
     };
   },

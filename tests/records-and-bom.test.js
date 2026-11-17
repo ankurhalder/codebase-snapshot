@@ -198,3 +198,35 @@ test("the setup hint names the project's own script behind a byte-order mark", (
   const output = `${result.stdout}${result.stderr}`;
   assert.match(output, /Next:\s+npm (?:install && )?npm run snapshot/, output);
 });
+
+test("the run banner names the project dependency behind a byte-order mark", (t) => {
+  const pkg = {
+    name: "fixture",
+    version: "1.0.0",
+    devDependencies: { "codebase-snapshot": "^0.10.1" },
+  };
+  const dir = makeRepo(t, {
+    "package.json": `${BOM}${JSON.stringify(pkg, null, 2)}\n`,
+    "src/a.ts": "export const a = 1;\n",
+  });
+
+  const result = spawnSync(process.execPath, [CLI, "generate", "--cwd", dir], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+
+  // The banner exists to say whether the snapshot came from the project's own pin or from
+  // whatever was first on PATH. A bare `JSON.parse` threw on the BOM, the catch swallowed it, and
+  // a project that pins this package was told it had a "global or direct install".
+  assert.match(result.stderr, /\(project dependency \^0\.10\.1\)/);
+  assert.doesNotMatch(result.stderr, /global or direct install/);
+});
+
+test("the banner still says what it cannot know when there is no dependency", (t) => {
+  const dir = makeRepo(t, {
+    "package.json": '{"name":"fixture","version":"1.0.0"}\n',
+    "src/a.ts": "export const a = 1;\n",
+  });
+
+  const result = spawnSync(process.execPath, [CLI, "generate", "--cwd", dir], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /\(global or direct install\)/);
+});

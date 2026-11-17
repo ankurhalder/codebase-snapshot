@@ -173,6 +173,25 @@ function wouldNowBeIncluded(cwd: string, relativePath: string): boolean {
   }
 }
 
+/** Every truncation cause the generator can record. */
+const TRUNCATION_REASONS: ReadonlySet<string> = new Set([
+  "large-file-budget",
+  "part-budget",
+  "section-metadata",
+]);
+
+/**
+ * True when a path recorded in a manifest stays inside the repository it describes.
+ *
+ * The same rule `confineToDirectory` applies at the read sites, in a form the shape guard can
+ * use without touching the filesystem: a manifest is an input, and `path.join` accepts `../..`.
+ */
+function isConfinedRelative(value: string): boolean {
+  if (value.length === 0 || value.includes("\0") || value.includes("\\")) return false;
+  if (path.isAbsolute(value)) return false;
+  return !value.split("/").includes("..");
+}
+
 /**
  * Describes why a parsed JSON value is not usable as a snapshot manifest.
  *
@@ -280,6 +299,85 @@ export function describeManifestShapeProblem(value: unknown): string | null {
     }
     if (!candidate.kinds || typeof candidate.kinds !== "object" || Array.isArray(candidate.kinds)) {
       return 'missing "kinds" object';
+    }
+
+    // The completeness contract, added in 0.10.0. This guard predated it and checked only the
+    // fields that existed when it was written, so `incomplete[]` — the one list whose purpose is
+    // to say what is *missing* — was the one list nothing verified. Ten tampered variants of a
+    // real record, including a `relativePath` of `../escape.ts`, all reported "valid and up to
+    // date".
+    const incompleteCount = (counts as Record<string, unknown>).incompleteCount;
+    if (
+      typeof incompleteCount !== "number" ||
+      !Number.isSafeInteger(incompleteCount) ||
+      incompleteCount < 0
+    ) {
+      return 'missing numeric `counts.incompleteCount`';
+    }
+    const incomplete = candidate.incomplete;
+    if (!Array.isArray(incomplete)) return 'missing "incomplete" array';
+    if (incompleteCount !== incomplete.length) {
+      return '`counts.incompleteCount` does not match the length of `incomplete`';
+    }
+    for (const entry of incomplete) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return 'an "incomplete" entry is not an object';
+      }
+      const fields = entry as Record<string, unknown>;
+      const relativePath = fields.relativePath;
+      if (typeof relativePath !== "string" || relativePath.length === 0) {
+        return 'an "incomplete" entry has no "relativePath"';
+      }
+      // The third of the three path-bearing arrays, and the only one that was unguarded:
+      // `files[].relativePath` and `parts[].filename` were already confined.
+      if (!isConfinedRelative(relativePath)) {
+        return 'an "incomplete" entry "relativePath" must stay inside the repository';
+      }
+      if (typeof fields.part !== "string" || fields.part.trim() === "") {
+        return 'an "incomplete" entry has no "part"';
+      }
+      if (typeof fields.reason !== "string" || !TRUNCATION_REASONS.has(fields.reason)) {
+        return 'an "incomplete" entry has an unknown "reason"';
+      }
+      for (const key of ["omittedLines", "includedLines", "lines"]) {
+        const value = fields[key];
+        if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+          return `an "incomplete" entry "${key}" must be a non-negative integer`;
+        }
+      }
+      const lines = fields.lines as number;
+      if (fields.includedLines as number > lines) {
+        return 'an "incomplete" entry "includedLines" exceeds its "lines"';
+      }
+      const ranges = fields.omittedRanges;
+      if (!Array.isArray(ranges)) return 'an "incomplete" entry has no "omittedRanges" array';
+      let previousEnd = 0;
+      let omitted = 0;
+      for (const range of ranges) {
+        if (!Array.isArray(range) || range.length !== 2) {
+          return 'an "incomplete" entry "omittedRanges" must hold [from, to] pairs';
+        }
+        const [from, to] = range as unknown[];
+        if (
+          typeof from !== "number" ||
+          typeof to !== "number" ||
+          !Number.isSafeInteger(from) ||
+          !Number.isSafeInteger(to)
+        ) {
+          return 'an "incomplete" entry "omittedRanges" must hold integer pairs';
+        }
+        if (from < 1 || to < from || to > lines) {
+          return `an "incomplete" entry records an omitted range ${from}-${to}, outside 1-${lines}`;
+        }
+        if (from <= previousEnd) {
+          return 'an "incomplete" entry "omittedRanges" must be sorted and non-overlapping';
+        }
+        previousEnd = to;
+        omitted += to - from + 1;
+      }
+      if (omitted !== fields.omittedLines) {
+        return '`omittedLines` does not match the ranges it records';
+      }
     }
   }
 
@@ -454,10 +552,69 @@ export function validateSnapshot(
 
   // ---- source files -------------------------------------------------------
   const manifestFileMap = new Map<string, string>();
+  const manifestFilesByPath = new Map<string, (typeof manifest.files)[number]>();
   for (const file of manifest.files) {
     if (file && typeof file.relativePath === "string") {
       manifestFileMap.set(file.relativePath, file.hashSha256);
+      manifestFilesByPath.set(file.relativePath, file);
     }
+  }
+
+  // ---- completeness contract ---------------------------------------------
+  // `verifyInMemory` enforces this while generating. Once `manifest.json` is on disk it is an
+  // *input*, and `validate` is the only command that reads it as one — so the two statements of
+  // "what is missing" have to be checked against each other here, or the shape guard's field list
+  // is the only thing standing between a tampered record and "valid and up to date".
+  const incompleteRecords = manifest.incomplete ?? [];
+  const incompleteness = new Map<string, (typeof incompleteRecords)[number]>();
+  for (const record of incompleteRecords) {
+    incompleteness.set(record.relativePath, record);
+    const label = maskedPath(record.relativePath, config.secretRules);
+    const file = manifestFilesByPath.get(record.relativePath);
+    if (file === undefined) {
+      drift.partIssues.push({
+        part: "(manifest)",
+        issue: `${label} is in incomplete[] but not in files[]`,
+      });
+      continue;
+    }
+    if (file.part !== record.part) {
+      drift.partIssues.push({
+        part: "(manifest)",
+        issue:
+          `${label} is recorded in part ${String(record.part)} in incomplete[] and part ` +
+          `${String(file.part)} in files[]`,
+      });
+    }
+    if (file.truncationReason !== record.reason) {
+      drift.partIssues.push({
+        part: "(manifest)",
+        issue:
+          `${label} records truncationReason ${String(file.truncationReason)} in files[] and ` +
+          `reason ${String(record.reason)} in incomplete[]`,
+      });
+    }
+    const recordedRanges = file.omittedRanges ?? [];
+    const rangesAgree =
+      recordedRanges.length === record.omittedRanges.length &&
+      recordedRanges.every(
+        ([from, to], index) =>
+          record.omittedRanges[index][0] === from && record.omittedRanges[index][1] === to
+      );
+    if (!rangesAgree || file.includedLines !== record.includedLines || file.lines !== record.lines) {
+      drift.partIssues.push({
+        part: "(manifest)",
+        issue: `${label} records different omission numbers in files[] and incomplete[]`,
+      });
+    }
+  }
+  for (const file of manifest.files) {
+    if (file.truncationReason === undefined) continue;
+    if (incompleteness.has(file.relativePath)) continue;
+    drift.partIssues.push({
+      part: "(manifest)",
+      issue: `${maskedPath(file.relativePath, config.secretRules)} records a truncationReason but is missing from incomplete[]`,
+    });
   }
 
   // Paths in the shipped manifest are already masked, so a disk path is matched

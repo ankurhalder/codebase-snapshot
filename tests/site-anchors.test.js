@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { addHeadingIds, headingSlug, renderMarkdown, renderPages } from "../scripts/build-site.mjs";
 import { findAnchorProblems } from "../scripts/check-site-links.mjs";
 
@@ -76,4 +80,36 @@ test("every anchor in the published documentation resolves", () => {
   const { checked, problems } = findAnchorProblems(pages);
   assert.deepEqual(problems, []);
   assert.ok(checked > 40, `only ${checked} anchors were checked`);
+});
+
+test("every image on a rendered page resolves to a file the site build copies", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const assets = new Set(
+    fs.readdirSync(path.join(here, "..", "docs", "assets")).filter((name) => /\.(svg|png|ico)$/.test(name))
+  );
+
+  const broken = [];
+  for (const page of renderPages()) {
+    for (const match of page.html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+      const target = match[1];
+      if (/^(?:https?:|mailto:|data:|#)/.test(target)) continue;
+      if (!/^assets\//.test(target)) continue;
+      const name = target.replace(/^assets\//, "");
+      if (!assets.has(name)) broken.push(`${page.slug}: ${target}`);
+    }
+  }
+  assert.deepEqual(broken, [], "an image path the build does not copy is a 404 on the live site");
+});
+
+test("no page references a repository asset path the site does not serve", () => {
+  // The two dead assets on the published site were both `src` attributes pointing at
+  // `docs/assets/…`: the builder stripped the raw-URL prefix but never rewrote the directory to
+  // `assets/`, and the link gate read only `href`. Both halves are pinned here.
+  for (const page of renderPages()) {
+    assert.doesNotMatch(
+      page.html,
+      /(?:src|href)="docs\/assets\//,
+      `${page.slug} points at a path the site does not serve`
+    );
+  }
 });

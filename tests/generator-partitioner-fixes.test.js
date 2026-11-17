@@ -5,7 +5,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 
-import { generateProjectTree, generateSnapshot, resolveConfig, truncatePreview } from "../dist/index.js";
+import {
+  generateProjectTree,
+  generateSnapshot,
+  resolveConfig,
+  treeTruncationWarnings,
+  truncatePreview,
+} from "../dist/index.js";
 
 /**
  * Regression cover for the approved Track-2 items:
@@ -171,7 +177,11 @@ test("the audit report shows part-budget truncation with bytes and lines", (t) =
 
   assert.ok(!audit.includes("✅ No files exceeded the large file budget"), "the lie is gone");
   assert.ok(audit.includes("| Included Bytes |"), "bytes are printed next to lines");
-  assert.match(audit, /\| Truncated \| maxPartBytes \|/, "the cause is labelled maxPartBytes");
+  assert.match(
+    audit,
+    /\| Truncated \| part budget \(maxPartBytes\) \|/,
+    "the cause uses the same words as the in-block marker, with the setting named"
+  );
   assert.ok(audit.includes("lines omitted"), "the reader is pointed at the in-block marker");
 });
 
@@ -197,4 +207,42 @@ test("git branch names with a backtick or bidi character are rendered inert", (t
   assert.match(audit, /\*\*Git Branch:\*\* ``a`b\\u202E``/, "audit renders the branch as inline code");
   assert.equal(readme.includes("\u202E"), false, "no raw bidi in README");
   assert.equal(audit.includes("\u202E"), false, "no raw bidi in audit");
+});
+
+test("both tree caps are reported in the manifest, not only in the artifact", () => {
+  // The tree carries its own marker, but a manifest reader never opens the artifact. Only the
+  // depth form produced a warning; a tree cut at the line cap was silent in the manifest.
+  const many = Array.from({ length: 20_050 }, (_, index) => `src/file${index}.ts`);
+  const tree = generateProjectTree(many);
+  assert.match(tree, /\[tree truncated at 20000 lines\]/, "the artifact says so");
+
+  const warnings = treeTruncationWarnings(tree);
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /20000-line cap/);
+  assert.match(warnings[0], /project-tree\.md/);
+
+  assert.deepEqual(
+    treeTruncationWarnings("text\n... [tree truncated at 512 levels] ...\n"),
+    [
+      "reports/project-tree.md was truncated at the 512-level depth cap: deeper directories are not listed there.",
+    ],
+    "the depth wording is unchanged"
+  );
+  assert.deepEqual(treeTruncationWarnings("no truncation"), []);
+});
+
+test("a run with a line-capped tree records the warning in the manifest", (t) => {
+  const dir = tempDir(t);
+  write(dir, "package.json", '{"name":"tree-cap"}\n');
+  // A deep chain is cheap to create and is not the cap under test; the line cap needs breadth.
+  for (let index = 0; index < 20_050; index += 1) {
+    fs.writeFileSync(path.join(dir, `f${index}.ts`), "export const x = 1;\n");
+  }
+  const manifest = generateSnapshot({ cwd: dir, outDir: "snapshot" });
+
+  assert.ok(
+    manifest.warnings.some((warning) => /20000-line cap/.test(warning)),
+    `the manifest must record it: ${JSON.stringify(manifest.warnings)}`
+  );
+  assert.equal(manifest.totals.warningCount, manifest.warnings.length);
 });

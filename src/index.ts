@@ -26,7 +26,7 @@ import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
 import { generateReadme } from "./generator/readme.js";
-import { generateProjectTree } from "./generator/tree.js";
+import { generateProjectTree, treeTruncationWarnings } from "./generator/tree.js";
 import { anchorForPath, partitionFiles, partitionFilesForBuckets } from "./partitioner/chunker.js";
 import type { PartitionedPart } from "./partitioner/chunker.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
@@ -123,7 +123,7 @@ const SUMMARY_MAX_SOURCE_BYTES = SUMMARY_MAX_SOURCE_BYTES_SHARED;
  * redaction pass and the TypeScript parse for every file the last run already read.
  *
  * The operations it covers are the expensive ones. On a 3 000-file repository a regeneration
- * spends nearly all of its wall time in them — masking every line of every file against 31 rules,
+ * spends nearly all of its wall time in them — masking every line of every file against 32 rules,
  * and building an AST per source file — and almost none of it reading bytes or writing parts, which
  * are all that changed when the watcher fired for one file.
  */
@@ -456,17 +456,41 @@ function retain<T>(items: T[], keep: (item: T) => boolean): void {
  */
 const SKIP_PREVIEW_SUMMARIES = true;
 
-function buildIndexes(files: FileEntry[], tsconfigPaths: ReturnType<typeof tsconfigPathsFor>): ManifestIndexes {
+function buildIndexes(
+  files: FileEntry[],
+  tsconfigPaths: ReturnType<typeof tsconfigPathsFor>,
+  skippedSummaryImports: ReadonlyMap<string, string[]> = new Map()
+): ManifestIndexes {
   const resolver = buildImportResolver(files, { tsconfig: tsconfigPaths });
   const importerCounts = new Map<string, number>();
 
-  const byFile = files.filter((file) => isSourceSummary(file.summary)).map((file) => {
-    const summary = file.summary as SourceSummary;
-    return {
-      path: file.relativePath,
-      imports: summary.imports,
-      exports: summary.exports,
-    };
+  // A previewed importer is in the snapshot **because** it imports the change, and
+  // `SKIP_PREVIEW_SUMMARIES` above is why it has no structural summary. Filtering on
+  // `isSourceSummary` therefore dropped the one edge that explains why the file is here:
+  // `snapshot_dependents` answered "0 importer(s)" for a file that has one, and `centralFiles`
+  // omitted a file that really is central. The specifiers are the ones `--with-dependents`
+  // already uses, from the same map; the export list was never extracted, and says so rather
+  // than claiming the file exports nothing.
+  const byFile: ManifestIndexes["imports"]["byFile"] = files.flatMap((file) => {
+    if (isSourceSummary(file.summary)) {
+      return [
+        {
+          path: file.relativePath,
+          imports: file.summary.imports,
+          exports: file.summary.exports,
+        },
+      ];
+    }
+    const imports = skippedSummaryImports.get(file.relativePath);
+    if (imports === undefined) return [];
+    return [
+      {
+        path: file.relativePath,
+        imports,
+        exports: [],
+        exportsOmitted: true as const,
+      },
+    ];
   });
 
   for (const entry of byFile) {
@@ -655,6 +679,18 @@ export function resolveSafeOutputDirs(config: {
 const IGNORABLE_ENTRIES = new Set([".DS_Store"]);
 
 /**
+ * True when an entry is Finder noise rather than content this tool must refuse.
+ *
+ * The comparison is on the **basename**: `.DS_Store` is written by Finder into whatever
+ * directory the user opens, so it appears at any depth. Comparing the whole relative path
+ * against the set made `reports/.DS_Store` a foreign entry, and the next run refused to
+ * replace the directory this generator had just written.
+ */
+function isIgnorableEntry(entry: string): boolean {
+  return IGNORABLE_ENTRIES.has(entry.slice(entry.lastIndexOf("/") + 1));
+}
+
+/**
  * Prefix of a per-run staging directory inside `tmpDir`.
  *
  * Staging used to *be* the `tmpDir` path, so two concurrent runs — even with
@@ -668,7 +704,6 @@ const RUN_DIR_PREFIX = "run-";
 /** A staging directory older than this is a crash leftover, not a live run. */
 const STALE_RUN_MS = 60 * 60 * 1000;
 
-/** Masks one path with the default rules plus the caller's custom rules. */
 /** Masks every string inside a summary object, recursively. */
 function maskSummaryStrings(value: unknown, secretRules: readonly SecretRule[]): unknown {
   if (typeof value === "string") return maskPathText(value, secretRules);
@@ -797,13 +832,6 @@ function listEntries(dir: string): string[] {
   return entries.sort();
 }
 
-/**
- * Lists everything in `dir` and digests every regular file.
- *
- * The digest pass is what the ownership check verifies on the next run. It reads each file
- * once, immediately after this run wrote those same bytes, so it costs a sequential read of
- * the snapshot rather than anything proportional to the repository.
- */
 /** A file this run wrote, with the metadata that lets a later marker skip re-reading it. */
 interface WrittenArtifact {
   digest: MarkerFileDigest;
@@ -813,6 +841,13 @@ interface WrittenArtifact {
 /** Every artifact this run wrote, by entry name, so the marker need not hash its own output. */
 type WrittenLedger = Map<string, WrittenArtifact>;
 
+/**
+ * Lists everything in `dir` and digests every regular file.
+ *
+ * The digest pass is what the ownership check verifies on the next run. It reads each file
+ * once, immediately after this run wrote those same bytes, so it costs a sequential read of
+ * the snapshot rather than anything proportional to the repository.
+ */
 function markerInventory(
   dir: string,
   written?: WrittenLedger
@@ -823,7 +858,7 @@ function markerInventory(
     // The marker cannot record its own digest: writing the record would change it.
     if (entry === OWNERSHIP_MARKER) continue;
     // Finder noise is tolerated by the ownership check and is not part of the record.
-    if (IGNORABLE_ENTRIES.has(entry.slice(entry.lastIndexOf("/") + 1))) continue;
+    if (isIgnorableEntry(entry)) continue;
     const full = path.join(dir, ...entry.split("/"));
     let stats: fs.Stats;
     try {
@@ -1237,7 +1272,7 @@ function assessSnapshotDirectory(dir: string): DirectoryVerdict {
 
   const entries = listEntries(dir);
   const foreignEntries = entries.filter(
-    (entry) => !recorded.has(entry) && !IGNORABLE_ENTRIES.has(entry)
+    (entry) => !recorded.has(entry) && !isIgnorableEntry(entry)
   );
   if (foreignEntries.length > 0) {
     // Named separately so the refusal can list exactly what stops it.
@@ -1977,6 +2012,18 @@ function artifactWarnings(artifacts: ResolvedArtifacts, sarif: boolean): string[
 }
 
 /**
+ * The stdout diversion used by `hooks.afterGenerate`.
+ *
+ * The scope and the router live in `stdout.ts`, because `setup --format json` borrows stdout too
+ * and the two used to patch `process.stdout.write` independently — with the result that whichever
+ * finished second restored a function belonging to the one that had already finished. See that
+ * module for the whole account.
+ */
+function installHookStdoutRedirect(): () => void {
+  return installStdoutRouter();
+}
+
+/**
  * Runs `hooks.afterGenerate`, downgrading a throwing hook to a warning.
  *
  * The snapshot is already written by this point; losing a good artefact because user code threw
@@ -1996,18 +2043,6 @@ function artifactWarnings(artifacts: ResolvedArtifacts, sarif: boolean): string[
  *    pending I/O are alive, so a hook that schedules an hour of work delays the command by an hour.
  *    That is a property of the event loop, not of this function, and the docs say so.
  */
-/**
- * The stdout diversion used by `hooks.afterGenerate`.
- *
- * The scope and the router live in `stdout.ts`, because `setup --format json` borrows stdout too
- * and the two used to patch `process.stdout.write` independently — with the result that whichever
- * finished second restored a function belonging to the one that had already finished. See that
- * module for the whole account.
- */
-function installHookStdoutRedirect(): () => void {
-  return installStdoutRouter();
-}
-
 function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): Promise<unknown> | null {
   const hook = config.hooks.afterGenerate;
   if (!hook) return null;
@@ -2761,7 +2796,7 @@ export function generateSnapshot(
     },
     layers: layerCounts,
     kinds: kindCounts,
-    indexes: buildIndexes(files, tsconfigPathsFor(config.cwd)),
+    indexes: buildIndexes(files, tsconfigPathsFor(config.cwd), skippedSummaryImports),
     parts: parts.map((part) => part.metadata),
     files: files.map((file) => {
       const { content: _content, ...rest } = file;
@@ -2839,12 +2874,10 @@ export function generateSnapshot(
   let projectTree: string | null = null;
   if (config.artifacts.projectTree) {
     projectTree = generateProjectTree(files.map((file) => file.relativePath));
-    const depthMarker = /\[tree truncated at (\d+) levels\]/.exec(projectTree);
-    if (depthMarker) {
-      manifest.warnings.push(
-        `reports/project-tree.md was truncated at the ${depthMarker[1]}-level depth cap: ` +
-          "deeper directories are not listed there."
-      );
+    // Both caps are reported, through the one function that knows their wording.
+    const truncations = treeTruncationWarnings(projectTree);
+    if (truncations.length > 0) {
+      manifest.warnings.push(...truncations);
       manifest.totals.warningCount = manifest.warnings.length;
     }
   }
@@ -2906,7 +2939,7 @@ export function generateSnapshot(
     // inclusion fields describe what this artifact actually contains.
     const fullFiles: FileEntry[] = files.map((file) => {
       const content = fullContents.get(file.relativePath) ?? "";
-      return {
+      const entry: FileEntry = {
         ...file,
         content,
         inclusionMode: "full",
@@ -2914,6 +2947,13 @@ export function generateSnapshot(
         includedBytes: Buffer.byteLength(content, "utf8"),
         includedLines: countLines(content),
       };
+      // This artifact carries the whole body, so the fields that describe a *partial* one have to
+      // go with it. Leaving them made one entry say "full" in `inclusionMode` and
+      // "large-file-budget" in `truncationReason`: a consumer filtering on the mode read a
+      // complete file and a consumer reading the reason read a preview, from the same object.
+      delete entry.truncationReason;
+      delete entry.omittedRanges;
+      return entry;
     });
 
     // A body that already exceeds the ceiling cannot fit once headers and escaping are added,
@@ -3237,13 +3277,6 @@ export function generateSnapshot(
  * `generateSnapshot` is synchronous and cannot await them; `generateSnapshotAsync` can, and
  * should: a caller that awaited the async form used to get control back while the hook was still
  * writing files into the snapshot it had just been told was finished.
- */
-/**
- * `hooks.afterGenerate` promises still running, keyed by the output directory they write into.
- *
- * `generateSnapshot` is synchronous and cannot await them; `generateSnapshotAsync` can, and
- * should: a caller that awaited the async form used to get control back while the hook was still
- * writing files into the snapshot it had just been told was finished.
  *
  * The entry is removed when the hook settles, not only when `generateSnapshotAsync` consumes it. A
  * synchronous caller never consumed it, so a long-lived process kept one settled promise per output
@@ -3295,6 +3328,7 @@ export {
   truncatePreview,
   partitionFiles,
   generateProjectTree,
+  treeTruncationWarnings,
   summarizeJson,
   summarizeMarkdown,
   summarizeTypeScriptSource,
