@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.76
+
+- The goal log records the 0.12.72-0.12.75 round: the tool reference and the test that guards it,
+  `snapshot_tests` as the 23rd tool, and the verify totals.
 ## 0.12.75
 
 - `tests/mcp-tools.test.js` ended with two newlines after the new test was appended; the lint gate

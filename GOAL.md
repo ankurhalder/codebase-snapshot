@@ -244,3 +244,19 @@ and 0.13.0, the first publish under the clean-registry policy.
 Full `verify` at 0.12.69: 1296 tests, 1288 pass, 0 fail, 8 host skips; tarball 51 files.
 
 Next: the last thirty sub-bumps to 0.12.99, then 0.13.0 as the first milestone publish.
+
+### 0.12.72-0.12.76 - the reference, the test graph, and the guard rails
+
+- 0.12.72 `docs/tools.md`: all tools by name, cost and status, with a ready-to-send call each.
+  0.12.73 a test parses that page against the real schemas and caught three examples that named
+  arguments no tool accepts (`locate` path/by, `context` files, `dependents` direction/limit).
+- 0.12.74 `snapshot_tests`, the 23rd tool: tests that import a path or share its stem, or every
+  test and what it covers.
+- 0.12.75/0.12.76 the lint gate fixed the newline it caught.
+
+Full `verify` at 0.12.75: 1300 tests, 1292 pass, 0 fail, 8 host skips; tarball 52 files; site 29
+pages, audit-site clean.
+
+Next: 0.12.77 through 0.12.99 (23 sub-bumps), then 0.13.0 as the first milestone publish. The
+backlog for those: a `snapshot_history` tool over the log report, workspace-wide health, a
+docs page for the workspace workflow, and the endgame checks the GOAL.md plan asks for.
