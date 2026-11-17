@@ -26,6 +26,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.8
+
+- **0.12.7 published its own test log.** A `Tee-Object` capture (`.t127.txt`) was in the working
+  tree when `git add -A` ran. Removed, and `.gitignore` now covers root-level `.*.txt` captures.
+
+Nothing else changed. Verified: 1 183 tests, 1 175 pass, 0 fail, 8 host skips; every gate clean at
+0.12.8.
 ## 0.12.7
 
 - **A part ceiling below the per-layer bucket count could never be met, and the run said the wrong

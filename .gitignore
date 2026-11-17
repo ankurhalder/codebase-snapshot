@@ -26,3 +26,4 @@ audit/poc/*.txt
 .probe-*.mjs
 .docs-audit.*
 /.*.json
+/.*.txt
