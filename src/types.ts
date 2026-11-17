@@ -518,6 +518,8 @@ export interface Manifest {
     tokenTree?: ManifestArtifact;
     fullJson: ManifestArtifact | null;
     fullMarkdown: ManifestArtifact | null;
+    /** `full-codebase.xml`, when `--pack xml` asked for it. */
+    fullXml?: ManifestArtifact | null;
     /**
      * `reports/audit.sarif`, when `--sarif` asked for it.
      *
@@ -752,6 +754,12 @@ export interface SnapshotConfig {
   /** How many commits `reports/log.md` carries when it is enabled (default 20). */
   logCount?: number;
   /**
+   * Which single-file pack to write: `single` (markdown), `xml` or `json`.
+   *
+   * Unset keeps the historical `--include-monolith` behaviour: markdown and JSON together.
+   */
+  pack?: "single" | "xml" | "json";
+  /**
    * With `changedSince` or `staged`, also include the files that import a changed one.
    *
    * A one-hop closure: the file you changed and the files that reference it are the context
@@ -821,6 +829,8 @@ export interface ResolvedSnapshotConfig {
   sarif?: boolean;
   /** How many commits `reports/log.md` carries when it is enabled. */
   logCount: number;
+  /** The chosen single-file pack, or null for the historical pair. */
+  pack: "single" | "xml" | "json" | null;
   /** Also include the files that import a changed one. */
   withDependents?: boolean;
   /** Empty means "no allow-list"; every discovered file is a candidate. */

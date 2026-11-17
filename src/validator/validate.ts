@@ -1364,6 +1364,7 @@ export function validateSnapshot(
     ["reports/tokens.md", manifest.artifacts?.tokenTree],
     ["full-codebase.json", manifest.artifacts?.fullJson],
     ["full-codebase.md", manifest.artifacts?.fullMarkdown],
+    ["full-codebase.xml", manifest.artifacts?.fullXml],
   ];
   for (const [key, artifact] of declaredArtifacts) {
     if (!artifact) continue;

@@ -1488,8 +1488,22 @@ export function resolveConfig(
   // scans.
 
   const cliMonolith = cliOptions?.includeMonolith;
+  const rawPack = (cliOptions as { pack?: unknown } | undefined)?.pack ?? userConfig?.pack;
+  const pack =
+    rawPack === undefined || rawPack === null
+      ? null
+      : rawPack === "single" || rawPack === "xml" || rawPack === "json"
+        ? rawPack
+        : (() => {
+            throw new Error(
+              "`pack` must be one of: single, xml, json (received " + describeValue(rawPack) + ")."
+            );
+          })();
+  // A named pack is a request for a single-file artifact, so it implies the monolith switch.
   const includeMonolith =
-    cliMonolith ?? strictBoolean(userConfig?.includeMonolith, false, "`includeMonolith`");
+    pack !== null
+      ? true
+      : (cliMonolith ?? strictBoolean(userConfig?.includeMonolith, false, "`includeMonolith`"));
   // The three opt-in reports are CLI switches as well as config keys, so they are merged into
   // the request before resolution: `--skip-artifacts` still wins, which is the documented
   // precedence (an explicit skip outranks a request).
@@ -1671,6 +1685,7 @@ export function resolveConfig(
     ...(withDependents ? { withDependents } : {}),
     ...(skeleton ? { skeleton } : {}),
     ...(sarif ? { sarif } : {}),
+    pack,
     logCount: resolveLogCount(
       (cliOptions as { logCount?: unknown } | undefined)?.logCount ?? userConfig?.logCount
     ),

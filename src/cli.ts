@@ -174,6 +174,7 @@ export const CLI_OPTIONS = {
   delta: { type: "string" },
   slice: { type: "string" },
   "slice-tokens": { type: "string" },
+  pack: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -232,6 +233,7 @@ Options:
   --slice <question>            Keep only what the planner picks for this question
   --slice-tokens <n>            Budget for --slice (default 30000)
   --delta <path>                Only what changed since this snapshot (plus its importers)
+  --pack <single|xml|json>      Also write one full-repository file in that shape
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
   --token-tree                  Write reports/tokens.md with per-file token estimates
@@ -396,6 +398,8 @@ interface ParsedInvocation {
   slice?: string;
   /** `--slice-tokens`: the budget the slice is planned within. */
   sliceTokens?: number;
+  /** `--pack`: single | xml | json. */
+  pack?: "single" | "xml" | "json";
 }
 
 export function parsePositiveInteger(
@@ -860,6 +864,14 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     tokenTree: values["token-tree"] === true ? true : undefined,
     delta: values.delta === undefined ? undefined : String(values.delta),
     slice: values.slice === undefined ? undefined : String(values.slice),
+    pack:
+      values.pack === undefined
+        ? undefined
+        : values.pack === "single" || values.pack === "xml" || values.pack === "json"
+          ? (values.pack as "single" | "xml" | "json")
+          : (() => {
+              throw new UsageError("--pack must be one of: single, xml, json (received " + String(values.pack) + ").");
+            })(),
     sliceTokens:
       values["slice-tokens"] === undefined
         ? undefined
@@ -1924,6 +1936,7 @@ async function runCommand(argv: string[]): Promise<number> {
         ...(invocation.includeDiffs === true ? { includeDiffs: true } : {}),
         ...(invocation.includeLogs === undefined ? {} : { includeLogs: invocation.includeLogs }),
         ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
+        ...(invocation.pack === undefined ? {} : { pack: invocation.pack }),
         brief: invocation.brief,
         promptTask: invocation.promptTask,
         skipArtifacts: invocation.skipArtifacts,

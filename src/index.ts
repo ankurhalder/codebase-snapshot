@@ -26,6 +26,7 @@ import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
 import { planForQuestion } from "./mcp/retrieval.js";
+import { generateMonolithXml } from "./generator/monolith.js";
 import { generateDiffReport } from "./generator/diff.js";
 import { generateLogReport } from "./generator/log.js";
 import { generateTokenTree } from "./generator/tokens.js";
@@ -3273,6 +3274,10 @@ export function generateSnapshot(
   // digest and both files are written from these exact strings.
   let monolithJson: string | null = null;
   let monolithMarkdown: string | null = null;
+  let monolithXml: string | null = null;
+  const wantsMarkdown = config.includeMonolith && (config.pack === null || config.pack === "single");
+  const wantsJson = config.includeMonolith && (config.pack === null || config.pack === "json");
+  const wantsXml = config.includeMonolith && config.pack === "xml";
   if (config.includeMonolith) {
     // Built from the pre-partition contents so the monolith really is the whole
     // codebase, not whatever survived the per-part byte budget. A file that the
@@ -3309,11 +3314,13 @@ export function generateSnapshot(
       const reason =
         `their bodies total ${bodyBytes} B, which already exceeds ` +
         `maxMonolithBytes ${config.maxMonolithBytes ?? 0} B`;
-      manifest.warnings.push(`full-codebase.md skipped: ${reason}`);
-      manifest.warnings.push(`full-codebase.json skipped: ${reason}`);
+      if (wantsMarkdown) manifest.warnings.push(`full-codebase.md skipped: ${reason}`);
+      if (wantsJson) manifest.warnings.push(`full-codebase.json skipped: ${reason}`);
+      if (wantsXml) manifest.warnings.push(`full-codebase.xml skipped: ${reason}`);
     }
 
-    const markdown = definitelyTooLarge ? null : generateMonolithMarkdown(manifest, fullFiles);
+    const markdown =
+      definitelyTooLarge || !wantsMarkdown ? null : generateMonolithMarkdown(manifest, fullFiles);
     const markdownBytes = markdown === null ? 0 : Buffer.byteLength(markdown, "utf8");
     if (markdown !== null && (!config.maxMonolithBytes || markdownBytes <= config.maxMonolithBytes)) {
       monolithMarkdown = markdown;
@@ -3326,11 +3333,25 @@ export function generateSnapshot(
         `full-codebase.md skipped: ${markdownBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
       );
     }
+    // XML embeds no manifest, so it can be built before the JSON re-embeds the warning list; it
+    // still records its digest so `validate` can require the file to exist and match.
+    if (wantsXml && !definitelyTooLarge) {
+      const xml = generateMonolithXml(manifest, fullFiles);
+      const xmlBytes = Buffer.byteLength(xml, "utf8");
+      if (config.maxMonolithBytes === null || xmlBytes <= config.maxMonolithBytes) {
+        monolithXml = xml;
+        manifest.artifacts.fullXml = { byteSize: xmlBytes, sha256: sha256Hex(xml) };
+      } else {
+        manifest.warnings.push(
+          "full-codebase.xml skipped: " + xmlBytes + " B exceeds maxMonolithBytes " + config.maxMonolithBytes + " B"
+        );
+      }
+    }
     manifest.totals.warningCount = manifest.warnings.length;
 
     // Last: the JSON embeds the manifest, so it now carries the markdown digest and
     // every warning produced above (artifact warnings, monolith skips).
-    const json = definitelyTooLarge ? null : generateMonolithJson(manifest, fullFiles);
+    const json = definitelyTooLarge || !wantsJson ? null : generateMonolithJson(manifest, fullFiles);
     const jsonBytes = json === null ? 0 : Buffer.byteLength(json, "utf8");
     if (json !== null && (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes)) {
       monolithJson = json;
@@ -3510,6 +3531,9 @@ export function generateSnapshot(
     }
     if (monolithMarkdown !== null) {
       writeArtifact(stagingDir, "full-codebase.md", monolithMarkdown);
+    }
+    if (monolithXml !== null) {
+      writeArtifact(stagingDir, "full-codebase.xml", monolithXml);
     }
 
     // The snapshot is whole in staging: record its inventory and manifest digest

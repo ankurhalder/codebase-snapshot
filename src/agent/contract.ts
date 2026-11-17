@@ -642,6 +642,16 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--pack",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("pack"),
+        summary:
+          "Also write one full-repository file: `single` = full-codebase.md, `json` = " +
+          "full-codebase.json, `xml` = full-codebase.xml. Unset keeps the historical " +
+          "--include-monolith pair; a named pack is gated by --max-monolith-bytes like the pair.",
+      },
+      {
         flag: "--slice",
         type: "string",
         default: "unset",

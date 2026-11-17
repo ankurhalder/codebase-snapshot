@@ -26,6 +26,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.31
+
+**`--pack single|xml|json`: one full-repository file, in the shape you asked for.**
+
+- `--pack xml` writes `full-codebase.xml` (one `<file>` element per source, attributes for layer,
+  kind, language, lines and bytes, the body in CDATA). `]]>` cannot appear in CDATA, so it is split
+  across two sections — a file containing that sequence still produces valid XML.
+- `--pack single` writes only `full-codebase.md`; `--pack json` only `full-codebase.json`. Unset
+  keeps the historical `--include-monolith` pair, so nothing that worked before changes.
+- The chosen pack is gated by `--max-monolith-bytes` like the pair, records its digest in
+  `artifacts` (`fullXml` for XML), and `validate` requires it to exist and match.
+
+Verified: XML parses and has one element per file including a `]]>` body; each mode writes only its
+file; a deleted XML fails validate with its path; an invalid mode is a usage error.
 ## 0.12.30
 
 **`snapshot_review`: three questions in one call.**

@@ -26,7 +26,8 @@ snapshot/
 ```
 
 With `--include-monolith` you also get `full-codebase.json` and `full-codebase.md` — the
-whole repository in one file. They are off by default because they grow without bound;
+whole repository in one file. `--pack xml` writes `full-codebase.xml` instead, one `<file>` element
+per source with the body in CDATA; `--pack single` and `--pack json` write just the other one. They are off by default because they grow without bound;
 `--max-monolith-bytes` skips them when they would exceed a size you set.
 
 `full-codebase.json` embeds its own `files[]` array, and its `includedBytes` / `includedLines`

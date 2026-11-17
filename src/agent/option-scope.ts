@@ -41,6 +41,7 @@ export type CommandName =
  */
 const VALIDATE_OPTIONS = [
   "sarif",
+  "pack",
   // The opt-in reports change the artifact selection the manifest records, so validate must accept
   // them to compare like with like: without the flags it reports the selection as drift.
   "include-diffs",
@@ -78,6 +79,7 @@ const VALIDATE_OPTIONS = [
  */
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
+    "pack",
     "slice",
     "slice-tokens",
     "delta",
