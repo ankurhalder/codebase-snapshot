@@ -8,9 +8,9 @@ import * as path from "node:path";
 import test from "node:test";
 import { createMcpServer } from "../dist/mcp.js";
 
-const wdForTest = fs.mkdtempSync(path.join(os.tmpdir(), "cancel-"));
-
 test("a cancelled call reaches the tool's cancel callback", async (t) => {
+  const wdForTest = fs.mkdtempSync(path.join(os.tmpdir(), "cancel-"));
+  t.after(() => fs.rmSync(wdForTest, { recursive: true, force: true }));
   let cancelled = false;
   const server = createMcpServer({
     info: { name: "codebase-snapshot", title: "t", version: "0.0.0" },

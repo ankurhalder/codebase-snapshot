@@ -10,9 +10,13 @@ This package started its public life as `@ankurhalder/codebase-snapshot`, which 
 moved to the unscoped name and **restarted at 0.9.0**, so the numbers below are not a continuation of
 the old line — `0.9.0` is newer than `4.4.1`, not older.
 
-The line stays at **`0.12.x`**. Every change ships as a patch release: there is no `0.13`, and
-`1.0.0` is not planned. A feature that would normally justify a minor bump is released as
-`0.12.<n+1>` with the same rigour; the number is not the promise, the entry below is.
+The line now runs **`0.12.x` to `0.17.0`, with literal sub-bumps**: every change ships as its
+own version, `0.12.15` through `0.12.99`, then `0.13.0` and the same ladder again. The number is not
+the promise; the entry below is. `1.0.0` is never released.
+
+GitHub carries a tag for every version and `main` carries every commit. **npm publication happens
+only at `x.y.0`** (`0.13.0`, `0.14.0`, …), so the registry stays clean while the repository keeps a
+complete, buildable history.
 
 Two versions exist on the registry that are not releases, and both are deprecated:
 
@@ -25,6 +29,17 @@ Deleting them requires account-level rights that the release pipeline does not h
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
 ---
+
+## 0.12.60
+
+- The version note at the top of this file still claimed there would be no `0.13` and that every
+  change was a patch; the project has moved to the 0.12.x→0.17.0 ladder with npm publication at
+  `x.y.0`. The note now states the policy that is actually in force.
+- `tests/mcp-cancel.test.js` created its scratch directory at module load and never removed it; the
+  hygiene test caught the leak and the directory now dies with the test.
+
+Verified: full `verify` green at 1291 tests, 1283 pass, 0 fail; the changelog/version agreement test
+passes.
 
 ## 0.12.59
 
