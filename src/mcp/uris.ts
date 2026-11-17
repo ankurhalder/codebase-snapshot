@@ -15,6 +15,11 @@ export const STATIC_RESOURCE_URIS: readonly string[] = [
   "snapshot://reports/audit",
   "snapshot://reports/tree",
   "snapshot://reports/navigation",
+  // Written only when the matching flag is on; reading one of these from a snapshot that has no
+  // such report is a not-found with the reason, which is a better answer than an empty document.
+  "snapshot://reports/diff",
+  "snapshot://reports/log",
+  "snapshot://reports/tokens",
 ];
 
 /** Parameterised resource families, advertised through `resources/templates/list`. */

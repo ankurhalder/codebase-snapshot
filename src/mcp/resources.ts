@@ -108,6 +108,9 @@ const REPORT_URIS = new Map<string, { file: string; title: string }>([
   ["snapshot://reports/audit", { file: "audit.md", title: "Secret audit and risk findings" }],
   ["snapshot://reports/tree", { file: "project-tree.md", title: "Project tree" }],
   ["snapshot://reports/navigation", { file: "navigation.md", title: "Navigation index" }],
+  ["snapshot://reports/diff", { file: "diff.md", title: "Uncommitted changes" }],
+  ["snapshot://reports/log", { file: "log.md", title: "Recent commits" }],
+  ["snapshot://reports/tokens", { file: "tokens.md", title: "Token tree" }],
 ]);
 
 /** Resources that exist regardless of what is on disk, in the order `resources/list` reports them. */

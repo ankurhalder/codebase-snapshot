@@ -322,3 +322,26 @@ test("a known resource this snapshot does not contain says why", async (t) => {
   // An unknown URI is still an unknown URI.
   assert.equal(await provider.read("snapshot://nope", context), null);
 });
+
+test("an opt-in report is advertised, and its absence is explained", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+  const provider = buildResourceProvider();
+
+  for (const uri of ["snapshot://reports/diff", "snapshot://reports/log", "snapshot://reports/tokens"]) {
+    await assert.rejects(
+      () => provider.read(uri, context),
+      (error) => {
+        assert.equal(error.name, "ResourceNotFoundError", uri);
+        assert.match(error.message, /not in this snapshot|disabled/, uri);
+        return true;
+      }
+    );
+  }
+
+  const listed = (await provider.list(context)).map((resource) => resource.uri);
+  for (const uri of ["snapshot://reports/diff", "snapshot://reports/log", "snapshot://reports/tokens"]) {
+    assert.ok(listed.includes(uri), uri + " is listed");
+  }
+});

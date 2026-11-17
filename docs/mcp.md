@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.35 mcp
+npx -y codebase-snapshot@0.12.36 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.35", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.36", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.35 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.36 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.35 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.36 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -161,6 +161,9 @@ Resources are the browse surface; tools are the act surface.
 | `snapshot://reports/audit` | Secret findings, large files, parse diagnostics |
 | `snapshot://reports/tree` | The directory tree of included files |
 | `snapshot://reports/navigation` | File-to-part lookup |
+| `snapshot://reports/diff` | `reports/diff.md`, when the snapshot was generated with `--include-diffs` |
+| `snapshot://reports/log` | `reports/log.md`, when generated with `--include-logs` |
+| `snapshot://reports/tokens` | `reports/tokens.md`, when generated with `--token-tree` |
 | `snapshot://prompt` | `PROMPT.md` — the brief: the job, what the snapshot contains and omits, the history it was built from, and the owner half when a `brief` is configured |
 | `snapshot://contract` | The machine-readable CLI contract |
 | `snapshot://skill` | The agent skill, as one read |

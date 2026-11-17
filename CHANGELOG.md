@@ -26,6 +26,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.36
+
+- **The opt-in reports are resources too**: `snapshot://reports/diff`, `snapshot://reports/log` and
+  `snapshot://reports/tokens` are listed and readable when the snapshot has them. When it does not,
+  the read is a not-found that names the artifact, not an empty document that looks like an answer.
+
+Verified: all three are advertised by `resources/list`, and reading one from a snapshot generated
+without the flag raises the documented not-found error.
 ## 0.12.35
 
 - **A Dockerfile, entrypoint and deploy page.** The image copies the built bundle and runs as the
