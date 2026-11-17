@@ -1357,6 +1357,11 @@ export function validateSnapshot(
     ["reports/navigation.md", manifest.artifacts?.navigation],
     ["reports/project-tree.md", manifest.artifacts?.projectTree],
     ["reports/audit.md", manifest.artifacts?.audit],
+    // The opt-in reports are declared exactly like the others, so deleting one must fail here
+    // for the same reason: the manifest says it exists and the directory says otherwise.
+    ["reports/diff.md", manifest.artifacts?.diff],
+    ["reports/log.md", manifest.artifacts?.log],
+    ["reports/tokens.md", manifest.artifacts?.tokenTree],
     ["full-codebase.json", manifest.artifacts?.fullJson],
     ["full-codebase.md", manifest.artifacts?.fullMarkdown],
   ];

@@ -92,3 +92,14 @@ test("an invalid --include-logs value is a usage error, not a silent default", (
   assert.notEqual(result.code, 0);
   assert.match(result.out, /include-logs/);
 });
+
+test("deleting an opt-in report fails validation with its path", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--token-tree"], root).code, 0);
+  assert.equal(run(["validate", "--token-tree"], root).code, 0);
+
+  fs.rmSync(path.join(root, "snapshot", "reports", "tokens.md"));
+  const result = run(["validate", "--token-tree"], root);
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /tokens\.md/);
+});

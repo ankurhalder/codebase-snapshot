@@ -26,6 +26,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.28
+
+- `validate` now checks the opt-in reports the manifest declares (`reports/diff.md`,
+  `reports/log.md`, `reports/tokens.md`), like it already checked the README, brief, navigation,
+  tree, audit and monoliths. Deleting one fails with its path instead of leaving validate green.
+- `validate` accepts `--include-diffs`, `--include-logs` and `--token-tree`, because those flags
+  change the artifact selection the manifest records: without them validate reported the selection
+  as drift. Comparing like with like is the point of a drift check.
 ## 0.12.27
 
 - Site: hand-written meta descriptions for the five pages added in this stretch (`health`, `serve`,
