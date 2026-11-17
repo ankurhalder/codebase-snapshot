@@ -260,3 +260,17 @@ pages, audit-site clean.
 Next: 0.12.77 through 0.12.99 (23 sub-bumps), then 0.13.0 as the first milestone publish. The
 backlog for those: a `snapshot_history` tool over the log report, workspace-wide health, a
 docs page for the workspace workflow, and the endgame checks the GOAL.md plan asks for.
+
+### 0.12.77-0.12.79 - history, and a flag that lied
+
+- 0.12.77 `snapshot_history`, the 24th tool, reads `reports/log.md` into commits. The same release
+  fixed `--include-logs <n>`: the flag turned the report on, but the count was read from
+  `logCount` alone, so `--include-logs 3` wrote twenty and said nothing. A request accepted and
+  dropped is the forbidden silent fallback.
+- 0.12.78 `snapshot_health` takes `maxScanBytes` for the expensive half of the audit, and a test now
+  compares the `docs/mcp.md` tool table with the served set.
+
+Full `verify` at 0.12.78: 1302 tests, 1294 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Twenty-one sub-bumps to 0.12.99, then 0.13.0. The backlog for them: workspace-wide health, a
+docs page for the workspace workflow end to end, and the endgame checks GOAL.md lists before 0.17.0.

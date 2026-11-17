@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.79
+
+- The goal log records the 0.12.77-0.12.78 round: `snapshot_history`, the `--include-logs` count fix,
+  `maxScanBytes` on the health tool, and the page-parity test.
 ## 0.12.78
 
 - **`snapshot_health` takes `maxScanBytes`.** The audit reads text to look for secrets and host
