@@ -8,6 +8,7 @@ import { getGitInfo } from "../scanner/files.js";
 import type { DiscoveryMode } from "../scanner/files.js";
 import type { ArtifactSelection, ByteSize } from "../types.js";
 import { GENERATOR_NAME, GENERATOR_VERSION } from "../version.js";
+import { BRIEF_SCAFFOLD, BRIEF_SCAFFOLD_FILE } from "./brief-template.js";
 import {
   DEFAULT_ANSWERS,
   renderConfig,
@@ -104,6 +105,10 @@ export interface InitResult {
    * project that chose a different directory.
    */
   outDir: string;
+  /** The brief scaffold this run wrote, when it wrote one. */
+  briefPath: string;
+  /** False when the repository already had a BRIEF.md, which is never overwritten. */
+  briefWritten: boolean;
 }
 
 const CONFIG_CANDIDATES = [
@@ -564,6 +569,9 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     artifacts: artifactAnswers(options),
     includeSensitiveFiles: options.includeSensitiveFiles ?? DEFAULT_ANSWERS.includeSensitiveFiles,
     outDir: options.outDir ?? DEFAULT_ANSWERS.outDir,
+    // The scaffold is written below but not wired in: a config that points at a file the user
+    // may delete would turn "delete the template" into "generate now fails". They enable it
+    // when they have something to say, and the scaffold says how.
   };
 
   const interactive = isInteractive(io) && options.yes !== true;
@@ -836,6 +844,8 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       dependency: { name: GENERATOR_NAME, range: `^${GENERATOR_VERSION}`, added: false },
       notes,
       outDir: answers.outDir,
+      briefPath: path.join(options.cwd, BRIEF_SCAFFOLD_FILE),
+      briefWritten: false,
     };
   }
 
@@ -862,6 +872,14 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   }
 
   if (!reused) writeFileOrExplain(configPath, configText);
+  // The owner half: written once, never overwritten. A repository that already has one keeps
+  // its words, and the config above still points at it.
+  const briefPath = path.join(options.cwd, BRIEF_SCAFFOLD_FILE);
+  let briefWritten = false;
+  if (!fs.existsSync(briefPath)) {
+    writeFileOrExplain(briefPath, BRIEF_SCAFFOLD);
+    briefWritten = true;
+  }
   const { scripts, dependency } = updatePackageJson(options.cwd, notes);
   // A config this run writes names no `tmpDir`, so the default is the effective one. A config
   // that is *kept* may name one this function cannot see, so only the outDir entry is claimed.
@@ -883,6 +901,8 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     gitignoreEntries: ignore.added,
     dependency,
     notes,
+    briefPath,
+    briefWritten,
     outDir: answers.outDir,
   };
 }

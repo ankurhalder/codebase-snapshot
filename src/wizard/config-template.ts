@@ -17,6 +17,8 @@ export interface WizardAnswers {
   artifacts: Required<ArtifactSelection>;
   includeSensitiveFiles: boolean;
   outDir: string;
+  /** Path to the owner brief this config points at, when `init` wrote one. */
+  brief?: string;
 }
 
 export const DEFAULT_ANSWERS: WizardAnswers = {
@@ -205,7 +207,12 @@ export function renderConfig(answers: WizardAnswers): string {
   // adding a part as the code grows. The plan in PROMPT.md becomes a fixed-length attachment list.
   // maxParts: 10,
   // The owner-written half of PROMPT.md: Stakes, The system, What came before, The bar, Calibration.
-  // brief: "docs/brief.md",
+  // Any other heading is kept as Owner notes; a measured heading is refused. Capped at 64 KiB.
+  ${
+    answers.brief === undefined
+      ? '// brief: "docs/brief.md",'
+      : `brief: ${JSON.stringify(answers.brief)},`
+  }
   // Which job the brief is written for: audit, review or explain.
   // promptTask: "audit",
   // afterGenerate: (manifest) => { /* write your own artifact */ }

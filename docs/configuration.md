@@ -297,6 +297,9 @@ case where the file count, not the byte count, is the binding constraint.
 
 ## The brief: what only you can write
 
+[The brief](brief.md) documents the format in full: the merge, the refusals, and how the file is
+parsed.
+
 `PROMPT.md` is generated, and half of it cannot be: what the software is *for*, what has already
 gone wrong, and which failures you would recognise. That is judgement, so it is supplied as a
 file and merged at fixed slots.

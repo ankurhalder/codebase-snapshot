@@ -932,6 +932,17 @@ async function runInitCommand(invocation: ParsedInvocation): Promise<number> {
     if (result.gitignoreEntries.length > 0) {
       info(`   Added to .gitignore: ${result.gitignoreEntries.join(", ")}`);
     }
+    // The one file `init` writes that asks for the user rather than telling them: say so, or
+    // it is a scaffold nobody opens.
+    if (result.briefWritten) {
+      info(
+        `   Wrote ${path.basename(result.briefPath)}: a scaffold for the half of PROMPT.md only ` +
+          "you can write. Fill it in, then set brief: " +
+          `${JSON.stringify(path.basename(result.briefPath))} in the config to merge it.`
+      );
+    } else if (fs.existsSync(result.briefPath)) {
+      info(`   Kept ${path.basename(result.briefPath)}: it already exists, and is never overwritten.`);
+    }
     for (const note of result.notes) info(`   ⚠ ${note}`);
     if (hook) for (const note of hook.notes) info(`   ${note}`);
     info("");

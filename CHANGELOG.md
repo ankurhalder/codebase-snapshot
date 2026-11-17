@@ -26,6 +26,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.9
+
+- **`init` now writes `BRIEF.md`.** The scaffold holds the five headings with their guidance in
+  comments, and the config keeps `brief:` commented: an untouched scaffold renders no section, and
+  because nothing points at it, deleting the template cannot break `generate`. One edit enables it.
+  The summary line says which edit.
+- **HTML comments are stripped before the brief is parsed.** The scaffold is nothing but comments;
+  without this, every comment would have been pasted into the model's instructions.
+- **An empty recognised section is no longer rendered.** A heading someone has not filled in yet is
+  not an assertion, and it no longer produces a provenance line above nothing.
+- New page: [docs/brief.md](docs/brief.md) — the merge, the refusals, the parse rules and a worked
+  example. Linked from the README table and the configuration page.
+
+Verified: 1 187 tests, 1 179 pass, 0 fail, 8 host skips; lint 226 files; site 16 pages, 410 internal
+links, 0 problems; every gate clean at 0.12.9.
 ## 0.12.8
 
 - **0.12.7 published its own test log.** A `Tee-Object` capture (`.t127.txt`) was in the working

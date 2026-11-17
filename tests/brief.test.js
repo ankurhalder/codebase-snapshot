@@ -355,3 +355,62 @@ test("a credential-shaped brief path is masked like every other name", (t) => {
   const manifest = fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8");
   assert.equal(manifest.includes("AKIAIOSFODNN7EXAMPLE"), false, "the manifest masks it too");
 });
+
+test("init writes a brief scaffold and points the config at it", (t) => {
+  const dir = makeRepo(t);
+  const result = cli(["init", "--yes"], dir);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Wrote BRIEF\.md/);
+
+  const scaffold = fs.readFileSync(path.join(dir, "BRIEF.md"), "utf8");
+  assert.match(scaffold, /## Stakes/, "the headings are there");
+  assert.match(scaffold, /<!--/, "and the guidance is comments");
+
+  const config = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config."));
+  assert.ok(config, "a config was written");
+  // Commented, not enabled: a config pointing at a scaffold the user may delete would turn
+  // "delete the template" into "generate now fails".
+  assert.match(fs.readFileSync(path.join(dir, config), "utf8"), /\/\/ brief: "docs\/brief\.md"/);
+
+  // An untouched scaffold renders no owner section: comments are guidance, not assertions.
+  const generated = cli(["generate"], dir);
+  assert.equal(generated.code, 0, generated.out);
+  const prompt = promptOf(dir);
+  assert.doesNotMatch(prompt, /## Stakes/);
+  assert.doesNotMatch(prompt, /Written by the project owner/);
+});
+
+test("init never overwrites a brief the repository already has", (t) => {
+  const dir = makeRepo(t);
+  fs.writeFileSync(path.join(dir, "BRIEF.md"), "## Stakes\n\nOur own words.\n", "utf8");
+  const result = cli(["init", "--yes"], dir);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Kept BRIEF\.md/);
+  assert.match(fs.readFileSync(path.join(dir, "BRIEF.md"), "utf8"), /Our own words\./);
+});
+
+test("init --dry-run writes no brief", (t) => {
+  const dir = makeRepo(t);
+  const result = cli(["init", "--yes", "--dry-run"], dir);
+  assert.equal(result.code, 0, result.out);
+  assert.equal(fs.existsSync(path.join(dir, "BRIEF.md")), false);
+});
+
+test("a filled scaffold section is merged at its slot", (t) => {
+  const dir = makeRepo(t);
+  assert.equal(cli(["init", "--yes"], dir).code, 0);
+  // Enabling it is one edit to the config the scaffold was written beside.
+  const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config."));
+  const configPath = path.join(dir, configName);
+  fs.writeFileSync(
+    configPath,
+    fs.readFileSync(configPath, "utf8").replace(/\/\/ brief: "docs\/brief\.md"/, 'brief: "BRIEF.md"')
+  );
+  fs.writeFileSync(
+    path.join(dir, "BRIEF.md"),
+    "<!-- guidance -->\n\n## Stakes\n\nA wrong cleanup deletes data.\n",
+    "utf8"
+  );
+  assert.equal(cli(["generate"], dir).code, 0);
+  assert.match(promptOf(dir), /## Stakes\n\n> Written by the project owner[\s\S]*A wrong cleanup deletes data\./);
+});

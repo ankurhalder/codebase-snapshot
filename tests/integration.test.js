@@ -1749,7 +1749,7 @@ test("skill --install writes the two registries, ignores them, and is idempotent
 // reached node_modules and `npm run snapshot` fetched @latest on every run; a `--minimal`
 // flag could also write a config listing five settings out of twenty-six. Both are gone,
 // and an agent file is never part of an install.
-test("init's whole footprint is the config, package.json and .gitignore", () => {
+test("init's whole footprint is the config, package.json, .gitignore and the brief scaffold", () => {
   const dir = makeRepo(
     "init-footprint-",
     { "package.json": '{"name":"fixture","version":"1.0.0"}\n' },
@@ -1760,8 +1760,8 @@ test("init's whole footprint is the config, package.json and .gitignore", () => 
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(
     fs.readdirSync(dir).sort(),
-    [".gitignore", "package.json", "snapshot.config.mjs"],
-    "exactly three paths, and no markdown or agent file"
+    [".gitignore", "BRIEF.md", "package.json", "snapshot.config.mjs"],
+    "the config, the brief scaffold, and no agent file"
   );
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));

@@ -56,7 +56,9 @@ export function parseOwnerBrief(
   const problems: string[] = [];
   // A byte-order mark is not a heading: a brief saved by a Windows editor would otherwise
   // lose its first section and produce a snapshot that silently omitted it.
-  const source = text.replace(/^\uFEFF/, "");
+  // Comments are guidance, not content: the scaffold `init` writes is nothing but comments,
+  // and an untouched one must render no section rather than an empty one with a provenance line.
+  const source = text.replace(/^\uFEFF/, "").replace(/<!--[\s\S]*?-->/g, "");
   const preamble: string[] = [];
   const sections: Array<{ heading: string; body: string[] }> = [];
   let current: { heading: string; body: string[] } | null = null;
@@ -125,7 +127,8 @@ export function parseOwnerBrief(
     }
     const ownerName = canonicalOwner.get(key);
     if (ownerName !== undefined) {
-      recognised[ownerName] = body;
+      // An empty section is a template someone has not filled in yet, not an assertion.
+      if (body.length > 0) recognised[ownerName] = body;
       continue;
     }
     // Unknown headings are kept, not dropped: a brief is the owner's text, and silently

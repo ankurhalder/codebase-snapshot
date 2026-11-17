@@ -855,8 +855,8 @@ test("runInit writes a config from flags without a TTY", async () => {
   assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));
   assert.deepEqual(
     fs.readdirSync(dir).sort(),
-    [".gitignore", "go.mod", "package.json", "snapshot.config.mjs"],
-    "no markdown or agent file is part of an install"
+    [".gitignore", "BRIEF.md", "go.mod", "package.json", "snapshot.config.mjs"],
+    "the brief scaffold, but no agent file"
   );
 
   await assert.rejects(() => runInit({ cwd: dir, yes: true, io: quietIO }), /already exists/);
