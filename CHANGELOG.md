@@ -26,6 +26,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.53
+
+- **The browser page can slice and budget, not only dump everything.** A mode selector offers *whole
+  repository*, *a slice for a question* and *fit a token budget*; the API accepts
+  `{ mode, question, budgetTokens }`, validates them (a slice needs a real question, a budget at least
+  500) and reports how many paths were not selected.
+- The page sends the mode and the result line says which one ran, so the same page is useful for a
+  question, a context window and a full audit.
+
+Verified: slice and budget modes generate through the API with their `dropped` counts; a slice with
+an empty question and a budget below 500 are 400s.
 ## 0.12.52
 
 - **Every tool states its cost**: `cheap` (manifest), `medium` (one or a few parts), `expensive`

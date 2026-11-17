@@ -144,3 +144,42 @@ test("a private remote is refused unless the server allows it", async (t) => {
   const body = await response.json();
   assert.match(body.error, /private address/);
 });
+
+test("the page can slice and budget, not only generate everything", async (t) => {
+  const root = fixture(t);
+  const server = await serve(t, root);
+  const repo = path.join(root, "repo");
+  const headers = { authorization: "Bearer " + server.token, "content-type": "application/json" };
+
+  const sliced = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ source: repo, mode: "slice", question: "how is a user authenticated" }),
+  });
+  assert.equal(sliced.status, 200, await sliced.clone().text());
+  const sliceSummary = await sliced.json();
+  assert.equal(sliceSummary.mode, "slice");
+  assert.equal(typeof sliceSummary.dropped, "number");
+
+  const budgeted = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ source: repo, mode: "budget", budgetTokens: 800 }),
+  });
+  assert.equal(budgeted.status, 200, await budgeted.clone().text());
+  const budgetSummary = await budgeted.json();
+  assert.equal(budgetSummary.mode, "budget");
+
+  const bad = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ source: repo, mode: "slice", question: "" }),
+  });
+  assert.equal(bad.status, 400);
+  const badBudget = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ source: repo, mode: "budget", budgetTokens: 10 }),
+  });
+  assert.equal(badBudget.status, 400);
+});

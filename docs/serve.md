@@ -16,15 +16,18 @@ Serving http://127.0.0.1:4788/
 
 ## What it does
 
-1. **Generate.** Paste an absolute path or a public repository URL and press Generate. A URL is
+1. **Choose a mode.** *Whole repository* is the default. *A slice for a question* runs the
+   retrieval planner at generate time and asks for the question. *Fit a token budget* selects whole
+   files to fit the number you give. The result line reports how many paths were not selected.
+2. **Generate.** Paste an absolute path or a public repository URL and press Generate. A URL is
    cloned shallowly into a temporary directory (removed when the server exits) with the same
    provenance record the CLI writes. The page calls the same
    `generateSnapshot` the CLI calls, with the default settings — the defaults are what a browser
    session can honestly promise, because a config file can run code and this process will not run
    repository code on a page's request. For a project config, use the CLI.
-2. **Preview.** The brief (`PROMPT.md`) and the file list come back from the written snapshot, not
+3. **Preview.** The brief (`PROMPT.md`) and the file list come back from the written snapshot, not
    from the working tree. If the snapshot is wrong, the page shows the wrongness.
-3. **Download.** The zip is the snapshot directory, stored entries, no compression — the same bytes
+4. **Download.** The zip is the snapshot directory, stored entries, no compression — the same bytes
    the agent would read.
 
 ## The token

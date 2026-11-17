@@ -44,6 +44,13 @@ export const SERVE_PAGE = `<!doctype html>
 <main>
   <form id="gen">
     <input id="source" placeholder="/absolute/path/to/repo   or   https://github.com/owner/repo" spellcheck="false" autofocus>
+    <select id="mode" title="What to generate">
+      <option value="full">whole repository</option>
+      <option value="slice">a slice for a question</option>
+      <option value="budget">fit a token budget</option>
+    </select>
+    <input id="question" placeholder="the question (slice mode)" spellcheck="false" hidden>
+    <input id="budget" type="number" min="500" step="500" value="30000" title="token budget" hidden>
     <button id="run" type="submit">Generate</button>
     <button id="download" type="button" disabled>Download .zip</button>
   </form>
@@ -76,6 +83,11 @@ export const SERVE_PAGE = `<!doctype html>
     showAuth(false);
     status("Token stored.");
   });
+  $("mode").addEventListener("change", () => {
+    const mode = $("mode").value;
+    $("question").hidden = mode !== "slice";
+    $("budget").hidden = mode !== "budget";
+  });
   $("gen").addEventListener("submit", async (event) => {
     event.preventDefault();
     const source = $("source").value.trim();
@@ -86,12 +98,23 @@ export const SERVE_PAGE = `<!doctype html>
       const response = await api("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ source }),
+        body: JSON.stringify({
+          source,
+          mode: $("mode").value,
+          question: $("question").value.trim(),
+          budgetTokens: Number($("budget").value),
+        }),
       });
       const result = await response.json();
       snapshotPath = result.path;
       $("download").disabled = false;
-      status("Generated " + result.files + " files in " + result.seconds + "s, " + result.parts + " part(s), " + result.tokens + " estimated tokens." + (result.warning ? " " + result.warning : ""), result.warning ? "warn" : "ok");
+      status(
+        "Generated " + result.files + " files (" + (result.mode || "full") + ") in " + result.seconds + "s, " +
+          result.parts + " part(s), " + result.tokens + " estimated tokens." +
+          (result.dropped === undefined ? "" : " " + result.dropped + " path(s) not selected.") +
+          (result.warning ? " " + result.warning : ""),
+        result.warning ? "warn" : "ok"
+      );
       await load();
     } catch (error) {
       status(String(error.message || error), "bad");

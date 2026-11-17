@@ -172,15 +172,34 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
       request.on("end", () => {
         void (async () => {
           let source = "";
+          let mode: "full" | "slice" | "budget" = "full";
+          let question = "";
+          let budgetTokens: number | undefined;
           try {
-            const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { source?: unknown };
+            const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+              source?: unknown;
+              mode?: unknown;
+              question?: unknown;
+              budgetTokens?: unknown;
+            };
             source = typeof body.source === "string" ? body.source.trim() : "";
+            mode = body.mode === "slice" || body.mode === "budget" ? body.mode : "full";
+            question = typeof body.question === "string" ? body.question.trim() : "";
+            budgetTokens = typeof body.budgetTokens === "number" ? body.budgetTokens : undefined;
           } catch {
             send(400, { error: "body must be JSON with a source string" });
             return;
           }
           if (source === "") {
             send(400, { error: "source is empty" });
+            return;
+          }
+          if (mode === "slice" && question.length < 3) {
+            send(400, { error: "slice mode needs a question of at least 3 characters" });
+            return;
+          }
+          if (mode === "budget" && (budgetTokens === undefined || budgetTokens < 500)) {
+            send(400, { error: "budget mode needs budgetTokens of at least 500" });
             return;
           }
           const isRemote = /^(https?|file):\/\//i.test(source);
@@ -227,6 +246,8 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           try {
             const manifest = generateSnapshot({ cwd: target }, {
               ...(provenance === undefined ? {} : { source: provenance }),
+              ...(mode === "slice" ? { slice: { question } } : {}),
+              ...(mode === "budget" && budgetTokens !== undefined ? { budgetTokens } : {}),
             });
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
             send(200, {
@@ -235,6 +256,9 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
               parts: manifest.counts.partsCount,
               tokens: manifest.totals.estimatedTokens ?? 0,
               fingerprint: manifest.fingerprint,
+              mode,
+              ...(manifest.slice === undefined ? {} : { dropped: manifest.slice.dropped }),
+              ...(manifest.budget === undefined ? {} : { dropped: manifest.budget.dropped }),
               seconds,
               warning: manifest.warnings.length > 0 ? manifest.warnings[0] : null,
             });
