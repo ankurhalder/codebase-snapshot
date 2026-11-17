@@ -162,7 +162,14 @@ export function planForQuestion(
     }
     for (const name of symbolNames(file)) {
       for (const term of terms) {
-        if (name.includes(term)) {
+        // `charge` and `chargeCard` are the same subject; so are `authenticated` and `auth`.
+        // Exact substring matching alone missed both, which made a real question plan nothing.
+        const shared = Math.min(name.length, term.length);
+        if (
+          name.includes(term) ||
+          term.includes(name) ||
+          (shared >= 4 && name.slice(0, shared) === term.slice(0, shared))
+        ) {
           score += 5;
           reasons.push("symbol:" + term);
           break;

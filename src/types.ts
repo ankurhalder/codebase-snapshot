@@ -127,6 +127,13 @@ export type SkipReason =
    */
   | "unchanged"
   /**
+   * Scanned, but the `--slice` planner did not choose it for the question.
+   *
+   * Different from `unchanged`: the file may have changed and may still matter; it simply is not
+   * part of the budgeted answer to the question this snapshot was asked to serve.
+   */
+  | "not-selected"
+  /**
    * Staged for deletion: the path is in the next commit's parent, not in the next commit.
    *
    * With `--staged` the scope is the index, and a deletion has no blob to read. Recording it is
@@ -527,6 +534,21 @@ export interface Manifest {
    * their one-hop dependents; every unchanged file is accounted in `delta.unchanged` and in
    * `skipped[]` with reason "unchanged", so nothing disappears without a record.
    */
+  /**
+   * A task-scoped slice (`--slice`): which question the snapshot was narrowed for.
+   *
+   * `files[]` then contains the planner selection; every other scanned path is in `skipped[]`
+   * with reason "slice-dropped", so the accounting contract still holds.
+   */
+  slice?: {
+    question: string;
+    budgetTokens: number;
+    usedTokens: number;
+    /** The paths the planner chose, in reading order. */
+    files: string[];
+    /** Scanned paths the planner did not choose. */
+    dropped: number;
+  };
   delta?: {
     base: { path: string; fingerprint: string; generatedAt: string };
     added: string[];

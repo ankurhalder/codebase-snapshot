@@ -210,7 +210,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.12.25 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.12.26 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
@@ -273,6 +273,7 @@ others.
 | [In the browser](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/serve.md) | `serve`: a local page to generate, preview and download a snapshot |
 | [Remote repositories](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/remote.md) | `--remote`: a shallow, SSRF-safe clone with recorded provenance |
 | [Delta packs](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/delta.md) | `--delta`: only what changed since a base snapshot, with its importers |
+| [Task slices](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/slice.md) | `--slice`: only what the planner picks for a question, at a token budget |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
 | [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | fourteen tools, resources, both protocol eras |

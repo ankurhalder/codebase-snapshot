@@ -26,6 +26,24 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.26
+
+**Task slices: `--slice "<question>"`.**
+
+- The retrieval planner runs at generate time: only the files it chooses for the question are written,
+  within `--slice-tokens` (default 30000). For a focused question about one subsystem, the snapshot
+  is small enough to paste and carries the callers it needs.
+- Every scanned path that was not chosen is in `skipped[]` with reason `not-selected` — deliberately
+  not `unchanged`, which would be a different and untrue statement. The manifest records the
+  question, the budget, the used tokens, the chosen paths and the dropped count.
+- `PROMPT.md` says at the top that the snapshot is a slice, quotes the question and warns that
+  unselected paths are not in the parts.
+- Symbol matching learned stems: `charge` matches `chargeCard`, `authenticated` matches `auth`, which
+  is what makes a real question plan something.
+- `--slice` and `--delta` are refused together: they narrow in different directions.
+
+Verified: the matching file is kept and the unrelated document is dropped and recorded; the budget
+is a ceiling; the contradiction is refused.
 ## 0.12.25
 
 **Delta packs: `--delta <base>`.**

@@ -172,6 +172,8 @@ export const CLI_OPTIONS = {
   "include-logs": { type: "string" },
   "token-tree": { type: "boolean" },
   delta: { type: "string" },
+  slice: { type: "string" },
+  "slice-tokens": { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -227,6 +229,8 @@ Options:
                                 0 = no limit); PROMPT.md plans the delivery to fit
   --max-parts <n>               Experimental: grow the part budget until the snapshot has at
                                 most n parts, instead of adding parts as the code grows
+  --slice <question>            Keep only what the planner picks for this question
+  --slice-tokens <n>            Budget for --slice (default 30000)
   --delta <path>                Only what changed since this snapshot (plus its importers)
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
@@ -388,6 +392,10 @@ interface ParsedInvocation {
   tokenTree?: boolean;
   /** `--delta`: base snapshot directory or manifest.json. */
   delta?: string;
+  /** `--slice`: the question the snapshot is narrowed for. */
+  slice?: string;
+  /** `--slice-tokens`: the budget the slice is planned within. */
+  sliceTokens?: number;
 }
 
 export function parsePositiveInteger(
@@ -851,6 +859,11 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
         : parsePositiveInteger(values["include-logs"] as string, "include-logs", 1),
     tokenTree: values["token-tree"] === true ? true : undefined,
     delta: values.delta === undefined ? undefined : String(values.delta),
+    slice: values.slice === undefined ? undefined : String(values.slice),
+    sliceTokens:
+      values["slice-tokens"] === undefined
+        ? undefined
+        : parsePositiveInteger(values["slice-tokens"] as string, "slice-tokens", 500),
     allowOrigins:
       values["allow-origin"] === undefined
         ? undefined
@@ -2046,6 +2059,10 @@ async function runCommand(argv: string[]): Promise<number> {
   // `--changed-since` on a non-repository is one: the command line is valid and this machine
   // cannot honour it. Reported through `fail` so `--format json` still gets one parseable
   // document.
+  if (invocation.slice !== undefined && invocation.delta !== undefined) {
+    return fail(invocation.format, "--slice and --delta narrow in two different directions; pass one.");
+  }
+
   if (invocation.watch) {
     const problem = watchSupportProblem();
     if (problem !== null) return fail(invocation.format, problem);
@@ -2085,6 +2102,16 @@ async function runCommand(argv: string[]): Promise<number> {
       dryRun: invocation.dryRun,
       ...(sourceProvenance === undefined ? {} : { source: sourceProvenance }),
       ...(deltaBase === undefined ? {} : { deltaBase }),
+      ...(invocation.slice === undefined
+        ? {}
+        : {
+            slice: {
+              question: invocation.slice,
+              ...(invocation.sliceTokens === undefined
+                ? {}
+                : { maxTokens: invocation.sliceTokens }),
+            },
+          }),
     });
     const elapsed = ((performance.now() - started) / 1000).toFixed(2);
 

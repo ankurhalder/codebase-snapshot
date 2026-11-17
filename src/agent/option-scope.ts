@@ -73,6 +73,8 @@ const VALIDATE_OPTIONS = [
  */
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
+    "slice",
+    "slice-tokens",
     "delta",
     "include-diffs",
     "include-logs",

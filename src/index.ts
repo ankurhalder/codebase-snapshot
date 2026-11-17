@@ -25,6 +25,7 @@ import { generateAuditReport } from "./generator/audit.js";
 import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
+import { planForQuestion } from "./mcp/retrieval.js";
 import { generateDiffReport } from "./generator/diff.js";
 import { generateLogReport } from "./generator/log.js";
 import { generateTokenTree } from "./generator/tokens.js";
@@ -391,6 +392,8 @@ export interface GenerateOptions {
   source?: Manifest["source"];
   /** Base snapshot for `--delta`: only what changed since it is written, with its dependents. */
   deltaBase?: { manifest: Manifest; path: string };
+  /** `--slice`: narrow the snapshot to what the planner would pick for this question. */
+  slice?: { question: string; maxTokens?: number };
 }
 
 const TS_EXTENSIONS = [
@@ -2793,6 +2796,38 @@ export function generateSnapshot(
     }
   }
 
+  // `--slice` narrows to what the MCP planner would choose for a question, at generate time. The
+  // planner takes a manifest; here the scan is not yet a manifest, so the two fields it reads are
+  // supplied directly: the files (with their parsed imports) and an empty centrality table, which
+  // the planner recomputes from `byFile`.
+  let sliceBlock: Manifest["slice"] | undefined;
+  if (options?.slice !== undefined) {
+    const byFile = files
+      .filter((file) => isSourceSummary(file.summary))
+      .map((file) => ({
+        path: file.relativePath,
+        imports: isSourceSummary(file.summary) ? file.summary.imports : [],
+        exports: [],
+      }));
+    const pseudo = {
+      files,
+      indexes: { imports: { byFile, centralFiles: [] } },
+    } as unknown as Manifest;
+    const plan = planForQuestion(pseudo, options.slice.question, {
+      ...(options.slice.maxTokens === undefined ? {} : { maxTokens: options.slice.maxTokens }),
+    });
+    const keep = new Set(plan.files.map((file) => file.path));
+    const scanned = files.length;
+    narrowTo(keep);
+    sliceBlock = {
+      question: options.slice.question,
+      budgetTokens: plan.budgetTokens,
+      usedTokens: plan.usedTokens,
+      files: plan.files.map((file) => file.path),
+      dropped: scanned - plan.files.length,
+    };
+  }
+
   // Files the scope removed are recorded the same way whether they were filtered before the scan
   // or after it. `unchanged` is deliberately a different statement from `excluded`: the file is
   // includable and simply did not move.
@@ -2803,6 +2838,16 @@ export function generateSnapshot(
         : "identical to the base snapshot given with --delta";
     for (const relativePath of unchangedPaths) {
       skipped.push({ path: relativePath, reason: "unchanged", detail });
+    }
+  } else if (options?.slice !== undefined) {
+    // A slice dropped these because the planner did not choose them for this question, which is a
+    // different statement from "unchanged" and must not be filed as one.
+    for (const relativePath of unchangedPaths) {
+      skipped.push({
+        path: relativePath,
+        reason: "not-selected",
+        detail: "not selected for the --slice question at the given budget",
+      });
     }
   }
 
@@ -2963,6 +3008,7 @@ export function generateSnapshot(
     git: { ...gitInfo, branch: maskPathText(gitInfo.branch, config.secretRules) },
     ...(options?.source === undefined ? {} : { source: options.source }),
     ...(deltaBlock === undefined ? {} : { delta: deltaBlock }),
+    ...(sliceBlock === undefined ? {} : { slice: sliceBlock }),
     budgets: {
       // The ceiling the parts actually honour. It equals the configured one unless `maxParts`
       // grew it; `config.maxPartBytes` below keeps the configured value, because that is what

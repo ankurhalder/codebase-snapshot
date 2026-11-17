@@ -101,6 +101,22 @@ export function generatePrompt(
     ""
   ];
   if (brief?.preamble !== undefined) lines.push(text(brief.preamble), "");
+  if (manifest.slice !== undefined) {
+    lines.push(
+      "This snapshot is a **task slice**: it contains the " +
+        manifest.slice.files.length +
+        " file(s) the planner chose for the question \"" +
+        text(manifest.slice.question) +
+        "\" within " +
+        manifest.slice.budgetTokens +
+        " tokens (" +
+        manifest.slice.usedTokens +
+        " used). Every other scanned path was not selected and is recorded in `skipped[]` with " +
+        "reason \"not-selected\"; do not describe those paths from memory, and say so if the task " +
+        "needs one of them.",
+      ""
+    );
+  }
   if (manifest.delta !== undefined) {
     const delta = manifest.delta;
     lines.push(

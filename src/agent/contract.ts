@@ -642,6 +642,24 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--slice",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("slice"),
+        summary:
+          "generate: narrow the snapshot to what the retrieval planner would choose for this " +
+          "question at the given budget. Records a `slice` block with the question, the budget, " +
+          "the chosen paths and the count dropped; the rest are in skipped[] with reason " +
+          "\"not-selected\". Mutually exclusive with --delta.",
+      },
+      {
+        flag: "--slice-tokens",
+        type: "string",
+        default: "30000",
+        appliesTo: optionAppliesTo("slice-tokens"),
+        summary: "generate --slice: the token budget the selection is planned within.",
+      },
+      {
         flag: "--delta",
         type: "string",
         default: "unset",

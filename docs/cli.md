@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.12.25 (project dependency ^0.12.25)
+   Branch: main | Part budget: 300 KB | Generator: 0.12.26 (project dependency ^0.12.26)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.25
+   Added devDependency: codebase-snapshot ^0.12.26
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.25
+   Added devDependency: codebase-snapshot ^0.12.26
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -482,6 +482,8 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--allow-private` | flag | off | generate | With `--remote`: allow private addresses and `file:` URLs. Refused by default. |
 | `--keep-clone` | flag | off | generate | With `--remote`: keep the temporary clone and print where it is. |
 | `--prompt-task <task>` | string | `audit` | generate, validate | `audit`, `review` or `explain` — which job the brief is written for. Changes the opening section, not the standard. |
+| `--slice <question>` | string | unset | generate | Narrow the snapshot to what the retrieval planner picks for this question. Records a `slice` block and `skipped[]` reasons `not-selected`. See [slices](slice.md). |
+| `--slice-tokens <n>` | count | `30000` | generate | The token budget for `--slice`. |
 | `--delta <path>` | path | unset | generate | Narrow the snapshot to what changed since a base snapshot, plus the one-hop importers. Unchanged files are recorded in `delta.unchanged` and `skipped[]`. See [delta](delta.md). |
 | `--include-diffs` | flag | off | generate | Also write `reports/diff.md`: the unstaged and staged diff, with the commands, bounded to 200 KiB. Absent when the tree is clean. |
 | `--include-logs <n>` | count | unset | generate | Also write `reports/log.md`: the last n commits (1–500), one line each. |
