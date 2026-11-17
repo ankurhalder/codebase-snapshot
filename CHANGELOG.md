@@ -26,6 +26,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.34
+
+- **`scripts/benchmark.mjs` and a benchmarks page.** Three modes on this repository: full 987,750
+  estimated tokens across 313 files and 11 parts; a task slice 66,430 tokens (6.7%); a 30,000-token
+  budget 36,315 tokens across 21 whole files (3.7%). Generation time is about the same in all three,
+  which is the point: the saving is in what is written, not in what is read. The script is runnable
+  against any repository.
+- **A security review page.** The threat model (malicious repository, URL, browser page, MCP client,
+  log reader), the controls for each surface, the tests that pin them, and six residual risks stated
+  rather than hidden — including the SSE query token, DNS rebinding and prompt injection.
 ## 0.12.33
 
 **`--budget-tokens <n>`: fit a repository into a limit without tearing files.**

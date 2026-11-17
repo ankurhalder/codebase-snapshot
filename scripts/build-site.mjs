@@ -142,6 +142,12 @@ const DESCRIPTIONS = {
   budget:
     "Fit a repository into a token budget by selecting whole files in value order instead of " +
     "truncating them, with a record of everything that did not fit.",
+  benchmarks:
+    "Reproducible token and time numbers for the full snapshot, a task slice and a token " +
+    "budget, on this repository, with the script that produced them.",
+  "security-review":
+    "The threat model of the CLI, the HTTP server, the browser page and remote ingestion, " +
+    "the controls, the tests and the residual risks stated plainly.",
   signing:
     "Sign the manifest with Ed25519 so a reader can prove who produced a snapshot and that it " +
     "has not changed since. health verifies it.",
