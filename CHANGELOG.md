@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.66
+
+- `scripts/compare.mjs` is the one change: the file ends with a newline, and the lint gate is clean
+  again. 0.12.65 shipped the harness with that rule failing, which is exactly what the gate exists to
+  catch and what `npm run verify` would have refused.
 ## 0.12.65
 
 **A measured head-to-head, not a claim.**
