@@ -26,6 +26,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.11
+
+- **`setup` wrote the scaffold and did not mention it.** `init` said "Wrote BRIEF.md …"; `setup`,
+  which runs the same wizard, printed everything except that line. A scaffold nobody is told about
+  is a file for nothing.
+
+Verified: 1 188 tests, 1 180 pass, 0 fail, 8 host skips; every gate clean at 0.12.11.
 ## 0.12.10
 
 - **The contract said `init` writes nothing else.** It writes `BRIEF.md` as of 0.12.9, and the

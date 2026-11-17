@@ -1255,6 +1255,14 @@ async function runSetupCommand(
       if (init.gitignoreEntries.length > 0) {
         info(`   Added to .gitignore: ${init.gitignoreEntries.join(", ")}`);
       }
+      // Same line as `init`, for the same reason: a scaffold nobody opens is a file for nothing.
+      if (init.briefWritten) {
+        info(
+          `   Wrote ${path.basename(init.briefPath)}: a scaffold for the half of PROMPT.md only ` +
+            "you can write. Fill it in, then set brief: " +
+            `${JSON.stringify(path.basename(init.briefPath))} in the config to merge it.`
+        );
+      }
       if (hook) for (const note of hook.notes) info(`   ${note}`);
       if (init.reused && invocation.preset !== undefined) {
         info(`   ⚠ --preset ${invocation.preset} was not applied: the existing config is kept.`);

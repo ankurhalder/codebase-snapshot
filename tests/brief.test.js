@@ -414,3 +414,11 @@ test("a filled scaffold section is merged at its slot", (t) => {
   assert.equal(cli(["generate"], dir).code, 0);
   assert.match(promptOf(dir), /## Stakes\n\n> Written by the project owner[\s\S]*A wrong cleanup deletes data\./);
 });
+
+test("setup writes the scaffold and says so", (t) => {
+  const dir = makeRepo(t);
+  const result = cli(["setup", "--yes"], dir);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Wrote BRIEF\.md/, "the one file the run asks the user to fill in");
+  assert.equal(fs.existsSync(path.join(dir, "BRIEF.md")), true);
+});
