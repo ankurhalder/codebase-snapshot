@@ -26,6 +26,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.17
+
+- **`snapshot_context`**: named files or exported symbols in, one bounded context block out, read
+  from the snapshot (so redacted and preview-bounded). Each file contributes a head window; a file
+  that does not fit is shortened and says "first N lines", never silently dropped, and a file that
+  cannot be shortened is listed in `missing` with the reason.
+- Twelve tools. The counts in the docs move with the server, enforced by the hygiene test.
+
+Verified: file and symbol lookup, honest `missing`, the budget ceiling and the shortened-file
+notice are covered in `tests/mcp-retrieval.test.js`.
 ## 0.12.16
 
 **Two retrieval tools, which are the point of the product.**

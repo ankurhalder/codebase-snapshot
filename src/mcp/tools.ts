@@ -1,5 +1,5 @@
 /**
- * The eleven tools this server exposes.
+ * The twelve tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -65,7 +65,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the eleven tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the twelve tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -273,6 +273,124 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const contextTool: McpTool = {
+  name: "snapshot_context",
+  title: "Assemble a bounded context block",
+  description:
+    "Given file paths, symbol names, or both, return their contents (from the snapshot, so " +
+    "redacted and preview-bounded) as one context block within a token budget. Each file " +
+    "contributes a head window; files that do not fit are reported, never silently dropped.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      files: { type: "array", items: { type: "string" }, description: "Paths, as the manifest names them." },
+      symbols: { type: "array", items: { type: "string" }, description: "Exported symbol names." },
+      maxTokens: { type: "integer", description: "Budget for the block (default 20000).", minimum: 500 },
+      linesPerFile: { type: "integer", description: "Head lines per file (default 80).", minimum: 10 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      budgetTokens: { type: "integer" },
+      usedTokens: { type: "integer" },
+      files: { type: "array", items: { type: "object" } },
+      missing: { type: "array", items: { type: "string" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const workspace = prepared.workspace;
+    const read = readManifest(workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const manifest = read.manifest;
+    const wantedFiles = Array.isArray(args.files) ? args.files.filter((item) => typeof item === "string") : [];
+    const wantedSymbols = Array.isArray(args.symbols)
+      ? args.symbols.filter((item) => typeof item === "string").map((item) => item.toLowerCase())
+      : [];
+    if (wantedFiles.length === 0 && wantedSymbols.length === 0) {
+      return { text: "Provide at least one of files or symbols.", isError: true };
+    }
+    const budget = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 20000);
+    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80);
+
+    const byPath = new Map(manifest.files.map((file) => [file.relativePath.toLowerCase(), file]));
+    const targets: FileEntry[] = [];
+    const missing: string[] = [];
+    for (const wanted of wantedFiles) {
+      const found = byPath.get(wanted.toLowerCase());
+      if (found === undefined) missing.push(wanted);
+      else if (!targets.includes(found)) targets.push(found);
+    }
+    for (const symbol of wantedSymbols) {
+      const matches = manifest.files.filter((file) =>
+        symbolNamesOf(file).some((name) => name.toLowerCase() === symbol)
+      );
+      for (const file of matches) if (!targets.includes(file)) targets.push(file);
+    }
+
+    const sectionsByPart = new Map<string, ReturnType<typeof parsePartSections> | null>();
+    const blocks: Array<{ path: string; part: string; lines: number; tokens: number }> = [];
+    const text: string[] = [];
+    let used = 0;
+    for (const file of targets) {
+      if (used >= budget) {
+        missing.push(file.relativePath + " (budget)");
+        continue;
+      }
+      const partPath = partPathFor(workspace, file.part);
+      if (partPath === null) {
+        missing.push(file.relativePath + " (part missing)");
+        continue;
+      }
+      if (!sectionsByPart.has(file.part)) {
+        try {
+          sectionsByPart.set(file.part, parsePartSections(fs.readFileSync(partPath, "utf8")));
+        } catch {
+          sectionsByPart.set(file.part, null);
+        }
+      }
+      const sections = sectionsByPart.get(file.part);
+      const section = sections === null || sections === undefined ? null : findSection(sections, file.relativePath);
+      if (section === null) {
+        missing.push(file.relativePath + " (section not found)");
+        continue;
+      }
+      const window = windowText(section.body, 1, linesPerFile);
+      const body = window.text;
+      let tokens = Math.max(1, Math.ceil(Buffer.byteLength(body, "utf8") / 4));
+      if (used + tokens > budget) {
+        const keep = Math.max(4, Math.floor(((budget - used) / tokens) * linesPerFile));
+        const smaller = windowText(section.body, 1, Math.max(4, keep));
+        if (Buffer.byteLength(smaller.text, "utf8") === 0) {
+          missing.push(file.relativePath + " (budget)");
+          continue;
+        }
+        const partial = Math.max(1, Math.ceil(Buffer.byteLength(smaller.text, "utf8") / 4));
+        text.push("### " + file.relativePath + " (" + file.part + ", first " + Math.max(4, keep) + " lines)");
+        text.push(smaller.text);
+        blocks.push({ path: file.relativePath, part: file.part, lines: Math.max(4, keep), tokens: partial });
+        used += partial;
+        continue;
+      }
+      text.push("### " + file.relativePath + " (" + file.part + ")");
+      text.push(body);
+      blocks.push({ path: file.relativePath, part: file.part, lines: window.text === "" ? 0 : window.text.split("\n").length, tokens });
+      used += tokens;
+    }
+
+    return {
+      text: text.join("\n\n"),
+      structured: { budgetTokens: budget, usedTokens: used, files: blocks, missing },
+    };
+  },
+};
 
 const queryTool: McpTool = {
   name: "snapshot_query",
@@ -1346,6 +1464,7 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    contextTool,
     queryTool,
     planForTool,
     planTool,

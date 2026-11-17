@@ -35,6 +35,7 @@ function fixture(t) {
   ].join("\n"));
   write("src/session.ts", "export const SESSION_TTL = 3600;\n");
   write("tests/user.test.js", 'test("user", () => {});\n');
+  write("src/big.ts", Array.from({ length: 300 }, (_, index) => "export const v" + index + " = " + index + ";").join("\n") + "\n");
   write("README.md", "# Fixture\n");
   return root;
 }
@@ -133,4 +134,32 @@ test("a query filters by layer, pattern and symbol", async (t) => {
   const badPattern = await tool.handler({ pathPattern: "(" }, context);
   assert.equal(badPattern.isError, true);
   assert.match(badPattern.text, /not a valid regular expression/);
+});
+
+test("a context block carries the requested files within its budget", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_context");
+  assert.ok(tool, "snapshot_context is served");
+  const context = contextFor(root);
+
+  const byFile = await tool.handler({ files: ["src/user.ts"], maxTokens: 4000 }, context);
+  assert.equal(byFile.isError, undefined, byFile.text);
+  assert.match(byFile.text, /export function getUser/);
+  assert.equal(byFile.structured.files.length, 1);
+  assert.ok(byFile.structured.usedTokens <= 4000);
+
+  const bySymbol = await tool.handler({ symbols: ["deleteUser"], maxTokens: 4000 }, context);
+  assert.match(bySymbol.text, /deleteUser/, "a symbol resolves to the file that exports it");
+
+  const missing = await tool.handler({ files: ["nope.ts"], maxTokens: 1000 }, context);
+  assert.deepEqual(missing.structured.missing, ["nope.ts"]);
+  assert.equal(missing.structured.files.length, 0);
+
+  const none = await tool.handler({}, context);
+  assert.equal(none.isError, true);
+
+  const small = await tool.handler({ files: ["src/big.ts"], maxTokens: 500, linesPerFile: 300 }, context);
+  assert.ok(small.structured.usedTokens <= 500, "the budget is honoured");
+  assert.match(small.text, /first \d+ lines/, "a shortened file says so");
 });

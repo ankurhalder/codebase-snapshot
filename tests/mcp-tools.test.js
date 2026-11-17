@@ -86,10 +86,11 @@ async function call(name, args, context) {
   return tool.handler(args, context);
 }
 
-test("exposes exactly the eleven documented tools", () => {
+test("exposes exactly the twelve documented tools", () => {
   assert.deepEqual([...tools.keys()], [
     "snapshot_status",
     "snapshot_health",
+    "snapshot_context",
     "snapshot_query",
     "snapshot_plan_for",
     "snapshot_plan",
