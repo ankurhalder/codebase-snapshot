@@ -126,3 +126,13 @@ test("a stale snapshot is reported as a warning", (t) => {
   assert.match(result.out, /The snapshot still describes the repository/);
   assert.match(result.out, /HEAD is/);
 });
+
+test("a signed snapshot reports no unexpected path", (t) => {
+  const root = repoWithSnapshot(t);
+  const signed = spawnSync(process.execPath, [BIN, "generate", "--sign"], { cwd: root, encoding: "utf8" });
+  assert.equal(signed.status, 0, (signed.stdout ?? "") + (signed.stderr ?? ""));
+  const result = health(root);
+  assert.equal(result.code, 0, result.out);
+  assert.doesNotMatch(result.out, /unexpected path/);
+  assert.match(result.out, /signature verifies/);
+});

@@ -26,6 +26,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.57
+
+- **A signed snapshot no longer reports `signature.json` as an unexpected file.** The health audit
+  knew every artifact the manifest records, and the signature is written after the manifest, so it
+  was not among them. It is now part of the expected set, and the check still verifies it.
+
+Verified: generating with `--sign` and auditing reports no unexpected path and says the signature
+verifies; an unsigned snapshot keeps the skip.
 ## 0.12.56
 
 **`validate` no longer fails a correct slice or budget snapshot.**

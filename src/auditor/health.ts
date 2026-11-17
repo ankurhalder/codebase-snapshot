@@ -314,6 +314,9 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   const known = new Set<string>([
     ".codebase-snapshot",
     "manifest.json",
+    // Written after the manifest by `--sign`, so it is not in any artifact record, but it is a
+    // file this tool wrote and belongs to the snapshot it signs.
+    "signature.json",
     ...Object.values(ARTIFACT_FILES),
     ...manifest.parts.map((part) => "parts/" + part.filename),
   ]);
