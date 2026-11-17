@@ -26,6 +26,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.4
+
+Two ways the MCP surface described itself wrongly.
+
+- **`describe` did not list `snapshot://prompt`.** The resource was served from 0.12.2 and missing
+  from `contract.mcp.resources`, which is generated from a leaf list precisely so it cannot drift.
+  It is in that list now, and a test compares the contract against a live `resources/list`.
+- **A known resource that was simply absent said "Unknown resource".** `snapshot://prompt` in a
+  snapshot generated with `--skip-artifacts prompt`, or a report with its artifact disabled,
+  answered `-32602 "Unknown resource"` — telling the client its URI was wrong when the artifact had
+  been left out. Those reads now answer `-32002` (resource not found) with the cause and the fix;
+  a genuinely unknown URI is unchanged.
+
+Verified: 1 180 tests, 1 172 pass, 0 fail, 8 host skips; lint 225 files; every gate clean at 0.12.4.
 ## 0.12.3
 
 A read of what the tool says, rather than what it does.

@@ -47,6 +47,22 @@ export class ResourceTooLargeError extends Error {
   }
 }
 
+/**
+ * Raised when the URI names a resource this build serves but this snapshot does not contain.
+ *
+ * Distinct from an unknown URI: the URI is valid and the reason is on disk, so the client is
+ * told why rather than that it asked for the wrong thing.
+ */
+export class ResourceNotFoundError extends Error {
+  constructor(
+    readonly uri: string,
+    message: string
+  ) {
+    super(message);
+    this.name = "ResourceNotFoundError";
+  }
+}
+
 /** Throws the actionable refusal for a resource that cannot be returned in one read. */
 function refuseTooLarge(uri: string, bytes: number, advice: string): never {
   throw new ResourceTooLargeError(
@@ -247,7 +263,14 @@ export function buildResourceProvider(): ResourceProvider {
         const text = readFileIfPresent(
           path.resolve(workspace.root, workspace.config.outDir, "PROMPT.md")
         );
-        if (text === null) return null;
+        if (text === null) {
+          throw new ResourceNotFoundError(
+            uri,
+            "This snapshot contains no PROMPT.md: the prompt artifact was disabled " +
+              "(artifacts.prompt = false or --skip-artifacts prompt), or nothing has been " +
+              "generated yet. Run snapshot_generate first."
+          );
+        }
         return { uri, mimeType: "text/markdown", text: ensureSingleRead(uri, text, PROMPT_ADVICE) };
       }
 
@@ -256,7 +279,13 @@ export function buildResourceProvider(): ResourceProvider {
         const text = readFileIfPresent(
           path.resolve(workspace.root, workspace.config.outDir, "reports", report.file)
         );
-        if (text === null) return null;
+        if (text === null) {
+          throw new ResourceNotFoundError(
+            uri,
+            "This snapshot contains no " + report.file + ": that report was disabled, or " +
+              "nothing has been generated yet. Run snapshot_generate first."
+          );
+        }
         return { uri, mimeType: "text/markdown", text: ensureSingleRead(uri, text, REPORT_ADVICE) };
       }
 

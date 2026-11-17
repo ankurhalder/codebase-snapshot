@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.3 mcp
+npx -y codebase-snapshot@0.12.4 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.3", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.4", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.3 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.4 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -118,6 +118,11 @@ the CLI for the contract or the skill. It never returns a truncated document: ha
 does not parse, and half a part is a fragment that looks complete. The rule applies to every
 resource — `snapshot://manifest`, each `snapshot://parts/{index}`, the three reports,
 `snapshot://prompt`, `snapshot://contract` and `snapshot://skill`.
+
+A URI this build serves but this snapshot does not contain — `snapshot://prompt` when the prompt
+artifact was disabled, a report when that artifact was — is answered with `-32002` (resource not
+found) and a message naming the artifact and the cause. An unknown URI is still "Unknown resource":
+the two are different mistakes and a client should be able to tell them apart.
 
 Part resources carry their size in the description, so a client choosing between them can see that
 one is 300 kB before attaching it; a part above the limit says in its description that it will be

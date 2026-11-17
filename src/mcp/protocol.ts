@@ -97,6 +97,14 @@ export const ERROR_CODES = {
    */
   resourceTooLarge: -32000,
   /**
+   * A known resource that this snapshot does not contain.
+   *
+   * `-32002` is the MCP code for "resource not found". Answering `-32602` ("Unknown resource")
+   * for `snapshot://prompt` in a snapshot generated with `--skip-artifacts prompt` told the
+   * client its URI was wrong when the artifact had simply been left out.
+   */
+  resourceNotFound: -32002,
+  /**
    * The server is at its concurrency limit.
    *
    * Implementation-defined range, like `resourceTooLarge`. A typed error rather than silent

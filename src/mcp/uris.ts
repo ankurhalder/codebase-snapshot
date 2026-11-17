@@ -11,6 +11,7 @@ export const STATIC_RESOURCE_URIS: readonly string[] = [
   "snapshot://manifest",
   "snapshot://contract",
   "snapshot://skill",
+  "snapshot://prompt",
   "snapshot://reports/audit",
   "snapshot://reports/tree",
   "snapshot://reports/navigation",

@@ -134,3 +134,15 @@ test("mcp refuses a flag it does not apply", () => {
   }
   assert.ok(failed, "mcp --format must fail rather than start a server");
 });
+
+test("every static resource the contract publishes is served, in the same order", async () => {
+  const contract = describeContract();
+  const live = await liveSession();
+  // The parts are discovered from the manifest, so they are the one family the contract cannot
+  // list by URI. Everything else is fixed, and `describe` promising a resource the server does
+  // not serve (or missing one it does) is the contract lying about itself.
+  const served = live.resources
+    .map((resource) => resource.uri)
+    .filter((uri) => !uri.startsWith("snapshot://parts/"));
+  assert.deepEqual(served, contract.mcp.resources);
+});

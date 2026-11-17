@@ -295,3 +295,23 @@ test("the brief is a resource an MCP client can read", async (t) => {
   assert.match(read.text, /## The job/, "with the brief in it");
   assert.match(read.text, /## Coverage/, "including the duty section");
 });
+
+test("a known resource this snapshot does not contain says why", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+  // The artifact is disabled or the file is gone: either way the resource is known and absent.
+  fs.rmSync(path.join(root, "snapshot", "PROMPT.md"));
+
+  const provider = buildResourceProvider();
+  await assert.rejects(
+    () => provider.read("snapshot://prompt", context),
+    (error) => {
+      assert.equal(error.name, "ResourceNotFoundError");
+      assert.match(error.message, /prompt artifact was disabled/);
+      return true;
+    }
+  );
+  // An unknown URI is still an unknown URI.
+  assert.equal(await provider.read("snapshot://nope", context), null);
+});

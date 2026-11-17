@@ -25,7 +25,7 @@ import {
 import type { JsonObject, JsonRpcId, JsonRpcResponse } from "./protocol.js";
 import { classifyRequest, createSession, negotiateLegacyVersion } from "./era.js";
 import type { SessionState } from "./era.js";
-import { ResourceTooLargeError } from "./resources.js";
+import { ResourceNotFoundError, ResourceTooLargeError } from "./resources.js";
 import { applyDefaults, coerceNumericStrings, validateArguments } from "./schema.js";
 import type {
   McpPrompt,
@@ -231,6 +231,9 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       // A resource that exists but cannot be returned whole is an error the client can act on.
       // Truncating it instead would hand a model half a JSON document or half a part, which is
       // worse than a refusal because nothing downstream can tell the difference.
+      if (error instanceof ResourceNotFoundError) {
+        return errorResponse(id, ERROR_CODES.resourceNotFound, error.message, { uri: error.uri });
+      }
       if (error instanceof ResourceTooLargeError) {
         options.context.log(
           `mcp: refused ${error.uri} (${error.bytes} bytes, limit ${error.limit}); ` +
