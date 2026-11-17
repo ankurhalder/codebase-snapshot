@@ -30,6 +30,12 @@ const MAX_LARGEST_FILES = 3;
 /** `1 part` / `2 parts`, so a one-part snapshot does not read as machine output. */
 const partWord = (count: number): string => (count === 1 ? "part" : "parts");
 
+/** "`a`, `b` and `c`" — the list form the delivery sentences need. */
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+}
+
 /** `attachmentSlots: 0` means the destination imposes no file limit. */
 const UNLIMITED_SLOTS = 0;
 
@@ -65,6 +71,9 @@ export function generatePrompt(
   // A missing selection means "assume written", so the library call that predates it keeps
   // working and a caller that does not care about the selection still gets a full brief.
   const wrote = (name: keyof ResolvedArtifacts): boolean => artifacts?.[name] !== false;
+  // Whether `manifest.json` itself was written. The brief names that file as the place to check
+  // skips, the call graph and the validation state; with the artifact disabled it must not.
+  const sawManifest = wrote("manifest");
   const code = (value: string): string => inlineCode(escapeControls(value));
   // Owner prose, commit messages and the README summary are reproduced text: a NUL or a bidi
   // override in any of them reaches an artifact otherwise. The repo escapes them everywhere
@@ -97,15 +106,21 @@ export function generatePrompt(
   lines.push(...stakesSection(brief, code, text));
   lines.push(...haveSection(wrote), "");
   lines.push(...whatThisIsSection(overview, text), "");
-  lines.push(...systemSection(manifest, code, brief, text), "");
+  lines.push(...systemSection(manifest, code, brief, text, sawManifest), "");
   lines.push(...historySection(history, brief, code, text), "");
   lines.push(...barSection(brief, code, text), "");
-  lines.push(...coverageSection(manifest, code, wrote("audit"), wrote("parts")), "");
+  lines.push(...coverageSection(manifest, code, wrote("audit"), wrote("parts"), sawManifest), "");
   lines.push(...answerSection(), "");
   lines.push(...calibrationSection(brief, code, text), "");
   lines.push(...ownerNotesSection(brief, code, text));
   lines.push(...snapshotSection(manifest, code, wrote("parts")), "");
-  lines.push(...deliverySection(manifest, wrote("parts"), slots));
+  const accompanying: string[] = [];
+  if (wrote("manifest")) accompanying.push("`manifest.json`");
+  if (wrote("readme")) accompanying.push("`README.md`");
+  if (wrote("navigation")) accompanying.push("`reports/navigation.md`");
+  if (wrote("projectTree")) accompanying.push("`reports/project-tree.md`");
+  if (wrote("audit")) accompanying.push("`reports/audit.md`");
+  lines.push(...deliverySection(manifest, wrote("parts"), slots, accompanying));
 
   lines.push(
     "## Your task",
@@ -127,8 +142,12 @@ export function generatePrompt(
     "",
     "## Keeping it true",
     "",
-    "- It is one of the artifacts recorded in `manifest.json` under `artifacts.prompt`, so deleting",
-    "  or editing `PROMPT.md` makes `snapshot validate` fail.",
+    sawManifest
+      ? "- It is one of the artifacts recorded in `manifest.json` under `artifacts.prompt`, so deleting"
+      : "- It is one of the artifacts of this run, so a later check notices it changed — except that",
+    sawManifest
+      ? "  or editing `PROMPT.md` makes `snapshot validate` fail."
+      : "  `manifest.json` was not written in this run, so `validate` has nothing to check against.",
     "- `--skip-artifacts prompt`, or `artifacts: { prompt: false }` in the config, turns it off.",
     "- The history section disappears when git cannot be read, rather than being invented.",
     "- If the code moves, regenerate. A brief naming the previous run parts is worse than no",
@@ -198,7 +217,8 @@ function systemSection(
   manifest: Manifest,
   code: (value: string) => string,
   brief: OwnerBrief | undefined,
-  escape: (value: string) => string
+  escape: (value: string) => string,
+  sawManifest: boolean
 ): string[] {
   const out = ["## The system", ""];
   if (brief?.system !== undefined) {
@@ -239,7 +259,13 @@ function systemSection(
       ? "- Entry points by convention: " + entryPoints.map(code).join(", ") + "."
       : "- No entry point was identifiable by name. The largest files below are where execution"
   );
-  if (entryPoints.length === 0) out.push("  starts, and the call graph in `manifest.json` is the map.");
+  if (entryPoints.length === 0) {
+    out.push(
+      sawManifest
+        ? "  starts, and the call graph in `manifest.json` is the map."
+        : "  starts, and no manifest was written in this run, so the index is not here to read."
+    );
+  }
 
   const routes = manifest.indexes.routes.length;
   const handlers = manifest.indexes.handlers.length;
@@ -358,7 +384,8 @@ function coverageSection(
   manifest: Manifest,
   code: (value: string) => string,
   auditWritten: boolean,
-  partsWritten: boolean
+  partsWritten: boolean,
+  sawManifest: boolean
 ): string[] {
   const out = ["## Coverage", ""];
   const reasons = new Map<string, number>();
@@ -385,7 +412,9 @@ function coverageSection(
   out.push(
     "- " + counted,
     partsWritten
-      ? "  `manifest.skipped[]` names each one and why. An absent path is not a clean path."
+      ? sawManifest
+        ? "  `manifest.skipped[]` names each one and why. An absent path is not a clean path."
+        : "  No manifest was written in this run, so the per-path reasons are not in this snapshot."
       : "  The code itself is not in this snapshot: only the index and the reports were written."
   );
   out.push(...incompleteSection(manifest, code));
@@ -572,8 +601,7 @@ function snapshotSection(
       : "  The working tree was clean at generation time."
   );
   out.push(
-    "- Validation: `manifest.validation.status` was " + code(manifest.validation.status) +
-      " at generation time.",
+    "- Validation: the generation-time check was " + code(manifest.validation.status) + ".",
     "  That describes the run, not now: if the tree may have moved since, the snapshot is a",
     "  claim that needs re-checking, not a fact."
   );
@@ -669,11 +697,18 @@ function redactionSection(manifest: Manifest, auditWritten: boolean): string[] {
  * of that budget, so "attach the snapshot" can be advice that cannot be followed. This section
  * states what fits, what to leave behind, and what to do when the parts do not fit.
  */
-function deliverySection(manifest: Manifest, partsWritten: boolean, slots: number): string[] {
+function deliverySection(
+  manifest: Manifest,
+  partsWritten: boolean,
+  slots: number,
+  others: readonly string[]
+): string[] {
   if (!partsWritten || manifest.parts.length === 0) return [];
   const parts = manifest.parts.length;
-  // manifest.json, README.md, navigation, project-tree and audit: everything else a run writes.
-  const wholeSet = parts + 5;
+  // Every file besides the parts, named as it exists: a skipped artifact used to be counted and
+  // named anyway, which made the arithmetic promise a file the reader would never be given.
+  const wholeSet = parts + others.length;
+  const rest = others.length === 0 ? "and nothing else" : "plus " + joinNames(others);
   const unlimited = slots <= UNLIMITED_SLOTS;
   const out: string[] = ["## Attaching this", ""];
   out.push(
@@ -685,27 +720,26 @@ function deliverySection(manifest: Manifest, partsWritten: boolean, slots: numbe
   if (unlimited) {
     out.push(
       "- No attachment limit is configured, so every file can travel: " + parts + " " +
-        partWord(parts) + " plus `manifest.json`, `README.md` and the three reports (" +
-        wholeSet + " files)."
+        partWord(parts) + " " + rest + " (" + wholeSet + " files)."
     );
   } else if (wholeSet <= slots) {
     out.push(
       "- A " + slots + "-file destination carries the whole set: " + parts + " " +
-        partWord(parts) + " plus `manifest.json`, `README.md` and the three reports - " +
-        wholeSet + " of " + slots + "."
+        partWord(parts) + " " + rest + " - " + wholeSet + " of " + slots + "."
     );
   } else if (parts + 1 <= slots) {
     out.push(
       "- A " + slots + "-file destination carries " + parts + " " + partWord(parts) + " and",
-      "  `manifest.json` (" + (parts + 1) + " of " + slots + "); `README.md` and",
-      "  `reports/` stay behind - the brief above carries what they add."
+      "  " + (others[0] ?? "one more file") + " (" + (parts + 1) + " of " + slots + "); " +
+      (others.length > 1 ? joinNames(others.slice(1)) + " stay" : "the rest stays") +
+      " behind - the brief above carries what they add."
     );
   } else if (parts <= slots) {
     out.push(
       parts === 1
-        ? "- The only part fills a " + slots + "-file destination, so `manifest.json` and"
-        : "- The " + parts + " parts fill a " + slots + "-file destination, so `manifest.json` and",
-      "  `reports/` stay behind. The brief above carries what they add."
+        ? "- The only part fills a " + slots + "-file destination, so " + rest + " stay behind."
+        : "- The " + parts + " parts fill a " + slots + "-file destination, so " + rest + " stay",
+      "  behind. The brief above carries what they add."
     );
     if (parts > 1) {
       out.push(

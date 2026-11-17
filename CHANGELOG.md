@@ -26,6 +26,19 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.14
+
+- **A brief written without a manifest still pointed at one.** With `--skip-artifacts manifest`,
+  `PROMPT.md` sent the reader to `manifest.skipped[]` for per-path reasons, to "the call graph in
+  `manifest.json`" for entry points, and to `manifest.validation.status` for the check — none of
+  which existed. `README.md` did the same. Each sentence now says what the run actually wrote.
+- **The attachment arithmetic counted files that were not written.** "1 part plus `manifest.json`,
+  `README.md` and the three reports — 6 of 10" became 5 of 10 the moment the manifest was skipped,
+  and the list of accompanying files is built from what exists.
+
+Both are the same failure as 0.12.12/0.12.13: an artifact describing a run it was not given.
+
+Verified: 1 190 tests, 1 182 pass, 0 fail, 8 host skips; every gate clean at 0.12.14.
 ## 0.12.13
 
 - **`README.md` counted a part it had just said was not written.** With `--skip-artifacts parts`,

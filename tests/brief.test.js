@@ -441,3 +441,17 @@ test("a brief written without parts does not claim part files", (t) => {
   assert.match(readme, /\*\*Part Count:\*\* `0`/);
   assert.match(readme, /No parts were written/);
 });
+
+test("a brief written without a manifest does not point at one", (t) => {
+  const dir = makeRepo(t);
+  const result = cli(["generate", "--skip-artifacts", "manifest"], dir);
+  assert.equal(result.code, 0, result.out);
+  const prompt = promptOf(dir);
+  assert.match(prompt, /no manifest was written/i, "the brief says what is missing");
+  assert.doesNotMatch(prompt, /`manifest\.skipped\[\]` names each one/, "it does not send the reader to skipped[]");
+  assert.doesNotMatch(prompt, /call graph in `manifest\.json`/, "nor to the call graph");
+  assert.doesNotMatch(prompt, /Validation: `manifest\.validation/, "nor to a field it did not write");
+
+  const readme = fs.readFileSync(path.join(dir, "snapshot", "README.md"), "utf8");
+  assert.match(readme, /No manifest was written, so this snapshot cannot be re-checked/);
+});

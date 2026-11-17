@@ -118,8 +118,12 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
       `${readOrder.length + 1}. Inspect \`manifest.json\` for precise dependency and AST symbol maps.`
     );
   }
+  // Without a manifest there is nothing to check and nothing that can check it: pointing the
+  // reader at a field in a file the run did not write is the same lie as a part count.
   readOrder.push(
-    `${readOrder.length + 1}. Check \`manifest.validation.status\` before trusting the snapshot; \`snapshot validate\` re-checks it against disk.`
+    wrote("manifest")
+      ? `${readOrder.length + 1}. Check \`manifest.validation.status\` before trusting the snapshot; \`snapshot validate\` re-checks it against disk.`
+      : `${readOrder.length + 1}. No manifest was written, so this snapshot cannot be re-checked; regenerate with the manifest artifact enabled before trusting it.`
   );
 
   lines.push("", "## AI Agent Ingestion Guide", "", ...readOrder, "");
