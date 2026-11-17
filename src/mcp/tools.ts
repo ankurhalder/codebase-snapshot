@@ -1492,7 +1492,9 @@ const generateTool: McpTool = {
     // seconds on a large repository, and a client with a socket timeout then reports a working
     // tool call as a dead server.
     context.notify?.({ message: "generating", progress: 1, total: 2 });
-    const result = await generateInWorker(workspace.root, workspace.cliOptions);
+    const controller = new AbortController();
+    context.onCancel?.(() => controller.abort());
+    const result = await generateInWorker(workspace.root, workspace.cliOptions, { signal: controller.signal });
     if (!result.ok) return failure(result.message);
     context.notify?.({ message: "writing the snapshot", progress: 2, total: 2 });
     const summary = result.summary;

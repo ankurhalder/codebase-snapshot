@@ -86,11 +86,24 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   const ok = (id: JsonRpcId | null, result: JsonObject, modern: boolean): JsonRpcResponse =>
     successResponse(id, result, modern, options.info);
 
-  function handleNotification(method: string): void {
-    // `notifications/initialized` and `notifications/cancelled` are the only ones we expect, and
-    // neither changes what we send: the first confirms a handshake we already completed, the
-    // second asks us to abandon a request we answer synchronously.
+  /** Cancellations registered by the running call, keyed by the request id a client quotes. */
+  const cancellations = new Map<JsonRpcId, () => void>();
+
+  function handleNotification(method: string, params: JsonObject | undefined): void {
+    // `notifications/initialized` and `notifications/cancelled` are the only ones we expect. The
+    // first confirms a handshake; the second is a request to stop, and it now reaches a tool that
+    // asked to be told (a generate terminates its worker instead of running to completion).
     if (method === METHOD.initialized && session.era === "legacy") session.ready = true;
+    if (method === "notifications/cancelled") {
+      const requestId = params?.requestId;
+      if (typeof requestId === "string" || typeof requestId === "number") {
+        const cancel = cancellations.get(requestId);
+        if (cancel !== undefined) {
+          cancellations.delete(requestId);
+          cancel();
+        }
+      }
+    }
   }
 
   function initialize(id: JsonRpcId, params: JsonObject | undefined): JsonRpcResponse {
@@ -194,12 +207,16 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       isJsonObject(meta) && (typeof meta.progressToken === "string" || typeof meta.progressToken === "number")
         ? meta.progressToken
         : undefined;
-    const callContext: ToolContext =
-      progressToken === undefined || options.notify === undefined
-        ? options.context
+    const callContext: ToolContext = {
+      ...options.context,
+      // Always offered, so a long tool can be stopped whether or not the client asked for progress.
+      onCancel: (cancel) => {
+        cancellations.set(id, cancel);
+      },
+      ...(progressToken === undefined || options.notify === undefined
+        ? {}
         : {
-            ...options.context,
-            notify: (event) => {
+            notify: (event: { message: string; progress?: number; total?: number }) => {
               const progress: JsonObject = {
                 progressToken,
                 progress: event.progress ?? 0,
@@ -208,7 +225,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
               };
               options.notify?.({ jsonrpc: "2.0", method: "notifications/progress", params: progress });
             },
-          };
+          }),
+    };
     let outcome: ToolOutcome;
     try {
       outcome = await tool.handler(args, callContext);
@@ -220,6 +238,9 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         { content: [{ type: "text", text: `${tool.name} failed: ${detail}` }], isError: true },
         modern
       );
+    } finally {
+      // A cancelled call leaves nothing behind for a later cancellation to reach.
+      cancellations.delete(id);
     }
 
     return ok(
@@ -414,7 +435,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         session.era = decision.era;
         session.protocolVersion = decision.version;
       }
-      handleNotification(method);
+      handleNotification(method, named);
       return null;
     }
 

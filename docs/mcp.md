@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.49 mcp
+npx -y codebase-snapshot@0.12.50 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.49", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.50", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.49 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.50 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.49 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.50 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -215,10 +215,11 @@ a long call runs — `snapshot_generate` reports "generating" and "writing the s
 2-step total. The notifications are coarse by design: the worker that does the generation posts a
 summary, not a stream of phases, and inventing finer numbers would be a progress bar that lies.
 
-`notifications/cancelled` is accepted and ignored: there is no cancellation signal inside a
-generate, and the worker is not killed on request. A client should treat a call as running until
-it answers. This is a stated limitation, not an accident; progress notifications are what makes the
-wait visible in the meantime.
+`notifications/cancelled` now stops the work that can be stopped. `snapshot_generate` terminates
+its worker and answers with "The generation was cancelled."; the partially written directory is
+removed by the generator's own staging rules, so a cancelled run leaves no snapshot claiming to be
+complete. Other tools finish before they can notice — they are bounded and fast — and the response
+says what happened rather than pretending the call never ran.
 
 ## What it will not do
 

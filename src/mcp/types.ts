@@ -23,6 +23,13 @@ export interface ToolContext {
    * gives a long run a heartbeat instead of a silent pause.
    */
   notify?: (event: { message: string; progress?: number; total?: number }) => void;
+  /**
+   * Registers a callback the server runs when the client cancels this call.
+   *
+   * A tool that can stop early (a generate terminates its worker) calls this once with the function
+   * that stops it. A tool that cannot stops nothing, and the server simply runs it to completion.
+   */
+  onCancel?: (cancel: () => void) => void;
 }
 
 /**

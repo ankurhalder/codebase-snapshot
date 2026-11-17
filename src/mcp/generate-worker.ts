@@ -150,7 +150,7 @@ const { parentPort, workerData } = require("node:worker_threads");
 export function generateInWorker(
   cwd: string,
   cliOptions: WorkspaceCliOptions,
-  options: { dryRun?: boolean } = {}
+  options: { dryRun?: boolean; signal?: AbortSignal } = {}
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
     let settled = false;
@@ -186,6 +186,20 @@ export function generateInWorker(
         }`,
       });
       return;
+    }
+
+    // A cancelled request terminates the worker rather than waiting: the call it was answering has
+    // already been abandoned, and a generation that keeps writing after that is work nobody asked for.
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) {
+        finish({ ok: false, message: "The generation was cancelled." });
+        return;
+      }
+      options.signal.addEventListener(
+        "abort",
+        () => finish({ ok: false, message: "The generation was cancelled." }),
+        { once: true }
+      );
     }
 
     worker.on("message", (message: WorkerResults) => finish(message));

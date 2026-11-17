@@ -26,6 +26,25 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.50
+
+**Cancellation reaches the tool.**
+
+- `notifications/cancelled` with a `requestId` now runs a callback the running call registered.
+  `snapshot_generate` terminates its worker and answers "The generation was cancelled."; the
+  staging rules remove what was half-written, so no snapshot claims to be complete.
+- Every tool is offered the hook; the ones that are bounded simply finish before they could notice.
+  The response says the call was cancelled rather than pretending it never ran.
+- The docs no longer claim cancellation is ignored.
+
+Verified: a stub tool registers its callback, the notification reaches it, and the call resolves with
+the cancelled result; the existing progress tests still pass.
+
+## 0.12.49
+
+- The goal log records the 0.12.15-0.12.48 stretch: what shipped, the verify totals, and the work
+  still open for the next rounds. Documentation only.
+
 ## 0.12.48
 
 - **The brief names the opt-in reports this run wrote.** `PROMPT.md` has one list of "what else you
