@@ -26,6 +26,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.47
+
+- **`snapshot_plan_for` includes the callers of its strongest matches.** Dependencies alone answer
+  "what does this use"; a reader editing a function also needs "what uses this". Up to four callers
+  of the top three files are pulled in with `why: "imports <path>"`, still inside the budget.
+- The planner now resolves `.js` specifiers to their `.ts`/`.tsx` files and extension-less
+  specifiers, so a TypeScript repository's caller edges are found rather than looking empty.
+
+Verified: a question matching `getUser` plans `src/user.ts` and its caller `src/auth.ts`, with the
+caller's reason naming the dependency.
 ## 0.12.46
 
 **Four graph tools: 21 in total.**

@@ -326,3 +326,14 @@ test("entry points list manifests first", async (t) => {
   assert.ok(result.structured.entries.length > 0);
   assert.equal(result.structured.entries[0].manifest, true, "the manifest sorts first");
 });
+
+test("a plan includes the callers of its strongest match", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const result = await plan(root, { question: "getUser", maxTokens: 8000 });
+  const paths = result.structured.files.map((file) => file.path);
+  assert.ok(paths.includes("src/user.ts"), "the match is there: " + paths.join(","));
+  const auth = result.structured.files.find((file) => file.path === "src/auth.ts");
+  assert.ok(auth, "the caller is pulled in: " + paths.join(","));
+  assert.match(auth.why, /imports src\/user\.ts/);
+});

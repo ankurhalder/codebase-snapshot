@@ -86,8 +86,19 @@ function resolveImport(from: string, specifier: string, byPath: Map<string, File
     else parts.push(segment);
   }
   const path = parts.join("/");
+  // A TypeScript repository writes "./user.js" and means "./user.ts"; extension-less specifiers
+  // are common too. Both are tried before giving up, or the caller side of the graph is empty.
+  const withoutExtension = path.replace(/\.[cm]?[jt]sx?$/, "");
   const candidates = [
     path,
+    withoutExtension + ".ts",
+    withoutExtension + ".tsx",
+    withoutExtension + ".js",
+    withoutExtension + ".jsx",
+    withoutExtension + ".py",
+    withoutExtension + ".go",
+    withoutExtension + ".rs",
+    withoutExtension + "/index.ts",
     path + ".ts",
     path + ".tsx",
     path + ".js",
@@ -254,6 +265,26 @@ export function planForQuestion(
         if (!take(target, "imported by " + seed.path, "head")) {
           skipped.push({ path: target.relativePath, reason: "does not fit the remaining budget" });
         }
+      }
+    }
+  }
+
+  // Then the callers of the strongest matches: "who uses this" is the other half of "what does
+  // this use", and a plan that answers only the first half sends the reader to edit a function
+  // without knowing what depends on it. Two per seed, capped, so the section cannot crowd out
+  // the answer.
+  let callerBudget = 4;
+  for (const seed of [...chosen.values()].slice(0, 3)) {
+    for (const caller of importers.get(seed.path) ?? []) {
+      if (callerBudget <= 0) break;
+      if (chosen.has(caller)) continue;
+      const file = byPath.get(caller);
+      if (file === undefined) continue;
+      if (isTest(file) && !wantsTests) continue;
+      if (take(file, "imports " + seed.path, "full")) {
+        callerBudget -= 1;
+      } else if (take(file, "imports " + seed.path, "head")) {
+        callerBudget -= 1;
       }
     }
   }
