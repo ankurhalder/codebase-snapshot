@@ -26,6 +26,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.38
+
+**`--workspace a,b`: several repositories, one deliverable.**
+
+- One snapshot per member under `<outDir>/<name>`, plus `WORKSPACE.json` listing each member's
+  fingerprint, file count, part count and token estimate. Each member directory is a normal
+  snapshot: `health`, `validate` and the MCP server work on it.
+- Members are generated on the defaults: a member may contain a config that runs code, and a
+  workspace is a set of repositories the caller named, not one they configured.
+- A missing member is named and the run exits 1 **after** writing the members that succeeded, so a
+  partial workspace is never mistaken for a complete one.
+- Refused with `--remote`, `--delta`, `--slice`, `--budget-tokens` and `--sign`: those narrow or sign
+  one snapshot.
+
+Verified: two members produce two manifests and two records; a missing member exits 1 with the good
+member written; the combination refusal names the conflicting flags.
 ## 0.12.37
 
 - **A migration guide** for 0.12.14 → 0.17.0: every new command, `generate` flag and config key with

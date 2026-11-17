@@ -178,6 +178,7 @@ export const CLI_OPTIONS = {
   pack: { type: "string" },
   sign: { type: "boolean" },
   "budget-tokens": { type: "string" },
+  workspace: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -238,6 +239,7 @@ Options:
   --delta <path>                Only what changed since this snapshot (plus its importers)
   --sign                        Sign manifest.json (ed25519; SNAPSHOT_SIGNING_KEY or a fresh key)
   --budget-tokens <n>           Fit the snapshot into n tokens, highest value per token first
+  --workspace <a,b>             One snapshot per member, plus WORKSPACE.json
   --pack <single|xml|json>      Also write one full-repository file in that shape
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
@@ -409,6 +411,8 @@ interface ParsedInvocation {
   sign?: boolean;
   /** `--budget-tokens`: fit the snapshot into this token budget. */
   budgetTokens?: number;
+  /** `--workspace`: comma-separated members, one snapshot each plus WORKSPACE.json. */
+  workspace?: string;
 }
 
 export function parsePositiveInteger(
@@ -872,6 +876,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
         : parsePositiveInteger(values["include-logs"] as string, "include-logs", 1),
     tokenTree: values["token-tree"] === true ? true : undefined,
     sign: values.sign === true ? true : undefined,
+    workspace: values.workspace === undefined ? undefined : String(values.workspace),
     budgetTokens:
       values["budget-tokens"] === undefined
         ? undefined
@@ -2093,6 +2098,77 @@ async function runCommand(argv: string[]): Promise<number> {
   if (invocation.watch) {
     const problem = watchSupportProblem();
     if (problem !== null) return fail(invocation.format, problem);
+  }
+
+  if (invocation.workspace !== undefined) {
+    const members = invocation.workspace
+      .split(",")
+      .map((member) => member.trim())
+      .filter((member) => member.length > 0);
+    if (members.length === 0) return fail(invocation.format, "--workspace needs at least one path.");
+    if (
+      invocation.remote !== undefined ||
+      invocation.delta !== undefined ||
+      invocation.slice !== undefined ||
+      invocation.budgetTokens !== undefined ||
+      invocation.sign === true
+    ) {
+      return fail(
+        invocation.format,
+        "--workspace writes one snapshot per member; --remote, --delta, --slice, --budget-tokens and --sign do not combine with it."
+      );
+    }
+    const outRoot = path.resolve(invocation.cwd, invocation.outDir ?? "snapshot");
+    const records: Array<{ name: string; path: string; fingerprint: string; files: number; parts: number; tokens: number }> = [];
+    let failed = 0;
+    for (const member of members) {
+      const directory = path.resolve(invocation.cwd, member);
+      const name = path.basename(directory);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(directory);
+      } catch {
+        warn("⚠ Workspace member missing: " + member);
+        failed += 1;
+        continue;
+      }
+      if (!stat.isDirectory()) {
+        warn("⚠ Workspace member is not a directory: " + member);
+        failed += 1;
+        continue;
+      }
+      try {
+        // Each member is generated on the defaults: a member may contain a config that runs code,
+        // and a workspace is a set of repositories the caller named, not one they configured.
+        const manifest = generateSnapshot({ cwd: directory, outDir: path.join(outRoot, name) });
+        records.push({
+          name,
+          path: directory,
+          fingerprint: manifest.fingerprint,
+          files: manifest.counts.totalFiles,
+          parts: manifest.counts.partsCount,
+          tokens: manifest.totals.estimatedTokens ?? 0,
+        });
+        info("   " + name + ": " + manifest.counts.totalFiles + " files, " + manifest.counts.partsCount + " part(s)");
+      } catch (error) {
+        warn("⚠ " + name + ": " + (error as Error).message);
+        failed += 1;
+      }
+    }
+    fs.mkdirSync(outRoot, { recursive: true });
+    const document = {
+      generatedAt: new Date().toISOString(),
+      generator: GENERATOR_VERSION,
+      members: records,
+    };
+    fs.writeFileSync(path.join(outRoot, "WORKSPACE.json"), JSON.stringify(document, null, 2) + "\n", "utf8");
+    emit(invocation.format, document, () => {
+      info("\n🗂 Workspace: " + records.length + " of " + members.length + " member(s) written under " + outRoot);
+      for (const record of records) {
+        info("   - " + record.name + " (" + record.fingerprint.slice(0, 12) + ")");
+      }
+    });
+    return failed === 0 ? 0 : 1;
   }
 
   const started = performance.now();

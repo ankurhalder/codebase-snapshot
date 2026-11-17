@@ -145,6 +145,9 @@ const DESCRIPTIONS = {
   benchmarks:
     "Reproducible token and time numbers for the full snapshot, a task slice and a token " +
     "budget, on this repository, with the script that produced them.",
+  workspace:
+    "One snapshot per member of a monorepo, plus WORKSPACE.json: real paths, local budgets, " +
+    "and a failure that is reported instead of skipped.",
   migration:
     "What changed from 0.12.14 to 0.17.0: every new command, flag, config key and MCP tool, " +
     "the two behaviour changes, and how to upgrade.",

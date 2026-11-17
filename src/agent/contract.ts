@@ -642,6 +642,17 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--workspace",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("workspace"),
+        summary:
+          "generate: write one snapshot per comma-separated member directory under <outDir>/<name>, " +
+          "on the defaults (a member config is not loaded), plus WORKSPACE.json listing each " +
+          "member fingerprint, file count, part count and token estimate. Exits 1 if any member " +
+          "failed, after writing the ones that succeeded.",
+      },
+      {
         flag: "--budget-tokens",
         type: "string",
         default: "unset",
