@@ -437,3 +437,18 @@ test("snapshot_workspace reads the index a workspace run wrote", async (t) => {
   assert.equal(missing.isError, true);
   assert.match(missing.text, /--workspace/);
 });
+
+test("review names the route methods a change touches", async (t) => {
+  const root = makeFixture(t);
+  fs.mkdirSync(path.join(root, "src", "users"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "src", "users", "route.ts"),
+    "async function handler() {}\nexport { handler as GET, handler as POST };\n"
+  );
+  await call("snapshot_generate", {}, contextFor(root));
+  const result = await call("snapshot_review", { paths: ["src/users/route.ts"] }, contextFor(root));
+  assert.equal(result.isError, undefined, result.text);
+  assert.equal(result.structured.routes.length, 1);
+  assert.deepEqual(result.structured.routes[0].methods, ["GET", "POST"]);
+  assert.match(result.text, /Routes touched: GET\/POST src\/users\/route\.ts/);
+});

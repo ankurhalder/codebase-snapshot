@@ -30,6 +30,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.68
+
+- **`snapshot_review` names the route methods a change touches.** A review of `route.ts` that says
+  only "3 files, 120 lines" hides the fact that a `GET` and a `POST` changed shape. The summary
+  already recorded the methods; the review now prints them and returns them as `routes`.
+
+Verified: a file exporting `handler as GET, handler as POST` is reviewed with
+`Routes touched: GET/POST src/users/route.ts`.
 ## 0.12.67
 
 - **`snapshot_workspace` joins the server: 22 tools.** It reads `WORKSPACE.json` and answers which

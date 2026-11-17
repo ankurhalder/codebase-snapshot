@@ -761,6 +761,7 @@ const reviewTool: ToolSpec = {
       score: { type: "integer" },
       failed: { type: "array", items: { type: "string" } },
       files: { type: "array", items: { type: "object" } },
+      routes: { type: "array", items: { type: "object" } },
       missing: { type: "array", items: { type: "string" } },
     },
   },
@@ -816,15 +817,29 @@ const reviewTool: ToolSpec = {
       body.push("### " + file.relativePath + " (" + file.part + ")", window.text);
     }
 
+    // A route method is the shape of the change a reviewer most needs to see, and the summary
+    // already recorded it. Naming it here saves opening the file to find out.
+    const routes: Array<{ path: string; methods: string[] }> = [];
+    for (const file of files) {
+      const entry = byPath.get(file.path.toLowerCase());
+      const summaryOfFile = entry?.summary as { routeHandlers?: unknown } | undefined;
+      if (summaryOfFile === undefined || !Array.isArray(summaryOfFile.routeHandlers)) continue;
+      const methods = summaryOfFile.routeHandlers as string[];
+      if (methods.length > 0) routes.push({ path: file.path, methods });
+    }
+
     const summary = [
       validation.valid ? "Snapshot: current." : "Snapshot: stale; run snapshot_generate before trusting it.",
       "Health: " + report.score + "/100 (" + report.counts.pass + " passed, " + report.counts.warn + " warning(s), " + report.counts.fail + " failed).",
       ...failed.map((item) => "FAIL " + item),
     ];
     if (missing.length > 0) summary.push("Not in the snapshot: " + missing.join(", "));
+    if (routes.length > 0) {
+      summary.push("Routes touched: " + routes.map((route) => route.methods.join("/") + " " + route.path).join("; "));
+    }
     return {
       text: summary.join("\n") + (body.length === 0 ? "" : "\n\n" + body.join("\n\n")),
-      structured: { current: validation.valid, score: report.score, failed, files, missing },
+      structured: { current: validation.valid, score: report.score, failed, files, missing, routes },
     };
   },
 };
