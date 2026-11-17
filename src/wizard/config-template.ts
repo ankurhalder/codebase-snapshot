@@ -33,6 +33,7 @@ export const DEFAULT_ANSWERS: WizardAnswers = {
   excludePatterns: [],
   artifacts: {
     readme: true,
+    prompt: true,
     manifest: true,
     parts: true,
     navigation: true,
@@ -182,6 +183,7 @@ export function renderConfig(answers: WizardAnswers): string {
   // ── Artifacts ──────────────────────────────────────────────────────────
   artifacts: {
     readme: ${artifacts.readme},        // README.md
+    prompt: ${artifacts.prompt},        // PROMPT.md — the instruction sheet a model is given
     manifest: ${artifacts.manifest},      // manifest.json — required by validate and report
     parts: ${artifacts.parts},         // parts/part-XXX.md
     navigation: ${artifacts.navigation},    // reports/navigation.md
@@ -197,6 +199,11 @@ export function renderConfig(answers: WizardAnswers): string {
   includeMonolith: ${artifacts.monolith},
 
   // ── Advanced ───────────────────────────────────────────────────────────
+  // Files your destination accepts in one message, used by PROMPT.md to plan the delivery.
+  // attachmentSlots: 10,
+  // Experimental: grow the per-part budget until the snapshot fits this many parts, instead of
+  // adding a part as the code grows. The plan in PROMPT.md becomes a fixed-length attachment list.
+  // maxParts: 10,
   // afterGenerate: (manifest) => { /* write your own artifact */ }
   hooks: {},
 };

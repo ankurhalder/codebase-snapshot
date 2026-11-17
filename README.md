@@ -116,6 +116,7 @@ as `manifest.fingerprint`.
 ```
 snapshot/
 ├── README.md                  human summary of this snapshot
+├── PROMPT.md                  the instruction sheet to paste with it
 ├── manifest.json              machine index: files, parts, hashes, config, skips
 ├── parts/part-001.md …        the code, grouped and size-budgeted
 └── reports/
@@ -145,6 +146,13 @@ contain.
 - **The output directory is the tool's.** Each run is written to a scratch directory and swapped in
   atomically, and it refuses to replace a directory it did not create — `--out-dir src` cannot
   destroy source code.
+- **The brief travels with the payload.** `PROMPT.md` is a brief, not a packing slip: the job,
+  the system map the manifest can prove (layers, load-bearing modules, entry points, indexed
+  surfaces), the recent commit history as claims to verify rather than rediscover, the evidence bar,
+  the coverage owed, and calibration examples. Then the apparatus — this run's parts, partial files
+  with their missing line ranges, fingerprint, and the attachment arithmetic. A prompt that names
+  the wrong snapshot is a lie that reads as current, so it is an artifact with a recorded digest and
+  `validate` fails when it is edited.
 - **Credential files are excluded by default** — `.env`, `*.pem`, `.npmrc`, `id_rsa`, `*.tfstate`
   and more — and secret-shaped strings inside ordinary files are redacted by masking only the
   matched span, never the whole line.
@@ -201,7 +209,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.10.2 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.11.0 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered

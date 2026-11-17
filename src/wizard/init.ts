@@ -609,6 +609,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
 
     const artifactChoices: Array<Choice<keyof ArtifactSelection>> = [
       { value: "readme", label: "README.md", hint: "orientation page" },
+      { value: "prompt", label: "PROMPT.md", hint: "instruction sheet for the model" },
       { value: "manifest", label: "manifest.json", hint: "required by validate and report" },
       { value: "parts", label: "parts/", hint: "the code payload" },
       { value: "navigation", label: "reports/navigation.md", hint: "file → part index" },

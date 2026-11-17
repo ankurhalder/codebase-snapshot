@@ -70,17 +70,36 @@ A file is never cut down to make a part fit. A file above `largeFileBytes` — w
 budget — becomes a head/tail excerpt with an explicit marker, and `manifest.json` lists it in
 `incomplete[]` with the line ranges it lost.
 
+### 2b. Count the attachment slots, not just the bytes
+
+Hosted chats take a fixed number of files per message — 10 is the common cap — and every part is
+one file. A 12-part snapshot cannot be delivered to a 10-file chat at all, and no amount of
+compression changes that: the payload is twelve files.
+
+Three things follow:
+
+- **Instructions are text, not a file.** Paste `PROMPT.md` into the message and attach only code.
+  A prompt that costs a slot is a part you do not get.
+- **Parts before reports.** When the parts leave no room, skip `manifest.json` and `reports/`:
+  `PROMPT.md` already names the parts, the counts and the omissions.
+- **Fewer parts, or fewer files.** Raise `maxPartBytes` to merge the parts into fewer, larger
+  files, or narrow the scope with `--include` and `excludePatterns` so the code that matters fits.
+
+`PROMPT.md` does this arithmetic for the snapshot you have: how many parts fit, which to leave out
+when they do not, and the `--max-part-bytes` value that would fit the whole repository.
+
 ### 3. Tell the model what it is looking at
 
-The snapshot is self-describing, and saying so up front measurably improves answers:
+`generate` writes `snapshot/PROMPT.md` for exactly this. Paste it before the parts.
 
-> The context below is a generated snapshot of a repository. `manifest.json` lists every included
-> file with its language, part and hash, and every excluded file with the reason. Reads start with
-> `parts/part-001.md`. If something you need is missing, ask me to check `explain <path>` rather than
-> assuming it does not exist.
+It is rendered from the manifest rather than written once, so it is about *this* snapshot: the
+parts by name, every file that is only partly present with the line ranges it lost, the skip
+reasons with counts, the fingerprint to quote back, and the commit it was taken from. Regenerate
+the snapshot and those numbers move with the code.
 
-That last sentence matters more than it looks: models fill gaps by invention, and telling them the
-gap is documented turns a hallucination into a question.
+The sentence it exists to say is the one models otherwise fill by invention — *a file may be
+missing, and the reason is recorded, so ask instead of assuming*. That is what turns a
+hallucination into a question you can answer with `explain <path>`.
 
 ### 4. Include the index, always
 
@@ -98,10 +117,22 @@ npm run snapshot:validate || npm run snapshot
 changed budget, layer rule or secret pattern is drift, not silence — so the check catches both code
 changes and configuration changes.
 
-## The prompt, ready to paste
+## The prompt
 
 Everything above is about producing the snapshot. This is the other half: what to say to the model
-that receives it. Put this before the artefacts and replace the task section with your question.
+that receives it.
+
+You do not have to write it. `snapshot/PROMPT.md` is the prompt, and being generated is what makes
+it worth pasting: it describes the snapshot you are actually sending. It is a brief, not a packing
+slip — the job, the system map the manifest can prove (layers, the modules with the most
+importers, entry points, which surfaces were indexed), the last ten commit subjects as claims to
+verify rather than rediscover, the evidence bar, the coverage owed, and calibration examples of
+the defects that do not crash. Then the per-run apparatus: fingerprint, part inventory, partial
+files, skip tallies and the attachment arithmetic.
+
+If you are assembling the message by hand instead — a chat window that takes one file at a time, a
+wrapper that cannot include a directory — this is the minimum that keeps the properties. Replace
+the task section with your question.
 
 ```text
 You are working on a codebase you cannot clone, run or grep. What you have is a generated snapshot of

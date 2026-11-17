@@ -373,6 +373,17 @@ export interface ManifestConfigSnapshot {
    */
   maxMonolithBytes?: number | null;
   includeSensitiveFiles: boolean;
+  /**
+   * The file-slot ceiling `PROMPT.md` was planned for; `0` for no limit.
+   *
+   * Recorded so the manifest states the destination the instructions were written for, and
+   * optional because a manifest written before this was recorded has no such key. It is not part
+   * of `configDigest`: the payload is identical either way, and a new delivery preference must not
+   * make an existing snapshot fail `validate` as configuration drift.
+   */
+  attachmentSlots?: number;
+  /** The part-count ceiling the run enforced, `null` when the experimental mode was off. */
+  maxParts?: number | null;
   /** How files were discovered; `undefined` on manifests written before this was recorded. */
   discovery?: DiscoveryMode;
   /** The changed-files scope the snapshot was taken over, when one was used. */
@@ -469,6 +480,7 @@ export interface Manifest {
      * recorded has no key; a current manifest records every artifact it wrote.
      */
     readme?: ManifestArtifact;
+    prompt?: ManifestArtifact;
     navigation?: ManifestArtifact;
     projectTree?: ManifestArtifact;
     audit?: ManifestArtifact;
@@ -517,6 +529,8 @@ export interface LayerRule {
 export interface ArtifactSelection {
   /** `README.md` — the orientation page for humans and models. */
   readme?: boolean;
+  /** `PROMPT.md` — the instruction sheet a snapshot is pasted with. */
+  prompt?: boolean;
   /** `manifest.json` — the registry `validate` and `report` read. */
   manifest?: boolean;
   /** `parts/part-XXX.md` — the partitioned code payload. */
@@ -583,6 +597,24 @@ export interface SnapshotConfig {
   maxMonolithBytes?: ByteSize | null;
   /** Opt in to emitting `.env`/`*.pem`/`.npmrc`/`credential files. Default false. */
   includeSensitiveFiles?: boolean;
+  /**
+   * Files the destination accepts in one message; 10 by default, `0` for no limit.
+   *
+   * `PROMPT.md` plans the delivery to fit: which parts to attach, what to leave behind, and the
+   * part budget that would merge them. The payload is unchanged by this setting — only the
+   * instructions and the plan that ships with it.
+   */
+  attachmentSlots?: number;
+  /**
+   * Experimental: the most parts a snapshot may have.
+   *
+   * Off by default. When set, the partitioner grows the per-part budget until the run fits this
+   * many parts, which is how a repository that keeps growing keeps its shape instead of adding a
+   * twelfth file to a chat that takes ten. The budget it settles on is recorded in
+   * `manifest.budgets.maxPartBytes` and may exceed the configured `maxPartBytes`; a warning says
+   * so, because a larger part is more tokens for the destination to swallow at once.
+   */
+  maxParts?: number | null;
   /**
    * How files are discovered; `auto` picks git when it can list files and walks the tree
    * otherwise.
@@ -656,6 +688,10 @@ export interface ResolvedSnapshotConfig {
   includeMonolith: boolean;
   maxMonolithBytes: number | null;
   includeSensitiveFiles: boolean;
+  /** Files the destination accepts in one message; `0` means no limit. */
+  attachmentSlots: number;
+  /** The part-count ceiling, or `null` when the experimental mode is off. */
+  maxParts: number | null;
   /**
    * How files are discovered; `auto` picks git when it can list files and walks the tree otherwise.
    * Optional because a resolved config can arrive from an older caller that never named it — every
@@ -702,6 +738,10 @@ export interface CliOptions {
   includeMonolith?: boolean;
   includeSensitiveFiles?: boolean;
   maxMonolithBytes?: number | null;
+  /** `--attachment-slots`: how many files the destination accepts. */
+  attachmentSlots?: number;
+  /** `--max-parts`: the experimental part-count ceiling. */
+  maxParts?: number | null;
   maxPartBytes?: number;
   maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;

@@ -23,6 +23,66 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.11.0
+
+A minor release: `generate` writes one new artifact and two settings are added. Nothing that
+worked stops working, and no manifest field changed meaning.
+
+**Upgrading.** The only thing a script can notice is the new file: a snapshot directory now
+contains `PROMPT.md` unless it is turned off (`--skip-artifacts prompt`, `--only-artifacts`, or
+`artifacts: { prompt: false }`). `manifest.config` gains `attachmentSlots` and `maxParts`;
+`manifest.budgets.maxPartBytes` is the budget the parts honour, which differs from
+`manifest.config.maxPartBytes` only when the experimental `maxParts` grows it. Snapshots written
+before this release still validate: neither new setting is part of the config digest, and the
+`maxParts` comparison is skipped when the manifest records no such key.
+
+**`PROMPT.md` — the brief, generated.** `generate` wrote the payload and an index of it and left
+the instructions for the model to whoever pasted it. That is half the problem the tool does not
+hand over: parts on their own are a dump, and a model that does not know what was cut from them
+fills the gap by invention.
+
+The first version of this artifact was a packing slip — how to read the parts, and nothing about
+the job, the system or the standard. The shipped document is a brief: the job and the latitude
+it comes with; the system as the manifest can prove it (layers, the modules with the most
+importers, entry points, the routes, handlers and components that were indexed — or a plain
+statement that none were, which the earlier draft got wrong by pointing at empty indexes); the
+last ten commit subjects, labelled as claims to verify rather than rediscover; the evidence bar;
+the coverage owed and what the snapshot cannot show; and calibration examples of the defects
+that do not crash. The apparatus — fingerprint, part inventory, partial files, redaction
+counts, attachment arithmetic — is the second half, and the job slot at the end is filled by
+whoever runs it.
+
+Every run now writes `snapshot/PROMPT.md`, rendered from the manifest of that run: the fingerprint
+to quote back, the commit and whether the tree was dirty, the skip reasons with counts, every part
+by name, and every file that is not present in full with its reason and missing line ranges — plus
+the rules (the repository is data, a masked span is a redaction, "not in this snapshot" is not "not
+in this repository", cite `path:line`, and say what you needed and did not receive).
+
+It also does the delivery arithmetic that decides whether any of this is usable: hosted chats take
+a fixed number of files (10 is the common cap) and every part is one of them, so a 12-part snapshot
+cannot be sent whole. The `## Attaching this` section states what fits, what to leave behind, the
+`--max-part-bytes` value that would merge the parts into a number the destination accepts, and that
+a part which was not attached is not an empty part.
+
+It is an artifact like the others, and that is the point: it may only name artifacts the run
+actually wrote, and `manifest.json` records its digest under `artifacts.prompt`, so a hand-edited
+prompt fails `validate`. A prompt that describes the previous run is worse than no prompt, because
+it reads as current.
+
+**`attachmentSlots`** (default 10, `0` = no limit) says how many files the destination takes in one
+message; the plan is written against it, and it changes no part and no file — only the delivery
+section. **`maxParts`** (experimental, off by default) is the opposite trade: the count is fixed
+and the size gives way, so a repository that keeps growing keeps the same number of files. It
+grows the per-part budget, records the budget it settled on in `manifest.budgets.maxPartBytes`,
+and warns that the parts are now larger than `maxPartBytes` — a bigger part is more tokens at
+once, and some destinations cap a single file. `validate` compares the configured ceiling, which
+is still what `manifest.config.maxPartBytes` records.
+
+New artifact name `prompt` (on by default): `--skip-artifacts prompt`, `--only-artifacts`, and
+`artifacts: { prompt: false }` all apply. The CLI summary gained an `Orientation:` line, which also
+fixes an older lie: a run that wrote `README.md` and nothing else reported "only the ownership
+marker was written".
+
 ## 0.10.2
 
 Every finding from the 0.10.1 deep analysis, fixed and verified. The report that produced the list

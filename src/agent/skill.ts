@@ -120,6 +120,10 @@ do not assume the repository is broken.
    - \`snapshot/reports/audit.md\` — secrets found, large files, parse diagnostics, git
      state. Read this before you quote code back to a user.
    - \`snapshot/reports/project-tree.md\` and \`navigation.md\` — structure and cross-links.
+   - \`snapshot/PROMPT.md\` — the instruction sheet to hand to the model that receives the
+     snapshot: paste it with the parts. It is rendered from this run's manifest and names the
+     parts, the partial files and the fingerprint, so do not rewrite it by hand — \`validate\`
+     fails when it was edited.
 
 ## Project types
 

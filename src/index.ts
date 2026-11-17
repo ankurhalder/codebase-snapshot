@@ -25,6 +25,8 @@ import { generateAuditReport } from "./generator/audit.js";
 import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
+import { generatePrompt } from "./generator/prompt.js";
+import { formatNumber } from "./terminal.js";
 import { generateReadme } from "./generator/readme.js";
 import { generateProjectTree, treeTruncationWarnings } from "./generator/tree.js";
 import { anchorForPath, partitionFiles, partitionFilesForBuckets } from "./partitioner/chunker.js";
@@ -46,7 +48,13 @@ import {
   resolveSpecifier,
   tsconfigPathsFor,
 } from "./scanner/dependents.js";
-import { collectFiles, findSecretInPath, getGitInfo, maskSkipPaths } from "./scanner/files.js";
+import {
+  collectFiles,
+  findSecretInPath,
+  getGitInfo,
+  maskSkipPaths,
+  recentCommitSubjects,
+} from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
 import { validateSnapshot } from "./validator/validate.js";
@@ -61,6 +69,7 @@ import type {
   ManifestIndexes,
   MarkdownSummary,
   ResolvedArtifacts,
+  ResolvedBudgets,
   ResolvedSnapshotConfig,
   SecretFinding,
   SecretRule,
@@ -2085,13 +2094,92 @@ function runAfterGenerate(config: ResolvedSnapshotConfig, manifest: Manifest): P
  * fitted to a budget — and then had to re-apply the byte bound to the rewritten text. Deciding the
  * numbering before rendering removes that whole after-the-fact repair.
  */
+interface PartitionResult {
+  parts: PartitionedPart[];
+  /** The per-layer budgets actually used; the configured ones unless `maxParts` grew them. */
+  budgets: ResolvedBudgets;
+  /** The per-part ceiling this run enforced; the configured one unless `maxParts` grew it. */
+  maxPartBytes: number;
+  /** What the growth did, when it did anything, so the manifest can say it. */
+  warnings: string[];
+}
+
 function partitionByBudget(
   files: FileEntry[],
   config: ResolvedSnapshotConfig,
   fingerprint: string
+): PartitionResult {
+  const configured: PartitionResult = {
+    parts: partitionWithBudgets(files, config.budgets, fingerprint),
+    budgets: config.budgets,
+    maxPartBytes: config.maxPartBytes,
+    warnings: [],
+  };
+  const limit = config.maxParts;
+  // A ceiling on parts nobody writes is not a constraint: growing the budget to satisfy it would
+  // cost a repartition per step and warn about part sizes that are never emitted.
+  if (limit === null || !config.artifacts.parts || configured.parts.length <= limit) return configured;
+
+  // `maxParts` is the experimental opposite of `maxPartBytes`: the count is fixed and the size
+  // gives way, instead of the other way round. The estimate below is the linear one plus the
+  // packing margin measured in `generator/prompt.ts`; two retries cover the cases where greedy
+  // packing and per-layer buckets leave it short.
+  const totalBytes = files.reduce((total, file) => total + file.includedBytes, 0);
+  let target = Math.max(config.budgets.default, Math.ceil((totalBytes * 1.15) / limit));
+  const seen: number[] = [];
+  // Grow until the count fits, then halve back: the first budget that fits is usually well above
+  // the smallest one that would, and every extra byte is a part bigger than the count required.
+  let low = config.budgets.default;
+  let fitting: { target: number; parts: PartitionedPart[] } | null = null;
+  for (let pass = 0; pass < 6; pass += 1) {
+    const parts = partitionWithBudgets(files, scaleBudgets(config.budgets, target), fingerprint);
+    if (parts.length <= limit) {
+      fitting = { target, parts };
+      break;
+    }
+    seen.push(parts.length);
+    low = target;
+    // A smaller step than the packing margin: overshooting merges parts into files that are
+    // larger than the count required, and a part nobody asked for is tokens the destination pays.
+    target = Math.ceil(target * 1.3);
+  }
+  if (fitting === null) {
+    throw new Error(
+      `maxParts ${limit} could not be met: ${seen.join(", ")} part(s) at budgets up to ` +
+        `${formatNumber(target)} B. Raise maxParts, include fewer files, or drop the setting.`
+    );
+  }
+  for (let step = 0; step < 3 && fitting.target - low > 8192; step += 1) {
+    const middle = Math.round((low + fitting.target) / 2);
+    const parts = partitionWithBudgets(files, scaleBudgets(config.budgets, middle), fingerprint);
+    if (parts.length <= limit) fitting = { target: middle, parts };
+    else low = middle;
+  }
+  const { target: chosen, parts } = fitting;
+  const budgets = scaleBudgets(config.budgets, chosen);
+  const maxPartBytes = Math.max(config.maxPartBytes, chosen);
+  const warnings = [
+    `maxParts ${limit}: the part budget grew from ${formatNumber(config.maxPartBytes)} B to ` +
+      `${formatNumber(maxPartBytes)} B, and the snapshot now has ${formatNumber(parts.length)} ` +
+      "part(s)."
+  ];
+  if (maxPartBytes > config.maxPartBytes) {
+    warnings.push(
+      `maxParts ${limit}: parts are now above the configured maxPartBytes ` +
+        `(${formatNumber(config.maxPartBytes)} B). A larger part is more tokens for the ` +
+        "destination to take at once, and some destinations cap a single file."
+    );
+  }
+  return { parts, budgets, maxPartBytes, warnings };
+}
+
+/** The configured layout, packed exactly as given. */
+function partitionWithBudgets(
+  files: FileEntry[],
+  budgets: ResolvedBudgets,
+  fingerprint: string
 ): PartitionedPart[] {
-  const budgetFor = (file: FileEntry): number =>
-    config.budgets.byLayer[file.layer] ?? config.budgets.default;
+  const budgetFor = (file: FileEntry): number => budgets.byLayer[file.layer] ?? budgets.default;
 
   const buckets = new Map<number, FileEntry[]>();
   for (const file of files) {
@@ -2112,6 +2200,23 @@ function partitionByBudget(
       .map(([budgetBytes, bucketFiles]) => ({ files: bucketFiles, budgetBytes })),
     fingerprint
   );
+}
+
+/**
+ * Grows every bucket in proportion to the default, so a per-layer budget keeps its relation to
+ * the rest instead of being flattened to one number.
+ */
+function scaleBudgets(budgets: ResolvedBudgets, targetDefault: number): ResolvedBudgets {
+  const factor = targetDefault / budgets.default;
+  return {
+    default: Math.max(budgets.default, Math.round(targetDefault)),
+    byLayer: Object.fromEntries(
+      Object.entries(budgets.byLayer).map(([name, bytes]) => [
+        name,
+        Math.max(bytes, Math.round(bytes * factor)),
+      ])
+    ),
+  };
 }
 
 /**
@@ -2665,7 +2770,8 @@ export function generateSnapshot(
     }
   }
 
-  const parts = partitionByBudget(files, config, fingerprint);
+  const partitioned = partitionByBudget(files, config, fingerprint);
+  const parts = partitioned.parts;
   // Byte-budget truncation happens inside the partitioner, so preview counts
   // must be derived from the final state of `files`, not from the scan loop.
   const truncatedPreviewCount = files.filter((file) => file.isPreviewTruncated).length;
@@ -2718,7 +2824,10 @@ export function generateSnapshot(
     // the README and the audit report.
     git: { ...gitInfo, branch: maskPathText(gitInfo.branch, config.secretRules) },
     budgets: {
-      maxPartBytes: config.maxPartBytes,
+      // The ceiling the parts actually honour. It equals the configured one unless `maxParts`
+      // grew it; `config.maxPartBytes` below keeps the configured value, because that is what
+      // `validate` compares against the config on disk.
+      maxPartBytes: partitioned.maxPartBytes,
       largeFileBytes: config.largeFileBytes,
     },
     config: {
@@ -2736,6 +2845,14 @@ export function generateSnapshot(
       // invisible in the manifest that is supposed to describe the run.
       maxMonolithBytes: config.maxMonolithBytes ?? null,
       includeSensitiveFiles: config.includeSensitiveFiles,
+      // The destination the instructions were written for. Not part of `digest`: the payload is
+      // identical whatever this says, and a new delivery preference must not make an existing
+      // snapshot fail `validate` as configuration drift.
+      attachmentSlots: config.attachmentSlots,
+      // The part-count ceiling the run enforced. Recorded because it decided the part sizes, and
+      // omitted from `digest` when it is off so an existing snapshot does not start reporting
+      // configuration drift.
+      maxParts: config.maxParts ?? null,
       discovery: config.discovery ?? "auto",
       // A changed-files scope decides which files are in the snapshot, so the manifest that
       // describes the run has to name it.
@@ -2806,6 +2923,13 @@ export function generateSnapshot(
     incomplete,
     warnings,
   };
+
+  // What `maxParts` did belongs in the record of the run, beside the other warnings that explain
+  // a shape the reader cannot derive from the settings alone.
+  if (partitioned.warnings.length > 0) {
+    manifest.warnings.push(...partitioned.warnings);
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
 
   // Redaction is not a warning. Every masked line used to be appended to `warnings` as
   // `<rule> at <path>:<line>`, so a repository with nothing wrong with it reported
@@ -2922,6 +3046,19 @@ export function generateSnapshot(
   if (auditText !== null) manifest.artifacts.audit = artifactRecord(auditText);
   const readmeText = artifacts.readme ? generateReadme(manifest, artifacts) : null;
   if (readmeText !== null) manifest.artifacts.readme = artifactRecord(readmeText);
+  // Rendered from the same manifest the reader gets, so the prompt cannot name a part, an
+  // omission or a fingerprint that this run did not produce.
+  const promptText = artifacts.prompt
+    ? generatePrompt(
+        manifest,
+        artifacts,
+        config.attachmentSlots,
+        // Commit subjects are user input and reach an artifact, so they go through the same
+        // masking as every other name the run reproduces.
+        recentCommitSubjects(config.cwd).map((subject) => maskPathText(subject, config.secretRules))
+      )
+    : null;
+  if (promptText !== null) manifest.artifacts.prompt = artifactRecord(promptText);
   if (projectTree !== null) manifest.artifacts.projectTree = artifactRecord(projectTree);
 
   // Monolith artefacts are serialised LAST, after every warning they have to
@@ -3139,6 +3276,9 @@ export function generateSnapshot(
     }
     if (readmeText !== null) {
       writeArtifact(stagingDir, "README.md", readmeText);
+    }
+    if (promptText !== null) {
+      writeArtifact(stagingDir, "PROMPT.md", promptText);
     }
     if (artifacts.manifest) {
       writeArtifact(stagingDir, "manifest.json", JSON.stringify(manifest, null, 2));

@@ -240,6 +240,10 @@ export function normalizeResolvedConfig(
   return markResolvedConfig({
     ...config,
     discovery,
+    // A spread copy built before the field existed carries no value; the default applies, and it
+    // is re-validated because the number reaches a rendered artifact.
+    attachmentSlots: resolveAttachmentSlots(config.attachmentSlots),
+    maxParts: resolveMaxParts(config.maxParts),
     includeMonolith: artifacts.monolith,
     secretRules: compileSecretRules(config.secretRules),
     artifacts,
@@ -370,6 +374,7 @@ const isThenable = (value: object): boolean =>
  */
 const CONFIG_KEY_NAMES = [
   "artifacts",
+  "attachmentSlots",
   "branch",
   "budgets",
   "changedSince",
@@ -387,6 +392,7 @@ const CONFIG_KEY_NAMES = [
   "layersMode",
   "maxMonolithBytes",
   "maxPartBytes",
+  "maxParts",
   "maxPartTokens",
   "outDir",
   "preset",
@@ -776,6 +782,7 @@ export const MIN_MAX_PART_TOKENS = MIN_MAX_PART_BYTES / 4;
 /** Every artifact this package can write, in the order it is written. */
 export const ARTIFACT_NAMES = [
   "readme",
+  "prompt",
   "manifest",
   "parts",
   "navigation",
@@ -789,6 +796,7 @@ export type ArtifactName = (typeof ARTIFACT_NAMES)[number];
 /** Everything on, except the monolith, which duplicates the whole payload. */
 const DEFAULT_ARTIFACTS: ResolvedArtifacts = {
   readme: true,
+  prompt: true,
   manifest: true,
   parts: true,
   navigation: true,
@@ -886,6 +894,45 @@ function resolveArtifacts(
  * `previewHeadLines: 0` used to be silently replaced by 80 and the run exited 0,
  * while `include: "x"` errored — the same class of mistake behaving two ways.
  */
+/**
+ * Files a destination accepts in one message, when nothing says otherwise.
+ *
+ * Ten is the cap the hosted assistants apply to an attachment list, and it is a default rather
+ * than a rule: `attachmentSlots: 0` means "no limit", and any other whole number is honoured as
+ * given. It never changes the payload — only the delivery plan `PROMPT.md` writes.
+ */
+export const DEFAULT_ATTACHMENT_SLOTS = 10;
+
+function resolveAttachmentSlots(value: unknown): number {
+  if (value === undefined || value === null) return DEFAULT_ATTACHMENT_SLOTS;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(
+      "attachmentSlots must be a whole number, with 0 meaning no limit (received " +
+        describeValue(value) +
+        ")."
+    );
+  }
+  return value;
+}
+
+/**
+ * The experimental part-count ceiling: `null` (off) or a positive whole number.
+ *
+ * Not folded into `strictPositiveInteger`: `0` here is not "one" and is not "off" spelled
+ * differently — it is a number of parts that cannot exist, so it is refused rather than clamped.
+ */
+function resolveMaxParts(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new Error(
+      "maxParts must be a whole number of parts, or null to disable it (received " +
+        describeValue(value) +
+        ")."
+    );
+  }
+  return value;
+}
+
 function strictPositiveInteger(value: unknown, fallback: number, label: string): number {
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
@@ -1512,6 +1559,10 @@ export function resolveConfig(
       "maxMonolithBytes"
     ),
     includeSensitiveFiles,
+    attachmentSlots: resolveAttachmentSlots(
+      cliOptions?.attachmentSlots ?? userConfig?.attachmentSlots
+    ),
+    maxParts: resolveMaxParts(cliOptions?.maxParts ?? userConfig?.maxParts),
     ...(changedSince === undefined ? {} : { changedSince }),
     ...(staged ? { staged } : {}),
     ...(withDependents ? { withDependents } : {}),
@@ -1628,6 +1679,9 @@ export function configDigest(config: ResolvedSnapshotConfig): string {
     includeMonolith: config.includeMonolith,
     maxMonolithBytes: config.maxMonolithBytes ?? null,
     includeSensitiveFiles: config.includeSensitiveFiles,
+    // Only when the experimental mode is on: `null` is the off switch, and writing it into the
+    // material would change the digest of every snapshot taken before the setting existed.
+    ...(config.maxParts === null ? {} : { maxParts: config.maxParts }),
     artifacts: config.artifacts,
     include: config.include,
     excludePatterns: config.excludePatterns,

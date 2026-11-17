@@ -109,6 +109,8 @@ export const CLI_OPTIONS = {
   "max-part-bytes": { type: "string" },
   "large-file-bytes": { type: "string" },
   "max-monolith-bytes": { type: "string" },
+  "attachment-slots": { type: "string" },
+  "max-parts": { type: "string" },
   "include-monolith": { type: "boolean" },
   "include-sensitive-files": { type: "boolean" },
   "skip-artifacts": { type: "string" },
@@ -185,6 +187,10 @@ Options:
   --skeleton                    Emit TypeScript signatures instead of bodies
   --sarif                       Also write reports/audit.sarif for GitHub Code Scanning
   --include-sensitive-files     Emit .env / *.pem / .npmrc / credential files
+  --attachment-slots <n>        Files the destination takes in one message (default: 10,
+                                0 = no limit); PROMPT.md plans the delivery to fit
+  --max-parts <n>               Experimental: grow the part budget until the snapshot has at
+                                most n parts, instead of adding parts as the code grows
   --skip-artifacts <names>      Comma-separated artifacts to omit
                                 (readme, manifest, parts, navigation,
                                  projectTree, audit, monolith)
@@ -272,6 +278,10 @@ interface ParsedInvocation {
   maxPartTokens?: number;
   largeFileBytes?: number;
   maxMonolithBytes?: number | null;
+  /** `--attachment-slots`: files the destination accepts in one message, 0 for no limit. */
+  attachmentSlots?: number;
+  /** `--max-parts`: the experimental part-count ceiling. */
+  maxParts?: number;
   skipArtifacts?: string[];
   /**
    * The artifacts named by `--only-artifacts`, kept separately from the derived
@@ -335,6 +345,32 @@ export function parseByteOption(
       `--${optionName} expects a ${unit} such as 120000 or "120k", received "${raw}".`
     );
   }
+  if (value < minimum) {
+    throw new UsageError(`--${optionName} must be at least ${minimum}, received "${raw}".`);
+  }
+  return value;
+}
+
+/**
+ * Parses a whole-number option such as `--attachment-slots 20`.
+ *
+ * Not `parseByteOption`: "20" here means twenty files, and a size suffix would be meaningless.
+ * `0` is meaningful — it says the destination imposes no limit — so the floor is zero rather
+ * than one, and a negative or fractional value is refused instead of rounded.
+ */
+export function parseCountOption(
+  raw: string | undefined,
+  optionName: string,
+  minimum = 0
+): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(Number(trimmed))) {
+    throw new UsageError(
+      `--${optionName} expects a whole number such as 10 or 20, received "${raw}".`
+    );
+  }
+  const value = Number(trimmed);
   if (value < minimum) {
     throw new UsageError(`--${optionName} must be at least ${minimum}, received "${raw}".`);
   }
@@ -686,6 +722,11 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
       "max-monolith-bytes",
       1
     ),
+    attachmentSlots: parseCountOption(
+      values["attachment-slots"] as string | undefined,
+      "attachment-slots"
+    ),
+    maxParts: parseCountOption(values["max-parts"] as string | undefined, "max-parts", 1),
     skipArtifacts,
     onlyArtifacts,
     discovery: isDiscoveryMode(rawDiscovery) ? rawDiscovery : undefined,
@@ -1234,6 +1275,12 @@ async function runSetupCommand(
     if (invocation.maxPartTokens !== undefined) {
       generateArgs.push("--max-part-tokens", String(invocation.maxPartTokens));
     }
+    if (invocation.attachmentSlots !== undefined) {
+      generateArgs.push("--attachment-slots", String(invocation.attachmentSlots));
+    }
+    if (invocation.maxParts !== undefined) {
+      generateArgs.push("--max-parts", String(invocation.maxParts));
+    }
     if (invocation.skeleton === true) generateArgs.push("--skeleton");
     if (invocation.sarif === true) generateArgs.push("--sarif");
     // `main` runs the update check per invocation, so without this the nested `generate`
@@ -1592,6 +1639,8 @@ async function runCommand(argv: string[]): Promise<number> {
         maxPartTokens: invocation.maxPartTokens,
         largeFileBytes: invocation.largeFileBytes,
         maxMonolithBytes: invocation.maxMonolithBytes,
+        attachmentSlots: invocation.attachmentSlots,
+        maxParts: invocation.maxParts,
         skipArtifacts: invocation.skipArtifacts,
         // `--only-artifacts` is forwarded as itself, not only as the derived suppression list:
         // suppression cannot switch an artifact *on*, so a config that had turned one of the
@@ -1835,7 +1884,26 @@ async function runCommand(argv: string[]): Promise<number> {
           );
         }
       }
-      if (reports.length === 0 && !artifacts.parts && !artifacts.manifest && !artifacts.monolith) {
+      // README.md and PROMPT.md are prose, not payload, so they were never listed — which meant
+      // a run that wrote both and nothing else reported that it had written only the marker.
+      const orientation = [
+        artifacts.readme ? "README.md" : null,
+        artifacts.prompt ? "PROMPT.md" : null,
+      ].filter((name): name is string => name !== null);
+      if (orientation.length > 0) {
+        info(
+          `   - Orientation:   ${orientation
+            .map((name) => displayOutPath(resolved.cwd, resolved.outDir, name))
+            .join(", ")}`
+        );
+      }
+      if (
+        reports.length === 0 &&
+        !artifacts.parts &&
+        !artifacts.manifest &&
+        !artifacts.monolith &&
+        orientation.length === 0
+      ) {
         info(`   - Artifacts:     all disabled (only the ownership marker was written)`);
       }
       info(`   - Fingerprint:   ${manifest.fingerprint}`);
@@ -2132,6 +2200,8 @@ async function runWatchLoop(
           maxPartTokens: invocation.maxPartTokens,
           largeFileBytes: invocation.largeFileBytes,
           maxMonolithBytes: invocation.maxMonolithBytes,
+          attachmentSlots: invocation.attachmentSlots,
+          maxParts: invocation.maxParts,
           skipArtifacts: invocation.skipArtifacts,
           onlyArtifacts: invocation.onlyArtifacts,
           discovery: invocation.discovery,

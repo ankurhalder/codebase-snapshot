@@ -15,6 +15,11 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
   const wrote = (name: keyof ResolvedArtifacts): boolean => artifacts?.[name] !== false;
 
   const reportLinks: string[] = [];
+  if (wrote("prompt")) {
+    reportLinks.push(
+      "- [PROMPT.md](PROMPT.md) — The instruction sheet to paste with this snapshot: what it contains, what it left out, and the rules for citing it."
+    );
+  }
   if (wrote("navigation")) {
     reportLinks.push(
       "- [reports/navigation.md](reports/navigation.md) — Comprehensive file directory mapping files to chunk files."
@@ -88,6 +93,11 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
   }
 
   const readOrder: string[] = [];
+  if (wrote("prompt")) {
+    readOrder.push(
+      "1. Hand `PROMPT.md` to the model that receives this snapshot: it names the parts, the partial files and the fingerprint of this run."
+    );
+  }
   if (wrote("navigation") || wrote("projectTree")) {
     const first = [wrote("navigation") ? "`reports/navigation.md`" : null, wrote("projectTree") ? "`reports/project-tree.md`" : null]
       .filter(Boolean)

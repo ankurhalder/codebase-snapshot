@@ -1,0 +1,561 @@
+import { DEFAULT_ATTACHMENT_SLOTS } from "../config.js";
+import type { Manifest, ResolvedArtifacts } from "../types.js";
+import { escapeControls, formatNumber, inlineCode } from "../terminal.js";
+
+/**
+ * Renders `PROMPT.md`: the brief a snapshot is handed over with, and the apparatus that keeps
+ * the handover honest.
+ *
+ * The first version of this file was a packing slip - it said how to read the parts and nothing
+ * about the job, the system or the standard. A model that receives a codebase without those
+ * produces a summary. The structure here is taken from briefs that worked: what the system is,
+ * what was already fixed, what counts as a finding, what coverage is owed, and one calibration
+ * example of the class worth finding.
+ *
+ * Everything factual is rendered from the manifest and the repository history, so the brief
+ * cannot describe a different run. Everything static is a standard, not a description.
+ */
+
+/** Basename of the artifact this module renders. */
+export const PROMPT_FILENAME = "PROMPT.md";
+
+const MAX_PART_ROWS = 16;
+const MAX_LAYER_ROWS = 8;
+const MAX_INCOMPLETE_ROWS = 50;
+const MAX_CENTRAL_FILES = 5;
+const MAX_ENTRY_POINTS = 4;
+const MAX_LARGEST_FILES = 3;
+/** `1 part` / `2 parts`, so a one-part snapshot does not read as machine output. */
+const partWord = (count: number): string => (count === 1 ? "part" : "parts");
+
+/** `attachmentSlots: 0` means the destination imposes no file limit. */
+const UNLIMITED_SLOTS = 0;
+
+/** Names an entry point by convention; the manifest has no field that says "start here". */
+const ENTRY_POINT = /(^|\/)(index|cli|main|bin|server|app|mod)\.[cm]?[jt]sx?$/;
+/** A test by directory or by file name, so the ratio holds for repositories without a test layer. */
+const TEST_PATH = /(^|\/)(tests?|__tests__)\//;
+const TEST_FILE = /\.(test|spec)\.[^.]+$/;
+
+export function generatePrompt(
+  manifest: Manifest,
+  artifacts?: ResolvedArtifacts,
+  attachmentSlots: number = DEFAULT_ATTACHMENT_SLOTS,
+  history: readonly string[] = []
+): string {
+  // A missing selection means "assume written", so the library call that predates it keeps
+  // working and a caller that does not care about the selection still gets a full brief.
+  const wrote = (name: keyof ResolvedArtifacts): boolean => artifacts?.[name] !== false;
+  const code = (value: string): string => inlineCode(escapeControls(value));
+
+  const lines: string[] = [
+    "# PROMPT.md",
+    "",
+    "The brief and the apparatus for this snapshot. Paste this file first, then the parts it names.",
+    "",
+    "It is generated rather than written once: the system map, the omissions, the fingerprint and",
+    "the history below are read from `manifest.json` and this repository, so they describe this run.",
+    "Regenerate it after the code moves.",
+    "",
+    "---",
+    "",
+    "```text",
+    "You are working on a codebase you cannot clone, run or grep. Everything you know about it comes",
+    "from the snapshot that follows this instruction. Where these notes and the snapshot disagree,",
+    "the snapshot is what exists.",
+    "",
+    "## The job",
+    "",
+    "Find what is still wrong or will break. How you read the code is yours to decide - by",
+    "subsystem, by data flow, by the invariants you derive yourself. What you owe in return is an",
+    "honest account of what you covered and what you did not.",
+    "",
+    history.length > 0
+      ? "Another pass of the same findings is worth nothing. This repository carries a record of"
+      : "Another pass of the same findings is worth nothing, but no earlier round is readable here,",
+    history.length > 0
+      ? "what was already fixed, below. Verify that those fixes hold instead of rediscovering them,"
+      : "so you cannot tell what has already been tried. Do not assume this is the first attempt.",
+    history.length > 0
+      ? "and treat a variant of one at a different call site as a new finding."
+      : "Every finding you report has to stand on the code alone.",
+    "",
+    "If the task at the end asks for something narrower - explain a file, review a change, answer a",
+    "question - that task wins. The standard and the coverage duty below still apply to it.",
+    ""
+  ];
+
+  lines.push(...haveSection(wrote), "");
+  lines.push(...systemSection(manifest, code), "");
+  lines.push(...historySection(history), "");
+  lines.push(...barSection(), "");
+  lines.push(...coverageSection(manifest, code, wrote("audit")), "");
+  lines.push(...answerSection(), "");
+  lines.push(...calibrationSection(), "");
+  lines.push(...snapshotSection(manifest, code), "");
+  lines.push(...deliverySection(manifest, wrote("parts"), attachmentSlots));
+
+  lines.push(
+    "## Your task",
+    "",
+    "<replace with the question, the area to review, or the subsystem to audit>",
+    "```"
+  );
+
+  lines.push(
+    "",
+    "---",
+    "",
+    "## Why this file exists",
+    "",
+    "Parts on their own are a dump: the model receives text, has no idea what was left out of it,",
+    "and fills the gap by invention. A brief on its own is a wish list: it cannot say which files",
+    "are present, which are partial or which part holds what. This file is both halves, and the",
+    "facts in it move with the snapshot.",
+    "",
+    "## Keeping it true",
+    "",
+    "- It is one of the artifacts recorded in `manifest.json` under `artifacts.prompt`, so deleting",
+    "  or editing `PROMPT.md` makes `snapshot validate` fail.",
+    "- `--skip-artifacts prompt`, or `artifacts: { prompt: false }` in the config, turns it off.",
+    "- The history section disappears when git cannot be read, rather than being invented.",
+    "- If the code moves, regenerate. A brief naming the previous run parts is worse than no",
+    "  brief, because it reads as current.",
+    ""
+  );
+
+  return lines.join("\n");
+}
+
+/** What the reader was given, and only what was actually written. */
+function haveSection(wrote: (name: keyof ResolvedArtifacts) => boolean): string[] {
+  const out = ["## What you have", ""];
+  const bullets: string[] = [];
+  if (wrote("readme")) {
+    bullets.push("- `README.md` - orientation: metrics, the part table, and the fingerprint.");
+  }
+  if (wrote("manifest")) {
+    bullets.push(
+      "- `manifest.json` - the index. Per file: `relativePath`, `layer`, `kind`, `language`,",
+      "  `part`, `sha256`, `inclusionMode`, `truncationReason`, `omittedRanges`. It also carries",
+      "  every excluded path under `skipped[]` with its reason, and `incomplete[]`, which names",
+      "  every included file whose emitted body is not the whole file."
+    );
+  }
+  if (wrote("navigation")) {
+    bullets.push("- `reports/navigation.md` - file to part. Locate here before you read anything.");
+  }
+  if (wrote("projectTree")) {
+    bullets.push("- `reports/project-tree.md` - the directory shape of what was included.");
+  }
+  if (wrote("audit")) {
+    bullets.push(
+      "- `reports/audit.md` - secret findings, the files whose lines were redacted, large files,",
+      "  parse diagnostics and the git state the snapshot was taken from."
+    );
+  }
+  if (wrote("parts")) {
+    bullets.push(
+      "- `parts/part-NNN.md` - the code itself, split to a fixed byte budget. Each part states its",
+      "  own number, the files it contains, and the fingerprint it was built from."
+    );
+  }
+  if (wrote("monolith")) {
+    bullets.push(
+      "- `full-codebase.json` and `full-codebase.md` - the entire payload in one file each.",
+      "  Where they are present, they supersede the parts: nothing was left out of them."
+    );
+  }
+  if (bullets.length === 0) {
+    bullets.push(
+      "- Nothing but this brief: every code artifact was disabled for this run. Ask for a snapshot",
+      "  generated with the artifacts you need, and do not answer from memory."
+    );
+  }
+  out.push(...bullets);
+  return out;
+}
+
+/** The system as the index can prove it: layers, hubs, entry points, surfaces, size. */
+function systemSection(manifest: Manifest, code: (value: string) => string): string[] {
+  const out = ["## The system", ""];
+
+  const layers = Object.entries(manifest.layers).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (layers.length > 0) {
+    const shown = layers
+      .slice(0, MAX_LAYER_ROWS)
+      .map(([name, count]) => code(name) + " " + formatNumber(count));
+    const rest =
+      layers.length > MAX_LAYER_ROWS
+        ? ", and " + formatNumber(layers.length - MAX_LAYER_ROWS) + " more"
+        : "";
+    out.push("- Layers, by file count: " + shown.join(", ") + rest + ".");
+  }
+
+  const central = manifest.indexes.imports.centralFiles;
+  if (central.length > 0) {
+    const shown = central
+      .slice(0, MAX_CENTRAL_FILES)
+      .map((entry) => code(entry.path) + " (" + formatNumber(entry.importedByCount) + ")")
+      .join(", ");
+    out.push(
+      "- Load-bearing modules, by how many files import them: " + shown + ".",
+      "  A change here reaches the most call sites; read it before judging anything that uses it."
+    );
+  }
+
+  const entryPoints = manifest.files
+    .map((file) => file.relativePath)
+    .filter((path) => ENTRY_POINT.test(path))
+    .sort((a, b) => a.split("/").length - b.split("/").length || a.length - b.length)
+    .slice(0, MAX_ENTRY_POINTS);
+  out.push(
+    entryPoints.length > 0
+      ? "- Entry points by convention: " + entryPoints.map(code).join(", ") + "."
+      : "- No entry point was identifiable by name. The largest files below are where execution"
+  );
+  if (entryPoints.length === 0) out.push("  starts, and the call graph in `manifest.json` is the map.");
+
+  const routes = manifest.indexes.routes.length;
+  const handlers = manifest.indexes.handlers.length;
+  const components = manifest.indexes.components.length;
+  const routesShown = manifest.indexes.routes.slice(0, 4).map((route) => code(route.path));
+  const componentsShown = manifest.indexes.components.slice(0, 4).map((entry) => code(entry.path));
+  if (routes + handlers + components === 0) {
+    out.push(
+      "- No routes, handlers or UI components were recorded: this snapshot indexes no HTTP or",
+      "  component surface. Do not go looking for one, and do not infer one from a file name."
+    );
+  } else {
+    const parts: string[] = [];
+    if (routes > 0) parts.push(formatNumber(routes) + " route(s), e.g. " + routesShown.join(", "));
+    if (handlers > 0) parts.push(formatNumber(handlers) + " handler(s)");
+    if (components > 0) parts.push(formatNumber(components) + " component(s), e.g. " + componentsShown.join(", "));
+    out.push("- Surfaces the index found: " + parts.join("; ") + ".");
+  }
+
+  const largest = [...manifest.files]
+    .sort((a, b) => b.includedBytes - a.includedBytes)
+    .slice(0, MAX_LARGEST_FILES);
+  if (largest.length > 0) {
+    out.push(
+      "- Largest files: " +
+        largest
+          .map((file) => code(file.relativePath) + " (" + formatNumber(Math.round(file.includedBytes / 1024)) + " KB)")
+          .join(", ") +
+        "."
+    );
+  }
+
+  const tests = manifest.files.filter(
+    (file) => TEST_PATH.test(file.relativePath) || TEST_FILE.test(file.relativePath)
+  );
+  if (tests.length > 0) {
+    const testBytes = tests.reduce((total, file) => total + file.includedBytes, 0);
+    const allBytes = manifest.files.reduce((total, file) => total + file.includedBytes, 0);
+    const share = allBytes === 0 ? 0 : Math.round((testBytes / allBytes) * 100);
+    out.push(
+      "- Tests: " + formatNumber(tests.length) + " file(s), " + share + "% of the included bytes.",
+      "  They are evidence of intent, not of behaviour: a fixture can encode a payload shape the",
+      "  real system never sends."
+    );
+  }
+
+  return out;
+}
+
+/** The record of what was already fixed, which is the section that stops a repeat audit. */
+function historySection(history: readonly string[]): string[] {
+  const out = ["## What came before", ""];
+  if (history.length === 0) {
+    out.push(
+      "No history was readable: this is not a git checkout, or git could not be run. Nothing about",
+      "what came before can be claimed from here, and that is not evidence that the code is new."
+    );
+    return out;
+  }
+  out.push(
+    "Commit subjects, newest first. They are claims by whoever wrote them, not evidence - the code",
+    "beside them is the evidence. If one of these fixes looks incomplete, quote the lines and say",
+    "which call site it missed.",
+    ""
+  );
+  for (const subject of history) out.push("- " + subject);
+  return out;
+}
+
+/** The standard. Static on purpose: this is what a finding has to be, for any repository. */
+function barSection(): string[] {
+  return [
+    "## The bar",
+    "",
+    "A finding is a concrete way the code breaks or lies, supported by quoted lines: the path and",
+    "line, the input or state that reaches it, what happens next, and why the guard that appears to",
+    "stop it does not. A comment is not behaviour. A passing test is evidence of intent, not of",
+    "behaviour.",
+    "",
+    "- No style, naming, formatting, add-types, add-tests, consider-X or speculative rewrites.",
+    "- Never invent a finding to fill a section. A clean surface is proven by quoting the guard",
+    "  that makes it clean.",
+    "- Mark confidence, and name the check - a test, a run, an input - that would settle anything",
+    "  you cannot decide by reading.",
+    "- Separate what the code does from what the deployment or configuration does. Both are",
+    "  findings; they have different owners and different fixes."
+  ];
+}
+
+/** What the snapshot cannot show, so the reader does not mistake absence for cleanliness. */
+function coverageSection(
+  manifest: Manifest,
+  code: (value: string) => string,
+  auditWritten: boolean
+): string[] {
+  const out = ["## Coverage", ""];
+  const reasons = new Map<string, number>();
+  for (const record of manifest.skipped) {
+    reasons.set(record.reason, (reasons.get(record.reason) ?? 0) + 1);
+  }
+  const tally = [...reasons.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([reason, count]) => code(reason) + " " + formatNumber(count))
+    .join(", ");
+  out.push(
+    "- " + formatNumber(manifest.totals.candidateFiles) + " path(s) were found; " +
+      formatNumber(manifest.totals.includedFiles) + " are in the parts and " +
+      formatNumber(manifest.counts.skippedCount) + " were skipped" +
+      (tally.length > 0 ? " (" + tally + ")" : "") + ".",
+    "  `manifest.skipped[]` names each one and why. An absent path is not a clean path."
+  );
+  out.push(...incompleteSection(manifest, code));
+  out.push(...redactionSection(manifest, auditWritten));
+  out.push(
+    "- Everything unseen is unread, never clean. If you were given only some of the parts, say",
+    "  which ones are missing before you answer. A file the index names but the parts do not carry",
+    "  is an input defect, not a code finding - report it as one."
+  );
+  return out;
+}
+
+/** What the answer has to contain to be worth the tokens. */
+function answerSection(): string[] {
+  return [
+    "## What a useful answer contains",
+    "",
+    "- An opening line, filled from This snapshot below:",
+    "",
+    "    snapshot <fingerprint> generated <generatedAt>",
+    "",
+    "- What you read and what you did not, named by path or by part.",
+    "- Findings ordered by consequence, each with the lines quoted.",
+    "- The checks or attacks that failed, and the line or guard that blocked them. A failed attack",
+    "  is how anyone knows an invariant is real rather than asserted.",
+    "- What you retracted after re-reading.",
+    "- What only a run, a test or a host can settle, and the check that would settle each.",
+    "- One paragraph on the failure you would bet on next.",
+    "- A closing line: Needed but not received: <paths>, or none. That line is not decoration -",
+    "  an invented function is indistinguishable from a real one, and this is where you name",
+    "  the gap you filled by asking instead of guessing."
+  ];
+}
+
+/**
+ * Three examples of the class worth finding, drawn from real audits of this kind of tool.
+ *
+ * They are generic on purpose: a repository-specific example would be invented, and an invented
+ * example teaches the model to invent.
+ */
+function calibrationSection(): string[] {
+  return [
+    "## Calibration",
+    "",
+    "The findings that matter here do not crash. They look like:",
+    "",
+    "- a guard applied at one call site and not its twin - the route checks, the timer does not;",
+    "- a budget shorter than the work it guards, so the caller gives up while the work continues;",
+    "- a success flag that means the call returned, consumed as the change happened;",
+    "- a document that describes a different run than the one beside it;",
+    "- a default that fabricates a number when the measurement failed.",
+    "",
+    "None of these throw. All are invisible in a summary."
+  ];
+}
+
+/** The fingerprint and the counts, so the answer can name the state it describes. */
+function snapshotSection(manifest: Manifest, code: (value: string) => string): string[] {
+  const out = ["## This snapshot", ""];
+  out.push("- Fingerprint: " + code(manifest.fingerprint) + " - quote it verbatim in your answer.");
+  out.push(
+    "- Generated: " + code(manifest.generatedAt) + " from branch " + code(manifest.git.branch) +
+      " at commit " + code(manifest.git.commit.slice(0, 8)) + "."
+  );
+  out.push(
+    manifest.git.isDirty
+      ? "  The working tree had uncommitted changes at generation time."
+      : "  The working tree was clean at generation time."
+  );
+  out.push(
+    "- Validation: `manifest.validation.status` was " + code(manifest.validation.status) +
+      " at generation time.",
+    "  That describes the run, not now: if the tree may have moved since, the snapshot is a",
+    "  claim that needs re-checking, not a fact."
+  );
+  if (manifest.parts.length > 0) {
+    out.push(
+      "- Parts: " + formatNumber(manifest.parts.length) + " at a " +
+        formatNumber(Math.round(manifest.budgets.maxPartBytes / 1024)) + " KB ceiling" +
+        (manifest.parts.length === 1 ? ":" : " each:")
+    );
+    for (const part of manifest.parts.slice(0, MAX_PART_ROWS)) {
+      out.push("  - " + code(part.filename) + " - " + formatNumber(part.fileCount) + " file(s)");
+    }
+    if (manifest.parts.length > MAX_PART_ROWS) {
+      out.push(
+        "  - and " + formatNumber(manifest.parts.length - MAX_PART_ROWS) +
+          " more, tabled in `README.md`"
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The list of files that are not whole, which is the section that earns its place.
+ *
+ * Left implicit, a preview reads as a complete file whose middle happens to be missing: the reader
+ * has no way to tell and no reason to ask.
+ */
+function incompleteSection(manifest: Manifest, code: (value: string) => string): string[] {
+  const out: string[] = [];
+  const list = manifest.incomplete;
+  if (list.length === 0) {
+    out.push("- Partial files: none. Every included file is present in full.");
+    return out;
+  }
+  out.push(
+    "- Partial files: " + formatNumber(list.length) + ". These are present only in part, and the",
+    "  missing lines are named, not implied:"
+  );
+  for (const entry of list.slice(0, MAX_INCOMPLETE_ROWS)) {
+    const ranges = entry.omittedRanges
+      .map(([start, end]) => (start === end ? String(start) : start + "-" + end))
+      .join(", ");
+    out.push(
+      "  - " + code(entry.relativePath) + " in " + code(entry.part) + " - " + entry.reason +
+        ", lines " + ranges + " (" + formatNumber(entry.omittedLines) + " of " +
+        formatNumber(entry.lines) + " missing)"
+    );
+  }
+  if (list.length > MAX_INCOMPLETE_ROWS) {
+    out.push(
+      "  - and " + formatNumber(list.length - MAX_INCOMPLETE_ROWS) +
+        " more, all named in `manifest.json` under `incomplete[]`"
+    );
+  }
+  return out;
+}
+
+/**
+ * Which lines were masked, and the one sentence that stops a mask being read as an empty value.
+ *
+ * The count is in the manifest either way; only the per-file detail lives in `reports/audit.md`, so
+ * the sentence changes with that artifact rather than pointing at a file that was not written.
+ */
+function redactionSection(manifest: Manifest, auditWritten: boolean): string[] {
+  const redacted = manifest.totals.redactedLines;
+  if (redacted === 0) {
+    return ["- Redacted: no line matched a secret rule."];
+  }
+  const where = auditWritten
+    ? "`reports/audit.md` names the files; the values are not recoverable from it."
+    : "`reports/audit.md` was disabled for this run, so only the count is available.";
+  return [
+    "- Redacted: " + formatNumber(redacted) + " line(s) had values masked before you received them.",
+    "  A masked span is a deliberate redaction, not an empty value.",
+    "  " + where
+  ];
+}
+
+/**
+ * The delivery plan: arithmetic a reader cannot do from the brief alone.
+ *
+ * A snapshot is pasted into a surface that takes a fixed number of files, and the parts are most
+ * of that budget, so "attach the snapshot" can be advice that cannot be followed. This section
+ * states what fits, what to leave behind, and what to do when the parts do not fit.
+ */
+function deliverySection(manifest: Manifest, partsWritten: boolean, slots: number): string[] {
+  if (!partsWritten || manifest.parts.length === 0) return [];
+  const parts = manifest.parts.length;
+  // manifest.json, README.md, navigation, project-tree and audit: everything else a run writes.
+  const wholeSet = parts + 5;
+  const unlimited = slots <= UNLIMITED_SLOTS;
+  const out: string[] = ["## Attaching this", ""];
+  out.push(
+    "Paste this file as text: instructions cost no attachment slot. Attach the files it names.",
+    "",
+    "- Every part opens with `# Codebase Snapshot Part NNN of MMM` and repeats the fingerprint",
+    "  above, so check both before relying on one. A part you were not given is not an empty part."
+  );
+  if (unlimited) {
+    out.push(
+      "- No attachment limit is configured, so every file can travel: " + parts + " " +
+        partWord(parts) + " plus `manifest.json`, `README.md` and the three reports (" +
+        wholeSet + " files)."
+    );
+  } else if (wholeSet <= slots) {
+    out.push(
+      "- A " + slots + "-file destination carries the whole set: " + parts + " " +
+        partWord(parts) + " plus `manifest.json`, `README.md` and the three reports - " +
+        wholeSet + " of " + slots + "."
+    );
+  } else if (parts + 1 <= slots) {
+    out.push(
+      "- A " + slots + "-file destination carries " + parts + " " + partWord(parts) + " and",
+      "  `manifest.json` (" + (parts + 1) + " of " + slots + "); `README.md` and",
+      "  `reports/` stay behind - the brief above carries what they add."
+    );
+  } else if (parts <= slots) {
+    out.push(
+      parts === 1
+        ? "- The only part fills a " + slots + "-file destination, so `manifest.json` and"
+        : "- The " + parts + " parts fill a " + slots + "-file destination, so `manifest.json` and",
+      "  `reports/` stay behind. The brief above carries what they add."
+    );
+    if (parts > 1) {
+      out.push(
+        "  Either raise `--max-part-bytes` to merge the parts, or set `--max-parts " + slots +
+          "` and let the parts grow to the count instead."
+      );
+    }
+  } else {
+    out.push(
+      "- The " + parts + " parts do not fit a " + slots + "-file destination: at most " + slots +
+        " can be attached.",
+      "  Choose by task - `reports/navigation.md` maps a file to its part - and name the parts",
+      "  you left out, or regenerate with `--max-part-bytes " + suggestBudgetBytes(manifest, slots) +
+        "` for about " + (slots - 1) + " parts. `--max-parts " + slots + "` grows the parts until",
+      "  they fit instead, and says so when they end up larger than maxPartBytes."
+    );
+  }
+  out.push(
+    "- If you were given only some of them, say which parts are missing before you answer, and",
+    "  name the files you needed. Do not infer the contents of a part you did not receive.",
+    ""
+  );
+  return out;
+}
+
+/**
+ * The part budget that would merge this run into `slots - 1` parts, rounded up.
+ *
+ * Not the linear total / target: parts are packed greedily with per-file anchors and headings, and
+ * a part ends at the first file that does not fit, so the emitted bytes overshoot the payload. The
+ * margin is measured rather than derived, and the number is a target, not a promise.
+ */
+function suggestBudgetBytes(manifest: Manifest, slots: number): string {
+  const total = manifest.parts.reduce((sum, part) => sum + part.byteSize, 0);
+  const target = Math.max(1, slots - 1);
+  const estimated = Math.ceil((total / target) * 1.15);
+  const rounded = Math.ceil(estimated / 16384) * 16384;
+  const budget = Math.max(rounded, manifest.budgets.maxPartBytes);
+  return Math.round(budget / 1024) + "k";
+}

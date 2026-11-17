@@ -10,6 +10,7 @@ explains everything they omit.
 snapshot/
 ├── .codebase-snapshot          ownership marker (see Safety)
 ├── README.md                   human summary of this snapshot
+├── PROMPT.md                   the instruction sheet to paste with it
 ├── manifest.json               machine index: files, parts, config, hashes, skips
 ├── parts/
 │   ├── part-001.md             the code, grouped and size-budgeted
@@ -41,6 +42,55 @@ The manifest embedded in `full-codebase.json` is otherwise identical to `manifes
 impossible field: a file cannot record its own sha256, so `artifacts.fullJson` is `null` in the
 embedded copy and a `selfReference` sentence points at `manifest.json`, which carries the real
 `byteSize` and `sha256` for that file.
+
+## PROMPT.md
+
+The one artifact written for the model rather than for you, and the only one that is a *brief*
+rather than an index. Paste it with the payload. It has two halves:
+
+**The brief** — what to do and how to be believed:
+
+- **The job**: find what is still wrong or will break, with the method left to the reader and an
+  honest account of coverage owed in return. A narrower task in the closing slot wins, and the
+  standard still applies to it.
+- **The system**, from the manifest: layers and their file counts, the modules with the most
+  importers (so a reader knows what a change reaches), entry points by convention, the routes,
+  handlers and components the index found — or a plain statement that none were recorded, so a
+  model does not go looking for a surface that is not there — the largest files, and the share of
+  bytes that is tests.
+- **What came before**: the last ten commit subjects, labelled as claims rather than evidence,
+  with the instruction to verify a recorded fix holds instead of rediscovering it. When git
+  cannot be read the section says so; it is never invented.
+- **The bar**: quoted lines, the state that reaches them, why the apparent guard does not stop it;
+  no style findings, no invented findings, a clean surface proven by quoting the guard.
+- **Coverage**: paths found, included and skipped with reasons, partial files with their missing
+  line ranges, redactions, and "everything unseen is unread, never clean".
+- **Calibration**: the classes of defect that do not crash — a guard at one call site and not its
+  twin, a budget shorter than the work it guards, a success flag that means the call returned.
+
+**The apparatus** — this run only:
+
+- the fingerprint to quote back, the timestamp, the commit, whether the tree was dirty, and the
+  validation status with the warning that it describes the run and not the tree now;
+- every part by name, and every file not present in full with its reason and missing ranges;
+- the delivery arithmetic below.
+
+Everything factual is rendered from the manifest and the repository, so the brief cannot describe
+a different run. It only names artifacts that were actually written: `--skip-artifacts
+parts,audit` produces a brief that does not tell a model to read parts, and says the per-file
+redaction detail is unavailable rather than pointing at a file that is not there.
+
+It also does the arithmetic of sending it. Hosted chats take a fixed number of files — 10 is the
+common cap — and every part is one file, so a 12-part snapshot cannot be delivered whole. The
+`## Attaching this` section states which files fit, what to leave behind, and the `--max-part-bytes`
+value that would merge the parts into a number the destination accepts. The instructions themselves
+are pasted as text, so they cost no attachment slot.
+
+It only names artifacts that were actually written: `--skip-artifacts parts,audit` produces a
+prompt that does not tell a model to read parts, and says the per-file redaction detail is
+unavailable rather than pointing at a file that is not there. Its digest is recorded under
+`artifacts.prompt`, so editing it by hand makes `validate` fail — a prompt that names a previous
+run's parts is worse than no prompt, because it reads as current.
 
 Every artifact can be turned off. `--skip-artifacts parts` omits the parts,
 `--only-artifacts manifest` writes nothing but the manifest, and `config.artifacts` does the
@@ -104,13 +154,13 @@ diff the manifest only when you need to know that a run happened.
 | `generatedAt` | ISO timestamp of the run. |
 | `generator` | `{ name, version }` of the tool that wrote it. |
 | `git` | `{ branch, commit, isDirty }`. `branch` falls back to the configured branch on a detached HEAD and outside a repository; `commit` is `"unknown"` and `isDirty` is `false` when git cannot report. A `false` there means "not known to be dirty", not "clean tree" — check `commit` to tell the two apart. |
-| `budgets` | The effective byte limits for the run: `{ maxPartBytes, largeFileBytes }`. The per-layer overrides live at `config.budgets`, which is `{ default, byLayer }`. |
+| `budgets` | The effective byte limits for the run: `{ maxPartBytes, largeFileBytes }`. The per-layer overrides live at `config.budgets`, which is `{ default, byLayer }`. With the experimental `maxParts`, `maxPartBytes` here is the budget the run grew to and `config.maxPartBytes` keeps the configured ceiling. |
 | `config` | The resolved configuration actually used (preset, artifacts, sizing, scoping). |
 | `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount, incompleteCount }`. |
 | `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, sourceLines, emittedLines, estimatedTokens, partCount, warningCount, redactedLines }`. `sourceLines` is the source line count before previews and part budgets; `emittedLines` is what the parts actually carry. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
 | `fingerprint` | Stable hash of the snapshot content **and** the settings that shaped it. Two runs over unchanged input and unchanged settings produce the same value; changing the budget, a preset, a layer rule or the secret rules moves it, because the parts move too. It is recomputed by `validate` from `files[]` and `config.digest`, so an edited file list cannot keep the recorded value — and because the partitioner may change a file's `inclusionMode` after the fingerprint is taken, the mode is not part of the hash. |
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
-| `artifacts` | A digest of every artifact the run wrote: `readme`, `navigation`, `projectTree`, `audit`, `fullJson`, `fullMarkdown` and `sarif` when present, each `{ byteSize, sha256 }`. `validate` requires each recorded file to exist and match, so deleting the README or the navigation index is a failure rather than a silent omission. Monolith entries are `null` when the file was not written; a key absent for an older manifest is not drift. |
+| `artifacts` | A digest of every artifact the run wrote: `readme`, `prompt`, `navigation`, `projectTree`, `audit`, `fullJson`, `fullMarkdown` and `sarif` when present, each `{ byteSize, sha256 }`. `validate` requires each recorded file to exist and match, so deleting the README or the navigation index is a failure rather than a silent omission. Monolith entries are `null` when the file was not written; a key absent for an older manifest is not drift. |
 | `layers`, `kinds` | File counts per layer and per kind. |
 | `indexes` | Cross-references: `routes`, `components`, `handlers`, `features`, `imports`, `directives`. `imports.byFile` holds one entry per file whose import edges are known — including a previewed or oversized file, whose specifiers are still extracted because they are what makes it a dependent. Such an entry has `exportsOmitted: true`: its `exports` list was never read, and an empty array there would claim "no exports". |
 | `parts` | One entry per part (below). |

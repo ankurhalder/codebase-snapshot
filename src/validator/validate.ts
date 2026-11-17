@@ -1234,7 +1234,11 @@ export function validateSnapshot(
     }
   }
 
-  if (manifest.budgets && manifest.budgets.maxPartBytes !== config.maxPartBytes) {
+  // With the experimental `maxParts`, the effective ceiling is derived from the file sizes and
+  // grows past the configured one, so the field legitimately disagrees with the config. The
+  // configured number is still covered by the config digest, together with `maxParts` itself.
+  const ceilingDerivedByMaxParts = (manifest.config?.maxParts ?? null) !== null;
+  if (!ceilingDerivedByMaxParts && manifest.budgets && manifest.budgets.maxPartBytes !== config.maxPartBytes) {
     totalsMismatches.push(
       `budgets.maxPartBytes: manifest ${manifest.budgets.maxPartBytes} vs current ${config.maxPartBytes}`
     );
@@ -1279,6 +1283,7 @@ export function validateSnapshot(
   // `validate` green.
   const declaredArtifacts: Array<[string, ManifestArtifact | null | undefined]> = [
     ["README.md", manifest.artifacts?.readme],
+    ["PROMPT.md", manifest.artifacts?.prompt],
     ["reports/navigation.md", manifest.artifacts?.navigation],
     ["reports/project-tree.md", manifest.artifacts?.projectTree],
     ["reports/audit.md", manifest.artifacts?.audit],

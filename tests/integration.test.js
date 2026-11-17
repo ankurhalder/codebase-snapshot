@@ -737,7 +737,7 @@ test("generate only reports the artifacts it actually wrote", () => {
   const none = makeRepo("pol-m3c-", { "package.json": '{"name":"f"}', "a.ts": "export const a=1;\n" });
   const noneOut = runCli([
     "generate", "--cwd", none,
-    "--skip-artifacts", "readme,manifest,parts,navigation,projectTree,audit,monolith",
+    "--skip-artifacts", "readme,prompt,manifest,parts,navigation,projectTree,audit,monolith",
   ]).stderr;
   assert.match(noneOut, /all disabled/);
   fs.rmSync(none, { recursive: true, force: true });
@@ -828,7 +828,7 @@ test("the all-artifacts-disabled warning names what is actually written", () => 
   const dir = makeRepo("pol-l9-", { "package.json": '{"name":"fixture"}', "a.ts": "export const a=1;\n" });
   const result = runCli([
     "generate", "--cwd", dir,
-    "--skip-artifacts", "readme,manifest,parts,navigation,projectTree,audit,monolith",
+    "--skip-artifacts", "readme,prompt,manifest,parts,navigation,projectTree,audit,monolith",
   ]);
   assert.equal(result.code, 0);
   // It claimed the directory "will be empty" while the marker is always written.

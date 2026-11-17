@@ -63,7 +63,12 @@ export interface AgentContract {
   exitCodes: Record<string, string>;
   options: Array<{
     flag: string;
-    type: "string" | "boolean";
+    /**
+     * `number` is a distinct type, not a string that happens to parse: `--attachment-slots 20`
+     * carries a count, and a consumer that treated it as bytes would be off by three orders of
+     * magnitude.
+     */
+    type: "string" | "boolean" | "number";
     default?: string | number | boolean;
     appliesTo: string;
     summary: string;
@@ -114,6 +119,7 @@ export interface AgentContract {
 
 const ARTIFACT_SUMMARY: Record<string, string> = {
   readme: "README.md describing the snapshot at the output root.",
+  prompt: "PROMPT.md: the instruction sheet to paste with the snapshot, rendered from its manifest.",
   manifest: "manifest.json: machine-readable index of every file, part, hash and config.",
   parts: "parts/*.md: the packed, budget-limited markdown parts that carry the code.",
   navigation: "reports/navigation.md: links between parts and layers.",
@@ -125,6 +131,7 @@ const ARTIFACT_SUMMARY: Record<string, string> = {
 
 const ARTIFACT_DEFAULTS: Record<string, boolean> = {
   readme: true,
+  prompt: true,
   manifest: true,
   parts: true,
   navigation: true,
@@ -286,13 +293,15 @@ export function buildAgentContract(): AgentContract {
       {
         step: 6,
         id: "consume",
-        run: "read ./snapshot/parts/*.md, then ./snapshot/manifest.json, then ./snapshot/reports/audit.md",
+        run: "read ./snapshot/PROMPT.md first, then ./snapshot/parts/*.md, ./snapshot/manifest.json and ./snapshot/reports/audit.md",
         expect: "the code, the index of what was included, and the risk findings",
         notes:
           "manifest.json.files[] lists every included file with layer, kind, language, part and summary. " +
           "manifest.skipped[] explains every file that was left out and why; " +
           "manifest.incomplete[] lists every included file that is not present in full, with its " +
-          "missing line ranges.",
+          "missing line ranges. " +
+          "PROMPT.md is the instruction sheet for whoever reads the snapshot; it is rendered from " +
+          "the manifest, so it names this run's omissions rather than describing snapshots in general.",
       },
     ],
     commands: [
@@ -453,6 +462,26 @@ export function buildAgentContract(): AgentContract {
         summary:
           "How files are discovered: auto (git when usable), git (require git), walk (read .gitignore " +
           "files directly, including nested ones; the escape hatch for a .git that cannot be listed).",
+      },
+      {
+        flag: "--attachment-slots",
+        type: "number",
+        default: "10",
+        appliesTo: optionAppliesTo("attachment-slots"),
+        summary:
+          "Files the destination accepts in one message (0 = no limit). PROMPT.md plans the " +
+          "delivery against it: which parts to attach, what to leave behind, and the part budget " +
+          "that would merge them. It does not change the payload.",
+      },
+      {
+        flag: "--max-parts",
+        type: "number",
+        default: "unset",
+        appliesTo: optionAppliesTo("max-parts"),
+        summary:
+          "Experimental: grow the per-part budget until the snapshot has at most this many parts. " +
+          "The budget it settles on is recorded in manifest.budgets.maxPartBytes and may exceed " +
+          "maxPartBytes; a warning says so.",
       },
       {
         flag: "--skip-artifacts",
@@ -692,6 +721,8 @@ export function buildAgentContract(): AgentContract {
         { key: "includeSensitiveFiles", type: "boolean", default: false, summary: "Emit .env / *.pem / credential files." },
         { key: "include", type: "string[]", default: "[]", summary: "Allow-list of globs; empty means everything." },
         { key: "excludePatterns", type: "string[]", default: "[]", summary: "Extra exclude globs." },
+        { key: "maxParts", type: "number | null", default: null, summary: "Experimental: the most parts a snapshot may have. The per-part budget grows to fit, up to the run's own needs; the effective ceiling is recorded in manifest.budgets.maxPartBytes and may exceed maxPartBytes." },
+        { key: "attachmentSlots", type: "number", default: 10, summary: "Files the destination accepts in one message (0 = no limit); PROMPT.md plans the delivery to fit. It does not change the payload, and it is not part of the config digest." },
         { key: "discovery", type: '"auto" | "git" | "walk"', default: "auto", summary: "How files are discovered; `walk` scans the tree and reads .gitignore directly when a .git directory cannot be listed." },
         { key: "artifacts", type: "object", default: "all on except monolith", summary: "Per-artifact opt-out." },
         { key: "budgets", type: "object", default: "{ default, byLayer }", summary: "Per-layer byte budgets." },
@@ -706,6 +737,7 @@ export function buildAgentContract(): AgentContract {
     output: {
       layout: [
         "<outDir>/README.md",
+        "<outDir>/PROMPT.md",
         "<outDir>/manifest.json",
         "<outDir>/parts/part-NNN.md",
         "<outDir>/reports/project-tree.md",
@@ -719,6 +751,7 @@ export function buildAgentContract(): AgentContract {
         "indexes.imports.byFile includes previewed files (their import specifiers are still extracted); such an entry carries `exportsOmitted: true` instead of pretending it exports nothing.",
         "validate re-checks manifest.incomplete[] against files[] and refuses a manifest whose two statements of what is missing disagree.",
         "manifest.skipped[] carries the path and the exact reason it was excluded.",
+        "PROMPT.md is rendered from the manifest of the run that wrote it — its parts, partial files, skip tallies and fingerprint are that run's — and manifest.artifacts.prompt records its digest, so an edited prompt fails validate.",
         `The output directory is replaced atomically; ${MIN_MAX_PART_BYTES} bytes is the smallest legal budget.`,
       ],
     },

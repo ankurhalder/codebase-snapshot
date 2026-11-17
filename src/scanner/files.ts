@@ -938,6 +938,34 @@ export function defaultIgnoreReason(
 }
 
 /**
+ * The last `limit` commit subjects, newest first; empty when git cannot answer.
+ *
+ * Feeds the "what came before" section of `PROMPT.md`. A repository with no readable history
+ * gets no history section rather than an invented one, so the caller is told whether the list
+ * is empty and the prompt says so in words.
+ */
+export function recentCommitSubjects(cwd: string, limit = 10): string[] {
+  try {
+    const stdout = childProcess.execFileSync(
+      "git",
+      ["log", "-n", String(limit), "--pretty=%s", "--no-color"],
+      {
+        cwd,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
+        maxBuffer: GIT_OUTPUT_LIMIT,
+      }
+    );
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Lists paths git ignores, one entry per ignored directory (`--directory`
  * collapses them so `node_modules/` is a single line).
  *

@@ -38,7 +38,10 @@ const config = {
   // Example: ["src/**", "packages/*/src/**"]
   include: [],
   // Globs or path segments to drop. Example: ["**/*.test.ts", "docs"]
-  excludePatterns: [],
+  // The audit trail and the changelog are records of work, not code. They were 490 KB of the
+  // 3.1 MB this repository emitted — a third of a 300 KB budget's worth of parts — and neither
+  // answers a question about how the code works.
+  excludePatterns: ["audit/**", "CHANGELOG.md"],
   // How candidate files are found: "auto" lists them through git when git can
   // and walks the tree otherwise; "git" and "walk" force one path, and "walk" is
   // the escape hatch when .git exists but git cannot list it.

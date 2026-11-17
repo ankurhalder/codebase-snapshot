@@ -225,6 +225,7 @@ the manifest called it a preview by policy. That combination is a config error.
 export default {
   artifacts: {
     readme: true,          // snapshot/README.md
+    prompt: true,          // snapshot/PROMPT.md — the instruction sheet a model is given
     manifest: true,        // snapshot/manifest.json
     parts: true,           // snapshot/parts/*.md
     navigation: true,      // snapshot/reports/navigation.md
@@ -245,6 +246,54 @@ means `validate` and `report` cannot inspect the snapshot, and `parts` off with 
 on leaves links pointing at files that were never written. Both are allowed.
 
 The `.codebase-snapshot` ownership marker is always written, whatever the selection.
+
+## Delivering it: how many files the destination takes
+
+```js
+export default {
+  attachmentSlots: 10,   // files your chat accepts per message; 0 = no limit
+};
+```
+
+Hosted assistants take a fixed number of files per message — 10 is the common cap — and every part
+is one of them. `PROMPT.md` plans the delivery against this number: which parts to attach, what to
+leave behind when they do not all fit, and the `--max-part-bytes` value that would merge them.
+
+- Default `10`; `0` means the destination imposes no limit and the plan says to attach everything.
+- It changes **no part and no file**: the payload is byte-identical either way. Only the delivery
+  section of `PROMPT.md` moves, which is why it is recorded in `manifest.config` but is not part of
+  the config digest — a new delivery preference must not make an existing snapshot fail `validate`.
+- Instructions are pasted as text and cost no slot, so the budget is always spent on files.
+
+The one thing it cannot do is make a snapshot fit: a 12-part snapshot does not go into a 10-file
+message at any setting. Raise `maxPartBytes` to merge the parts, or narrow the scope — the plan in
+`PROMPT.md` names the number.
+
+### Experimental: a fixed number of parts
+
+```js
+export default {
+  maxParts: 10,   // grow the parts until the snapshot has at most ten; off by default
+};
+```
+
+The opposite trade to everything above: the **count** is fixed and the **size** gives way. As the
+repository grows, `maxParts` grows the per-part budget instead of adding a part, which is what a
+destination with a hard file limit wants — the snapshot keeps its shape instead of turning into
+eleven parts next month.
+
+- Off by default (`null`). Opt in per run with `--max-parts <n>`, or in the config.
+- The budget it settles on is recorded in `manifest.budgets.maxPartBytes` — the number the parts
+  actually honour — while `manifest.config.maxPartBytes` keeps the configured value, so
+  `validate` still compares like with like.
+- It may exceed `maxPartBytes`, and that is the point: a part bigger than the configured ceiling is
+  more tokens at once, and some destinations cap a single file. Both facts land in
+  `manifest.warnings`, so the run says what it did rather than quietly changing the shape.
+- If it cannot converge, generation fails with the counts it tried rather than writing something
+  the setting did not ask for.
+
+Treat it as experimental: `maxPartBytes` stays the honest control, and this is the knob for the
+case where the file count, not the byte count, is the binding constraint.
 
 See [Snapshot output](output.md) for the layout and the manifest schema.
 
@@ -464,6 +513,9 @@ const config = {
   excludePatterns: [],
   discovery: "auto",                 // "auto" | "git" | "walk"
 
+  // ── Delivery ─────────────────────────────────────────────
+  attachmentSlots: 10,               // files your destination takes per message; 0 = no limit
+
   // ── Classification ───────────────────────────────────────
   layersMode: "merge",
   layers: [],
@@ -476,6 +528,7 @@ const config = {
   // ── Artifacts ────────────────────────────────────────────
   artifacts: {
     readme: true,
+    prompt: true,
     manifest: true,
     parts: true,
     navigation: true,
