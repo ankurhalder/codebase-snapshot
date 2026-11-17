@@ -94,6 +94,13 @@ test("prompts, resources and templates are described exactly as served", async (
   for (const uri of contract.mcp.resources) {
     assert.ok(servedUris.has(uri), `${uri} is described in the contract and served`);
   }
+  // A report resource is promised only by the second list, and only when written; anything served
+  // has to appear in one of the two.
+  const known = new Set([...contract.mcp.resources, ...contract.mcp.reportResources]);
+  for (const uri of servedUris) {
+    if (uri.startsWith("snapshot://parts/")) continue;
+    assert.ok(known.has(uri), `${uri} is served and described`);
+  }
 });
 
 test("the advertised protocol versions match the contract", async () => {
@@ -135,14 +142,18 @@ test("mcp refuses a flag it does not apply", () => {
   assert.ok(failed, "mcp --format must fail rather than start a server");
 });
 
-test("every static resource the contract publishes is served, in the same order", async () => {
+test("every static resource the contract publishes is served, before the report resources", async () => {
   const contract = describeContract();
   const live = await liveSession();
   // The parts are discovered from the manifest, so they are the one family the contract cannot
-  // list by URI. Everything else is fixed, and `describe` promising a resource the server does
-  // not serve (or missing one it does) is the contract lying about itself.
+  // list by URI. The static four are fixed and come first; the report resources follow, and only
+  // the ones this run wrote. `describe` promising a resource the server does not serve (or
+  // missing one it does) is the contract lying about itself.
   const served = live.resources
     .map((resource) => resource.uri)
     .filter((uri) => !uri.startsWith("snapshot://parts/"));
-  assert.deepEqual(served, contract.mcp.resources);
+  assert.deepEqual(served.slice(0, contract.mcp.resources.length), contract.mcp.resources);
+  for (const uri of served.slice(contract.mcp.resources.length)) {
+    assert.ok(contract.mcp.reportResources.includes(uri), `${uri} is a declared report resource`);
+  }
 });

@@ -30,6 +30,15 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.69
+
+- **The contract distinguishes static resources from report resources.** Splitting the list fixed two
+  real failures: `resources/list` no longer advertises a report that was never written (0.12.62), but
+  `describe` still claimed all six unconditionally, so the parity tests — correctly — failed.
+  `describe` now publishes `resources` (the four always-present) and `reportResources` (the six, served
+  only when written); the tests assert that split.
+
+Verified: 48 MCP/contract/hygiene tests pass, including the two that caught it.
 ## 0.12.68
 
 - **`snapshot_review` names the route methods a change touches.** A review of `route.ts` that says

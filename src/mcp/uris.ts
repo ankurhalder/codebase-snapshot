@@ -12,11 +12,19 @@ export const STATIC_RESOURCE_URIS: readonly string[] = [
   "snapshot://contract",
   "snapshot://skill",
   "snapshot://prompt",
+];
+
+/**
+ * Report resources, listed only when the run wrote the file.
+ *
+ * They are not in {@link STATIC_RESOURCE_URIS} because a resource in `resources/list` has to be
+ * readable, and `--include-diffs`, `--include-logs` and `--token-tree` are opt-in. The contract
+ * publishes them separately so a client can know they exist without being promised one.
+ */
+export const REPORT_RESOURCE_URIS: readonly string[] = [
   "snapshot://reports/audit",
   "snapshot://reports/tree",
   "snapshot://reports/navigation",
-  // Written only when the matching flag is on; reading one of these from a snapshot that has no
-  // such report is a not-found with the reason, which is a better answer than an empty document.
   "snapshot://reports/diff",
   "snapshot://reports/log",
   "snapshot://reports/tokens",

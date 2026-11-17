@@ -114,7 +114,7 @@ const REPORT_URIS = new Map<string, { file: string; title: string }>([
 ]);
 
 /** Resources that exist regardless of what is on disk, in the order `resources/list` reports them. */
-export { STATIC_RESOURCE_URIS, RESOURCE_TEMPLATE_URIS } from "./uris.js";
+export { STATIC_RESOURCE_URIS, REPORT_RESOURCE_URIS, RESOURCE_TEMPLATE_URIS } from "./uris.js";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

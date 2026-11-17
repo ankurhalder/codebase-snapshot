@@ -7,7 +7,7 @@ import {
   LEGACY_PROTOCOL_VERSIONS,
   MODERN_PROTOCOL_VERSIONS,
 } from "../mcp/protocol.js";
-import { RESOURCE_TEMPLATE_URIS, STATIC_RESOURCE_URIS } from "../mcp/uris.js";
+import { REPORT_RESOURCE_URIS, RESOURCE_TEMPLATE_URIS, STATIC_RESOURCE_URIS } from "../mcp/uris.js";
 import { PRESETS } from "../presets/registry.js";
 import { optionAppliesTo } from "./option-scope.js";
 
@@ -113,6 +113,8 @@ export interface AgentContract {
     }>;
     prompts: Array<{ name: string; summary: string; arguments: string[] }>;
     resources: string[];
+    /** Report resources, served only when the run wrote the file. */
+    reportResources: string[];
     resourceTemplates: string[];
     notes: string[];
   };
@@ -1029,6 +1031,7 @@ export function buildAgentContract(): AgentContract {
         arguments: prompt.arguments.map((argument) => argument.name),
       })),
       resources: [...STATIC_RESOURCE_URIS],
+      reportResources: [...REPORT_RESOURCE_URIS],
       resourceTemplates: [...RESOURCE_TEMPLATE_URIS],
       notes: [
         "stdout carries JSON-RPC messages only; every note and log line goes to stderr.",
