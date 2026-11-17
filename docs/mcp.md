@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.28 mcp
+npx -y codebase-snapshot@0.12.29 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.28", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.29", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.28 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.29 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.28 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.29 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -70,7 +70,22 @@ reachable from the network must not be readable by any page that guesses the por
 | `--allow-origin <list>` | unset | Extra CORS origins, comma separated |
 
 CORS is granted to loopback origins (`localhost`, `127.0.0.1`, `[::1]`, any port) and to the
-origins you list. Any other `Origin` gets `403`. Request bodies are capped at 2 MB, the rate is
+origins you list. Any other `Origin` gets `403`.
+
+### Legacy SSE, for clients that cannot send a header
+
+`GET /sse` opens an event stream and announces its message endpoint:
+
+```text
+event: endpoint
+data: /messages?sessionId=<id>
+```
+
+The client POSTs JSON-RPC to that path, receives `202`, and reads the answer as a `message`
+event on the open stream. This exists for browsers and older clients where `EventSource` cannot
+set `Authorization`; the token may travel as `?token=` **on this path only**, which is a leak
+into logs and is documented as such. A heartbeat every 15 s keeps the connection alive, and
+shutdown ends the streams rather than waiting on them. Request bodies are capped at 2 MB, the rate is
 capped at 60 requests per 10 seconds per address, and every response is one bounded JSON document.
 
 ## The fourteen tools

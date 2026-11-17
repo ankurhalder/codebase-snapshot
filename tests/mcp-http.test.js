@@ -123,3 +123,69 @@ test("healthz reports the server is up", async (t) => {
   assert.equal(body.ok, true);
   assert.equal(body.name, "codebase-snapshot");
 });
+
+test("the legacy SSE endpoint hands out a session and answers on the stream", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+
+  const stream = await fetch(transport.url.replace("/mcp", "/sse") + "?token=" + transport.token, {
+    headers: { accept: "text/event-stream" },
+    signal: controller.signal,
+  });
+  assert.equal(stream.status, 200);
+  assert.match(String(stream.headers.get("content-type")), /text\/event-stream/);
+
+  const reader = stream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const nextEvent = async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stream closed");
+      buffer += decoder.decode(value, { stream: true });
+      const end = buffer.indexOf("\n\n");
+      if (end !== -1) {
+        const event = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        return event;
+      }
+    }
+  };
+
+  const endpoint = await nextEvent();
+  assert.match(endpoint, /event: endpoint/);
+  const messagePath = /data: (\S+)/.exec(endpoint)[1];
+
+  const posted = await fetch(transport.url.replace("/mcp", "") + messagePath, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer " + transport.token },
+    body: JSON.stringify(rpc(7, "initialize", { protocolVersion: "2024-11-05", capabilities: {} })),
+  });
+  assert.equal(posted.status, 202);
+
+  const answer = await nextEvent();
+  assert.match(answer, /event: message/);
+  const payload = JSON.parse(/data: (.+)/.exec(answer)[1]);
+  assert.equal(payload.id, 7);
+  assert.equal(payload.result.serverInfo.name, "codebase-snapshot");
+});
+
+test("the SSE endpoint requires the token", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const response = await fetch(transport.url.replace("/mcp", "/sse"));
+  assert.equal(response.status, 401);
+});
+
+test("an unknown SSE session is a 404", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const response = await fetch(transport.url.replace("/mcp", "/messages?sessionId=nope"), {
+    method: "POST",
+    headers: { authorization: "Bearer " + transport.token, "content-type": "application/json" },
+    body: JSON.stringify(rpc(1, "tools/list", {})),
+  });
+  assert.equal(response.status, 404);
+});

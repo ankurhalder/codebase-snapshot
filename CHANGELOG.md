@@ -26,6 +26,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.29
+
+- **Legacy SSE transport** for clients that predate Streamable HTTP: `GET /sse` announces
+  `/messages?sessionId=…`, the client POSTs JSON-RPC and reads the answer as a `message` event.
+  The token may arrive as `?token=` on this path only, because `EventSource` cannot set headers;
+  the docs say that is a leak into logs. A heartbeat every 15 s keeps the stream alive, and
+  shutdown ends the streams instead of waiting on them forever.
+- `/healthz` reports the real tool count (it said 12 while the server served 14).
+
+Verified: a full SSE handshake and JSON-RPC answer, 401 without the token, 404 for an unknown
+session id, and the suite no longer hangs on teardown.
 ## 0.12.28
 
 - `validate` now checks the opt-in reports the manifest declares (`reports/diff.md`,

@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import * as crypto from "node:crypto";
 import { createServer } from "./run.js";
+import { buildTools } from "./tools.js";
 import type { McpServer } from "./server.js";
 import type { JsonRpcResponse } from "./protocol.js";
 
@@ -88,6 +89,22 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   }
 
   const server: McpServer = createServer({ cwd: options.cwd, log });
+  const toolCount = buildTools().length;
+  /**
+   * Legacy SSE sessions: `GET /sse` hands out an endpoint URL, `POST /messages` answers on the
+   * open stream. It exists for clients that predate Streamable HTTP and cannot send headers —
+   * which is also why the token may arrive as a query parameter here. That is a leak into logs,
+   * so it is confined to this path and the docs say so.
+   */
+  const sseSessions = new Map<string, { write: (payload: string) => void; end: () => void }>();
+  const tokenAccepted = (request: http.IncomingMessage, url: URL): boolean => {
+    if (token === null) return true;
+    const header = request.headers.authorization ?? "";
+    const match = /^Bearer\s+(.+)$/i.exec(header);
+    if (match !== null && timingSafeEqual(match[1].trim(), token)) return true;
+    const fromQuery = url.searchParams.get("token");
+    return fromQuery !== null && timingSafeEqual(fromQuery, token);
+  };
   const sessions = new Map<string, { count: number; resetAt: number }>();
 
   const allowedOrigin = (origin: string | undefined): string | null => {
@@ -129,7 +146,76 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
 
     if (request.method === "GET" && request.url === "/healthz") {
-      send(200, { ok: true, name: "codebase-snapshot", tools: 12 }, cors);
+      send(200, { ok: true, name: "codebase-snapshot", tools: toolCount }, cors);
+      return;
+    }
+
+    const url = new URL(request.url ?? "/", "http://localhost");
+
+    if (request.method === "GET" && url.pathname === "/sse") {
+      if (!tokenAccepted(request, url)) {
+        send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
+        return;
+      }
+      const id = crypto.randomBytes(12).toString("hex");
+      response.writeHead(200, {
+        ...cors,
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      const write = (payload: string): void => {
+        response.write(payload);
+      };
+      sseSessions.set(id, { write, end: () => response.end() });
+      const heartbeat = setInterval(() => write(": ping\n\n"), 15_000);
+      const cleanup = (): void => {
+        clearInterval(heartbeat);
+        sseSessions.delete(id);
+      };
+      request.on("close", cleanup);
+      response.on("close", cleanup);
+      write("event: endpoint\ndata: /messages?sessionId=" + id + "\n\n");
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/messages") {
+      if (!tokenAccepted(request, url)) {
+        send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
+        return;
+      }
+      const id = url.searchParams.get("sessionId") ?? "";
+      const stream = sseSessions.get(id);
+      if (stream === undefined) {
+        send(404, { error: "unknown sessionId; open GET /sse first" });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let received = 0;
+      request.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        if (received > maxBody) {
+          request.destroy();
+          send(413, { error: "request body too large", limit: maxBody });
+          return;
+        }
+        chunks.push(chunk);
+      });
+      request.on("end", () => {
+        void (async () => {
+          let message: unknown;
+          try {
+            message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch (error) {
+            send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: String(error) } });
+            return;
+          }
+          const answer = await server.handle(message);
+          if (answer !== null) stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
+          send(202, "", cors);
+        })();
+      });
       return;
     }
 
@@ -229,7 +315,18 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     token,
     close: () =>
       new Promise<void>((resolve) => {
+        // An open SSE stream keeps `close()` waiting forever, and a shutdown that never finishes
+        // is indistinguishable from a server that ignored the signal.
+        for (const [, session] of sseSessions) {
+          try {
+            session.end();
+          } catch {
+            // The client may already be gone.
+          }
+        }
+        sseSessions.clear();
         httpServer.close(() => resolve());
+        httpServer.closeAllConnections();
       }),
   };
 }
