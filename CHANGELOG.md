@@ -26,6 +26,26 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.20
+
+**`generate --remote`: a repository URL in, a traceable snapshot out.**
+
+- https only, no credentials in the URL, and the resolved address must be public: loopback,
+  RFC1918, link-local (including cloud metadata `169.254.169.254`), CGNAT and their v6 equivalents
+  are refused unless `--allow-private` says otherwise. The host is checked again after DNS, because
+  a name can point at 127.0.0.1.
+- Shallow clone (`--depth 1`, one branch, no tags, no submodules, no LFS) into a temporary
+  directory that is removed on exit; `--keep-clone` keeps it. `GITHUB_TOKEN` reaches git through
+  the environment, never argv, and never enters the manifest.
+- The manifest records `source: { url, host, owner, repo, ref, commit, fetchedAt }`, so the snapshot
+  names the commit it describes instead of a branch that may have moved. A fetched repository is
+  not a trusted one, so its config file is not loaded.
+- `--allow-private` for air-gapped mirrors and `file:` tests; it is an explicit override, not a
+  fallback.
+
+Verified: parser and refusal table, private-address classification (v4 and v6), `file:` gated behind
+`--allow-private`, and an end-to-end clone whose manifest carries a 40-character commit and writes
+into the caller directory rather than the temp clone.
 ## 0.12.19
 
 **`snapshot serve`: the browser face.**

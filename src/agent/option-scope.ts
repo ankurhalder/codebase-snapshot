@@ -73,6 +73,10 @@ const VALIDATE_OPTIONS = [
  */
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
+    "remote",
+    "ref",
+    "allow-private",
+    "keep-clone",
     "sarif",
     "skeleton",
     "changed-since",

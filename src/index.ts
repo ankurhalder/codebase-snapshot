@@ -85,6 +85,8 @@ import type {
 } from "./types.js";
 
 export { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION } from "./version.js";
+export { assertPublicHost, cloneRepository, isPrivateHost, makeCloneDirectory, parseRemoteSource } from "./remote/source.js";
+export type { CloneOptions, CloneResult, ParsedSource, RemoteSource } from "./remote/source.js";
 export { startWebServer } from "./web/server.js";
 export type { ServeHandle, ServeOptions } from "./web/server.js";
 export { writeZip, crc32, walkFiles } from "./web/zip.js";
@@ -382,6 +384,8 @@ function sha256Hex(input: string | Buffer): string {
 export interface GenerateOptions {
   /** Compute the full manifest but write nothing to disk. */
   dryRun?: boolean;
+  /** Provenance for a tree fetched from a remote, recorded in the manifest and the brief. */
+  source?: Manifest["source"];
 }
 
 const TS_EXTENSIONS = [
@@ -2903,6 +2907,7 @@ export function generateSnapshot(
     // A branch name is user input and can carry a token: it reaches the manifest,
     // the README and the audit report.
     git: { ...gitInfo, branch: maskPathText(gitInfo.branch, config.secretRules) },
+    ...(options?.source === undefined ? {} : { source: options.source }),
     budgets: {
       // The ceiling the parts actually honour. It equals the configured one unless `maxParts`
       // grew it; `config.maxPartBytes` below keeps the configured value, because that is what

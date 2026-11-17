@@ -560,6 +560,40 @@ export function buildAgentContract(): AgentContract {
           "findings. The matched value is never included.",
       },
       {
+        flag: "--remote",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("remote"),
+        summary:
+          "generate: fetch a repository instead of scanning the current directory. https only, " +
+          "shallow clone (depth 1, no tags, no submodules), public addresses only unless " +
+          "--allow-private, and the manifest records the URL, host, owner, repo, ref, commit and " +
+          "fetch time. GITHUB_TOKEN is used when set, through the environment.",
+      },
+      {
+        flag: "--ref",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("ref"),
+        summary: "generate --remote: branch or tag to clone (a #ref in the URL also works).",
+      },
+      {
+        flag: "--allow-private",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("allow-private"),
+        summary:
+          "generate --remote: allow private addresses and file: URLs. Off by default because a " +
+          "repository URL decides which machine this process reaches.",
+      },
+      {
+        flag: "--keep-clone",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("keep-clone"),
+        summary: "generate --remote: keep the temporary clone and print where it is.",
+      },
+      {
         flag: "--http",
         type: "boolean",
         default: false,

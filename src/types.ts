@@ -453,6 +453,21 @@ export interface Manifest {
     commit: string;
     isDirty: boolean;
   };
+  /**
+   * Where the described tree came from, when it was fetched rather than found on disk.
+   *
+   * Absent for a local run. Present for `--remote`, with the commit that was actually cloned so
+   * a reader can trace the snapshot back to a revision rather than to a URL that may have moved.
+   */
+  source?: {
+    url: string;
+    host: string;
+    owner: string;
+    repo: string;
+    ref: string | null;
+    commit: string;
+    fetchedAt: string;
+  };
   budgets: {
     maxPartBytes: number;
     largeFileBytes: number;

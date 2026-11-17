@@ -47,6 +47,7 @@ import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
 import { startHttpTransport } from "./mcp/http.js";
 import { startWebServer } from "./web/server.js";
+import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "./remote/source.js";
 import {
   cacheFilePath,
   checkForUpdate,
@@ -163,6 +164,10 @@ export const CLI_OPTIONS = {
   token: { type: "string" },
   "no-auth": { type: "boolean" },
   "allow-origin": { type: "string" },
+  remote: { type: "string" },
+  ref: { type: "string" },
+  "allow-private": { type: "boolean" },
+  "keep-clone": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -359,6 +364,14 @@ interface ParsedInvocation {
   token?: string | null;
   noAuth?: boolean;
   allowOrigins?: string[];
+  /** `generate`: fetch this repository instead of scanning the current directory. */
+  remote?: string;
+  /** `--remote`: branch or tag to clone. */
+  ref?: string;
+  /** `--remote`: allow private addresses and file: URLs. */
+  allowPrivate?: boolean;
+  /** `--remote`: keep the clone after the run. */
+  keepClone?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -811,6 +824,10 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     host: values.host === undefined ? undefined : String(values.host),
     token: values.token === undefined ? undefined : String(values.token),
     noAuth: values["no-auth"] === true ? true : undefined,
+    remote: values.remote === undefined ? undefined : String(values.remote),
+    ref: values.ref === undefined ? undefined : String(values.ref),
+    allowPrivate: values["allow-private"] === true ? true : undefined,
+    keepClone: values["keep-clone"] === true ? true : undefined,
     allowOrigins:
       values["allow-origin"] === undefined
         ? undefined
@@ -1778,6 +1795,55 @@ async function runCommand(argv: string[]): Promise<number> {
     if (decided !== null) return decided;
   }
 
+  // `--remote` fetches the tree before anything reads it. The clone is the repository for the
+  // rest of this run: the config file it may contain is deliberately not loaded (a fetched
+  // repository is not a trusted one), and the output directory stays where the user ran the
+  // command, which is where they will look for it.
+  let sourceProvenance: Manifest["source"] | undefined;
+  if (invocation.remote !== undefined) {
+    if (invocation.command !== "generate") {
+      return fail(invocation.format, "--remote is accepted by generate only.");
+    }
+    const parsed = parseRemoteSource(invocation.remote, { allowPrivate: invocation.allowPrivate === true });
+    if (!parsed.ok) return fail(invocation.format, parsed.message);
+    try {
+      if (parsed.source.kind === "https") {
+        await assertPublicHost(parsed.source.host, invocation.allowPrivate === true);
+      }
+      const clone = await cloneRepository(parsed.source, {
+        dest: makeCloneDirectory(),
+        token: process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? null,
+        ref: invocation.ref ?? null,
+        allowPrivate: invocation.allowPrivate === true,
+        log: (line) => info("   " + line),
+      });
+      sourceProvenance = clone.provenance;
+      const outDir = path.resolve(invocation.cwd, invocation.outDir ?? "snapshot");
+      invocation = { ...invocation, cwd: clone.directory, outDir, noConfig: true };
+      info(
+        "   Source: " + parsed.source.owner + "/" + parsed.source.repo + "@" + clone.commit.slice(0, 12) +
+          " (fetched " + clone.provenance.fetchedAt + ")"
+      );
+      if (invocation.keepClone === true) {
+        info("   Clone kept at: " + clone.directory);
+      } else {
+        // Every exit path, including a fail() after this point, leaves the temp tree behind unless
+        // this runs. rmSync on exit is synchronous and the process is already ending, so nothing
+        // is waiting on it.
+        const directory = clone.directory;
+        process.once("exit", () => {
+          try {
+            fs.rmSync(directory, { recursive: true, force: true });
+          } catch {
+            // Best effort: a locked file must not turn a successful run into a crash.
+          }
+        });
+      }
+    } catch (error) {
+      return fail(invocation.format, "Remote fetch failed: " + (error as Error).message);
+    }
+  }
+
   // `diff` compares two manifests and never needs a repository config; importing one would
   // execute repository code to answer a question about files. --no-config also skips it.
   const skipConfig = invocation.noConfig || invocation.command === "diff";
@@ -1966,7 +2032,10 @@ async function runCommand(argv: string[]): Promise<number> {
   );
 
   try {
-    const manifest = generateSnapshot(resolved, { dryRun: invocation.dryRun });
+    const manifest = generateSnapshot(resolved, {
+      dryRun: invocation.dryRun,
+      ...(sourceProvenance === undefined ? {} : { source: sourceProvenance }),
+    });
     const elapsed = ((performance.now() - started) / 1000).toFixed(2);
 
     if (invocation.dryRun) {

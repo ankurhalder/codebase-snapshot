@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.12.19 (project dependency ^0.12.19)
+   Branch: main | Part budget: 300 KB | Generator: 0.12.20 (project dependency ^0.12.20)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.19
+   Added devDependency: codebase-snapshot ^0.12.20
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.12.19
+   Added devDependency: codebase-snapshot ^0.12.20
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -477,6 +477,10 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--large-file-bytes <n>` | size | the part budget (307200) | generate, validate, explain, setup | Above this, a file becomes a head/tail preview. It may not exceed `--max-part-bytes`: a file between the two could not fit a part. |
 | `--max-monolith-bytes <n>` | size | unset | generate, validate, setup | Skip the single-file monolith when it would exceed this. |
 | `--brief <path>` | path | unset | generate, validate | The owner-written half of `PROMPT.md`: `Stakes`, `The system`, `What came before`, `The bar`, `Calibration`. Unknown headings are kept as Owner notes; measured headings cannot be redefined; the file is digested, so editing it is drift. |
+| `--remote <url>` | url | unset | generate | Fetch a repository instead of scanning the current directory. https only, public addresses only, shallow clone; the manifest records the URL and the commit. See [remote](remote.md). |
+| `--ref <branch>` | string | unset | generate | With `--remote`: the branch or tag to clone. |
+| `--allow-private` | flag | off | generate | With `--remote`: allow private addresses and `file:` URLs. Refused by default. |
+| `--keep-clone` | flag | off | generate | With `--remote`: keep the temporary clone and print where it is. |
 | `--prompt-task <task>` | string | `audit` | generate, validate | `audit`, `review` or `explain` — which job the brief is written for. Changes the opening section, not the standard. |
 | `--max-parts <n>` | count | unset | generate, validate | **Experimental.** Grow the per-part budget until the snapshot has at most `n` parts, so the file count stays fixed as the code grows. The budget it settles on is recorded in `manifest.budgets.maxPartBytes` and may exceed `--max-part-bytes`; a warning says so. `0` is a usage error. |
 | `--attachment-slots <n>` | count | `10` | generate | Files the destination accepts in one message; `0` means no limit. `PROMPT.md` plans the delivery against it — which parts to attach, what to leave behind, and the `--max-part-bytes` value that would merge them. It changes no part and no file, so it is recorded in the manifest but is not part of the config digest. |
