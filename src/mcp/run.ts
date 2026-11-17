@@ -9,7 +9,7 @@
 import { GENERATOR_NAME, GENERATOR_VERSION } from "../version.js";
 import { SERVER_INSTRUCTIONS } from "./instructions.js";
 import { ERROR_CODES, errorResponse, isJsonObject } from "./protocol.js";
-import type { JsonRpcId } from "./protocol.js";
+import type { JsonObject, JsonRpcId } from "./protocol.js";
 import { createMcpServer } from "./server.js";
 import type { McpServer } from "./server.js";
 import { createLineReader, createWriter } from "./stdio.js";
@@ -24,6 +24,8 @@ const PROJECT_URL = "https://ankurhalder.github.io/codebase-snapshot/";
 export interface ServerOptions {
   /** Repository the tools operate on. Also the only directory they may read. */
   cwd: string;
+  /** Writes a JSON-RPC notification. The stdio loop supplies it; HTTP answers one request at a time. */
+  notify?: (message: JsonObject) => void;
   /** Additional directories callers may name as `root`. Defaults to `cwd` alone. */
   roots?: string[];
   /** Where operational notes go. Never stdout, which carries protocol messages only. */
@@ -52,6 +54,7 @@ export function createServer(options: ServerOptions): McpServer {
     resources: buildResourceProvider(),
     prompts: buildPrompts(),
     context,
+    ...(options.notify === undefined ? {} : { notify: options.notify }),
   });
 }
 
@@ -65,8 +68,15 @@ export function createServer(options: ServerOptions): McpServer {
  */
 export async function runStdioServer(options: ServerOptions): Promise<number> {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
-  const server = createServer(options);
   const writer = createWriter(process.stdout);
+  const server = createServer({
+    ...options,
+    notify: (message) => {
+      // A notification is not a response: it must not take a slot in the response chain and it
+      // has no id to route, so it is written through the same serialiser and forgotten.
+      void writer.write(message).catch(() => undefined);
+    },
+  });
 
   let writeChain: Promise<void> = Promise.resolve();
   const send = (message: unknown): Promise<void> => {

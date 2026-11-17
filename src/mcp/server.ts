@@ -45,6 +45,8 @@ export interface McpServerOptions {
   resources: ResourceProvider;
   prompts: McpPrompt[];
   context: ToolContext;
+  /** Writes a JSON-RPC notification. Present on transports that can carry one mid-call. */
+  notify?: (message: JsonObject) => void;
 }
 
 export interface McpServer {
@@ -186,9 +188,30 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     }
 
     const args = applyDefaults(tool.inputSchema, supplied);
+    // Progress is opt-in per call: the client names a token, and every notification quotes it back.
+    const meta = params?._meta;
+    const progressToken =
+      isJsonObject(meta) && (typeof meta.progressToken === "string" || typeof meta.progressToken === "number")
+        ? meta.progressToken
+        : undefined;
+    const callContext: ToolContext =
+      progressToken === undefined || options.notify === undefined
+        ? options.context
+        : {
+            ...options.context,
+            notify: (event) => {
+              const progress: JsonObject = {
+                progressToken,
+                progress: event.progress ?? 0,
+                ...(event.total === undefined ? {} : { total: event.total }),
+                message: event.message,
+              };
+              options.notify?.({ jsonrpc: "2.0", method: "notifications/progress", params: progress });
+            },
+          };
     let outcome: ToolOutcome;
     try {
-      outcome = await tool.handler(args, options.context);
+      outcome = await tool.handler(args, callContext);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       options.context.log(`mcp: tool ${tool.name} failed: ${detail}`);

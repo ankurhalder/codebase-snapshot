@@ -1233,8 +1233,10 @@ const generateTool: McpTool = {
     // Off the JSON-RPC thread: a synchronous generate stops this server answering `ping` for
     // seconds on a large repository, and a client with a socket timeout then reports a working
     // tool call as a dead server.
+    context.notify?.({ message: "generating", progress: 1, total: 2 });
     const result = await generateInWorker(workspace.root, workspace.cliOptions);
     if (!result.ok) return failure(result.message);
+    context.notify?.({ message: "writing the snapshot", progress: 2, total: 2 });
     const summary = result.summary;
     // The new manifest has the same path as the cached one; dropping it here means the next call
     // cannot be served a snapshot from before this write on a filesystem with coarse mtimes.

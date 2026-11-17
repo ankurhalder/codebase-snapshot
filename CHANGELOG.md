@@ -26,6 +26,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.43
+
+- **MCP progress notifications.** A `tools/call` carrying `_meta.progressToken` receives
+  `notifications/progress` while it runs; `snapshot_generate` reports "generating" and "writing the
+  snapshot" with a 2-step total. A call without a token emits nothing.
+- Notifications are delivered by the stdio loop; the HTTP transport answers one request with one
+  document and cannot interleave them.
+- `notifications/cancelled` is still accepted and ignored, and the docs now say so instead of leaving
+  a client to guess: there is no cancellation signal inside a generate.
+
+Verified: a call with a token emits notifications carrying that token and a numeric progress before
+the response; a call without one emits nothing.
 ## 0.12.42
 
 - **The language profiles are pinned by a test.** Python, Go, Rust, Java, C#, Ruby and PHP each get a

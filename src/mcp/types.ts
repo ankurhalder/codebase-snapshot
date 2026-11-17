@@ -15,6 +15,14 @@ export interface ToolContext {
   roots: string[];
   /** Writes one line to stderr. Never stdout, which carries protocol messages only. */
   log: (line: string) => void;
+  /**
+   * Emits a progress notification for the current call.
+   *
+   * Present only when the client supplied a `progressToken` in `_meta` and the transport can carry
+   * a notification mid-call (stdio). A tool that never calls it is still correct; a tool that does
+   * gives a long run a heartbeat instead of a silent pause.
+   */
+  notify?: (event: { message: string; progress?: number; total?: number }) => void;
 }
 
 /**

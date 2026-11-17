@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.42 mcp
+npx -y codebase-snapshot@0.12.43 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.42", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.43", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.42 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.43 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.42 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.43 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -203,6 +203,18 @@ Seven. Two are about order of operations, five are a job:
 | `security-review` | Authentication, authorization, secrets and injection, plus what the snapshot cannot see. |
 
 Every tool a prompt names is a tool the server serves; a test holds the two lists together.
+
+## Progress, and what cancellation does not do
+
+A client that sends `progressToken` in `tools/call` `_meta` receives `notifications/progress` while
+a long call runs — `snapshot_generate` reports "generating" and "writing the snapshot" with a
+2-step total. The notifications are coarse by design: the worker that does the generation posts a
+summary, not a stream of phases, and inventing finer numbers would be a progress bar that lies.
+
+`notifications/cancelled` is accepted and ignored: there is no cancellation signal inside a
+generate, and the worker is not killed on request. A client should treat a call as running until
+it answers. This is a stated limitation, not an accident; progress notifications are what makes the
+wait visible in the meantime.
 
 ## What it will not do
 
