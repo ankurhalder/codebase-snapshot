@@ -26,6 +26,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.58
+
+**The health audit knows every artifact the run wrote.**
+
+- `reports/diff.md`, `reports/log.md`, `reports/tokens.md`, `full-codebase.xml` and
+  `reports/audit.sarif` were missing from the audit's expected set, so a snapshot that used any of
+  them warned "unexpected path" about a file the tool had just written. All five are known now, and
+  their digests are verified when the manifest records them.
+- Expected paths are derived from what the manifest declares rather than from a static list, so an
+  artifact a run did not write is not expected and a file it did not declare is still unexpected.
+
+Verified: a snapshot with every artifact reports 13 passed, 0 warnings, no unexpected path.
 ## 0.12.57
 
 - **A signed snapshot no longer reports `signature.json` as an unexpected file.** The health audit

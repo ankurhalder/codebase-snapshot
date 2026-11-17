@@ -57,8 +57,13 @@ const ARTIFACT_FILES: Record<string, string> = {
   navigation: "reports/navigation.md",
   projectTree: "reports/project-tree.md",
   audit: "reports/audit.md",
+  diff: "reports/diff.md",
+  log: "reports/log.md",
+  tokenTree: "reports/tokens.md",
   fullJson: "full-codebase.json",
   fullMarkdown: "full-codebase.md",
+  fullXml: "full-codebase.xml",
+  sarif: "reports/audit.sarif",
 };
 
 const TEXT_ARTIFACT = /\.(md|json|txt|sarif)$/i;
@@ -311,13 +316,18 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
           sample(artifactProblems))
   );
 
+  // Expected paths are the fixed files plus the artifacts this manifest actually records: an
+  // artifact a run did not write is not expected, and a file it did not declare is unexpected.
+  const recordedArtifacts = (manifest.artifacts ?? {}) as Record<string, unknown>;
   const known = new Set<string>([
     ".codebase-snapshot",
     "manifest.json",
     // Written after the manifest by `--sign`, so it is not in any artifact record, but it is a
     // file this tool wrote and belongs to the snapshot it signs.
     "signature.json",
-    ...Object.values(ARTIFACT_FILES),
+    ...Object.entries(ARTIFACT_FILES)
+      .filter(([key]) => recordedArtifacts[key] !== undefined && recordedArtifacts[key] !== null)
+      .map(([, file]) => file),
     ...manifest.parts.map((part) => "parts/" + part.filename),
   ]);
   const unexpected = walk(snapshotDir).filter((file) => !known.has(file));

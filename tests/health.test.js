@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, "..", "dist", "bin.js");
 
-function repoWithSnapshot(t, files = {}) {
+function repoWithSnapshot(t, files = {}, extraArgs = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "health-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
@@ -25,7 +25,7 @@ function repoWithSnapshot(t, files = {}) {
   for (const [relative, content] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, relative), content);
   }
-  const result = cli(["generate"], dir);
+  const result = cli(["generate", ...extraArgs], dir);
   assert.equal(result.code, 0, result.out);
   return dir;
 }
@@ -135,4 +135,12 @@ test("a signed snapshot reports no unexpected path", (t) => {
   assert.equal(result.code, 0, result.out);
   assert.doesNotMatch(result.out, /unexpected path/);
   assert.match(result.out, /signature verifies/);
+});
+
+test("every artifact the manifest records is expected, and none is a warning", (t) => {
+  const dir = repoWithSnapshot(t, {}, ["--pack", "xml", "--include-logs", "3", "--token-tree", "--include-diffs"]);
+  const result = health(dir);
+  assert.equal(result.code, 0, result.out);
+  assert.doesNotMatch(result.out, /unexpected path/);
+  assert.match(result.out, /13 passed, 0 warning/);
 });
