@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.81
+
+- **The workspace page now shows the whole workflow**, not just the generate call: the health audit
+  across members, validating one member against its repository, and serving the index to an agent
+  through `snapshot_workspace`. Each command in it was run on a fixture while the feature shipped.
 ## 0.12.80
 
 - **`health --all-members` audits a whole workspace.** It reads `WORKSPACE.json` and audits every

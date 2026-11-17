@@ -9,6 +9,26 @@ dependencies, different languages and different reasons to be read. This writes 
 member** and an index that ties them together, so a reader gets the same guarantees per member
 without one part budget stretched across everything.
 
+## The whole workflow
+
+```bash
+# 1. One snapshot per member, plus the index
+codebase-snapshot generate --workspace api,web,shared --out-dir context
+
+# 2. Audit every member at once; the combined score is the weakest one
+codebase-snapshot health --all-members --out-dir context --strict
+
+# 3. Check one member against its repository
+codebase-snapshot validate --cwd api --out-dir ../context/api
+
+# 4. Serve the index to an agent
+codebase-snapshot mcp --cwd .        # snapshot_workspace reads context/WORKSPACE.json
+```
+
+`health --all-members` fails the run when any member fails, so step 2 can gate a release the way a
+single-snapshot audit does. The members are independent snapshots: validating `api` says nothing
+about `web`, and that is deliberate — a shared failure is not evidence about either.
+
 ## What it writes
 
 ```text
