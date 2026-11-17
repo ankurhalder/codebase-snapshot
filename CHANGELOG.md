@@ -26,6 +26,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.41
+
+**Two more tools: `snapshot_search` and `snapshot_stats`.**
+
+- `snapshot_search` answers "where is this mentioned?" across the emitted parts, case-insensitive or
+  as a regular expression, with a match cap, a scan budget and optional context lines. It reads only
+  what the snapshot contains, so a redacted value and an excluded file cannot be found by searching
+  for them. A query under three characters is refused rather than matching everything.
+- `snapshot_stats` reads the manifest: files by layer and kind, part sizes, token estimate, the
+  heaviest files and the most expensive parts.
+- Seventeen tools now, and every count in the docs follows.
+
+Verified: a symbol is found with real line numbers, an absent string finds nothing, a two-character
+query and an invalid regex are refused, and stats agree with the manifest exactly.
 ## 0.12.40
 
 **`--strip-comments`: less prose, same line numbers.**

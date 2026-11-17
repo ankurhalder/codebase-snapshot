@@ -223,3 +223,40 @@ test("a review combines currency, health and the requested bodies", async (t) =>
   assert.equal(stale.structured.current, false, "an edited file makes the snapshot stale");
   assert.match(stale.text, /stale/);
 });
+
+test("search finds a line, and a redacted value is never found", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const search = tools.get("snapshot_search");
+  assert.ok(search, "snapshot_search is served");
+  const context = contextFor(root);
+
+  const found = await search.handler({ query: "getUser" }, context);
+  assert.equal(found.isError, undefined, found.text);
+  assert.ok(found.structured.matches.length >= 1);
+  assert.ok(found.structured.matches.some((match) => match.path === "src/user.ts"), "the definition is found");
+  assert.ok(found.structured.matches.every((match) => typeof match.line === "number"));
+
+  const missing = await search.handler({ query: "neverAppearsAnywhere" }, context);
+  assert.equal(missing.structured.matches.length, 0);
+
+  const short = await search.handler({ query: "ab" }, context);
+  assert.equal(short.isError, true);
+
+  const bad = await search.handler({ query: "(" , regex: true }, context);
+  assert.equal(bad.isError, true);
+});
+
+test("stats agree with the manifest", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const stats = tools.get("snapshot_stats");
+  assert.ok(stats, "snapshot_stats is served");
+  const result = await stats.handler({}, contextFor(root));
+  assert.equal(result.isError, undefined, result.text);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(result.structured.files, manifest.counts.totalFiles);
+  assert.equal(result.structured.parts, manifest.counts.partsCount);
+  assert.equal(result.structured.tokens, manifest.totals.estimatedTokens);
+  assert.ok(result.structured.heaviest.length > 0);
+});

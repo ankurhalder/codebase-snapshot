@@ -1,5 +1,5 @@
 /**
- * The fifteen tools this server exposes.
+ * The seventeen tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -21,6 +21,9 @@ import { planForQuestion } from "./retrieval.js";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
 import { buildImportResolver, resolveSpecifier } from "../index.js";
+
+/** One search reads at most this many bytes of part text. */
+const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
 import { truncateToBytes } from "../partitioner/preview.js";
 import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
@@ -65,7 +68,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the fifteen tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the seventeen tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -273,6 +276,153 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const searchTool: McpTool = {
+  name: "snapshot_search",
+  title: "Search the snapshot text",
+  description:
+    "Case-insensitive text search across the emitted parts, bounded by a match cap and a scan " +
+    "budget. Returns the path, part and line number of each match with a short snippet. Reads " +
+    "only what the snapshot contains, so redacted values and excluded files are never found.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Text to find (at least 3 characters)." },
+      regex: { type: "boolean", description: "Treat the query as a regular expression." },
+      maxMatches: { type: "integer", description: "Cap on matches (default 50).", minimum: 1 },
+      contextLines: { type: "integer", description: "Lines of context around each match (default 0).", minimum: 0 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      matches: { type: "array", items: { type: "object" } },
+      scanned: { type: "integer" },
+      truncated: { type: "boolean" },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const workspace = prepared.workspace;
+    const read = readManifest(workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const query = typeof args.query === "string" ? args.query : "";
+    if (query.trim().length < 3) return { text: "query must be at least 3 characters", isError: true };
+    const cap = Math.max(1, Math.min(500, typeof args.maxMatches === "number" ? args.maxMatches : 50));
+    const contextLines = Math.max(0, Math.min(10, typeof args.contextLines === "number" ? args.contextLines : 0));
+    let pattern: RegExp;
+    try {
+      pattern = args.regex === true ? new RegExp(query, "i") : new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    } catch (error) {
+      return { text: "not a valid regular expression: " + (error as Error).message, isError: true };
+    }
+
+    const matches: Array<{ path: string; part: string; line: number; text: string }> = [];
+    const skippedOversize: string[] = [];
+    let scanned = 0;
+    let truncated = false;
+    for (const part of read.manifest.parts) {
+      if (matches.length >= cap) { truncated = true; break; }
+      const partPath = partPathFor(workspace, part.filename);
+      if (partPath === null) continue;
+      let text: string;
+      try {
+        text = fs.readFileSync(partPath, "utf8");
+      } catch {
+        continue;
+      }
+      if (Buffer.byteLength(text, "utf8") > MAX_SEARCH_BYTES) {
+        skippedOversize.push(part.filename);
+        continue;
+      }
+      scanned += text.length;
+      for (const section of parsePartSections(text)) {
+        if (matches.length >= cap) { truncated = true; break; }
+        const lines = section.body.split("\n");
+        for (let index = 0; index < lines.length; index += 1) {
+          if (!pattern.test(lines[index])) continue;
+          const from = Math.max(0, index - contextLines);
+          const to = Math.min(lines.length, index + contextLines + 1);
+          const snippet = lines.slice(from, to).join("\n").trim().slice(0, 400);
+          matches.push({ path: section.path, part: part.filename, line: index + 1, text: snippet });
+          if (matches.length >= cap) { truncated = true; break; }
+        }
+      }
+    }
+
+    const lines = [
+      matches.length + " match(es) in " + read.manifest.files.length + " file(s)." +
+        (truncated ? " Results are capped; narrow the query." : ""),
+      ...(skippedOversize.length > 0
+        ? ["Skipped " + skippedOversize.length + " oversized part(s): " + skippedOversize.slice(0, 5).join(", ")]
+        : []),
+      ...matches.map((match) => match.path + ":" + match.line + " (" + match.part + "): " + match.text),
+    ];
+    return { text: lines.join("\n"), structured: { matches, scanned, truncated } };
+  },
+};
+
+const statsTool: McpTool = {
+  name: "snapshot_stats",
+  title: "Snapshot statistics",
+  description:
+    "Counts and costs: files by layer and kind, part sizes, token estimate, the largest files " +
+    "and the most expensive parts. Read from the manifest, so it is cheap and always agrees with " +
+    "what the snapshot claims.",
+  inputSchema: {
+    type: "object",
+    properties: { root: ROOT_PROPERTY, outDir: OUT_DIR_PROPERTY },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      files: { type: "integer" },
+      parts: { type: "integer" },
+      tokens: { type: "integer" },
+      layers: { type: "object" },
+      kinds: { type: "object" },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const manifest = read.manifest;
+    const heaviest = [...manifest.files]
+      .sort((left, right) => right.includedBytes - left.includedBytes)
+      .slice(0, 10)
+      .map((file) => ({ path: file.relativePath, tokens: Math.ceil(file.includedBytes / 4), part: file.part }));
+    const parts = manifest.parts.map((part) => ({ filename: part.filename, tokens: part.estimatedTokens }));
+    const lines = [
+      manifest.counts.totalFiles + " file(s) in " + manifest.counts.partsCount + " part(s), " +
+        (manifest.totals.estimatedTokens ?? 0) + " estimated tokens.",
+      "Layers: " + Object.entries(manifest.layers).map(([name, count]) => name + "=" + count).join(", "),
+      "Kinds: " + Object.entries(manifest.kinds).map(([name, count]) => name + "=" + count).join(", "),
+      "Heaviest: " + heaviest.slice(0, 5).map((file) => file.path + " (" + file.tokens + ")").join(", "),
+    ];
+    return {
+      text: lines.join("\n"),
+      structured: {
+        files: manifest.counts.totalFiles,
+        parts: manifest.counts.partsCount,
+        tokens: manifest.totals.estimatedTokens ?? 0,
+        layers: manifest.layers,
+        kinds: manifest.kinds,
+        heaviest,
+        partSizes: parts,
+      },
+    };
+  },
+};
 
 const reviewTool: McpTool = {
   name: "snapshot_review",
@@ -1759,6 +1909,8 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    searchTool,
+    statsTool,
     reviewTool,
     diffContextTool,
     symbolTool,
