@@ -31,7 +31,7 @@ import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import type { JsonObject, JsonSchema } from "./protocol.js";
 import type { FileEntry, ValidationDrift, ValidationResult } from "../types.js";
-import type { McpTool, ToolAnnotations, ToolContext, ToolOutcome } from "./types.js";
+import type { McpTool, ToolAnnotations, ToolContext, ToolCost, ToolOutcome } from "./types.js";
 import { forgetManifest, manifestPathFor, openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
 import type { Workspace, WorkspaceOverrides } from "./workspace.js";
 
@@ -277,7 +277,7 @@ function symbolNamesOf(file: FileEntry): string[] {
   return names;
 }
 
-const neighborsTool: McpTool = {
+const neighborsTool: ToolSpec = {
   name: "snapshot_neighbors",
   title: "Imports and importers of a file",
   description:
@@ -345,7 +345,7 @@ const neighborsTool: McpTool = {
   },
 };
 
-const entrypointsTool: McpTool = {
+const entrypointsTool: ToolSpec = {
   name: "snapshot_entrypoints",
   title: "Likely entry points",
   description:
@@ -391,7 +391,7 @@ const entrypointsTool: McpTool = {
   },
 };
 
-const routesTool: McpTool = {
+const routesTool: ToolSpec = {
   name: "snapshot_routes",
   title: "Routes and handlers",
   description:
@@ -445,7 +445,7 @@ const routesTool: McpTool = {
   },
 };
 
-const cyclesTool: McpTool = {
+const cyclesTool: ToolSpec = {
   name: "snapshot_cycles",
   title: "Import cycles",
   description:
@@ -535,7 +535,7 @@ const cyclesTool: McpTool = {
   },
 };
 
-const searchTool: McpTool = {
+const searchTool: ToolSpec = {
   name: "snapshot_search",
   title: "Search the snapshot text",
   description:
@@ -626,7 +626,7 @@ const searchTool: McpTool = {
   },
 };
 
-const statsTool: McpTool = {
+const statsTool: ToolSpec = {
   name: "snapshot_stats",
   title: "Snapshot statistics",
   description:
@@ -682,7 +682,7 @@ const statsTool: McpTool = {
   },
 };
 
-const reviewTool: McpTool = {
+const reviewTool: ToolSpec = {
   name: "snapshot_review",
   title: "Review a change set against the snapshot",
   description:
@@ -774,7 +774,7 @@ const reviewTool: McpTool = {
   },
 };
 
-const diffContextTool: McpTool = {
+const diffContextTool: ToolSpec = {
   name: "snapshot_diff_context",
   title: "Context for a set of changed files",
   description:
@@ -894,7 +894,7 @@ const diffContextTool: McpTool = {
   },
 };
 
-const symbolTool: McpTool = {
+const symbolTool: ToolSpec = {
   name: "snapshot_symbol",
   title: "Find a symbol definition",
   description:
@@ -977,7 +977,7 @@ const symbolTool: McpTool = {
   },
 };
 
-const contextTool: McpTool = {
+const contextTool: ToolSpec = {
   name: "snapshot_context",
   title: "Assemble a bounded context block",
   description:
@@ -1095,7 +1095,7 @@ const contextTool: McpTool = {
   },
 };
 
-const queryTool: McpTool = {
+const queryTool: ToolSpec = {
   name: "snapshot_query",
   title: "Query the snapshot index",
   description:
@@ -1168,7 +1168,7 @@ const queryTool: McpTool = {
   },
 };
 
-const planForTool: McpTool = {
+const planForTool: ToolSpec = {
   name: "snapshot_plan_for",
   title: "Plan a reading order for a question",
   description:
@@ -1227,7 +1227,7 @@ const planForTool: McpTool = {
   },
 };
 
-const healthTool: McpTool = {
+const healthTool: ToolSpec = {
   name: "snapshot_health",
   title: "Snapshot health audit",
   description:
@@ -1283,7 +1283,7 @@ const healthTool: McpTool = {
   },
 };
 
-const statusTool: McpTool = {
+const statusTool: ToolSpec = {
   name: "snapshot_status",
   title: "Snapshot status",
   description:
@@ -1370,7 +1370,7 @@ const statusTool: McpTool = {
   },
 };
 
-const planTool: McpTool = {
+const planTool: ToolSpec = {
   name: "snapshot_plan",
   title: "Preview a snapshot",
   description:
@@ -1452,7 +1452,7 @@ const planTool: McpTool = {
   },
 };
 
-const generateTool: McpTool = {
+const generateTool: ToolSpec = {
   name: "snapshot_generate",
   title: "Generate the snapshot",
   description:
@@ -1559,7 +1559,7 @@ const generateTool: McpTool = {
   },
 };
 
-const validateTool: McpTool = {
+const validateTool: ToolSpec = {
   name: "snapshot_validate",
   title: "Validate the snapshot",
   description:
@@ -1626,7 +1626,7 @@ const validateTool: McpTool = {
   },
 };
 
-const locateTool: McpTool = {
+const locateTool: ToolSpec = {
   name: "snapshot_locate",
   title: "Locate code in the snapshot",
   description:
@@ -1784,7 +1784,7 @@ const locateTool: McpTool = {
  * The resolution runs through `buildImportResolver`, the same code the generator used, so
  * this cannot describe a different graph from the one in `centralFiles`.
  */
-const dependentsTool: McpTool = {
+const dependentsTool: ToolSpec = {
   name: "snapshot_dependents",
   title: "Follow the import graph",
   description:
@@ -1925,7 +1925,7 @@ const dependentsTool: McpTool = {
   },
 };
 
-const readTool: McpTool = {
+const readTool: ToolSpec = {
   name: "snapshot_read",
   title: "Read a file from the snapshot",
   description:
@@ -2127,7 +2127,7 @@ const readTool: McpTool = {
   },
 };
 
-const explainTool: McpTool = {
+const explainTool: ToolSpec = {
   name: "snapshot_explain",
   title: "Explain one path",
   description:
@@ -2195,6 +2195,34 @@ const explainTool: McpTool = {
 };
 
 /** Every tool this server exposes, in the order a first-time caller should read them. */
+/** A tool before its cost class is attached; `buildTools` is the one place that knows the table. */
+type ToolSpec = Omit<McpTool, "cost">;
+
+/** The cost class of each tool, in one table so a new tool cannot ship without one. */
+const TOOL_COSTS: Record<string, ToolCost> = {
+  snapshot_status: "cheap",
+  snapshot_health: "expensive",
+  snapshot_entrypoints: "cheap",
+  snapshot_neighbors: "medium",
+  snapshot_routes: "cheap",
+  snapshot_cycles: "medium",
+  snapshot_search: "medium",
+  snapshot_stats: "cheap",
+  snapshot_review: "expensive",
+  snapshot_diff_context: "medium",
+  snapshot_symbol: "medium",
+  snapshot_context: "medium",
+  snapshot_query: "cheap",
+  snapshot_plan_for: "cheap",
+  snapshot_plan: "expensive",
+  snapshot_generate: "expensive",
+  snapshot_validate: "medium",
+  snapshot_locate: "cheap",
+  snapshot_dependents: "cheap",
+  snapshot_read: "medium",
+  snapshot_explain: "cheap",
+};
+
 export function buildTools(): McpTool[] {
   return [
     statusTool,
@@ -2218,5 +2246,9 @@ export function buildTools(): McpTool[] {
     dependentsTool,
     readTool,
     explainTool,
-  ];
+  ].map((tool) => {
+    const cost = TOOL_COSTS[tool.name];
+    if (cost === undefined) throw new Error("no cost class for tool " + tool.name);
+    return { ...tool, cost };
+  });
 }

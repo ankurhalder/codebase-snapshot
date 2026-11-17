@@ -159,6 +159,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       inputSchema: tool.inputSchema,
       ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
       annotations: tool.annotations,
+      _meta: { "codebase-snapshot/cost": tool.cost },
     }));
     return ok(id, { tools }, modern);
   }

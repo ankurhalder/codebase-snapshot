@@ -56,6 +56,15 @@ export interface ToolOutcome {
   isError?: boolean;
 }
 
+/**
+ * How expensive a tool call is, in the units an agent can act on.
+ *
+ * `cheap` reads the manifest; `medium` reads one or a few parts; `expensive` reads the repository,
+ * partitions it, or writes. The class is a hint for choosing between two tools that answer the
+ * same question, and it is stated as a class because a token count depends on the repository.
+ */
+export type ToolCost = "cheap" | "medium" | "expensive";
+
 export interface McpTool {
   name: string;
   title: string;
@@ -63,6 +72,8 @@ export interface McpTool {
   inputSchema: InputSchema;
   outputSchema?: InputSchema;
   annotations: ToolAnnotations;
+  /** Relative cost of a call; see `ToolCost`. */
+  cost: ToolCost;
   handler(args: JsonObject, context: ToolContext): Promise<ToolOutcome>;
 }
 

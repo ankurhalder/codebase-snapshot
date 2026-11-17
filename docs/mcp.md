@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.51 mcp
+npx -y codebase-snapshot@0.12.52 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.51", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.52", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.51 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.52 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.12.51 mcp --http --port 4789
+npx -y codebase-snapshot@0.12.52 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -89,6 +89,11 @@ shutdown ends the streams rather than waiting on them. Request bodies are capped
 capped at 60 requests per 10 seconds per address, and every response is one bounded JSON document.
 
 ## The 21 tools
+
+Every tool states its cost class in `tools/list` as `_meta["codebase-snapshot/cost"]`: `cheap`
+reads the manifest, `medium` reads one or a few parts, `expensive` reads the repository or writes.
+Two tools that answer the same question can differ by an order of magnitude, and a client choosing
+between them should not have to guess.
 
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |

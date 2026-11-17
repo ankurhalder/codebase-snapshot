@@ -107,6 +107,7 @@ export interface AgentContract {
       title: string;
       summary: string;
       readOnly: boolean;
+      cost: "cheap" | "medium" | "expensive";
       parameters: string[];
       required: string[];
     }>;
@@ -1018,6 +1019,7 @@ export function buildAgentContract(): AgentContract {
         title: tool.title,
         summary: tool.description,
         readOnly: tool.annotations.readOnlyHint,
+        cost: tool.cost,
         parameters: Object.keys(tool.inputSchema.properties),
         required: tool.inputSchema.required ?? [],
       })),

@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { buildResourceProvider, buildTools } from "../dist/mcp.js";
+import { buildPrompts, buildResourceProvider, buildTools, createMcpServer } from "../dist/mcp.js";
 
 function writeFixture(root) {
   const write = (relative, content) => {
@@ -360,4 +360,25 @@ test("snapshot_generate can write the opt-in reports", async (t) => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
   assert.ok(manifest.artifacts.tokenTree, "tokens.md was written");
   assert.ok(fs.existsSync(path.join(root, "snapshot", "reports", "tokens.md")));
+});
+
+test("every tool states its cost, and tools/list reports it", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  const server = createMcpServer({
+    info: { name: "codebase-snapshot", title: "t", version: "0.0.0" },
+    instructions: "",
+    tools: buildTools(),
+    resources: buildResourceProvider(),
+    prompts: buildPrompts(),
+    context,
+  });
+  await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {} } });
+  const listed = await server.handle({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+  for (const tool of listed.result.tools) {
+    assert.ok(
+      ["cheap", "medium", "expensive"].includes(tool._meta["codebase-snapshot/cost"]),
+      tool.name + " states a cost"
+    );
+  }
 });

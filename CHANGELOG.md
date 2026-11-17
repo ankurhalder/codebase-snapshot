@@ -26,6 +26,15 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.52
+
+- **Every tool states its cost**: `cheap` (manifest), `medium` (one or a few parts), `expensive`
+  (reads the repository or writes), published as `_meta["codebase-snapshot/cost"]` in `tools/list`
+  and as `cost` in `describe --format json`. The table lives in one place and `buildTools` throws if
+  a tool is added without one.
+
+Verified: every one of the 21 tools reports a valid class through the protocol, and the contract lists
+them.
 ## 0.12.51
 
 - **`snapshot_generate` can write the opt-in reports.** `includeDiffs`, `includeLogs <n>`,
