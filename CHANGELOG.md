@@ -30,6 +30,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.83
+
+- **The troubleshooting page covers the features added since it was written.** A new section maps the
+  failure modes of selections, workspaces and signatures to their real messages: the `--slice`/`--delta`
+  and `--slice`/`--budget-tokens` refusals, the selection warning `validate` prints, the `not-selected`
+  answer from `explain`, a missing workspace index or member, why the combined score is the weakest
+  member, a signature that does not verify, the https-only and 1 GB refusals for `--remote`, and the
+  opt-in log report `snapshot_history` needs.
+- These are the messages a user hits first, and until now the page that promises "every message below
+  is the real text the tool prints" did not list them.
+
+Verified: site builds 29 pages and `audit-site` reports no problems.
 ## 0.12.82
 
 - The goal log records the 0.12.80-0.12.81 round: `health --all-members` and the workspace workflow

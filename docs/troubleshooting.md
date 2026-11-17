@@ -344,6 +344,69 @@ path rather than about a candidate file:
 Also check `include`: if it is non-empty it acts as an allow-list, and everything else is
 excluded.
 
+## Selections, workspaces and signatures
+
+The features added since 0.12.15 each have a failure mode that is working as intended. This section is
+the map.
+
+### `--slice and --delta narrow in two different directions; pass one.`
+
+A delta asks "what changed", a slice asks "what does this question need". Both narrow the same
+selection and the CLI refuses to guess which you meant. Run one, or run two generates.
+
+### `--slice and --budget-tokens both narrow the selection; pass one, or use --slice-tokens`
+
+Same reason. The slice has its own budget: `--slice "question" --slice-tokens 30000`.
+
+### `validate` warns `This snapshot is a selection (…)`
+
+Not a failure. Files the selection left out are recorded as `not-selected`, and `validate` does not
+re-run the planner — it cannot, the question and the budget are not in the manifest. It checks that
+what *is* in the snapshot still matches disk. A changed selected file still fails, with its path.
+
+### `explain` answers `reason not-selected`
+
+That is the answer, not an error: the file passes every per-file rule and was left out by the
+selection. The detail names it.
+
+### `No workspace index at …`
+
+`health --all-members` needs the `WORKSPACE.json` a `--workspace` run writes. Generate the workspace
+first, or drop the flag to audit the single snapshot at `outDir`.
+
+### `⚠ Workspace member missing: api` — and exit 1
+
+One member path does not exist or is not a directory. The other members are still written, the index
+still lists the ones that succeeded, and the run exits 1 so a script cannot mistake a partial
+workspace for a complete one.
+
+### A member scores lower than the rest
+
+`health --all-members` reports the **weakest member** as the combined score. A workspace is only as
+trustworthy as its worst part, and an average would hide a failed member.
+
+### `signature does not verify`
+
+The manifest was signed with a key this environment does not have, or the manifest changed after
+signing. Set `SNAPSHOT_SIGNING_KEY` to the key that signed it, or regenerate and sign again with
+`--sign`. A key generated on first use lives in the environment only for that run; the snapshot
+records its fingerprint, not the key.
+
+### `only https URLs are accepted`
+
+`--remote` and the serve page refuse `http:`, `file:` and `git:` URLs. Use an `https://` repository
+URL. Private repositories are reached with `GITHUB_TOKEN` in the environment, never a URL credential.
+
+### `the clone is larger than 1 GB (…)`
+
+The shallow clone passed the 1 GB cap and was discarded rather than scanned. Point at a smaller
+repository, or scan a local checkout.
+
+### `This snapshot has no reports/log.md`
+
+`snapshot_history` reads an opt-in report. Generate with `includeLogs` (MCP) or
+`--include-logs <n>` (CLI); the commit subjects are repository content, so the report is not written
+unless asked for.
 ## The snapshot is too big
 
 - Lower the budget: `--max-part-bytes 120k`.
