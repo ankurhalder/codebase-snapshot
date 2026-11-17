@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.80
+
+- **`health --all-members` audits a whole workspace.** It reads `WORKSPACE.json` and audits every
+  member snapshot a `--workspace` run wrote, one row each; the combined score is the weakest member,
+  and a missing member snapshot is an error row rather than a silent skip. `--format json` returns
+  the members with their counts and failed check ids.
+- The flag is registered in the parser, the option-scope table and the contract, so `describe` says
+  it applies to `health` and nowhere else — the parser rejects it anywhere else.
+
+Verified: a two-member workspace audits to 0 with both members listed; tampering with one member's
+part fails the run and names that member; no index gives exit 1 with the instruction.
 ## 0.12.79
 
 - The goal log records the 0.12.77-0.12.78 round: `snapshot_history`, the `--include-logs` count fix,

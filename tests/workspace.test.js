@@ -80,3 +80,26 @@ test("a workspace records which member imports which", (t) => {
   assert.ok(link.examples.includes("src/index.ts"));
   assert.match(result.out, /app imports shared/);
 });
+
+test("health audits every member of a workspace", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--workspace", "api,web"], root).code, 0);
+  const healthy = run(["health", "--all-members"], root);
+  assert.equal(healthy.code, 0, healthy.out);
+  assert.match(healthy.out, /Workspace health/);
+  assert.match(healthy.out, /Combined score:/);
+  for (const member of ["api", "web"]) assert.match(healthy.out, new RegExp(member));
+
+  const part = path.join(root, "snapshot", "api", "parts", "part-001.md");
+  fs.writeFileSync(part, fs.readFileSync(part, "utf8") + "\ntampered\n");
+  const broken = run(["health", "--all-members"], root);
+  assert.equal(broken.code, 1, broken.out);
+  assert.match(broken.out, /api/);
+});
+
+test("health --all-members names the missing index", (t) => {
+  const root = makeRepo(t);
+  const result = run(["health", "--all-members"], root);
+  assert.equal(result.code, 1);
+  assert.match(result.out, /No workspace index/);
+});

@@ -180,6 +180,7 @@ export const CLI_OPTIONS = {
   "budget-tokens": { type: "string" },
   workspace: { type: "string" },
   "strip-comments": { type: "boolean" },
+  "all-members": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -417,6 +418,8 @@ interface ParsedInvocation {
   workspace?: string;
   /** `--strip-comments`: remove comment text from JS/TS bodies. */
   stripComments?: boolean;
+  /** `--all-members` (health): audit every snapshot a `--workspace` run wrote. */
+  allMembers?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -882,6 +885,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     sign: values.sign === true ? true : undefined,
     workspace: values.workspace === undefined ? undefined : String(values.workspace),
     stripComments: values["strip-comments"] === true ? true : undefined,
+    allMembers: values["all-members"] === true ? true : undefined,
     budgetTokens:
       values["budget-tokens"] === undefined
         ? undefined
@@ -1997,6 +2001,60 @@ async function runCommand(argv: string[]): Promise<number> {
   }
 
   if (invocation.command === "health") {
+    if (invocation.allMembers === true) {
+      // A workspace is one generate run that wrote one snapshot per member. Auditing only the
+      // first would be a health report about a repository nobody asked about.
+      const outRoot = path.resolve(resolved.cwd, resolved.outDir);
+      const indexPath = path.join(outRoot, "WORKSPACE.json");
+      if (!fs.existsSync(indexPath)) {
+        return fail(
+          invocation.format,
+          `No workspace index at ${indexPath}. Run generate --workspace <a,b> first, or drop --all-members.`
+        );
+      }
+      let index: { members?: Array<{ name?: string; path?: string }> };
+      try {
+        index = JSON.parse(fs.readFileSync(indexPath, "utf8")) as typeof index;
+      } catch (error) {
+        return fail(invocation.format, `Could not read ${indexPath}: ${(error as Error).message}`);
+      }
+      const rows: Array<{ name: string; score: number; counts: { pass: number; warn: number; fail: number }; failed: string[]; error?: string }> = [];
+      for (const member of index.members ?? []) {
+        const name = member.name ?? "?";
+        const snapshotDir = path.join(outRoot, name);
+        const repoDir = path.resolve(resolved.cwd, member.path ?? name);
+        if (!fs.existsSync(path.join(snapshotDir, "manifest.json"))) {
+          rows.push({ name, score: 0, counts: { pass: 0, warn: 0, fail: 1 }, failed: [], error: "no snapshot at " + snapshotDir });
+          continue;
+        }
+        const report = auditSnapshot({ snapshotDir, repoDir });
+        rows.push({
+          name,
+          score: report.score,
+          counts: report.counts,
+          failed: report.checks.filter((check) => check.status === "fail").map((check) => check.id),
+        });
+      }
+      const score = rows.length === 0 ? 100 : Math.min(...rows.map((row) => row.score));
+      const totals = rows.reduce(
+        (sum, row) => ({ pass: sum.pass + row.counts.pass, warn: sum.warn + row.counts.warn, fail: sum.fail + row.counts.fail }),
+        { pass: 0, warn: 0, fail: 0 }
+      );
+      emit(invocation.format, { outRoot, score, totals, members: rows }, () => {
+        info(`\n🏥 Workspace health (${outRoot})`);
+        for (const row of rows) {
+          info(
+            "   - " +
+              row.name.padEnd(20) +
+              (row.error !== undefined ? "ERROR   " + row.error : row.score + "/100  " + row.counts.pass + " passed, " + row.counts.warn + " warning(s), " + row.counts.fail + " failed")
+          );
+        }
+        info(`\n   Combined score: ${score}/100 (the weakest member)`);
+      });
+      if (totals.fail > 0) return invocation.strict === true ? 2 : 1;
+      if (invocation.strict === true && totals.warn > 0) return 1;
+      return 0;
+    }
     const snapshotDir = path.resolve(resolved.cwd, resolved.outDir);
     const report = auditSnapshot({ snapshotDir, repoDir: resolved.cwd });
     emit(invocation.format, report, () => renderHealthText(report));

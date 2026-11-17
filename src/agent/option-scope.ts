@@ -128,7 +128,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   ],
   // The health audit resolves the config only to find the output directory; --strict decides the
   // exit code, and every other setting would be a promise the command does not keep.
-  health: ["cwd", "out-dir", "format", "strict", "no-update-check", "help"],
+  health: ["cwd", "out-dir", "format", "strict", "all-members", "no-update-check", "help"],
   validate: VALIDATE_OPTIONS,
   // `report` reads `manifest.json` and prints what is there; a generation setting would change
   // nothing. The seven generation flags used to be listed here and were accepted as silent no-ops

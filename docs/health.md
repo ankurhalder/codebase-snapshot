@@ -43,6 +43,18 @@ secret, but you may not want it in the payload either.
 The score starts at 100; each failure costs 25 and each warning 5, with a floor of zero. It is a
 summary, not a substitute for the checks — the report always lists every one.
 
+## A workspace, all at once
+
+`health --all-members` reads `WORKSPACE.json` and audits every snapshot a `--workspace` run wrote,
+printing one row per member. The combined score is the **weakest member**, because a workspace is
+only as trustworthy as its worst part; a missing member snapshot is an error row, not a skip.
+
+```bash
+codebase-snapshot health --all-members --cwd /repo
+```
+
+`--format json` returns the members with their counts and failed check ids.
+
 ## What it never does
 
 - It does not regenerate, repair or delete anything. The report is evidence; evidence that mutates
