@@ -1,4 +1,4 @@
-# Workspaces: several repositories, one deliverable
+# Workspaces: many repos, one pack
 
 ```bash
 codebase-snapshot generate --workspace api,web,shared --out-dir context
