@@ -120,7 +120,14 @@ export function generatePrompt(
         " tokens used), and " +
         manifest.budget.dropped +
         " scanned path(s) did not fit. They are recorded in `skipped[]` with reason " +
-        "\"not-selected\"; do not describe them from memory.",
+        "\"not-selected\"; do not describe them from memory." +
+        (manifest.budget.coverage === undefined
+          ? ""
+          : " Coverage: " +
+            manifest.budget.coverage.symbols.kept + "/" + manifest.budget.coverage.symbols.total + " exported " +
+            "symbol(s), " +
+            manifest.budget.coverage.entryPoints.kept + "/" + manifest.budget.coverage.entryPoints.total + " entry " +
+            "point(s)."),
       ""
     );
   }

@@ -32,9 +32,18 @@ same estimate the manifest reports.
   "maxTokens": 100000,
   "usedTokens": 96812,
   "files": ["package.json", "src/main.ts", "src/core.ts", "..."],
-  "dropped": 418
+  "dropped": 418,
+  "coverage": {
+    "byLayer": { "config": { "kept": 3, "total": 3 }, "src": { "kept": 12, "total": 40 } },
+    "entryPoints": { "kept": 2, "total": 2 },
+    "symbols": { "kept": 18, "total": 61 }
+  }
 }
 ```
+
+`coverage` is the honest half of the report: which layers kept what, how many entry points
+survived, and how many exported symbols made it in. When an entry point is lost the run warns —
+a snapshot without its entry point is a tour without a front door.
 
 Every scanned path that did not fit is in `skipped[]` with reason `not-selected` and the detail
 "did not fit the --budget-tokens budget". The brief states the budget, the selection size and the

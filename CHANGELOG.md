@@ -26,6 +26,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.44
+
+- **The token-budget report says what survived.** `budget.coverage` records, per layer, how many
+  files were kept of how many, plus entry points and exported symbols. The brief quotes the symbol
+  and entry-point counts, and a lost entry point is a warning rather than a silent omission.
+
+Verified: the coverage block exists, every `kept` is at most its `total`, symbols are counted from
+the summaries, and the fixture's entry points are counted.
 ## 0.12.43
 
 - **MCP progress notifications.** A `tools/call` carrying `_meta.progressToken` receives

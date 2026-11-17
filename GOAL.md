@@ -144,3 +144,45 @@ Append one block per release. Newest last.
 Fixed: PROMPT.md and README.md sent readers to manifest.skipped[], the call graph and
 manifest.validation.status when the manifest artifact was disabled. The attachment arithmetic
 also counted files that were not written. Verified: 1190 tests, 1182 pass, 0 fail.
+
+### 0.12.15-0.12.43 - the retrieval server, the browser, and the proof
+
+A forty-release stretch in one session, every version tagged and pushed. In order:
+
+- **0.12.15** `snapshot health`: hashes, artifacts, secrets, host paths, token accounting, freshness,
+  score, severities, `--strict`, and the MCP tool. The cheap subset went into `validate` in 0.12.28.
+- **0.12.16-0.12.17-0.12.23** the retrieval tools: `plan_for`, `query`, `context`, `symbol`,
+  `diff_context`. The planner matches stems (`charge`/`chargeCard`), packs to a budget and explains
+  every choice.
+- **0.12.18-0.12.29** transports: Streamable HTTP with a bearer token and loopback default, then
+  legacy SSE with the query-token caveat documented and a shutdown that does not hang.
+- **0.12.19-0.12.21** `serve`: one loopback process for the page, the API and MCP; a hand-written
+  store-only zip writer; repository URLs in the page with the same SSRF guard as the CLI.
+- **0.12.20** `generate --remote`: https only, DNS-checked public addresses, shallow clone, token via
+  the environment, provenance (URL, host, owner, repo, ref, commit, fetchedAt) in the manifest.
+- **0.12.22** seven prompts: orient, keep-current, audit, review, explain, onboard, security-review.
+- **0.12.24-0.12.25-0.12.26-0.12.33-0.12.38** the packs that neither competitor has: `--delta`
+  (changed files plus their importers, unchanged paths recorded), `--slice` (the planner at generate
+  time), `--budget-tokens` (whole files, not torn ones), `--workspace` (one snapshot per member).
+- **0.12.27-0.12.31-0.12.32-0.12.34-0.12.35-0.12.37-0.12.39** `--pack single|xml|json`, `--sign`
+  (Ed25519 over the manifest, verified by health), benchmarks, the security review, the container,
+  the migration guide, the roadmap statuses, the docs.
+- **0.12.40-0.12.41-0.12.42-0.12.43** `--strip-comments` (parser-based, line numbers preserved),
+  `snapshot_search` and `snapshot_stats`, a language-profile test, and MCP progress notifications.
+
+State at the end: 17 MCP tools, 7 prompts, 5 transports/commands added (`health`, `serve`, `mcp
+--http`, SSE, workspace), 27 site pages, ~1,270 tests. Every release has a changelog entry, a tag and
+a green targeted gate; full `verify` ran green at 0.12.15, 0.12.24, 0.12.26, 0.12.27 and 0.12.40.
+
+What is still open, in the order the next session should take it:
+
+1. Cross-references between workspace members (a `WORKSPACE.json` that knows which member imports
+   which is the obvious next step; today the members are independent).
+2. A coverage/quality report for `--budget-tokens`: what fraction of layers, symbols and entry
+   points survived, not only the token total.
+3. Cancellation for MCP calls. Progress exists; an aborted call still runs to completion, and that
+   is stated in the docs.
+4. A head-to-head benchmark against repomix and gitingest on the same repository and budget, with
+   both tools' own token accounting.
+5. The last three tools to reach twenty: candidates are a route/handler index, a dependency-cycle
+   reporter, and a resource that serves the workspace index.

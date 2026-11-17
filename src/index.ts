@@ -2900,8 +2900,40 @@ export function generateSnapshot(
       used += item.tokens;
     }
     const scanned = files.length;
+    const byLayer: Record<string, { kept: number; total: number }> = {};
+    let entryKept = 0;
+    let entryTotal = 0;
+    let symbolsKept = 0;
+    let symbolsTotal = 0;
+    for (const file of files) {
+      const kept = keep.has(file.relativePath);
+      const bucket = byLayer[file.layer] ?? { kept: 0, total: 0 };
+      bucket.total += 1;
+      if (kept) bucket.kept += 1;
+      byLayer[file.layer] = bucket;
+      if (entry(file.relativePath)) {
+        entryTotal += 1;
+        if (kept) entryKept += 1;
+      }
+      const summary = file.summary;
+      if (isSourceSummary(summary)) {
+        symbolsTotal += summary.exports.length;
+        if (kept) symbolsKept += summary.exports.length;
+      }
+    }
     narrowTo(keep);
-    budgetBlock = { maxTokens: budget, usedTokens: used, files: selected, dropped: scanned - selected.length };
+    budgetBlock = {
+      maxTokens: budget,
+      usedTokens: used,
+      files: selected,
+      dropped: scanned - selected.length,
+      coverage: { byLayer, entryPoints: { kept: entryKept, total: entryTotal }, symbols: { kept: symbolsKept, total: symbolsTotal } },
+    };
+    if (entryTotal > 0 && entryKept < entryTotal) {
+      warnings.push(
+        "The budget kept " + entryKept + " of " + entryTotal + " entry points; raise --budget-tokens to keep them all.",
+      );
+    }
     if (selected.length === 0) {
       warnings.push("No file fits --budget-tokens " + budget + "; the snapshot is empty.");
     }

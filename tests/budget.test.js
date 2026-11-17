@@ -58,3 +58,19 @@ test("a tiny budget does not crash and says so", (t) => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
   assert.ok(manifest.budget.usedTokens <= 500);
 });
+
+test("the budget report says what survived", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--budget-tokens", "800"], root).code, 0);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  const coverage = manifest.budget.coverage;
+  assert.ok(coverage, "coverage is recorded");
+  assert.ok(coverage.symbols.total > 0, "symbols are counted");
+  assert.ok(coverage.symbols.kept <= coverage.symbols.total);
+  const layers = Object.keys(coverage.byLayer);
+  assert.ok(layers.length > 0);
+  for (const layer of layers) {
+    assert.ok(coverage.byLayer[layer].kept <= coverage.byLayer[layer].total);
+  }
+  assert.ok(coverage.entryPoints.total > 0, "the fixture has entry points");
+});

@@ -554,6 +554,12 @@ export interface Manifest {
   budget?: {
     maxTokens: number;
     usedTokens: number;
+    /** What survived, by layer and by symbol, so a reader can judge the cut. */
+    coverage?: {
+      byLayer: Record<string, { kept: number; total: number }>;
+      entryPoints: { kept: number; total: number };
+      symbols: { kept: number; total: number };
+    };
     /** Paths chosen, in the order they were selected. */
     files: string[];
     /** Scanned paths that did not fit. */
