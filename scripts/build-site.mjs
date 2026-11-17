@@ -124,6 +124,21 @@ const DESCRIPTIONS = {
   mcp:
     "Serve a repository to Claude, Cursor or any MCP client: fourteen tools and snapshot:// " +
     "resources, so an agent reads the one part it needs instead of all of them.",
+  health:
+    "Audit a generated snapshot: part hashes, artifact claims, unmasked secrets, host paths, " +
+    "token accounting and freshness, with a score and a strict exit code.",
+  serve:
+    "A local page to generate a snapshot, read the brief and download the zip. The same " +
+    "process serves MCP, with a bearer token and a loopback bind by default.",
+  remote:
+    "Fetch a public repository with a shallow, SSRF-safe clone: https only, private addresses " +
+    "refused, and the commit recorded in the manifest.",
+  delta:
+    "Send only what changed since a base snapshot, plus the files that import it. Unchanged " +
+    "files are accounted for, never dropped silently.",
+  slice:
+    "Build a snapshot for one question: the retrieval planner picks the files within a token " +
+    "budget, and every unselected path is recorded.",
   "how-to-feed-a-repo-to-claude":
     "Hand a whole codebase to ChatGPT, Claude or Cursor: generate a snapshot locally, pick a " +
     "budget that fits the window, and tell the model what it is reading.",

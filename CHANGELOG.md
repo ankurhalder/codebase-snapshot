@@ -26,6 +26,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.27
+
+- Site: hand-written meta descriptions for the five pages added in this stretch (`health`, `serve`,
+  `remote`, `delta`, `slice`), each 100–160 characters and stating the problem, the artifact and the
+  differentiator. `audit-site` caught the fallback descriptions as too long, which is what it is for.
 ## 0.12.26
 
 **Task slices: `--slice "<question>"`.**
