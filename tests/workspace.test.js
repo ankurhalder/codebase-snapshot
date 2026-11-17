@@ -57,3 +57,26 @@ test("--workspace refuses to combine with --delta", (t) => {
   assert.notEqual(result.code, 0);
   assert.match(result.out, /do not combine/);
 });
+
+test("a workspace records which member imports which", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workspace-links-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const member of ["app", "shared"]) {
+    fs.mkdirSync(path.join(root, member, "src"), { recursive: true });
+    fs.writeFileSync(path.join(root, member, "package.json"), JSON.stringify({ name: member, version: "1.0.0" }) + "\n");
+  }
+  fs.writeFileSync(path.join(root, "shared", "src", "util.ts"), "export const util = 1;\n");
+  fs.writeFileSync(
+    path.join(root, "app", "src", "index.ts"),
+    'import { util } from "../../shared/src/util.js";\nexport const app = util;\n'
+  );
+
+  const result = run(["generate", "--workspace", "app,shared"], root);
+  assert.equal(result.code, 0, result.out);
+  const workspace = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "WORKSPACE.json"), "utf8"));
+  const link = workspace.links.find((entry) => entry.from === "app" && entry.to === "shared");
+  assert.ok(link, "the edge is recorded");
+  assert.ok(link.specifiers >= 1);
+  assert.ok(link.examples.includes("src/index.ts"));
+  assert.match(result.out, /app imports shared/);
+});

@@ -26,6 +26,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.45
+
+- **Workspaces record cross-member imports.** A relative import in one member that resolves inside
+  another becomes a link in `WORKSPACE.json` — from, to, specifier count and a few example paths —
+  and the summary prints it. It is the one thing a per-member snapshot cannot see, and the first
+  thing a reader of a monorepo needs.
+- The edge is a static link from the specifier text: it says the members are coupled, not that the
+  target file is present in the other member's snapshot. The docs say so.
+
+Verified: an app→shared import is recorded with its example path and printed; the three earlier
+workspace behaviours still pass.
 ## 0.12.44
 
 - **The token-budget report says what survived.** `budget.coverage` records, per layer, how many

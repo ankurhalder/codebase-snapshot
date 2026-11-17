@@ -2125,7 +2125,15 @@ async function runCommand(argv: string[]): Promise<number> {
       );
     }
     const outRoot = path.resolve(invocation.cwd, invocation.outDir ?? "snapshot");
-    const records: Array<{ name: string; path: string; fingerprint: string; files: number; parts: number; tokens: number }> = [];
+    const records: Array<{
+      name: string;
+      path: string;
+      fingerprint: string;
+      files: number;
+      parts: number;
+      tokens: number;
+      imports: Array<{ path: string; imports: string[] }>;
+    }> = [];
     let failed = 0;
     for (const member of members) {
       const directory = path.resolve(invocation.cwd, member);
@@ -2154,6 +2162,7 @@ async function runCommand(argv: string[]): Promise<number> {
           files: manifest.counts.totalFiles,
           parts: manifest.counts.partsCount,
           tokens: manifest.totals.estimatedTokens ?? 0,
+          imports: manifest.indexes.imports.byFile.map((entry) => ({ path: entry.path, imports: entry.imports })),
         });
         info("   " + name + ": " + manifest.counts.totalFiles + " files, " + manifest.counts.partsCount + " part(s)");
       } catch (error) {
@@ -2162,16 +2171,50 @@ async function runCommand(argv: string[]): Promise<number> {
       }
     }
     fs.mkdirSync(outRoot, { recursive: true });
+    /**
+     * Cross-member edges: a relative import in one member that resolves inside another.
+     *
+     * This is the one thing a per-member snapshot cannot see, and it is exactly what a reader of a
+     * monorepo needs first: which member depends on which. The edge is recorded from the specifier
+     * text, so it is a static link, not proof that the target exists in the other member's snapshot.
+     */
+    const links: Array<{ from: string; to: string; specifiers: number; examples: string[] }> = [];
+    for (const record of records) {
+      const counts = new Map<string, { count: number; examples: string[] }>();
+      for (const entry of record.imports) {
+        for (const specifier of entry.imports) {
+          if (!specifier.startsWith(".")) continue;
+          const resolved = path.resolve(record.path, path.dirname(entry.path), specifier);
+          for (const other of records) {
+            if (other === record) continue;
+            const prefix = other.path + path.sep;
+            if (!resolved.startsWith(prefix) && resolved !== other.path) continue;
+            const bucket = counts.get(other.name) ?? { count: 0, examples: [] };
+            bucket.count += 1;
+            if (bucket.examples.length < 5) bucket.examples.push(entry.path);
+            counts.set(other.name, bucket);
+          }
+        }
+      }
+      for (const [to, bucket] of counts) {
+        links.push({ from: record.name, to, specifiers: bucket.count, examples: bucket.examples });
+      }
+    }
+    links.sort((left, right) => (left.from + ">" + left.to).localeCompare(right.from + ">" + right.to));
     const document = {
       generatedAt: new Date().toISOString(),
       generator: GENERATOR_VERSION,
-      members: records,
+      members: records.map(({ imports: _imports, ...rest }) => rest),
+      links,
     };
     fs.writeFileSync(path.join(outRoot, "WORKSPACE.json"), JSON.stringify(document, null, 2) + "\n", "utf8");
     emit(invocation.format, document, () => {
       info("\n🗂 Workspace: " + records.length + " of " + members.length + " member(s) written under " + outRoot);
       for (const record of records) {
         info("   - " + record.name + " (" + record.fingerprint.slice(0, 12) + ")");
+      }
+      for (const link of links) {
+        info("   → " + link.from + " imports " + link.to + " (" + link.specifiers + " specifier(s))");
       }
     });
     return failed === 0 ? 0 : 1;

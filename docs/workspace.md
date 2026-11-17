@@ -29,6 +29,9 @@ context/
   "members": [
     { "name": "api", "path": "/repo/api", "fingerprint": "9f2c…", "files": 412, "parts": 6, "tokens": 184220 },
     { "name": "web", "path": "/repo/web", "fingerprint": "1a77…", "files": 208, "parts": 3, "tokens": 96110 }
+  ],
+  "links": [
+    { "from": "web", "to": "shared", "specifiers": 14, "examples": ["src/api/client.ts"] }
   ]
 }
 ```
@@ -49,6 +52,10 @@ works on it, and the MCP server can be pointed at it with `--cwd`.
   several.
 - **Names come from the directories.** `--workspace a/api,b/api` would collide; use paths whose last
   segment is unique.
+- **Cross-member imports are recorded, not judged.** A relative import in one member that resolves
+  inside another is written as a link in `WORKSPACE.json` with the specifier count and a few
+  example paths. It is a static link from the specifier text: it says the members are coupled, not
+  that the target file is present in the other member's snapshot.
 
 ## Why not one merged snapshot
 
