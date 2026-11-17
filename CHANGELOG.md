@@ -30,6 +30,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.84
+
+**`validate` compared a digest that did not cover three settings that change the bytes.**
+
+- `--strip-comments`, `--pack` and the `--include-logs` count were missing from `configDigest`, so a
+  snapshot generated with `--strip-comments` and validated without it compared equal: the bodies on
+  disk were comment-free and the configuration said comments were kept. `option-scope.ts` already
+  claimed `validate` accepted `--strip-comments` "because the digest is computed over all of them" —
+  it was not, and now it is.
+- Each field is written into the digest material only when it is not the default, so a snapshot
+  taken with the defaults keeps the digest it was recorded with and does not report drift after an
+  upgrade. A snapshot actually generated with one of these flags reports the change it was made
+  with, which is the answer `validate` promises.
+
+Verified: the digest moves for `stripComments`, `pack` and a non-default `logCount`, and an explicit
+default compares equal to the default.
 ## 0.12.83
 
 - **The troubleshooting page covers the features added since it was written.** A new section maps the

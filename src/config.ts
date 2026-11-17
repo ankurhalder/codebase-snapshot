@@ -1790,6 +1790,15 @@ export function classifyKind(filePath: string, kinds: KindRule[]): string {
 export function configDigest(config: ResolvedSnapshotConfig): string {
   const material = {
     maxPartBytes: config.maxPartBytes,
+    // Settings that change the emitted bytes but were missing from this digest, each written
+    // only when it is not the default: an existing snapshot taken with the defaults must keep the
+    // digest it was recorded with, and only a snapshot that really used one of these has a
+    // different one.
+    ...(config.stripComments === true ? { stripComments: true } : {}),
+    ...(config.pack === null ? {} : { pack: config.pack }),
+    // The count decides how much of `reports/log.md` is written, so 3 and 20 are different
+    // snapshots; 20 is the documented default and is omitted for the same compatibility reason.
+    ...(config.logCount === 20 ? {} : { logCount: config.logCount }),
     // The user's own unit. `maxPartBytes` above already reflects the converted ceiling, but
     // recording the token number means changing 32k to 64k moves the digest even in the
     // corner where both round to the same byte budget.

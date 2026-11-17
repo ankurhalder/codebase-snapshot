@@ -121,3 +121,19 @@ test("a config file may spell custom rules as secretRules", async (t) => {
     "and its rule must reach the resolver"
   );
 });
+
+test("the settings that change emitted bytes move the digest", (t) => {
+  const dir = tempDir(t);
+  const plain = resolve(dir);
+  const stripped = resolve(dir, { stripComments: true });
+  const packed = resolve(dir, { includeMonolith: true, pack: "xml" });
+  const logged = resolve(dir, { logCount: 3 });
+  assert.notEqual(configDigest(plain), configDigest(stripped), "strip-comments changes the bodies");
+  assert.notEqual(configDigest(plain), configDigest(packed), "the pack names the monolith artifact");
+  assert.notEqual(configDigest(plain), configDigest(logged), "the log count changes the report");
+  // The default must stay put: adding these fields cannot move a snapshot taken with defaults.
+  const again = resolve(dir);
+  assert.equal(configDigest(plain), configDigest(again));
+  const explicitDefault = resolve(dir, { stripComments: false, logCount: 20 });
+  assert.equal(configDigest(plain), configDigest(explicitDefault), "an explicit default is the default");
+});
