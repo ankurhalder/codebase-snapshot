@@ -336,6 +336,11 @@ Any other `##` heading is kept, verbatim, under **Owner notes** — nothing is d
 merge did not recognise it. Every owner section is marked in the output as written by the project
 owner, so a reader can tell an assertion from a measurement.
 
+A brief is capped at 64 KiB: past that it is a second codebase rather than instruction, and
+the error names the size. Text inside a fenced code block is content — a sample `## Coverage` in a
+documentation example is not a section — and `## Stakes:` is read as `## Stakes`, because the
+colon is a typo rather than a different heading.
+
 Three things are refused because they would make the document lie:
 
 - a heading that redefines a **measured** section (`Coverage`, `This snapshot`, `Attaching this`,

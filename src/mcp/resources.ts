@@ -76,6 +76,12 @@ const PART_ADVICE =
   "A part cut at the limit is a fragment of a file, not the file. Use snapshot_locate to find the " +
   "file inside this part that you need, then snapshot_read for a bounded window of it.";
 
+/** The brief: the artifact that says what the snapshot is and what it leaves out. */
+const PROMPT_URI = "snapshot://prompt";
+const PROMPT_ADVICE =
+  "PROMPT.md is written whole and never truncated; regenerate it with snapshot_generate, then " +
+  "read it from the snapshot directory.";
+
 /** Why a report is never returned in pieces. */
 const REPORT_ADVICE =
   "A report cut at the limit would look complete and would not be. Read it from the snapshot " +
@@ -141,6 +147,16 @@ export function buildResourceProvider(): ResourceProvider {
           name: "skill",
           title: "Agent skill",
           description: "Usage guidance for an agent working with this tool.",
+          mimeType: "text/markdown",
+        },
+        {
+          uri: PROMPT_URI,
+          name: "prompt",
+          title: "Snapshot brief",
+          description:
+            "The brief for this snapshot: the job, what the snapshot contains, what it omits, " +
+            "the history it was built from and the standard the answer is held to. Read this " +
+            "before the parts; it names which part holds which file.",
           mimeType: "text/markdown",
         },
       ];
@@ -226,6 +242,14 @@ export function buildResourceProvider(): ResourceProvider {
 
       const workspace = await workspaceFor(context);
       if ("error" in workspace) return null;
+
+      if (uri === PROMPT_URI) {
+        const text = readFileIfPresent(
+          path.resolve(workspace.root, workspace.config.outDir, "PROMPT.md")
+        );
+        if (text === null) return null;
+        return { uri, mimeType: "text/markdown", text: ensureSingleRead(uri, text, PROMPT_ADVICE) };
+      }
 
       const report = REPORT_URIS.get(uri);
       if (report) {

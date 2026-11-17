@@ -964,6 +964,9 @@ function resolvePromptTask(value: unknown): PromptTask {
  * silently lost the half the owner wrote. A reserved heading is an error because the merge would
  * otherwise let prose overwrite a measured section.
  */
+/** 64 KiB: about ten thousand words of judgement, and far below a part. */
+export const MAX_BRIEF_BYTES = 64 * 1024;
+
 function readConfiguredBrief(cwd: string, value: unknown): OwnerBrief | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -980,6 +983,15 @@ function readConfiguredBrief(cwd: string, value: unknown): OwnerBrief | undefine
     throw new Error(
       'brief "' + value + '" could not be read as a file; a snapshot must not ship without the ' +
         "half of the brief the owner wrote."
+    );
+  }
+  // A brief is judgement, not another codebase: past this size it stops being instructions
+  // and becomes a payload that crowds the parts it is meant to explain.
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_BRIEF_BYTES) {
+    throw new Error(
+      'brief "' + value + '" is ' + bytes + " bytes; the limit is " + MAX_BRIEF_BYTES +
+        ". Keep it to what a reader can act on, or move the detail into a document the snapshot carries."
     );
   }
   const parsed = parseOwnerBrief(value, text);

@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { buildTools } from "../dist/mcp.js";
+import { buildResourceProvider, buildTools } from "../dist/mcp.js";
 
 function writeFixture(root) {
   const write = (relative, content) => {
@@ -276,4 +276,22 @@ test("the tools never adopt includeSensitiveFiles", () => {
     assert.ok(!properties.includes("includeSensitiveFiles"), `${tool.name} cannot be asked to include secrets`);
     assert.ok(!properties.includes("preset"), `${tool.name} does not silently override the preset`);
   }
+});
+
+test("the brief is a resource an MCP client can read", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const provider = buildResourceProvider();
+  const listed = await provider.list(context);
+  const prompt = listed.find((resource) => resource.uri === "snapshot://prompt");
+  assert.ok(prompt, "the brief is listed");
+  assert.equal(prompt.mimeType, "text/markdown");
+  assert.match(prompt.description, /Read this before the parts/);
+
+  const read = await provider.read("snapshot://prompt", context);
+  assert.ok(read, "and it reads");
+  assert.match(read.text, /## The job/, "with the brief in it");
+  assert.match(read.text, /## Coverage/, "including the duty section");
 });

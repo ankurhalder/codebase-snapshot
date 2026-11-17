@@ -66,6 +66,10 @@ export function generatePrompt(
   // working and a caller that does not care about the selection still gets a full brief.
   const wrote = (name: keyof ResolvedArtifacts): boolean => artifacts?.[name] !== false;
   const code = (value: string): string => inlineCode(escapeControls(value));
+  // Owner prose, commit messages and the README summary are reproduced text: a NUL or a bidi
+  // override in any of them reaches an artifact otherwise. The repo escapes them everywhere
+  // else, and the brief must not be the one place that does not.
+  const text = (value: string): string => escapeControls(value);
   const hasOwnerHistory = (brief?.history ?? "").trim().length > 0;
 
   const lines: string[] = [
@@ -85,19 +89,19 @@ export function generatePrompt(
     "the snapshot is what exists.",
     ""
   ];
-  if (brief?.preamble !== undefined) lines.push(brief.preamble, "");
+  if (brief?.preamble !== undefined) lines.push(text(brief.preamble), "");
 
   lines.push(...jobSection(task, history.length > 0 || hasOwnerHistory), "");
-  lines.push(...stakesSection(brief, code));
+  lines.push(...stakesSection(brief, code, text));
   lines.push(...haveSection(wrote), "");
-  lines.push(...whatThisIsSection(overview), "");
-  lines.push(...systemSection(manifest, code, brief), "");
-  lines.push(...historySection(history, brief, code), "");
-  lines.push(...barSection(brief, code), "");
+  lines.push(...whatThisIsSection(overview, text), "");
+  lines.push(...systemSection(manifest, code, brief, text), "");
+  lines.push(...historySection(history, brief, code, text), "");
+  lines.push(...barSection(brief, code, text), "");
   lines.push(...coverageSection(manifest, code, wrote("audit")), "");
   lines.push(...answerSection(), "");
-  lines.push(...calibrationSection(brief, code), "");
-  lines.push(...ownerNotesSection(brief, code));
+  lines.push(...calibrationSection(brief, code, text), "");
+  lines.push(...ownerNotesSection(brief, code, text));
   lines.push(...snapshotSection(manifest, code), "");
   lines.push(...deliverySection(manifest, wrote("parts"), slots));
 
@@ -186,11 +190,12 @@ function haveSection(wrote: (name: keyof ResolvedArtifacts) => boolean): string[
 function systemSection(
   manifest: Manifest,
   code: (value: string) => string,
-  brief: OwnerBrief | undefined
+  brief: OwnerBrief | undefined,
+  escape: (value: string) => string
 ): string[] {
   const out = ["## The system", ""];
   if (brief?.system !== undefined) {
-    out.push(...ownerBlock(brief.system, brief.path, code), "", "What the index records:", "");
+    out.push(...ownerBlock(brief.system, brief.path, code, escape), "", "What the index records:", "");
   }
 
   const layers = Object.entries(manifest.layers).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -281,10 +286,11 @@ function systemSection(
 function historySection(
   history: readonly CommitRecord[],
   brief: OwnerBrief | undefined,
-  code: (value: string) => string
+  code: (value: string) => string,
+  escape: (value: string) => string
 ): string[] {
   const out = ["## What came before", ""];
-  if (brief?.history !== undefined) out.push(...ownerBlock(brief.history, brief.path, code), "");
+  if (brief?.history !== undefined) out.push(...ownerBlock(brief.history, brief.path, code, escape), "");
   if (history.length === 0) {
     out.push(
       "No history was readable: this is not a git checkout, or git could not be run. Nothing about",
@@ -300,16 +306,16 @@ function historySection(
     ""
   );
   for (const commit of history) {
-    out.push("- " + commit.subject);
-    if (commit.body.length > 0) out.push("  " + commit.body);
+    out.push("- " + escape(commit.subject));
+    if (commit.body.length > 0) out.push("  " + escape(commit.body));
   }
   return out;
 }
 
 /** The standard. Static on purpose: this is what a finding has to be, for any repository. */
-function barSection(brief: OwnerBrief | undefined, code: (value: string) => string): string[] {
+function barSection(brief: OwnerBrief | undefined, code: (value: string) => string, text: (value: string) => string): string[] {
   if (brief?.bar !== undefined) {
-    return ["## The bar", "", ...ownerBlock(brief.bar, brief.path, code), ""];
+    return ["## The bar", "", ...ownerBlock(brief.bar, brief.path, code, text), ""];
   }
   return [
     "## The bar",
@@ -391,10 +397,11 @@ function answerSection(): string[] {
  */
 function calibrationSection(
   brief: OwnerBrief | undefined,
-  code: (value: string) => string
+  code: (value: string) => string,
+  text: (value: string) => string
 ): string[] {
   if (brief?.calibration !== undefined) {
-    return ["## Calibration", "", ...ownerBlock(brief.calibration, brief.path, code), ""];
+    return ["## Calibration", "", ...ownerBlock(brief.calibration, brief.path, code, text), ""];
   }
   return [
     "## Calibration",
@@ -456,22 +463,25 @@ function jobSection(task: PromptTask, hasHistory: boolean): string[] {
 }
 
 /** What is at stake, when the owner has said. It sits beside the job, not in an appendix. */
-function stakesSection(brief: OwnerBrief | undefined, code: (value: string) => string): string[] {
+function stakesSection(brief: OwnerBrief | undefined, code: (value: string) => string, text: (value: string) => string): string[] {
   if (brief?.stakes === undefined) return [];
-  return ["## Stakes", "", ...ownerBlock(brief.stakes, brief.path, code), ""];
+  return ["## Stakes", "", ...ownerBlock(brief.stakes, brief.path, code, text), ""];
 }
 
 /** What the repository says about itself, when it says anything. */
-function whatThisIsSection(overview: ProjectOverview): string[] {
+function whatThisIsSection(
+  overview: ProjectOverview,
+  escape: (value: string) => string
+): string[] {
   const body: string[] = [];
   if (overview.description !== undefined) {
-    body.push("- Declared in `package.json`: " + overview.description);
+    body.push("- Declared in `package.json`: " + escape(overview.description));
   }
   if (overview.summary !== undefined) {
-    body.push("- From the `README.md` first paragraph: " + overview.summary);
+    body.push("- From the `README.md` first paragraph: " + escape(overview.summary));
   }
   if (overview.releases.length > 0) {
-    body.push("- Most recent releases: " + overview.releases.join("; ") + ".");
+    body.push("- Most recent releases: " + overview.releases.map(escape).join("; ") + ".");
   }
   if (body.length === 0) return [];
   return [
@@ -487,12 +497,13 @@ function whatThisIsSection(overview: ProjectOverview): string[] {
 /** Anything the owner wrote that the merge did not recognise. Never dropped. */
 function ownerNotesSection(
   brief: OwnerBrief | undefined,
-  code: (value: string) => string
+  code: (value: string) => string,
+  text: (value: string) => string
 ): string[] {
   if (brief === undefined || brief.notes.length === 0) return [];
   const out: string[] = ["## Owner notes", ""];
   for (const note of brief.notes) {
-    out.push("### " + note.heading, "", ...ownerBlock(note.body, brief.path, code), "");
+    out.push("### " + note.heading, "", ...ownerBlock(note.body, brief.path, code, text), "");
   }
   return out;
 }
@@ -503,8 +514,13 @@ function ownerNotesSection(
  * The marker is the whole reason this is a function: a reader has to be able to tell an
  * assertion by the owner from a measurement by the tool, in a document where both appear.
  */
-function ownerBlock(text: string, path: string, code: (value: string) => string): string[] {
-  return ["> Written by the project owner in " + code(path) + ", not generated.", "", text];
+function ownerBlock(
+  body: string,
+  path: string,
+  code: (value: string) => string,
+  escape: (value: string) => string
+): string[] {
+  return ["> Written by the project owner in " + code(path) + ", not generated.", "", escape(body)];
 }
 
 /** The fingerprint and the counts, so the answer can name the state it describes. */

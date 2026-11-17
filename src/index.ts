@@ -743,6 +743,7 @@ function maskOwnerBrief(
   const mask = (value: string): string => maskPathText(value, secretRules);
   return {
     ...brief,
+    path: mask(brief.path),
     ...(brief.stakes === undefined ? {} : { stakes: mask(brief.stakes) }),
     ...(brief.system === undefined ? {} : { system: mask(brief.system) }),
     ...(brief.history === undefined ? {} : { history: mask(brief.history) }),
@@ -2889,9 +2890,11 @@ export function generateSnapshot(
       // configuration drift.
       maxParts: config.maxParts ?? null,
       promptTask: config.promptTask,
+      // The path is user input like every other name in this block: a credential-shaped
+      // directory in it would otherwise be echoed into the manifest and PROMPT.md unmasked.
       ...(config.brief === undefined
         ? {}
-        : { brief: { path: config.brief.path, digest: config.brief.digest } }),
+        : { brief: { path: maskName(config.brief.path), digest: config.brief.digest } }),
       discovery: config.discovery ?? "auto",
       // A changed-files scope decides which files are in the snapshot, so the manifest that
       // describes the run has to name it.

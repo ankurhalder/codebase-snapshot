@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.1 mcp
+npx -y codebase-snapshot@0.12.2 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.1", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.2", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.1 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.2 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -106,6 +106,7 @@ Resources are the browse surface; tools are the act surface.
 | `snapshot://reports/audit` | Secret findings, large files, parse diagnostics |
 | `snapshot://reports/tree` | The directory tree of included files |
 | `snapshot://reports/navigation` | File-to-part lookup |
+| `snapshot://prompt` | `PROMPT.md` — the brief: the job, what the snapshot contains and omits, the history it was built from, and the owner half when a `brief` is configured |
 | `snapshot://contract` | The machine-readable CLI contract |
 | `snapshot://skill` | The agent skill, as one read |
 
@@ -116,7 +117,7 @@ JSON-RPC error `-32000` (the implementation-defined server-error range) and
 the CLI for the contract or the skill. It never returns a truncated document: half a JSON manifest
 does not parse, and half a part is a fragment that looks complete. The rule applies to every
 resource — `snapshot://manifest`, each `snapshot://parts/{index}`, the three reports,
-`snapshot://contract` and `snapshot://skill`.
+`snapshot://prompt`, `snapshot://contract` and `snapshot://skill`.
 
 Part resources carry their size in the description, so a client choosing between them can see that
 one is 300 kB before attaching it; a part above the limit says in its description that it will be

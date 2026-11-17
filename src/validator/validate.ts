@@ -283,6 +283,53 @@ export function describeManifestShapeProblem(value: unknown): string | null {
     // instead of refusing the document. A manifest written before the digest existed therefore
     // still diffs and reports; it just cannot be called current.
 
+    // Settings added after this guard was written are optional, but a manifest that carries one
+    // in the wrong shape is malformed rather than old: `report` prints these fields and
+    // `validate` compares the ones in the digest, so a `promptTask` of 5 reads as "unset" and a
+    // string `brief` would be echoed as a path it is not.
+    const recordedConfig = config as Record<string, unknown>;
+    const promptTask = recordedConfig.promptTask;
+    if (
+      promptTask !== undefined &&
+      promptTask !== "audit" &&
+      promptTask !== "review" &&
+      promptTask !== "explain"
+    ) {
+      return '`config.promptTask` must be "audit", "review" or "explain"';
+    }
+    const recordedBrief = recordedConfig.brief;
+    if (recordedBrief !== undefined) {
+      if (!recordedBrief || typeof recordedBrief !== "object" || Array.isArray(recordedBrief)) {
+        return '`config.brief` must be an object';
+      }
+      const briefRecord = recordedBrief as Record<string, unknown>;
+      if (typeof briefRecord.path !== "string" || briefRecord.path.length === 0) {
+        return '`config.brief.path` must be a non-empty string';
+      }
+      if (typeof briefRecord.digest !== "string" || !/^[0-9a-f]{64}$/.test(briefRecord.digest)) {
+        return '`config.brief.digest` must be a sha256 hex digest';
+      }
+    }
+    const recordedSlots = recordedConfig.attachmentSlots;
+    if (
+      recordedSlots !== undefined &&
+      (typeof recordedSlots !== "number" ||
+        !Number.isSafeInteger(recordedSlots) ||
+        recordedSlots < 0)
+    ) {
+      return '`config.attachmentSlots` must be a non-negative integer';
+    }
+    const recordedMaxParts = recordedConfig.maxParts;
+    if (
+      recordedMaxParts !== undefined &&
+      recordedMaxParts !== null &&
+      (typeof recordedMaxParts !== "number" ||
+        !Number.isSafeInteger(recordedMaxParts) ||
+        recordedMaxParts < 1)
+    ) {
+      return '`config.maxParts` must be a positive integer or null';
+    }
+
     const budgets = candidate.budgets;
     if (!budgets || typeof budgets !== "object" || Array.isArray(budgets)) {
       return 'missing "budgets" object';

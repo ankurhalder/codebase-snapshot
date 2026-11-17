@@ -60,7 +60,26 @@ export function parseOwnerBrief(
   const preamble: string[] = [];
   const sections: Array<{ heading: string; body: string[] }> = [];
   let current: { heading: string; body: string[] } | null = null;
+  // A fenced code block can contain anything, including a line that looks like a heading. The
+  // first version parsed one as a real section: a brief that *showed* the format with a sample
+  // "## Coverage" was refused for redefining a measured section that it never defined.
+  let fence: { char: string; length: number } | null = null;
   for (const line of source.split(/\r?\n/)) {
+    const fenceLine = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceLine) {
+      const marker = fenceLine[1] as string;
+      const char = marker[0] as string;
+      if (fence === null) fence = { char, length: marker.length };
+      else if (char === fence.char && marker.length >= fence.length) fence = null;
+      if (current) current.body.push(line);
+      else preamble.push(line);
+      continue;
+    }
+    if (fence !== null) {
+      if (current) current.body.push(line);
+      else preamble.push(line);
+      continue;
+    }
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading) {
       current = { heading: heading[1] as string, body: [] };
@@ -76,7 +95,14 @@ export function parseOwnerBrief(
   // Headings are matched case-insensitively, so "## coverage" cannot smuggle prose past the
   // reservation, and a heading defined twice is ambiguous rather than last-wins.
   const canonical = (heading: string): string =>
-    heading.trim().toLowerCase().replace(/\s+/g, " ");
+    heading
+      .trim()
+      // "## Stakes:" is the same intent as "## Stakes"; treating it as an unknown heading sent
+      // the owner stakes to Owner notes while the generic prose rendered in their place.
+      .replace(/[:.]+$/, "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
   const canonicalOwner = new Map(OWNER_SECTIONS.map((name) => [canonical(name), name]));
   const canonicalReserved = new Set(RESERVED_SECTIONS.map(canonical));
   const seen = new Set<string>();

@@ -26,6 +26,33 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.2
+
+Six defects in the brief, five of them found by attacking it rather than reading it.
+
+- **A fenced sample heading was parsed as a section.** A brief that documents the format —
+  ```` ```markdown ```` then `## Coverage` — was refused for redefining a measured section it never
+  defined. Fences are tracked now: content inside one is content, whatever it looks like.
+- **Control characters in reproduced text reached the artifact.** A `NUL` (or a bidi override) in the
+  owner brief, a commit body or the README paragraph was written into `PROMPT.md` verbatim. Every
+  reproduced string is escaped the same way the rest of the tool escapes them.
+- **`## Stakes:` fell into Owner notes.** A trailing colon is a typo, not a different heading, so the
+  canonical form drops trailing punctuation and the stakes render in their section.
+- **The brief had no size limit.** A 240 kB brief produced a 240 kB `PROMPT.md`, which is a second
+  codebase rather than instruction. It is capped at 64 KiB, and the error names the size.
+- **`config.brief.path` was recorded unmasked.** Every other user-supplied name in the manifest is
+  masked; a credential-shaped directory in the brief path was echoed into `manifest.json` and the
+  provenance line of `PROMPT.md`. It goes through the same masking now.
+- **The shape guard ignored the fields added in 0.11 and 0.12.** A manifest with `promptTask: 5`, a
+  string `brief`, a negative `attachmentSlots` or `maxParts: 0` was accepted: `report` echoed it and
+  `validate` read it as unset. Each is refused by name now.
+
+New: `snapshot://prompt` over MCP, so a client can read the brief before it attaches parts instead of
+running the CLI to see it.
+
+Everything else is unchanged. `0.12.2` is the same line: no `0.13`, no `1.0.0`.
+
+Verified: 1 178 tests, 1 170 pass, 0 fail, 8 host skips; lint 225 files; every gate clean at 0.12.2.
 ## 0.12.1
 
 Three defects in the facts 0.12.0 printed about a project, found by reading the artifact as the

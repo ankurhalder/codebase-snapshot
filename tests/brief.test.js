@@ -263,3 +263,90 @@ test("a commit body is cut at a sentence, not mid-word", (t) => {
   assert.match(body, /The guard existed on the route\.$/, "cut on a sentence boundary");
   assert.doesNotMatch(body, /bui…|\w…$/, "and never mid-word");
 });
+
+test("a fenced sample heading is not parsed as a section", (t) => {
+  const dir = makeRepo(t, {
+    "brief.md": [
+      "## Stakes",
+      "",
+      "The block below shows the format; it is not a section.",
+      "",
+      "```markdown",
+      "## Coverage",
+      "This line is a sample.",
+      "```",
+      "",
+      "That is all.",
+      "",
+    ].join("\n"),
+  });
+  const result = cli(["generate", "--brief", "brief.md"], dir);
+  assert.equal(result.code, 0, "a fenced heading is content, not a reservation violation");
+  const prompt = promptOf(dir);
+  assert.match(prompt, /This line is a sample\./, "the fence travels with the section");
+});
+
+test("control characters in owner prose are escaped", (t) => {
+  const dir = makeRepo(t, { "brief.md": "## Stakes\n\nBefore\u0000after the NUL.\n" });
+  const result = cli(["generate", "--brief", "brief.md"], dir);
+  assert.equal(result.code, 0, result.out);
+  const prompt = promptOf(dir);
+  assert.equal(prompt.includes("\u0000"), false, "no raw NUL reaches the artifact");
+  assert.match(prompt, /Before\\u0000after the NUL\./, "it is re-spelled instead");
+});
+
+test("a heading typo with a trailing colon still lands in its section", (t) => {
+  const dir = makeRepo(t, { "brief.md": "## Stakes:\n\nWith a trailing colon.\n" });
+  assert.equal(cli(["generate", "--brief", "brief.md"], dir).code, 0);
+  const prompt = promptOf(dir);
+  assert.match(prompt, /## Stakes\n/, "rendered as the stakes section");
+  assert.match(prompt, /With a trailing colon\./);
+  assert.doesNotMatch(prompt, /### Stakes:/, "not dumped into owner notes");
+});
+
+test("an oversized brief is refused with its size", (t) => {
+  const dir = makeRepo(t, { "brief.md": "## Stakes\n\n" + "word ".repeat(20000) + "\n" });
+  const result = cli(["generate", "--brief", "brief.md"], dir);
+  assert.notEqual(result.code, 0, "must fail");
+  assert.match(result.out, /the limit is 65536/, "names the limit");
+  assert.equal(fs.existsSync(path.join(dir, "snapshot")), false, "and writes nothing");
+});
+
+test("a manifest whose new config fields have the wrong shape is refused", (t) => {
+  const dir = makeRepo(t);
+  assert.equal(cli(["generate"], dir).code, 0);
+  const manifestPath = path.join(dir, "snapshot", "manifest.json");
+  const original = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+
+  const cases = [
+    [{ ...original, config: { ...original.config, promptTask: 5 } }, /promptTask/],
+    [{ ...original, config: { ...original.config, brief: "docs/brief.md" } }, /config\.brief/],
+    [{ ...original, config: { ...original.config, brief: { path: "", digest: "x" } } }, /brief\.path/],
+    [{ ...original, config: { ...original.config, attachmentSlots: -1 } }, /attachmentSlots/],
+    [{ ...original, config: { ...original.config, maxParts: 0 } }, /maxParts/],
+  ];
+  for (const [tampered, expected] of cases) {
+    fs.writeFileSync(manifestPath, JSON.stringify(tampered));
+    const result = cli(["validate"], dir);
+    assert.equal(result.code, 1, "a malformed config field is refused");
+    assert.match(result.out, expected, "and the message names the field");
+  }
+});
+
+test("a credential-shaped brief path is masked like every other name", (t) => {
+  const dir = makeRepo(t);
+  fs.mkdirSync(path.join(dir, "docs", "AKIAIOSFODNN7EXAMPLE"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "docs", "AKIAIOSFODNN7EXAMPLE", "brief.md"),
+    "## Stakes\n\nPath carries a credential shape.\n",
+    "utf8"
+  );
+  const briefPath = path.join("docs", "AKIAIOSFODNN7EXAMPLE", "brief.md");
+  const result = cli(["generate", "--brief", briefPath], dir);
+  assert.equal(result.code, 0, result.out);
+
+  const prompt = promptOf(dir);
+  assert.equal(prompt.includes("AKIAIOSFODNN7EXAMPLE"), false, "PROMPT.md masks the path");
+  const manifest = fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8");
+  assert.equal(manifest.includes("AKIAIOSFODNN7EXAMPLE"), false, "the manifest masks it too");
+});

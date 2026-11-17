@@ -481,8 +481,9 @@ export function buildAgentContract(): AgentContract {
         summary:
           "Path to the owner-written half of PROMPT.md: Stakes, The system, What came before, The " +
           "bar and Calibration replace or extend the generated prose; any other heading is kept as " +
-          "Owner notes. The measured headings cannot be redefined. A missing file is an error and " +
-          "an edited file is config drift.",
+          "Owner notes. The measured headings cannot be redefined; fenced code is content, not " +
+          "headings. The file is capped at 64 KiB. A missing file is an error and an edited file is " +
+          "config drift.",
       },
       {
         flag: "--prompt-task",
