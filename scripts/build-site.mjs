@@ -121,8 +121,10 @@ const DESCRIPTIONS = {
   troubleshooting:
     "Every message the tool prints and the one-line fix: refusals, config errors, drift, " +
     "sensitive-file skips and non-interactive first runs.",
-  mcp:
-    "Serve a repository to Claude, Cursor or any MCP client: 22 tools and snapshot:// " +
+  tools:
+    "All 22 MCP tools in one reference: what each answers, its cost class, and a call you can " +
+    "send as it stands, from status and search to the planner, review and health.",
+  mcp:    "Serve a repository to Claude, Cursor or any MCP client: 22 tools and snapshot:// " +
     "resources, so an agent reads the one part it needs instead of all of them.",
   health:
     "Audit a generated snapshot: part hashes, artifact claims, unmasked secrets, host paths, " +

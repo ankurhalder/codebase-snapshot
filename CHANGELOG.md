@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.72
+
+**A tool reference page: all 22 tools, with a call you can send.**
+
+- `docs/tools.md` lists every tool by name, cost class and read-only status, with one ready-to-send
+  JSON-RPC call each and the conventions they share (root, outDir, errors that say why). The site is
+  now 29 pages; `docs/mcp.md` links to it.
+- The page states what the tools will not do: a tool that cannot answer returns `isError` with a
+  reason instead of an empty list that looks like a true negative.
+
+Verified: `npm run site` builds 29 pages and `audit-site` reports no problems.
 ## 0.12.71
 
 - The goal log records the 0.12.65-0.12.70 stretch: the head-to-head harness and its measured
