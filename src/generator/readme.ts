@@ -63,7 +63,11 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
     `- **Emitted Lines:** \`${formatNumber(manifest.totals.emittedLines ?? manifest.counts.totalLines)}\``,
     `- **Total Size:** \`${(manifest.counts.totalSizeBytes / (1024 * 1024)).toFixed(2)} MiB\``,
     `- **Emitted Content:** \`${(manifest.totals.totalContentBytes / (1024 * 1024)).toFixed(2)} MiB\``,
-    `- **Part Count:** \`${manifest.counts.partsCount}\` (budget \`${(manifest.budgets.maxPartBytes / 1024).toFixed(0)} KB\` per part)`,
+    // The count is what was written, not what was planned: with the artifact disabled the section
+    // below says "No parts were written", and a count of 1 above it contradicted the file.
+    wrote("parts")
+      ? `- **Part Count:** \`${manifest.counts.partsCount}\` (budget \`${(manifest.budgets.maxPartBytes / 1024).toFixed(0)} KB\` per part)`
+      : `- **Part Count:** \`0\` (the parts artifact was disabled for this run)`,
     `- **Generator:** \`${manifest.generator.name}@${manifest.generator.version}\``,
     "",
     "## Documentation & Reports",

@@ -26,6 +26,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.13
+
+- **`README.md` counted a part it had just said was not written.** With `--skip-artifacts parts`,
+  the header said "Part Count: 1 (budget 300 KB per part)" three lines above "No parts were
+  written for this run." The count is what was written now: `0`, with the reason.
+
+The second instance of the same class as 0.12.12 — an artifact describing a run it was not given —
+and the reason the no-parts test checks both files.
+
+Verified: 1 189 tests, 1 181 pass, 0 fail, 8 host skips; every gate clean at 0.12.13.
 ## 0.12.12
 
 - **A brief written without parts described parts that were never written.** With

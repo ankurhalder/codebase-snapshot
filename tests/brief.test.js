@@ -434,4 +434,10 @@ test("a brief written without parts does not claim part files", (t) => {
   assert.doesNotMatch(prompt, /^- Parts: /m, "it does not list parts as files to open");
   assert.doesNotMatch(prompt, /- `parts\/part-NNN\.md`/, "nor describe their format");
   assert.doesNotMatch(prompt, /Paste this file first, then the parts it names/, "nor tell the reader to attach them");
+
+  // README.md is written from the same manifest, and a count above "No parts were written"
+  // contradicted the section right below it.
+  const readme = fs.readFileSync(path.join(dir, "snapshot", "README.md"), "utf8");
+  assert.match(readme, /\*\*Part Count:\*\* `0`/);
+  assert.match(readme, /No parts were written/);
 });
