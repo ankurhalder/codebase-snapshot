@@ -348,8 +348,8 @@ export function buildAgentContract(): AgentContract {
         summary:
           "Write a commented config file (snapshot.config.ts only when Node can strip types and the " +
           "project is an ES module; snapshot.config.mjs otherwise), add the snapshot scripts and the " +
-          "devDependency, and ignore the snapshot directories. Nothing else is written. Interactive, " +
-          "or --yes for CI.",
+          "devDependency, ignore the snapshot directories, and write a BRIEF.md scaffold for the " +
+          "owner half of PROMPT.md. No agent file is written. Interactive, or --yes for CI.",
         positionals: [],
         exits: [0, 1, 2],
       },

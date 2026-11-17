@@ -26,6 +26,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.10
+
+- **The contract said `init` writes nothing else.** It writes `BRIEF.md` as of 0.12.9, and the
+  command summary still ended "Nothing else is written." It names the scaffold now and keeps the
+  part that is still true: no agent file is written.
+
+Verified: 1 187 tests, 1 179 pass, 0 fail, 8 host skips; every gate clean at 0.12.10.
 ## 0.12.9
 
 - **`init` now writes `BRIEF.md`.** The scaffold holds the five headings with their guidance in
