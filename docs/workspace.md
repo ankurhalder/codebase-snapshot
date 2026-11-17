@@ -36,8 +36,16 @@ context/
 }
 ```
 
-Each member directory is a normal snapshot: `snapshot health --cwd api` works on it, `validate`
-works on it, and the MCP server can be pointed at it with `--cwd`.
+Each member directory is a normal snapshot, but it lives under the workspace output directory, so
+point the commands at it explicitly:
+
+```bash
+codebase-snapshot validate --cwd api --out-dir ../context/api
+codebase-snapshot health   --cwd api --out-dir ../context/api
+```
+
+The MCP server reads a repository and its own `outDir`; run it from `api` with that output
+directory configured if the member should be served on its own.
 
 ## Rules
 

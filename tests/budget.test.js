@@ -74,3 +74,15 @@ test("the budget report says what survived", (t) => {
   }
   assert.ok(coverage.entryPoints.total > 0, "the fixture has entry points");
 });
+
+test("a delta can be fitted to a budget", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate"], root).code, 0);
+  fs.appendFileSync(path.join(root, "src", "a.ts"), "export const changed = true;\n");
+  const result = run(["generate", "--out-dir", "delta", "--delta", path.join(root, "snapshot"), "--budget-tokens", "2000"], root);
+  assert.equal(result.code, 0, result.out);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "delta", "manifest.json"), "utf8"));
+  assert.ok(manifest.delta, "the delta is recorded");
+  assert.ok(manifest.budget, "the budget is recorded");
+  assert.ok(manifest.budget.usedTokens <= 2000);
+});

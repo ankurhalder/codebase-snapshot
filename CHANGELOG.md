@@ -26,6 +26,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.59
+
+- **The workspace docs named a command that cannot work.** A member snapshot lives at
+  `<outDir>/<name>`, not `<name>/snapshot`, so `snapshot health --cwd api` finds nothing. The page now
+  shows the real invocation (`--cwd api --out-dir ../context/api`) and says what the MCP server needs
+  to serve one member.
+- A delta pack and a token budget compose, and a test now pins it: narrow to the change, then fit the
+  window, with both blocks recorded.
 ## 0.12.58
 
 **The health audit knows every artifact the run wrote.**
