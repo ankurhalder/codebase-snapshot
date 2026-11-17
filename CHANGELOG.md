@@ -26,6 +26,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.37
+
+- **A migration guide** for 0.12.14 → 0.17.0: every new command, `generate` flag and config key with
+  the version that added it, the MCP surface from eight to fifteen tools and two to seven prompts,
+  and the two behaviour changes (`validate` accepts the report flags; npm publishes only at
+  `x.y.0`). It also says what did not change, which for a reader deciding whether to upgrade is the
+  first question.
 ## 0.12.36
 
 - **The opt-in reports are resources too**: `snapshot://reports/diff`, `snapshot://reports/log` and

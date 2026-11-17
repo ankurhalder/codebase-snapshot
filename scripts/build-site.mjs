@@ -145,6 +145,9 @@ const DESCRIPTIONS = {
   benchmarks:
     "Reproducible token and time numbers for the full snapshot, a task slice and a token " +
     "budget, on this repository, with the script that produced them.",
+  migration:
+    "What changed from 0.12.14 to 0.17.0: every new command, flag, config key and MCP tool, " +
+    "the two behaviour changes, and how to upgrade.",
   deploy:
     "Run it as a service: a container that refuses to start without a token, a compose file, " +
     "and a systemd timer that gates on validate.",

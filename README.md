@@ -210,7 +210,7 @@ Everything an agent needs is available as data, and the tool can install its own
 ```bash
 npx codebase-snapshot describe --format json   # contract: workflow, options, exit codes
 npx codebase-snapshot skill --install          # into .claude/skills + .cursor/rules
-npx -y codebase-snapshot@0.12.36 mcp             # or serve it over MCP
+npx -y codebase-snapshot@0.12.37 mcp             # or serve it over MCP
 ```
 
 An agent told only "use `npx codebase-snapshot`" can read the contract, follow its ordered
@@ -278,6 +278,7 @@ others.
 | [Benchmarks](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/benchmarks.md) | Reproducible token and time numbers for the three modes |
 | [Security review](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/security-review.md) | Threat model, controls, tests and residual risks |
 | [Deploy](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/deploy.md) | Container, compose and systemd, with the token requirement |
+| [Migrating](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/migration.md) | What changed from 0.12.14 to 0.17.0, and the two behaviour changes |
 | [Token budget](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/budget.md) | `--budget-tokens`: whole files chosen to fit a limit, not torn to fit a part |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
