@@ -549,6 +549,54 @@ export function buildAgentContract(): AgentContract {
           "findings. The matched value is never included.",
       },
       {
+        flag: "--http",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("http"),
+        summary:
+          "mcp: serve MCP over HTTP (Streamable HTTP: POST a JSON-RPC message to /mcp) instead of " +
+          "stdio. Loopback by default; a bearer token is generated and printed unless --token or " +
+          "--no-auth is given. Health endpoint: GET /healthz.",
+      },
+      {
+        flag: "--port",
+        type: "string",
+        default: "4789",
+        appliesTo: optionAppliesTo("port"),
+        summary: "mcp --http: port to bind. 0 picks an ephemeral port and prints it.",
+      },
+      {
+        flag: "--host",
+        type: "string",
+        default: "127.0.0.1",
+        appliesTo: optionAppliesTo("host"),
+        summary:
+          "mcp --http: address to bind. Anything other than loopback requires a token; --no-auth " +
+          "is refused there.",
+      },
+      {
+        flag: "--token",
+        type: "string",
+        default: "generated",
+        appliesTo: optionAppliesTo("token"),
+        summary: "mcp --http: bearer token clients must send. Generated per run when omitted.",
+      },
+      {
+        flag: "--no-auth",
+        type: "boolean",
+        default: false,
+        appliesTo: optionAppliesTo("no-auth"),
+        summary: "mcp --http: accept requests without Authorization. Refused on a non-loopback bind.",
+      },
+      {
+        flag: "--allow-origin",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("allow-origin"),
+        summary:
+          "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
+      },
+      {
         flag: "--strict",
         type: "boolean",
         default: false,

@@ -20,6 +20,8 @@ export type { PartSection, Window } from "./part.js";export { buildPrompts } fro
 export { buildResourceProvider } from "./resources.js";
 
 export { createServer, runStdioServer } from "./run.js";
+export { startHttpTransport, generateToken } from "./http.js";
+export type { HttpTransport, HttpTransportOptions } from "./http.js";
 export type { ServerOptions } from "./run.js";
 
 export { createLineReader, createWriter, MAX_LINE_BYTES } from "./stdio.js";

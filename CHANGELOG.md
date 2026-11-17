@@ -26,6 +26,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.18
+
+**MCP over HTTP, for the clients that cannot spawn a process.**
+
+- `snapshot mcp --http` serves the same twelve tools as Streamable HTTP: POST a JSON-RPC message
+  (or an array) to `/mcp`, read the answer from the response body. `GET /healthz` answers
+  `{ ok, name, tools }`.
+- Loopback by default (`127.0.0.1:4789`). A bearer token is generated on first run and printed;
+  `--token` picks one, `--no-auth` turns the requirement off and is refused on a non-loopback bind.
+- CORS for loopback origins and any `--allow-origin` listed; everything else gets 403. Bodies are
+  capped at 2 MB, requests at 60 per 10 s per address, and every error is a JSON-RPC error document.
+
+Verified: initialize and tools/list over POST, 401 without the token, `--no-auth` refusing a
+non-loopback bind, CORS allow/deny, a notification answered 202, invalid JSON answered -32700, and
+the health endpoint.
 ## 0.12.17
 
 - **`snapshot_context`**: named files or exported symbols in, one bounded context block out, read

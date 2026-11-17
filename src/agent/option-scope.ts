@@ -172,7 +172,18 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   skill: ["cwd", "format", "mode", "install", "target", "help", "version"],
   // `mcp` reads the repository, so it takes --cwd. It has no --format: stdout carries JSON-RPC
   // messages, and there is no second shape to choose, so offering the flag would be a lie.
-  mcp: ["cwd", "mode", "help", "version"],
+  mcp: [
+    "http",
+    "port",
+    "host",
+    "token",
+    "no-auth",
+    "allow-origin",
+    "cwd",
+    "no-update-check",
+    "help",
+  ],
+  // (The mcp scope above replaced the old "cwd, mode, help, version" entry when --http landed.)
   // `setup` generates through the `generate` command, so every generation setting it can
   // honour is in scope. Rejecting them made the one-command path unable to express a walk
   // scan, a monolith or a different large-file threshold; the alternative was to run

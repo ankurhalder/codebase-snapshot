@@ -45,6 +45,7 @@ import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
+import { startHttpTransport } from "./mcp/http.js";
 import {
   cacheFilePath,
   checkForUpdate,
@@ -152,6 +153,12 @@ export const CLI_OPTIONS = {
   skeleton: { type: "boolean" },
   sarif: { type: "boolean" },
   strict: { type: "boolean" },
+  http: { type: "boolean" },
+  port: { type: "string" },
+  host: { type: "string" },
+  token: { type: "string" },
+  "no-auth": { type: "boolean" },
+  "allow-origin": { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -185,7 +192,7 @@ Commands:
   diff <a> <b>         Compare two snapshots (directories or manifest.json files)
   describe             Print the machine-readable contract (--format json for agents)
   skill                Print the bundled agent skill; --install writes it into the repo
-  mcp                  Serve this repository to an MCP client over stdio
+  mcp                  Serve this repository to an MCP client (stdio, or --http for the web)
 
 Options:
   --cwd <path>                  Target repository directory (default: current directory)
@@ -220,6 +227,13 @@ Options:
   --discovery <mode>            auto | git | walk — how files are discovered.
                                 auto: git when usable. git: require git. walk: read
                                 .gitignore directly (escape hatch for a broken .git)
+
+  mcp --http:
+  --port <n>                    Port to bind (default 4789; 0 picks a free one)
+  --host <addr>                 Bind address (default 127.0.0.1). Non-loopback requires a token
+  --token <value>               Bearer token clients must send (generated per run by default)
+  --no-auth                     Accept unauthenticated requests; refused on a non-loopback bind
+  --allow-origin <origins>      Extra CORS origins, comma-separated (loopback always allowed)
 
   generate only:
   --autopilot                   Set the project up without asking, then generate: write the
@@ -333,6 +347,13 @@ interface ParsedInvocation {
   sarif?: boolean;
   /** `health`: treat warnings as failures and exit 2 on a critical check. */
   strict?: boolean;
+  /** `mcp`: serve over HTTP instead of stdio. */
+  http?: boolean;
+  port?: number;
+  host?: string;
+  token?: string | null;
+  noAuth?: boolean;
+  allowOrigins?: string[];
 }
 
 export function parsePositiveInteger(
@@ -780,6 +801,18 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     skeleton: values.skeleton === true ? true : undefined,
     sarif: values.sarif === true ? true : undefined,
     strict: values.strict === true ? true : undefined,
+    http: values.http === true ? true : undefined,
+    port: parsePositiveInteger(values.port as string | undefined, "port", 1),
+    host: values.host === undefined ? undefined : String(values.host),
+    token: values.token === undefined ? undefined : String(values.token),
+    noAuth: values["no-auth"] === true ? true : undefined,
+    allowOrigins:
+      values["allow-origin"] === undefined
+        ? undefined
+        : String(values["allow-origin"])
+            .split(",")
+            .map((origin) => origin.trim())
+            .filter((origin) => origin.length > 0),
   };
 }
 
@@ -1665,6 +1698,33 @@ async function runCommand(argv: string[]): Promise<number> {
   // starts before config discovery. A config that cannot be read must reach the client as a tool
   // error it can act on, not as a process that dies before it answers its first message.
   if (invocation.command === "mcp") {
+    if (invocation.http === true) {
+      const transport = await startHttpTransport({
+        cwd: path.resolve(invocation.cwd),
+        ...(invocation.host === undefined ? {} : { host: invocation.host }),
+        ...(invocation.port === undefined ? {} : { port: invocation.port }),
+        ...(invocation.noAuth === true ? { token: null } : {}),
+        ...(invocation.token === undefined ? {} : { token: invocation.token }),
+        ...(invocation.allowOrigins === undefined ? {} : { allowedOrigins: invocation.allowOrigins }),
+        log: (line) => warn(line),
+      });
+      info("MCP over HTTP: " + transport.url);
+      info("  tools: " + 12 + " (see describe --format json)");
+      if (transport.token !== null) {
+        info("  Authorization: Bearer " + transport.token);
+        info("  (generated for this run; pass --token to choose one)");
+      } else {
+        warn("  WARNING: --no-auth is on. Any page on this machine can read the repository.");
+      }
+      await new Promise<void>((resolve) => {
+        const stop = (): void => {
+          void transport.close().then(resolve);
+        };
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
+      });
+      return 0;
+    }
     return await runStdioServer({ cwd: path.resolve(invocation.cwd) });
   }
 

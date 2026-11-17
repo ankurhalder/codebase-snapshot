@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.12.17 mcp
+npx -y codebase-snapshot@0.12.18 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.12.17", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.12.18", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,11 +34,44 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.17 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.12.18 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
 there, and clients that spawn without a shell cannot execute it directly.
+
+## Over HTTP, for clients that cannot spawn a process
+
+```bash
+npx -y codebase-snapshot@0.12.18 mcp --http --port 4789
+```
+
+This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
+the JSON-RPC answer from the response body. `GET /healthz` answers `{ ok, name, tools }`.
+
+The first run prints the URL and a generated bearer token:
+
+```text
+MCP over HTTP: http://127.0.0.1:4789/mcp
+  Authorization: Bearer <generated>
+```
+
+Send `Authorization: Bearer <token>` with every request. `--token` picks your own; `--no-auth`
+turns the requirement off and is **refused** on a non-loopback bind, because a repository
+reachable from the network must not be readable by any page that guesses the port.
+
+| Flag | Default | What it does |
+| :--- | :--- | :--- |
+| `--http` | off | HTTP instead of stdio |
+| `--port <n>` | `4789` | Port; `0` picks a free one and prints it |
+| `--host <addr>` | `127.0.0.1` | Bind address |
+| `--token <value>` | generated | Bearer token |
+| `--no-auth` | off | Unauthenticated; loopback only |
+| `--allow-origin <list>` | unset | Extra CORS origins, comma separated |
+
+CORS is granted to loopback origins (`localhost`, `127.0.0.1`, `[::1]`, any port) and to the
+origins you list. Any other `Origin` gets `403`. Request bodies are capped at 2 MB, the rate is
+capped at 60 requests per 10 seconds per address, and every response is one bounded JSON document.
 
 ## The twelve tools
 
