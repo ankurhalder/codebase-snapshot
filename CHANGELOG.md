@@ -26,6 +26,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.23
+
+**Two more retrieval tools, aimed at the questions an agent actually asks.**
+
+- `snapshot_symbol`: where is this function/class/constant defined? Returns the emitted window around
+  the definition with a real line number, searched in the parts so redaction still applies. A miss
+  says the symbol may be excluded, unsupported or named differently, and points at `snapshot_explain`.
+- `snapshot_diff_context`: given the paths a change touched, the body window of each plus the files
+  that import it, within a token budget. Dependents resolve through extension-less and `.js` → `.ts`
+  specifiers, because that is how the repository writes them.
+- Fourteen tools; the count in every document follows, enforced by the hygiene test.
+
+Verified: symbol definition with line number, a clean miss, an empty name refused; diff context with
+its dependent named, a missing path reported, and an empty list refused.
 ## 0.12.22
 
 **Seven MCP prompts: two about order, five about a job.**

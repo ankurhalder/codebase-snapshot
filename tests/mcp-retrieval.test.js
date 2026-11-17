@@ -163,3 +163,45 @@ test("a context block carries the requested files within its budget", async (t) 
   assert.ok(small.structured.usedTokens <= 500, "the budget is honoured");
   assert.match(small.text, /first \d+ lines/, "a shortened file says so");
 });
+
+test("a symbol resolves to a definition window with a line number", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_symbol");
+  assert.ok(tool, "snapshot_symbol is served");
+  const context = contextFor(root);
+
+  const found = await tool.handler({ name: "deleteUser" }, context);
+  assert.equal(found.structured.found, 1);
+  assert.equal(found.structured.matches[0].path, "src/user.ts");
+  assert.ok(found.structured.matches[0].line >= 1);
+  assert.match(found.text, /export function deleteUser/);
+
+  const absent = await tool.handler({ name: "neverExported" }, context);
+  assert.equal(absent.structured.found, 0);
+  assert.match(absent.text, /No definition of neverExported/);
+
+  const blank = await tool.handler({ name: "" }, context);
+  assert.equal(blank.isError, true);
+});
+
+test("a changed-file set returns its bodies and its dependents", async (t) => {
+  const root = fixture(t);
+  await generate(root);
+  const tool = tools.get("snapshot_diff_context");
+  assert.ok(tool, "snapshot_diff_context is served");
+  const context = contextFor(root);
+
+  const result = await tool.handler({ paths: ["src/user.ts"], maxTokens: 8000 }, context);
+  assert.equal(result.isError, undefined, result.text);
+  assert.equal(result.structured.changed.length, 1);
+  assert.ok(result.structured.dependents.some((item) => item.path === "src/auth.ts"), "the importer is named");
+  assert.match(result.text, /export function getUser/);
+  assert.match(result.text, /dependent/);
+
+  const missing = await tool.handler({ paths: ["nope.ts"], maxTokens: 1000 }, context);
+  assert.deepEqual(missing.structured.missing, ["nope.ts"]);
+
+  const empty = await tool.handler({ paths: [] }, context);
+  assert.equal(empty.isError, true);
+});

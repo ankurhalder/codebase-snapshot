@@ -1,5 +1,5 @@
 /**
- * The twelve tools this server exposes.
+ * The fourteen tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -65,7 +65,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the twelve tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the fourteen tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -273,6 +273,209 @@ function symbolNamesOf(file: FileEntry): string[] {
   }
   return names;
 }
+
+const diffContextTool: McpTool = {
+  name: "snapshot_diff_context",
+  title: "Context for a set of changed files",
+  description:
+    "Given the paths a change touched, return each one head window plus the files that import " +
+    "it, within a token budget. The dependents are what a reviewer usually misses. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      paths: { type: "array", items: { type: "string" }, description: "Changed paths, as the manifest names them." },
+      maxTokens: { type: "integer", description: "Budget for the block (default 15000).", minimum: 500 },
+      linesPerFile: { type: "integer", description: "Head lines per changed file (default 80).", minimum: 10 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    required: ["paths"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      budgetTokens: { type: "integer" },
+      usedTokens: { type: "integer" },
+      changed: { type: "array", items: { type: "object" } },
+      dependents: { type: "array", items: { type: "object" } },
+      missing: { type: "array", items: { type: "string" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const workspace = prepared.workspace;
+    const read = readManifest(workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const wanted = Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === "string") : [];
+    if (wanted.length === 0) return { text: "paths must be a non-empty array", isError: true };
+    const budget = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 15000);
+    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80);
+    const byPath = new Map(read.manifest.files.map((file) => [file.relativePath.toLowerCase(), file]));
+    const importers = new Map<string, string[]>();
+    for (const entry of read.manifest.indexes.imports.byFile) {
+      for (const specifier of entry.imports) {
+        if (!specifier.startsWith(".")) continue;
+        const base = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "";
+        const parts: string[] = [];
+        for (const segment of (base + "/" + specifier).split("/")) {
+          if (segment === "" || segment === ".") continue;
+          if (segment === "..") parts.pop();
+          else parts.push(segment);
+        }
+        const joined = parts.join("/").toLowerCase();
+        const withoutExtension = joined.replace(/\.[cm]?[jt]sx?$/, "");
+        const target =
+          byPath.get(joined) ??
+          byPath.get(withoutExtension + ".ts") ??
+          byPath.get(withoutExtension + ".tsx") ??
+          byPath.get(withoutExtension + ".js") ??
+          byPath.get(withoutExtension + ".py") ??
+          byPath.get(withoutExtension + "/index.ts") ??
+          byPath.get(withoutExtension);
+        if (target === undefined) continue;
+        const list = importers.get(target.relativePath) ?? [];
+        list.push(entry.path);
+        importers.set(target.relativePath, list);
+      }
+    }
+    const missing: string[] = [];
+    const changed = [];
+    const text: string[] = [];
+    let used = 0;
+    for (const path of wanted) {
+      const file = byPath.get(path.toLowerCase());
+      if (file === undefined) {
+        missing.push(path);
+        continue;
+      }
+      const partPath = partPathFor(workspace, file.part);
+      if (partPath === null) {
+        missing.push(path + " (part missing)");
+        continue;
+      }
+      let section;
+      try {
+        section = findSection(parsePartSections(fs.readFileSync(partPath, "utf8")), file.relativePath);
+      } catch {
+        section = null;
+      }
+      if (section === null) {
+        missing.push(path + " (section not found)");
+        continue;
+      }
+      const window = windowText(section.body, 1, linesPerFile);
+      const tokens = Math.max(1, Math.ceil(Buffer.byteLength(window.text, "utf8") / 4));
+      if (used + tokens > budget) {
+        missing.push(path + " (budget)");
+        continue;
+      }
+      used += tokens;
+      changed.push({ path: file.relativePath, part: file.part, tokens });
+      text.push("### " + file.relativePath + " (" + file.part + ")");
+      text.push(window.text);
+    }
+    const dependents: Array<{ path: string; imports: string }> = [];
+    for (const entry of changed) {
+      for (const importer of importers.get(entry.path) ?? []) {
+        if (!dependents.some((item) => item.path === importer)) dependents.push({ path: importer, imports: entry.path });
+      }
+    }
+    const note =
+      dependents.length === 0
+        ? "No file in the snapshot imports the changed paths."
+        : dependents.length + " dependent(s): " + dependents.map((item) => item.path).join(", ");
+    return {
+      text: text.join("\n\n") + "\n\n" + note,
+      structured: { budgetTokens: budget, usedTokens: used, changed, dependents, missing },
+    };
+  },
+};
+
+const symbolTool: McpTool = {
+  name: "snapshot_symbol",
+  title: "Find a symbol definition",
+  description:
+    "Find where a function, class, interface, type or constant is defined in the snapshot and " +
+    "return a window around the definition with line numbers. Searches the emitted parts, so " +
+    "redaction still applies. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "Symbol name, case-insensitive." },
+      lines: { type: "integer", description: "Window size around the definition (default 40).", minimum: 5 },
+      maxFiles: { type: "integer", description: "Cap on files searched (default 5).", minimum: 1 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    required: ["name"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      found: { type: "integer" },
+      matches: { type: "array", items: { type: "object" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const workspace = prepared.workspace;
+    const read = readManifest(workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (name === "") return { text: "name must be a non-empty string", isError: true };
+    const lower = name.toLowerCase();
+    const windowSize = Math.max(5, typeof args.lines === "number" ? args.lines : 40);
+    const cap = Math.max(1, typeof args.maxFiles === "number" ? args.maxFiles : 5);
+    const candidates = read.manifest.files.filter((file) =>
+      symbolNamesOf(file).some((symbol) => symbol.toLowerCase() === lower || symbol.toLowerCase().endsWith("." + lower))
+    );
+    const matches = [];
+    for (const file of candidates.slice(0, cap)) {
+      const partPath = partPathFor(workspace, file.part);
+      if (partPath === null) continue;
+      let partText: string;
+      try {
+        partText = fs.readFileSync(partPath, "utf8");
+      } catch {
+        continue;
+      }
+      const section = findSection(parsePartSections(partText), file.relativePath);
+      if (section === null) continue;
+      const lines = section.body.split("\n");
+      const escaped = lower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const definition = new RegExp(
+        "^\\s*(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:function|class|interface|type|enum|const|let|var|def|fn|func|struct|impl|mod)\\s+" + escaped + "\\b",
+        "i"
+      );
+      const index = lines.findIndex((line) => definition.test(line));
+      if (index === -1) continue;
+      const from = Math.max(0, index - 3);
+      const to = Math.min(lines.length, index + windowSize);
+      matches.push({
+        path: file.relativePath,
+        part: file.part,
+        line: index + 1,
+        text: lines.slice(from, to).join("\n"),
+      });
+    }
+    if (matches.length === 0) {
+      return {
+        text: "No definition of " + name + " was found in the snapshot. It may be excluded, in a language without a symbol profile, or named differently; snapshot_explain says which for a path.",
+        structured: { found: 0, matches: [] },
+      };
+    }
+    const text = matches
+      .map((match) => "### " + match.path + " (" + match.part + ", line " + match.line + ")\n" + match.text)
+      .join("\n\n");
+    return { text, structured: { found: matches.length, matches } };
+  },
+};
 
 const contextTool: McpTool = {
   name: "snapshot_context",
@@ -1464,6 +1667,8 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    diffContextTool,
+    symbolTool,
     contextTool,
     queryTool,
     planForTool,
