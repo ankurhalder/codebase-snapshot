@@ -30,6 +30,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.70
+
+- **`report` says which selection produced the snapshot.** A budget or slice snapshot is a choice,
+  and the summary printed only totals: now it prints the slice question and cost, the budget usage
+  and coverage (entry points, symbols), and the delta base with its changed/added/removed/unchanged
+  counts. The data was in the manifest; the first screen a reader opens did not show it.
+
+Verified: a budget snapshot reports its section, usage and entry-point coverage.
 ## 0.12.69
 
 - **The contract distinguishes static resources from report resources.** Splitting the list fixed two

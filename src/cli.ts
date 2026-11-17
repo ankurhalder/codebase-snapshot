@@ -2054,6 +2054,33 @@ async function runCommand(argv: string[]): Promise<number> {
       for (const [layer, count] of Object.entries(manifest.layers)) {
         info(`     - ${layer.padEnd(16)}: ${count} files`);
       }
+      // A snapshot can be a selection, and the summary is where a reader looks first. Which
+      // selection, and what it cost, belongs here rather than only in the manifest.
+      if (manifest.slice !== undefined) {
+        info("\n   Selection (slice):");
+        info(`     - Question:       ${manifest.slice.question}`);
+        info(`     - Used:           ${formatNumber(manifest.slice.usedTokens)} of ${formatNumber(manifest.slice.budgetTokens)} tokens`);
+        info(`     - Not selected:   ${manifest.slice.dropped} path(s)`);
+      }
+      if (manifest.budget !== undefined) {
+        info("\n   Selection (budget):");
+        info(`     - Used:           ${formatNumber(manifest.budget.usedTokens)} of ${formatNumber(manifest.budget.maxTokens)} tokens`);
+        info(`     - Not selected:   ${manifest.budget.dropped} path(s)`);
+        if (manifest.budget.coverage !== undefined) {
+          const coverage = manifest.budget.coverage;
+          info(`     - Entry points:   ${coverage.entryPoints.kept} of ${coverage.entryPoints.total}`);
+          info(`     - Symbols:        ${coverage.symbols.kept} of ${coverage.symbols.total}`);
+        }
+      }
+      if (manifest.delta !== undefined) {
+        const delta = manifest.delta;
+        info("\n   Selection (delta):");
+        info(`     - Against:        ${path.basename(delta.base.path)} (${delta.base.fingerprint.slice(0, 12)})`);
+        info(
+          `     - Changed:        ${delta.changed.length} changed, ${delta.added.length} added, ` +
+            `${delta.removed.length} removed, ${delta.unchanged.length} unchanged`
+        );
+      }
     });
 
     // Reading the manifest is the whole job, so a readable, well-shaped manifest

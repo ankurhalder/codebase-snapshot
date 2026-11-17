@@ -86,3 +86,13 @@ test("a delta can be fitted to a budget", (t) => {
   assert.ok(manifest.budget, "the budget is recorded");
   assert.ok(manifest.budget.usedTokens <= 2000);
 });
+
+test("report says which selection produced the snapshot", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--budget-tokens", "800"], root).code, 0);
+  const report = run(["report"], root);
+  assert.equal(report.code, 0, report.out);
+  assert.match(report.out, /Selection \(budget\)/);
+  assert.match(report.out, /Not selected:/);
+  assert.match(report.out, /Entry points:/);
+});
