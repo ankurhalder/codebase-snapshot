@@ -26,6 +26,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.12
+
+- **A brief written without parts described parts that were never written.** With
+  `--skip-artifacts parts`, `PROMPT.md` said "Paste this file first, then the parts it names",
+  listed `part-001.md` under "Parts: 1 at a 300 KB ceiling", claimed the files "are in the parts",
+  and pointed at `reports/navigation.md` to "locate here before you read anything" — while zero
+  part files existed. The manifest records the partition either way (`files[].part` needs it), so
+  the brief now says what happened: no part files were written, the index still records the
+  planned partition, and the code itself is not in the snapshot.
+
+`docs/output.md` had claimed since 0.11.0 that `--skip-artifacts parts,audit` produces a brief that
+does not tell a model to read parts. It does now.
+
+Verified: 1 189 tests, 1 181 pass, 0 fail, 8 host skips; every gate clean at 0.12.12.
 ## 0.12.11
 
 - **`setup` wrote the scaffold and did not mention it.** `init` said "Wrote BRIEF.md …"; `setup`,

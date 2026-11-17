@@ -422,3 +422,16 @@ test("setup writes the scaffold and says so", (t) => {
   assert.match(result.out, /Wrote BRIEF\.md/, "the one file the run asks the user to fill in");
   assert.equal(fs.existsSync(path.join(dir, "BRIEF.md")), true);
 });
+
+test("a brief written without parts does not claim part files", (t) => {
+  const dir = makeRepo(t);
+  const result = cli(["generate", "--skip-artifacts", "parts"], dir);
+  assert.equal(result.code, 0, result.out);
+  const prompt = promptOf(dir);
+
+  assert.match(prompt, /No part files were written/, "it says what is missing");
+  assert.match(prompt, /The code itself is not in this snapshot/, "and what that means for the reader");
+  assert.doesNotMatch(prompt, /^- Parts: /m, "it does not list parts as files to open");
+  assert.doesNotMatch(prompt, /- `parts\/part-NNN\.md`/, "nor describe their format");
+  assert.doesNotMatch(prompt, /Paste this file first, then the parts it names/, "nor tell the reader to attach them");
+});

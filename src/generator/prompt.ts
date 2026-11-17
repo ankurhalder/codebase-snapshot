@@ -75,7 +75,9 @@ export function generatePrompt(
   const lines: string[] = [
     "# PROMPT.md",
     "",
-    "The brief and the apparatus for this snapshot. Paste this file first, then the parts it names.",
+    wrote("parts")
+      ? "The brief and the apparatus for this snapshot. Paste this file first, then the parts it names."
+      : "The brief and the apparatus for this snapshot. Paste this file first; this run wrote no parts, and the brief says what it did write.",
     "",
     "It is generated rather than written once: the system map, the omissions, the fingerprint and",
     "the history below are read from `manifest.json` and this repository, so they describe this run.",
@@ -98,11 +100,11 @@ export function generatePrompt(
   lines.push(...systemSection(manifest, code, brief, text), "");
   lines.push(...historySection(history, brief, code, text), "");
   lines.push(...barSection(brief, code, text), "");
-  lines.push(...coverageSection(manifest, code, wrote("audit")), "");
+  lines.push(...coverageSection(manifest, code, wrote("audit"), wrote("parts")), "");
   lines.push(...answerSection(), "");
   lines.push(...calibrationSection(brief, code, text), "");
   lines.push(...ownerNotesSection(brief, code, text));
-  lines.push(...snapshotSection(manifest, code), "");
+  lines.push(...snapshotSection(manifest, code, wrote("parts")), "");
   lines.push(...deliverySection(manifest, wrote("parts"), slots));
 
   lines.push(
@@ -153,7 +155,12 @@ function haveSection(wrote: (name: keyof ResolvedArtifacts) => boolean): string[
     );
   }
   if (wrote("navigation")) {
-    bullets.push("- `reports/navigation.md` - file to part. Locate here before you read anything.");
+    bullets.push(
+      wrote("parts")
+        ? "- `reports/navigation.md` - file to part. Locate here before you read anything."
+        : "- `reports/navigation.md` - file to part. Its links point at part files that were " +
+          "not written in this run, so it locates files rather than files you were given."
+    );
   }
   if (wrote("projectTree")) {
     bullets.push("- `reports/project-tree.md` - the directory shape of what was included.");
@@ -350,7 +357,8 @@ function barSection(brief: OwnerBrief | undefined, code: (value: string) => stri
 function coverageSection(
   manifest: Manifest,
   code: (value: string) => string,
-  auditWritten: boolean
+  auditWritten: boolean,
+  partsWritten: boolean
 ): string[] {
   const out = ["## Coverage", ""];
   const reasons = new Map<string, number>();
@@ -364,12 +372,21 @@ function coverageSection(
   const found = manifest.totals.candidateFiles;
   const included = manifest.totals.includedFiles;
   const skipped = manifest.counts.skippedCount;
+  const counted =
+    formatNumber(found) + (found === 1 ? " path was" : " paths were") + " found; " +
+    (partsWritten
+      ? formatNumber(included) + (included === 1 ? " is" : " are") + " in the parts"
+      : formatNumber(included) +
+        (included === 1 ? " was" : " were") +
+        " partitioned, but no part file was written") +
+    " and " +
+    formatNumber(skipped) + (skipped === 1 ? " was" : " were") + " skipped" +
+    (tally.length > 0 ? " (" + tally + ")" : "") + ".";
   out.push(
-    "- " + formatNumber(found) + (found === 1 ? " path was" : " paths were") + " found; " +
-      formatNumber(included) + (included === 1 ? " is" : " are") + " in the parts and " +
-      formatNumber(skipped) + (skipped === 1 ? " was" : " were") + " skipped" +
-      (tally.length > 0 ? " (" + tally + ")" : "") + ".",
-    "  `manifest.skipped[]` names each one and why. An absent path is not a clean path."
+    "- " + counted,
+    partsWritten
+      ? "  `manifest.skipped[]` names each one and why. An absent path is not a clean path."
+      : "  The code itself is not in this snapshot: only the index and the reports were written."
   );
   out.push(...incompleteSection(manifest, code));
   out.push(...redactionSection(manifest, auditWritten));
@@ -538,7 +555,11 @@ function ownerBlock(
 }
 
 /** The fingerprint and the counts, so the answer can name the state it describes. */
-function snapshotSection(manifest: Manifest, code: (value: string) => string): string[] {
+function snapshotSection(
+  manifest: Manifest,
+  code: (value: string) => string,
+  partsWritten: boolean
+): string[] {
   const out = ["## This snapshot", ""];
   out.push("- Fingerprint: " + code(manifest.fingerprint) + " - quote it verbatim in your answer.");
   out.push(
@@ -556,7 +577,16 @@ function snapshotSection(manifest: Manifest, code: (value: string) => string): s
     "  That describes the run, not now: if the tree may have moved since, the snapshot is a",
     "  claim that needs re-checking, not a fact."
   );
-  if (manifest.parts.length > 0) {
+  if (!partsWritten) {
+    // The partition is recorded in `manifest.parts[]` either way, because every file points at
+    // one. Listing those as files to open when no part file was written was a lie the reader
+    // could not detect until the attachment failed.
+    out.push(
+      "- No part files were written: the `parts` artifact was disabled for this run.",
+      "  `manifest.parts[]` still records the partition that was planned, so the index lines up",
+      "  with `files[].part`; the code itself is not in this snapshot."
+    );
+  } else if (manifest.parts.length > 0) {
     out.push(
       "- Parts: " + formatNumber(manifest.parts.length) + " at a " +
         formatNumber(Math.round(manifest.budgets.maxPartBytes / 1024)) + " KB ceiling" +
