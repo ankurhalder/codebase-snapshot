@@ -230,7 +230,8 @@ function describePayloadDiff(
     codes.push("config-digest");
     reasons.push(
       `configuration digest ${shortDigest(digestBefore)} → ${shortDigest(digestAfter)} ` +
-        "(budgets, preview thresholds, redaction rules and artifact selection all count)"
+        "(budgets, preview thresholds, redaction rules, artifact selection, the prompt task and the " +
+      "owner brief all count)"
     );
   } else if (digestBefore === null || digestAfter === null) {
     const missing = digestBefore === null && digestAfter !== null

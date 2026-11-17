@@ -26,6 +26,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.3
+
+A read of what the tool says, rather than what it does.
+
+- **Drift named the digest instead of the cause.** Editing the brief produced "the settings differ
+  (run generate)" and nothing else. `validate` compares `promptTask` and the brief digest directly
+  now: "brief: brief.md changed since this snapshot was generated", and "promptTask: manifest audit
+  vs current review". The generic line stays, because it is still true.
+- **The digest explanation was incomplete.** `diff` said the digest covers "budgets, preview
+  thresholds, redaction rules and artifact selection"; it also covers the prompt task and the owner
+  brief since 0.12.0.
+- **Singular counts read as plurals.** "1 path(s) were found; 1 are in the parts", "1 file(s) are
+  emitted as head/tail previews", "1 route(s)", "1 handler(s)", "1 file(s), 39 % of the included
+  bytes" - the plural is chosen now, the same way the part plan already did.
+
+No behaviour changes beyond the words. Verified: 1 178 tests, 1 170 pass, 0 fail, 8 host skips;
+lint 225 files; every gate clean at 0.12.3.
 ## 0.12.2
 
 Six defects in the brief, five of them found by attacking it rather than reading it.

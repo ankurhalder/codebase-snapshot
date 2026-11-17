@@ -62,7 +62,7 @@ test("a previewed source file gets no structural summary, and the manifest says 
   const grouped = manifest.warnings.filter((warning) => /head\/tail previews and were not parsed/.test(warning));
   assert.equal(grouped.length, 1, `expected one grouped warning: ${JSON.stringify(manifest.warnings)}`);
   assert.match(grouped[0], /src\/big\.ts/);
-  assert.match(grouped[0], /^1 file\(s\)/);
+  assert.match(grouped[0], /^1 file is emitted/);
 });
 
 test("the preview warning names at most five paths and counts the rest", (t) => {
@@ -76,7 +76,7 @@ test("the preview warning names at most five paths and counts the rest", (t) => 
 
   const grouped = manifest.warnings.filter((warning) => /head\/tail previews and were not parsed/.test(warning));
   assert.equal(grouped.length, 1);
-  assert.match(grouped[0], /^7 file\(s\)/);
+  assert.match(grouped[0], /^7 files are emitted/);
   assert.match(grouped[0], /and 2 more/);
   for (let index = 0; index < 7; index += 1) {
     assert.equal(

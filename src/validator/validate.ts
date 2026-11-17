@@ -1101,6 +1101,29 @@ export function validateSnapshot(
         `withDependents: manifest ${Boolean(recorded.withDependents)} vs current ${Boolean(config.withDependents)}`
       );
     }
+    // Both are recorded, so the drift can be named instead of left inside the digest.
+    // "the settings differ (run generate)" is true and useless when the owner edited their brief.
+    const recordedTask = recorded.promptTask;
+    if (recordedTask !== undefined && recordedTask !== config.promptTask) {
+      drift.configMismatches.push(
+        `promptTask: manifest ${String(recordedTask)} vs current ${config.promptTask}`
+      );
+    }
+    const recordedBrief = recorded.brief as { path?: unknown; digest?: unknown } | undefined;
+    const recordedBriefDigest =
+      recordedBrief !== undefined && typeof recordedBrief.digest === "string"
+        ? recordedBrief.digest
+        : undefined;
+    const currentBriefDigest = config.brief?.digest;
+    if (recordedBriefDigest !== currentBriefDigest) {
+      drift.configMismatches.push(
+        recordedBriefDigest === undefined
+          ? "brief: none recorded vs current " + String(config.brief?.path)
+          : currentBriefDigest === undefined
+            ? "brief: manifest " + String(recordedBrief?.path) + " vs current none"
+            : "brief: " + String(recordedBrief?.path) + " changed since this snapshot was generated"
+      );
+    }
     const effectiveDiscovery = config.discovery ?? "auto";
     const recordedDiscovery = recorded.discovery;
     if (recordedDiscovery !== undefined && recordedDiscovery !== effectiveDiscovery) {

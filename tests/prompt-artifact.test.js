@@ -64,7 +64,9 @@ test("PROMPT.md is rendered from the manifest it ships beside", (t) => {
   }
   assert.match(
     prompt,
-    new RegExp(`${manifest.totals.candidateFiles} path\\(s\\) were found; ${manifest.totals.includedFiles}`),
+    new RegExp(
+      `${manifest.totals.candidateFiles} paths? (?:was|were) found; ${manifest.totals.includedFiles}`
+    ),
     "the coverage line is this run's"
   );
   assert.match(prompt, /## The system/, "the brief maps the system");

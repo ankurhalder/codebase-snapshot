@@ -116,6 +116,11 @@ test("editing the brief makes the snapshot drift", (t) => {
   fs.appendFileSync(path.join(dir, "brief.md"), "\nOne more line.\n");
   const validated = cli(["validate", "--brief", "brief.md"], dir);
   assert.equal(validated.code, 1, "a changed brief is configuration drift");
+  assert.match(
+    validated.out,
+    /brief: brief\.md changed since this snapshot was generated/,
+    "and the drift names the file rather than a digest"
+  );
 });
 
 test("promptTask selects the job, and an unknown one is a usage error", (t) => {

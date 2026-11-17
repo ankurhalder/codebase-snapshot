@@ -246,9 +246,20 @@ function systemSection(
     );
   } else {
     const parts: string[] = [];
-    if (routes > 0) parts.push(formatNumber(routes) + " route(s), e.g. " + routesShown.join(", "));
-    if (handlers > 0) parts.push(formatNumber(handlers) + " handler(s)");
-    if (components > 0) parts.push(formatNumber(components) + " component(s), e.g. " + componentsShown.join(", "));
+    if (routes > 0) {
+      parts.push(
+        formatNumber(routes) + (routes === 1 ? " route" : " routes") + ", e.g. " + routesShown.join(", ")
+      );
+    }
+    if (handlers > 0) parts.push(formatNumber(handlers) + (handlers === 1 ? " handler" : " handlers"));
+    if (components > 0) {
+      parts.push(
+        formatNumber(components) +
+          (components === 1 ? " component" : " components") +
+          ", e.g. " +
+          componentsShown.join(", ")
+      );
+    }
     out.push("- Surfaces the index found: " + parts.join("; ") + ".");
   }
 
@@ -273,7 +284,7 @@ function systemSection(
     const allBytes = manifest.files.reduce((total, file) => total + file.includedBytes, 0);
     const share = allBytes === 0 ? 0 : Math.round((testBytes / allBytes) * 100);
     out.push(
-      "- Tests: " + formatNumber(tests.length) + " file(s), " + share + "% of the included bytes.",
+      "- Tests: " + formatNumber(tests.length) + (tests.length === 1 ? " file, " : " files, ") + share + "% of the included bytes.",
       "  They are evidence of intent, not of behaviour: a fixture can encode a payload shape the",
       "  real system never sends."
     );
@@ -350,10 +361,13 @@ function coverageSection(
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([reason, count]) => code(reason) + " " + formatNumber(count))
     .join(", ");
+  const found = manifest.totals.candidateFiles;
+  const included = manifest.totals.includedFiles;
+  const skipped = manifest.counts.skippedCount;
   out.push(
-    "- " + formatNumber(manifest.totals.candidateFiles) + " path(s) were found; " +
-      formatNumber(manifest.totals.includedFiles) + " are in the parts and " +
-      formatNumber(manifest.counts.skippedCount) + " were skipped" +
+    "- " + formatNumber(found) + (found === 1 ? " path was" : " paths were") + " found; " +
+      formatNumber(included) + (included === 1 ? " is" : " are") + " in the parts and " +
+      formatNumber(skipped) + (skipped === 1 ? " was" : " were") + " skipped" +
       (tally.length > 0 ? " (" + tally + ")" : "") + ".",
     "  `manifest.skipped[]` names each one and why. An absent path is not a clean path."
   );

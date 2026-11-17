@@ -2731,7 +2731,7 @@ export function generateSnapshot(
       .map((entry) => maskPathText(entry, config.secretRules));
     const hidden = previewSummaryPaths.length - ENCODING_PATHS_SHOWN;
     warnings.push(
-      `${previewSummaryPaths.length} file(s) are emitted as head/tail previews and were not parsed for a ` +
+      `${previewSummaryPaths.length} ${previewSummaryPaths.length === 1 ? "file is" : "files are"} emitted as head/tail previews and were not parsed for a ` +
         `structural summary: ${shown.join(", ")}${hidden > 0 ? ` and ${hidden} more` : ""}. ` +
         "A whole-file summary would describe lines the snapshot does not carry; `explain <path>` names the preview budget."
     );
