@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.71
+
+- The goal log records the 0.12.65-0.12.70 stretch: the head-to-head harness and its measured
+  numbers, `snapshot_workspace` (22 tools), route methods in a review, the contract's static/report
+  resource split, and the selection section in `report`.
 ## 0.12.70
 
 - **`report` says which selection produced the snapshot.** A budget or slice snapshot is a choice,

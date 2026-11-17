@@ -227,3 +227,20 @@ Full `verify` at 0.12.60: 1291 tests, 1283 pass, 0 fail, 8 host skips. Every rel
 Still open for the next rounds: head-to-head benchmarks against repomix and gitingest, a
 per-tool cost estimate measured rather than classified, cancellation for HTTP (stdio only today),
 and 0.13.0, the first publish under the clean-registry policy.
+
+### 0.12.65-0.12.71 - the comparison, the workspace tool, and the contract split
+
+- 0.12.65-0.12.66 `scripts/compare.mjs`: full, slice and budget against repomix 1.19.0 through
+  npx, in one run. Measured here: 330 files / 1,027,911 estimated tokens for us, 329 / 854,178 for
+  repomix; slice 6.5%, budget 3.5%. `docs/benchmarks.md` states that the gap is the estimator and
+  that ours is conservative.
+- 0.12.67 `snapshot_workspace`, the 22nd tool: members and cross-member imports from
+  WORKSPACE.json.
+- 0.12.68 `snapshot_review` names the route methods a change touches.
+- 0.12.69 the contract split `resources` (four always present) from `reportResources` (six, served
+  only when written), which is what the parity tests demanded once listing became conditional.
+- 0.12.70 `report` prints the selection: slice question and cost, budget coverage, delta counts.
+
+Full `verify` at 0.12.69: 1296 tests, 1288 pass, 0 fail, 8 host skips; tarball 51 files.
+
+Next: the last thirty sub-bumps to 0.12.99, then 0.13.0 as the first milestone publish.
