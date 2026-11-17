@@ -17,7 +17,7 @@ current, complete, and free of anything the repository owner did not choose to s
 | :--- | :--- |
 | Version ladder | Literal 100 sub-bumps per minor: 0.12.x to 0.12.99, then 0.13.0, and so on. Never 1.0.0. May continue past 0.17.0 if time remains. |
 | GitHub releases | A tag for every version. A GitHub release for milestones (0.13.0, 0.14.0, ...). |
-| Publishing | A workflow that publishes a list of tagged versions sequentially (the publish train). |
+| Publishing | **npm only at `x.y.0`** (0.13.0, 0.14.0, ...). Every patch version is still committed, tagged and pushed to GitHub, so the code history and tags are complete; the npm registry stays clean. |
 | Runtime dependencies | Zero. node: built-ins only. |
 | Priority | MCP and retrieval first; parity second; web UI alongside. |
 | Remote repos | Public and private. Private via GITHUB_TOKEN from the environment only. Depth 1, no submodules, no LFS. SSRF-safe by default. |

@@ -1,5 +1,5 @@
 /**
- * The nine tools this server exposes.
+ * The eleven tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -17,6 +17,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { auditSnapshot } from "../auditor/health.js";
+import { planForQuestion } from "./retrieval.js";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
 import { buildImportResolver, resolveSpecifier } from "../index.js";
@@ -64,7 +65,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the nine tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the eleven tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -259,6 +260,151 @@ async function prepare(
   if (!opened.ok) return { ok: false, outcome: failure(opened.message) };
   return { ok: true, workspace: opened.workspace };
 }
+
+/** The symbol names a file summary carries, for a query filter. */
+function symbolNamesOf(file: FileEntry): string[] {
+  const summary = file.summary as unknown as Record<string, unknown> | undefined;
+  if (summary === undefined) return [];
+  const names: string[] = [];
+  for (const key of ["exports", "functions", "classes", "interfaces", "types", "enums"]) {
+    const value = summary[key];
+    if (!Array.isArray(value)) continue;
+    for (const item of value) if (typeof item === "string") names.push(item);
+  }
+  return names;
+}
+
+const queryTool: McpTool = {
+  name: "snapshot_query",
+  title: "Query the snapshot index",
+  description:
+    "Filter the snapshot by layer, kind, a path regular expression or a symbol name, and return " +
+    "the matching files with their part, line count and token estimate. Use it to find a " +
+    "starting set before snapshot_context or snapshot_read. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      layer: { type: "string", description: "Exact layer name, e.g. src or test." },
+      kind: { type: "string", description: "Exact kind, e.g. source, test, config." },
+      pathPattern: { type: "string", description: "Regular expression matched against the path." },
+      symbol: { type: "string", description: "Case-insensitive substring of an exported symbol." },
+      maxFiles: { type: "integer", description: "Cap on returned files (default 40).", minimum: 1 },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      matched: { type: "integer" },
+      returned: { type: "integer" },
+      files: { type: "array", items: { type: "object" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const layer = typeof args.layer === "string" ? args.layer : undefined;
+    const kind = typeof args.kind === "string" ? args.kind : undefined;
+    const symbol = typeof args.symbol === "string" ? args.symbol.toLowerCase() : undefined;
+    const maxFiles =
+      typeof args.maxFiles === "number" ? Math.min(200, Math.max(1, args.maxFiles)) : 40;
+    let pattern: RegExp | null = null;
+    if (typeof args.pathPattern === "string") {
+      try {
+        pattern = new RegExp(args.pathPattern, "i");
+      } catch (error) {
+        return { text: "pathPattern is not a valid regular expression: " + (error as Error).message, isError: true };
+      }
+    }
+    const matches = read.manifest.files.filter((file) => {
+      if (layer !== undefined && file.layer !== layer) return false;
+      if (kind !== undefined && file.kind !== kind) return false;
+      if (pattern !== null && !pattern.test(file.relativePath)) return false;
+      if (symbol !== undefined) {
+        const names = symbolNamesOf(file);
+        if (!names.some((name) => name.toLowerCase().includes(symbol))) return false;
+      }
+      return true;
+    });
+    const files = matches.slice(0, maxFiles).map((file) => ({
+      path: file.relativePath,
+      layer: file.layer,
+      kind: file.kind,
+      part: file.part,
+      lines: file.includedLines,
+      tokens: Math.max(1, Math.ceil(file.includedBytes / 4)),
+    }));
+    const lines = [
+      matches.length + " file(s) matched; showing " + files.length + ".",
+      ...files.map((file) => file.path + " (" + file.layer + ", " + file.part + ", " + file.tokens + " tokens)"),
+    ];
+    return { text: lines.join("\n"), structured: { matched: matches.length, returned: files.length, files } };
+  },
+};
+
+const planForTool: McpTool = {
+  name: "snapshot_plan_for",
+  title: "Plan a reading order for a question",
+  description:
+    "Given a question and a token budget, return the smallest set of files from the snapshot " +
+    "that answer it, in reading order, each with the reason it was chosen and the part it lives " +
+    "in. Deterministic: path and symbol matches first, then the imports of the strongest " +
+    "matches, packed to the budget. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      question: { type: "string", description: "What you need to answer, in the user words." },
+      maxTokens: { type: "integer", description: "Budget for the plan (default 30000).", minimum: 500 },
+      includeTests: { type: "boolean", description: "Include test files (default false)." },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    required: ["question"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      question: { type: "string" },
+      budgetTokens: { type: "integer" },
+      usedTokens: { type: "integer" },
+      files: { type: "array", items: { type: "object" } },
+      skipped: { type: "array", items: { type: "object" } },
+      notes: { type: "array", items: { type: "string" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const question = typeof args.question === "string" ? args.question.trim() : "";
+    if (question.length === 0) return { text: "question must be a non-empty string", isError: true };
+    const maxTokens = typeof args.maxTokens === "number" ? args.maxTokens : undefined;
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const plan = planForQuestion(read.manifest, question, {
+      ...(maxTokens === undefined ? {} : { maxTokens }),
+      includeTests: args.includeTests === true,
+    });
+    const lines = [
+      "Plan for: " + question,
+      "Budget: " + plan.usedTokens + " of " + plan.budgetTokens + " tokens; " +
+        plan.files.length + " file(s).",
+      ...plan.files.map(
+        (file, index) =>
+          (index + 1) + ". " + file.path + " (" + file.part + ", " + file.tokens + " tokens, " +
+          file.mode + ") - " + file.why
+      ),
+      ...plan.notes.map((note) => "- " + note),
+    ];
+    return { text: lines.join("\n"), structured: plan as unknown as JsonObject };
+  },
+};
 
 const healthTool: McpTool = {
   name: "snapshot_health",
@@ -1200,6 +1346,8 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    queryTool,
+    planForTool,
     planTool,
     generateTool,
     validateTool,

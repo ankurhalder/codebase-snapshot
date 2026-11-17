@@ -26,6 +26,25 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.16
+
+**Two retrieval tools, which are the point of the product.**
+
+- `snapshot_plan_for`: given a question and a token budget, the smallest set of files that answer
+  it, in reading order, each with the reason it was chosen and the part it lives in. Deterministic:
+  path and symbol matches first (a question saying "authenticated" matches `auth.ts`), then the
+  imports of the strongest matches, packed to the budget. A file too large for what remains is
+  offered as a head-only read rather than dropped; every skip says why.
+- `snapshot_query`: filter the index by layer, kind, a path regular expression or a symbol name,
+  with the part, line count and token estimate. Invalid regular expressions are an error, not an
+  empty result.
+
+The MCP server now serves eleven tools. Every document that states the count agrees, enforced by
+the existing hygiene test. npm publication now happens only at `x.y.0`; this version is tagged and
+pushed, not published.
+
+Verified: the new suite covers reading order, the budget ceiling, determinism, test exclusion, an
+empty question, a missing snapshot, filtering, capping and an invalid pattern.
 ## 0.12.15
 
 **New command: `snapshot health`.** `validate` answers "did the code move?"; health answers the

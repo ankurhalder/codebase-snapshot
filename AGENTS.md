@@ -31,7 +31,7 @@ should paste the output of `skill`, so the commit belongs to that repository.
 The installable skill's canonical text lives in `src/agent/skill.ts` and is rendered by
 `codebase-snapshot skill` — do not hand-edit a generated copy.
 
-If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as nine
+If the agent runs inside an MCP client, `npx codebase-snapshot mcp` serves the repository as eleven
 tools over stdio instead of shelling out. Reads come from the snapshot rather than the working
 tree, so excluded and redacted content stays out of context. See [docs/mcp.md](docs/mcp.md).
 
@@ -109,9 +109,10 @@ version — `0.12.15`, `0.12.16`, … up to `0.12.99`, then `0.13.0` and the sam
 number is not the promise; the changelog entry is. Never `1.0.0`. `sync-docs` keeps every marked
 surface at the same value, and `pack-check` fails when the lockfile disagrees.
 
-Tags are created for every version. GitHub releases are created for milestones (`0.13.0`,
-`0.14.0`, …) because five hundred release pages is noise; npm publication of a batch goes
-through the `publish-train` workflow, which publishes tagged versions sequentially.
+Tags are created for every version, and `main` carries every commit. **npm publication happens
+only at `x.y.0`** (`0.13.0`, `0.14.0`, …): the registry stays clean while the repository keeps a
+complete, buildable history. `publish-train.yml` exists for republishing a specific tag; it is
+not used for routine patches.
 
 ## Conventions
 
