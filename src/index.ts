@@ -2145,32 +2145,54 @@ function partitionByBudget(
   config: ResolvedSnapshotConfig,
   fingerprint: string
 ): PartitionResult {
-  const configured: PartitionResult = {
-    parts: partitionWithBudgets(files, config.budgets, fingerprint),
-    budgets: config.budgets,
-    maxPartBytes: config.maxPartBytes,
-    warnings: [],
-  };
   const limit = config.maxParts;
-  // A ceiling on parts nobody writes is not a constraint: growing the budget to satisfy it would
-  // cost a repartition per step and warn about part sizes that are never emitted.
-  if (limit === null || !config.artifacts.parts || configured.parts.length <= limit) return configured;
+  // The fast path: one partition, on the real records. The ceiling is checked on a throwaway
+  // copy below, so this is the only case that does not pay for one.
+  if (limit === null || !config.artifacts.parts) {
+    return {
+      parts: partitionWithBudgets(files, config.budgets, fingerprint),
+      budgets: config.budgets,
+      maxPartBytes: config.maxPartBytes,
+      warnings: [],
+    };
+  }
 
   // `maxParts` is the experimental opposite of `maxPartBytes`: the count is fixed and the size
-  // gives way, instead of the other way round. The estimate below is the linear one plus the
-  // packing margin measured in `generator/prompt.ts`; two retries cover the cases where greedy
-  // packing and per-layer buckets leave it short.
+  // gives way. Every probe runs against a *copy* of the file records, because partitioning
+  // mutates them — it assigns `part`, truncates `content` and records `omittedRanges`. Probing on
+  // the real array left the records in the state of the last probe, and the final layout then
+  // dropped files it had already truncated: `verifyInMemory` reported "src/f7.ts was not assigned
+  // to a snapshot part", three parts were written without it, and the run exited 1 while
+  // printing "Snapshot generated". One partition of the real records, at the chosen budget, is
+  // the only one that may touch them.
+  const probe = (budgets: ResolvedBudgets): PartitionedPart[] =>
+    partitionWithBudgets(structuredClone(files), budgets, fingerprint);
+
+  const configuredParts = probe(config.budgets);
+  if (configuredParts.length <= limit) {
+    // The budget the user set already fits: partition for real, once, and say nothing.
+    return {
+      parts: partitionWithBudgets(files, config.budgets, fingerprint),
+      budgets: config.budgets,
+      maxPartBytes: config.maxPartBytes,
+      warnings: [],
+    };
+  }
+
+  // The estimate below is the linear one plus the packing margin measured in
+  // `generator/prompt.ts`; the retries cover the cases where greedy packing and per-layer
+  // buckets leave it short.
   const totalBytes = files.reduce((total, file) => total + file.includedBytes, 0);
   let target = Math.max(config.budgets.default, Math.ceil((totalBytes * 1.15) / limit));
   const seen: number[] = [];
   // Grow until the count fits, then halve back: the first budget that fits is usually well above
   // the smallest one that would, and every extra byte is a part bigger than the count required.
   let low = config.budgets.default;
-  let fitting: { target: number; parts: PartitionedPart[] } | null = null;
+  let fitting: { target: number; count: number } | null = null;
   for (let pass = 0; pass < 6; pass += 1) {
-    const parts = partitionWithBudgets(files, scaleBudgets(config.budgets, target), fingerprint);
+    const parts = probe(scaleBudgets(config.budgets, target));
     if (parts.length <= limit) {
-      fitting = { target, parts };
+      fitting = { target, count: parts.length };
       break;
     }
     seen.push(parts.length);
@@ -2187,13 +2209,14 @@ function partitionByBudget(
   }
   for (let step = 0; step < 3 && fitting.target - low > 8192; step += 1) {
     const middle = Math.round((low + fitting.target) / 2);
-    const parts = partitionWithBudgets(files, scaleBudgets(config.budgets, middle), fingerprint);
-    if (parts.length <= limit) fitting = { target: middle, parts };
+    const parts = probe(scaleBudgets(config.budgets, middle));
+    if (parts.length <= limit) fitting = { target: middle, count: parts.length };
     else low = middle;
   }
-  const { target: chosen, parts } = fitting;
-  const budgets = scaleBudgets(config.budgets, chosen);
-  const maxPartBytes = Math.max(config.maxPartBytes, chosen);
+  const budgets = scaleBudgets(config.budgets, fitting.target);
+  // One real partition, at the chosen budget. This is the only call that may mutate `files`.
+  const parts = partitionWithBudgets(files, budgets, fingerprint);
+  const maxPartBytes = Math.max(config.maxPartBytes, budgets.default);
   const warnings = [
     `maxParts ${limit}: the part budget grew from ${formatNumber(config.maxPartBytes)} B to ` +
       `${formatNumber(maxPartBytes)} B, and the snapshot now has ${formatNumber(parts.length)} ` +

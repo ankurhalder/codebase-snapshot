@@ -26,6 +26,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.5
+
+A lost-file bug in the experimental `maxParts`, found by fuzzing part budgets rather than reading
+code.
+
+- **Growing the budget dropped files from the layout.** Every probe re-partitioned the same file
+  records, which the previous probe had already assigned and truncated. When the probes disagreed,
+  files ended up with no part: three parts were written without them, `Integrity: failed`, and the
+  run exited 1 — after printing "Snapshot generated". Probes now run on a copy of the records, and
+  the real records are partitioned exactly once, at the chosen budget. 120 randomised budgets
+  (1-30 files, 4-64 KB, with and without token ceilings) found no failure after the fix; the
+  reproduction is a test.
+- **A failed verification was announced as success.** The banner printed a tick above "Integrity:
+  failed" and then exited 1. It says what happened now.
+
+`--max-parts` remains experimental and off by default. Verified: 1 181 tests, 1 173 pass, 0 fail,
+8 host skips; lint 225 files; every gate clean at 0.12.5.
 ## 0.12.4
 
 Two ways the MCP surface described itself wrongly.

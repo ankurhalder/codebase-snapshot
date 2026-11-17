@@ -110,3 +110,32 @@ test("maxParts is inert when the parts are not written", (t) => {
   assert.doesNotMatch(result.out, /maxParts 3: the part budget grew/, "and nothing claims to have grown");
   assert.equal(manifestOf(dir).config.maxParts, 3, "the setting is still recorded");
 });
+
+test("growing the budget leaves every file in a part", (t) => {
+  // The failure this pins: probing re-partitions the same file records, which have already been
+  // assigned and truncated by the previous probe. A run then dropped files from the layout, wrote
+  // parts without them, and exited 1 saying "Snapshot generated". Uneven sizes are what made the
+  // probes disagree with each other, so the fixture is uneven on purpose.
+  const dir = tempDir(t);
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), '{"name":"uneven","version":"1.0.0"}\n', "utf8");
+  for (let index = 0; index < 27; index += 1) {
+    const lines = 20 + ((index * 37) % 260);
+    const body = Array.from({ length: lines }, (_, line) => `export const v${line} = ${line};`).join("\n");
+    fs.writeFileSync(path.join(dir, "src", `f${index}.ts`), `${body}\n`, "utf8");
+  }
+
+  const generated = cli(["generate", "--max-part-bytes", "4k", "--max-parts", "3"], dir);
+  assert.equal(generated.code, 0, generated.out);
+  assert.match(generated.out, /Integrity:\s+passed/, "the run it reports is the run it verified");
+
+  const manifest = manifestOf(dir);
+  const partNames = new Set(manifest.parts.map((part) => part.filename));
+  for (const file of manifest.files) {
+    assert.ok(file.part && partNames.has(file.part), `${file.relativePath} is in a part that exists`);
+  }
+  const declared = manifest.parts.reduce((total, part) => total + part.fileCount, 0);
+  assert.equal(declared, manifest.files.length, "the parts account for every file exactly once");
+  assert.equal(manifest.validation.status, "passed");
+  assert.equal(cli(["validate", "--max-part-bytes", "4k", "--max-parts", "3"], dir).code, 0);
+});

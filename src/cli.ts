@@ -1842,7 +1842,14 @@ async function runCommand(argv: string[]): Promise<number> {
       info(`   - Integrity:    ${manifest.validation.status}`);
       for (const error of manifest.validation.errors.slice(0, 10)) info(`     - ${error}`);
     } else {
-      info(`\n✅ Snapshot generated in ${elapsed}s:`);
+      // A run that writes a snapshot it then fails to verify is not a success: printing a tick
+      // above "Integrity: failed" made the summary contradict itself in two adjacent lines while
+      // the exit code was already 1.
+      info(
+        manifest.validation.status === "passed"
+          ? `\n✅ Snapshot generated in ${elapsed}s:`
+          : `\n❌ Snapshot written, but it failed verification (${manifest.validation.errors.length} problem(s)):`
+      );
       // The included count alone read as "the whole repository" while 155 tracked files went
       // out the window. The breakdown is the number the manifest already had, printed where a
       // reader forms the impression: one line, with the reasons that took the rest.
