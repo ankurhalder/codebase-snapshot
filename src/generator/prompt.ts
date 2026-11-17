@@ -101,6 +101,21 @@ export function generatePrompt(
     ""
   ];
   if (brief?.preamble !== undefined) lines.push(text(brief.preamble), "");
+  if (manifest.budget !== undefined) {
+    lines.push(
+      "This snapshot was fitted to a **token budget** of " +
+        manifest.budget.maxTokens +
+        " tokens: " +
+        manifest.budget.files.length +
+        " file(s) were selected whole, in value order (" +
+        manifest.budget.usedTokens +
+        " tokens used), and " +
+        manifest.budget.dropped +
+        " scanned path(s) did not fit. They are recorded in `skipped[]` with reason " +
+        "\"not-selected\"; do not describe them from memory.",
+      ""
+    );
+  }
   if (manifest.slice !== undefined) {
     lines.push(
       "This snapshot is a **task slice**: it contains the " +

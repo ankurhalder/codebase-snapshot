@@ -79,6 +79,7 @@ const VALIDATE_OPTIONS = [
  */
 export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
+    "budget-tokens",
     "sign",
     "pack",
     "slice",

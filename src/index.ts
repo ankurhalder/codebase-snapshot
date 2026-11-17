@@ -395,6 +395,8 @@ export interface GenerateOptions {
   deltaBase?: { manifest: Manifest; path: string };
   /** `--slice`: narrow the snapshot to what the planner would pick for this question. */
   slice?: { question: string; maxTokens?: number };
+  /** `--budget-tokens`: fit the snapshot into this token budget, highest value first. */
+  budgetTokens?: number;
 }
 
 const TS_EXTENSIONS = [
@@ -2829,6 +2831,61 @@ export function generateSnapshot(
     };
   }
 
+  // `--budget-tokens` fits the repository into a budget instead of truncating files: whole files
+  // are selected by value per token, so the result is coherent rather than a set of torn previews.
+  // Value is: is it an entry point, how many files import it, is it configuration before source,
+  // and how much it costs. A cheap file that matters beats an expensive one that barely does.
+  let budgetBlock: Manifest["budget"] | undefined;
+  if (options?.budgetTokens !== undefined) {
+    const budget = Math.max(500, options.budgetTokens);
+    const importers = new Map<string, number>();
+    const resolver = buildImportResolver(files, { tsconfig: tsconfigPathsFor(config.cwd) });
+    for (const file of files) {
+      const summary = file.summary;
+      if (!isSourceSummary(summary)) continue;
+      for (const specifier of summary.imports) {
+        const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
+        if (resolved === null) continue;
+        importers.set(resolved, (importers.get(resolved) ?? 0) + 1);
+      }
+    }
+    const entry = (relativePath: string): boolean =>
+      /(^|\/)(index|main|app|server|cli)\.(ts|tsx|js|mjs|cjs|py|go|rs|java)$/.test(relativePath) ||
+      relativePath === "package.json" ||
+      relativePath === "pyproject.toml" ||
+      relativePath === "go.mod" ||
+      relativePath === "Cargo.toml";
+    const layerWeight = (layer: string): number =>
+      layer === "config" ? 40 : layer === "src" ? 20 : layer === "test" ? -10 : 0;
+    const ranked = files
+      .map((file) => {
+        const tokens = Math.max(1, Math.ceil(file.includedBytes / 4));
+        const value =
+          (entry(file.relativePath) ? 100 : 0) +
+          layerWeight(file.layer) +
+          Math.min(60, (importers.get(file.relativePath) ?? 0) * 6) -
+          Math.min(40, tokens / 250);
+        return { file, tokens, value };
+      })
+      .sort((left, right) => right.value - left.value || left.tokens - right.tokens || left.file.relativePath.localeCompare(right.file.relativePath));
+
+    const keep = new Set<string>();
+    let used = 0;
+    const selected: string[] = [];
+    for (const item of ranked) {
+      if (used + item.tokens > budget) continue;
+      keep.add(item.file.relativePath);
+      selected.push(item.file.relativePath);
+      used += item.tokens;
+    }
+    const scanned = files.length;
+    narrowTo(keep);
+    budgetBlock = { maxTokens: budget, usedTokens: used, files: selected, dropped: scanned - selected.length };
+    if (selected.length === 0) {
+      warnings.push("No file fits --budget-tokens " + budget + "; the snapshot is empty.");
+    }
+  }
+
   // Files the scope removed are recorded the same way whether they were filtered before the scan
   // or after it. `unchanged` is deliberately a different statement from `excluded`: the file is
   // includable and simply did not move.
@@ -2840,14 +2897,17 @@ export function generateSnapshot(
     for (const relativePath of unchangedPaths) {
       skipped.push({ path: relativePath, reason: "unchanged", detail });
     }
-  } else if (options?.slice !== undefined) {
+  } else if (options?.slice !== undefined || options?.budgetTokens !== undefined) {
     // A slice dropped these because the planner did not choose them for this question, which is a
     // different statement from "unchanged" and must not be filed as one.
     for (const relativePath of unchangedPaths) {
       skipped.push({
         path: relativePath,
         reason: "not-selected",
-        detail: "not selected for the --slice question at the given budget",
+        detail:
+          options?.slice === undefined
+            ? "did not fit the --budget-tokens budget"
+            : "not selected for the --slice question at the given budget",
       });
     }
   }
@@ -3010,6 +3070,7 @@ export function generateSnapshot(
     ...(options?.source === undefined ? {} : { source: options.source }),
     ...(deltaBlock === undefined ? {} : { delta: deltaBlock }),
     ...(sliceBlock === undefined ? {} : { slice: sliceBlock }),
+    ...(budgetBlock === undefined ? {} : { budget: budgetBlock }),
     budgets: {
       // The ceiling the parts actually honour. It equals the configured one unless `maxParts`
       // grew it; `config.maxPartBytes` below keeps the configured value, because that is what

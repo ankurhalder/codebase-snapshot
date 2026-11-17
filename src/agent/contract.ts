@@ -642,6 +642,16 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
+        flag: "--budget-tokens",
+        type: "string",
+        default: "unset",
+        appliesTo: optionAppliesTo("budget-tokens"),
+        summary:
+          "generate: fit the snapshot into this token budget by selecting whole files (entry " +
+          "points, then the most-imported, configuration before source) instead of truncating " +
+          "them. Records a `budget` block; the rest are in skipped[] with reason \"not-selected\".",
+      },
+      {
         flag: "--sign",
         type: "boolean",
         default: false,

@@ -542,6 +542,19 @@ export interface Manifest {
    * `files[]` then contains the planner selection; every other scanned path is in `skipped[]`
    * with reason "slice-dropped", so the accounting contract still holds.
    */
+  /**
+   * A token-budget selection (`--budget-tokens`): the plan that fit the repository into a budget.
+   *
+   * `files[]` holds the selection; the rest are in `skipped[]` with reason "not-selected".
+   */
+  budget?: {
+    maxTokens: number;
+    usedTokens: number;
+    /** Paths chosen, in the order they were selected. */
+    files: string[];
+    /** Scanned paths that did not fit. */
+    dropped: number;
+  };
   slice?: {
     question: string;
     budgetTokens: number;

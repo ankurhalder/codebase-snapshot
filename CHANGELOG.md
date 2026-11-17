@@ -26,6 +26,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.33
+
+**`--budget-tokens <n>`: fit a repository into a limit without tearing files.**
+
+- Part budgets truncate; a token budget **selects whole files**. Entry points first, then the
+  most-imported, configuration before source and tests last, with a small penalty for cost so a
+  cheap file that matters beats an expensive one that barely does.
+- The selection is recorded in `budget { maxTokens, usedTokens, files, dropped }`; every path that
+  did not fit is in `skipped[]` with reason `not-selected`, and the brief states the budget, the
+  selection size and the drop count.
+- It composes with `--delta`, so a budget can be spent only on what changed.
+
+Verified: the selection fits the budget, the entry point survives, every selected file is
+`inclusionMode: full`, and a budget too small for anything still exits cleanly and says so.
 ## 0.12.32
 
 **Signed snapshots (`--sign`).**

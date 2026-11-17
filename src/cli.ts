@@ -177,6 +177,7 @@ export const CLI_OPTIONS = {
   "slice-tokens": { type: "string" },
   pack: { type: "string" },
   sign: { type: "boolean" },
+  "budget-tokens": { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -236,6 +237,7 @@ Options:
   --slice-tokens <n>            Budget for --slice (default 30000)
   --delta <path>                Only what changed since this snapshot (plus its importers)
   --sign                        Sign manifest.json (ed25519; SNAPSHOT_SIGNING_KEY or a fresh key)
+  --budget-tokens <n>           Fit the snapshot into n tokens, highest value per token first
   --pack <single|xml|json>      Also write one full-repository file in that shape
   --include-diffs               Write reports/diff.md from the uncommitted diff
   --include-logs <n>            Write reports/log.md with the last n commits (1-500)
@@ -405,6 +407,8 @@ interface ParsedInvocation {
   pack?: "single" | "xml" | "json";
   /** `--sign`: sign the manifest with Ed25519. */
   sign?: boolean;
+  /** `--budget-tokens`: fit the snapshot into this token budget. */
+  budgetTokens?: number;
 }
 
 export function parsePositiveInteger(
@@ -868,6 +872,10 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
         : parsePositiveInteger(values["include-logs"] as string, "include-logs", 1),
     tokenTree: values["token-tree"] === true ? true : undefined,
     sign: values.sign === true ? true : undefined,
+    budgetTokens:
+      values["budget-tokens"] === undefined
+        ? undefined
+        : parsePositiveInteger(values["budget-tokens"] as string, "budget-tokens", 500),
     delta: values.delta === undefined ? undefined : String(values.delta),
     slice: values.slice === undefined ? undefined : String(values.slice),
     pack:
@@ -2121,6 +2129,7 @@ async function runCommand(argv: string[]): Promise<number> {
       dryRun: invocation.dryRun,
       ...(sourceProvenance === undefined ? {} : { source: sourceProvenance }),
       ...(deltaBase === undefined ? {} : { deltaBase }),
+      ...(invocation.budgetTokens === undefined ? {} : { budgetTokens: invocation.budgetTokens }),
       ...(invocation.slice === undefined
         ? {}
         : {

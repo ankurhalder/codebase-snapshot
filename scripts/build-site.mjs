@@ -139,6 +139,9 @@ const DESCRIPTIONS = {
   slice:
     "Build a snapshot for one question: the retrieval planner picks the files within a token " +
     "budget, and every unselected path is recorded.",
+  budget:
+    "Fit a repository into a token budget by selecting whole files in value order instead of " +
+    "truncating them, with a record of everything that did not fit.",
   signing:
     "Sign the manifest with Ed25519 so a reader can prove who produced a snapshot and that it " +
     "has not changed since. health verifies it.",
