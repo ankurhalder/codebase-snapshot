@@ -853,3 +853,15 @@ test("snapshot_validate validates as the snapshot was generated, flags included"
   assert.equal(stale.structured.current, false, stale.text);
   assert.match(stale.text, /file\(s\) changed on disk/);
 });
+
+test("snapshot_stats reports a part size in bytes and tokens", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+  const stats = await call("snapshot_stats", {}, context);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(stats.structured.partSizes.length, manifest.parts.length);
+  assert.equal(stats.structured.partSizes[0].bytes, manifest.parts[0].byteSize);
+  assert.equal(stats.structured.partSizes[0].tokens, manifest.parts[0].estimatedTokens);
+  assert.ok(Array.isArray(stats.structured.heaviest), "heaviest is declared in the schema and returned");
+});

@@ -951,6 +951,8 @@ const statsTool: ToolSpec = {
       tokens: { type: "integer" },
       layers: { type: "object" },
       kinds: { type: "object" },
+      heaviest: { type: "array", items: { type: "object" } },
+      partSizes: { type: "array", items: { type: "object" } },
     },
   },
   annotations: READ_ONLY,
@@ -964,7 +966,13 @@ const statsTool: ToolSpec = {
       .sort((left, right) => right.includedBytes - left.includedBytes)
       .slice(0, 10)
       .map((file) => ({ path: file.relativePath, tokens: Math.ceil(file.includedBytes / 4), part: file.part }));
-    const parts = manifest.parts.map((part) => ({ filename: part.filename, tokens: part.estimatedTokens }));
+    // "part sizes" that carried only tokens were misnamed: a caller sizing a transfer wants bytes,
+    // a caller budgeting context wants tokens, and both are in the manifest.
+    const parts = manifest.parts.map((part) => ({
+      filename: part.filename,
+      bytes: part.byteSize,
+      tokens: part.estimatedTokens,
+    }));
     const lines = [
       manifest.counts.totalFiles + " file(s) in " + manifest.counts.partsCount + " part(s), " +
         (manifest.totals.estimatedTokens ?? 0) + " estimated tokens.",

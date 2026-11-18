@@ -30,6 +30,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.43
+
+**The health page listed 14 of the 18 checks, and its sample output was from an older tool.**
+
+- `docs/health.md` had a "What it checks" table with 14 rows and no ids. The audit emits **18** ids
+  (16 on a clean snapshot, plus `pipeline.monolith` and `workspace.index` when they apply);
+  `bookkeeping`, `pipeline.bodies`, `pipeline.monolith` and `workspace.index` were missing entirely,
+  and the table could not be compared with the code.
+- Every row now carries the check id, and a test runs a real audit and fails if any emitted id is not
+  documented. The sample output ("13 passed") and the JSON example were updated to what a clean
+  snapshot prints today (15 passed, 1 skipped).
+- `snapshot_stats` `partSizes` carried `{ filename, tokens }` under a name that promises bytes; it
+  now carries `bytes` and `tokens`, and `heaviest`/`partSizes` appear in the output schema they were
+  missing from.
+
+Verified: the docs parity test passes; the stats test compares both numbers with the manifest.
 ## 0.17.42
 
 - The goal log records the 0.17.40-0.17.41 round: the concurrency probes that held, and the validate

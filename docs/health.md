@@ -12,28 +12,32 @@ npx codebase-snapshot health --format json  # the report, for a dashboard
 
 ## What it checks
 
-| Check | Severity | What it proves |
-| :--- | :--- | :--- |
-| Manifest present and well-formed | critical | The file parses and has the snapshot shape. |
-| Every part on disk | critical | Every part the manifest names exists. |
-| Every part matches its size and hash | critical | The bytes on disk are the bytes recorded. |
-| Every file in exactly one part | critical | No file was silently dropped from the layout. |
-| Every recorded artifact present and unchanged | critical | `README.md`, `PROMPT.md`, reports and monolith still match their digests. |
-| Nothing unexpected in the directory | warning | No stale file from an earlier run is sitting in the payload. |
-| No unmasked secret in any artifact | critical | Every written text file is re-scanned with the secret rules. |
-| No value from an excluded sensitive file appears | critical | Values from `.env`, keys and similar files are compared byte-for-byte against the artifacts. |
-| No host path or machine identity | warning | `/home/…`, `/Users/…`, `C:\Users\…` and the repository's absolute path are searched for. |
-| Token estimate is plausible | warning | The recorded estimate is compared with one recomputed from the parts. |
-| Every part honours the published budget | warning | A part larger than the ceiling the manifest advertises is reported. |
-| Every excluded path has a reason | critical | `skipped[]` is complete and the totals agree. |
-| The snapshot still describes the repository | warning | HEAD is compared with the recorded commit. |
-| The manifest signature verifies | critical | When `signature.json` exists: the manifest bytes match `manifestSha256` and the Ed25519 signature checks out. Absent signature is a skip, not a failure. |
+| Check | Id | Severity | What it proves |
+| :--- | :--- | :--- | :--- |
+| Manifest present and well-formed | `manifest` | critical | The file parses and has the snapshot shape. |
+| Every part on disk | `parts.present` | critical | Every part the manifest names exists. |
+| Every part matches its size and hash | `parts.hashes` | critical | The bytes on disk are the bytes recorded. |
+| Every file in exactly one part | `parts.accounting` | critical | No file was silently dropped from the layout. |
+| Every recorded artifact present and unchanged | `artifacts` | critical | `README.md`, `PROMPT.md`, reports and monoliths still match their digests. |
+| Nothing unexpected in the directory | `artifacts.extra` | warning | No stale file from an earlier run is sitting in the payload. |
+| No unmasked secret in any artifact | `secrets.artifacts` | critical | Every written text file is re-scanned with the secret rules; a signature record is scanned without its random key material. |
+| No value from an excluded sensitive file appears | `secrets.skipped` | critical | Values from `.env`, keys and similar files are compared byte-for-byte against the artifacts. |
+| No host path or machine identity | `pii.paths` | warning | `/home/…`, `/Users/…`, `C:\Users\…` and the repository's absolute path are searched for. |
+| The manifest signature verifies | `signature` | critical | When `signature.json` exists: the manifest bytes match `manifestSha256` and the Ed25519 signature checks out. |
+| The counts equal the data | `bookkeeping` | critical | `totalFiles`, `partsCount`, `skippedCount`, `totalContentBytes` and the per-layer counts are recomputed from the arrays. |
+| Every file body matches the accounting | `pipeline.bodies` | critical | Each part section's bytes and lines equal the file's `includedBytes` and `includedLines`. |
+| Every pack holds exactly the manifest's files | `pipeline.monolith` | critical | When `full-codebase.json`, `.xml` or `.md` is recorded, its file set is compared both ways. |
+| A member matches its workspace index | `workspace.index` | warning | Fingerprint and file count equal `WORKSPACE.json`, and a member whose source directory is gone warns. |
+| Token estimate is plausible | `tokens.count` | warning | The recorded estimate is compared with one recomputed from the parts. |
+| Every part honours the published budget | `tokens.budget` | warning | A part larger than the ceiling the manifest advertises is reported. |
+| Every excluded path has a reason | `skips` | critical | `skipped[]` is complete and the totals agree. |
+| The snapshot still describes the repository | `freshness` | warning | HEAD is compared with the recorded commit. |
 
 ## Reading the result
 
 ```text
 🩺 Snapshot health: 100/100
-   13 passed, 0 warning(s), 0 failed, 0 skipped
+   15 passed, 0 warning(s), 0 failed, 1 skipped
 ```
 
 A **failed** check (critical) means the snapshot is not safe to hand to a model as it stands; the
@@ -106,7 +110,7 @@ codebase-snapshot health --all-members --cwd /repo
 trusting a snapshot it was handed:
 
 ```json
-{ "score": 95, "counts": { "pass": 12, "warn": 1, "fail": 0, "skip": 0 }, "checks": [ … ] }
+{ "score": 100, "counts": { "pass": 15, "warn": 0, "fail": 0, "skip": 1 }, "checks": [ … ] }
 ```
 
 The cheap subset — manifest, parts, artifacts, skips — also runs inside `validate`, so a normal

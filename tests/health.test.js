@@ -255,3 +255,13 @@ test("the XML and markdown packs must hold every file too", (t) => {
     assert.match(broken.out, /is in the manifest but not the pack/, file);
   }
 });
+
+test("every check id an audit emits is documented", (t) => {
+  const dir = repoWithSnapshot(t);
+  const result = health(dir, "--format", "json");
+  assert.equal(result.code, 0, result.out);
+  const report = JSON.parse(result.stdout);
+  const doc = fs.readFileSync(path.join(HERE, "..", "docs", "health.md"), "utf8");
+  const missing = report.checks.map((check) => check.id).filter((id) => !doc.includes("`" + id + "`"));
+  assert.deepEqual(missing, [], "undocumented check ids: " + missing.join(", "));
+});
