@@ -47,14 +47,16 @@ node scripts/benchmark-suite.mjs <url> ...    # your own list
 
 Each repository is cloned shallow into a scratch directory, packed by all three tools, and the
 clone is deleted. A repository that cannot be cloned is reported as skipped with the reason, never
-dropped from the table. Measured at 0.14.5, repomix 1.19.0, gitingest from PyPI:
+dropped from the table. Measured at 0.14.5, repomix 1.19.0, gitingest from PyPI, and
+re-run on 2026-11-18 at 0.17.55: all ten repositories packed by all three tools, every number
+identical, which is what a deterministic scanner should do.
 
 | Repository | Ours files | Ours tokens | repomix tokens | repomix / ours | gitingest bytes |
 | :-- | --: | --: | --: | --: | --: |
 | jonschlinkert/is-odd | 11 | 5,450 | 4,291 | 0.79 | 29,392 |
 | chalk/chalk | 32 | 77,684 | 79,006 | 1.02 | 238,864 |
 | tj/co | 19 | 12,996 | 9,189 | 0.71 | 74,613 |
-| isaacs/minimatch | 85 | 319,879 | 64,846,987 | 202.7 | 1,800,672 |
+| isaacs/minimatch | 85 | 319,879 | 64,846,987 | 202.72 | 1,800,672 |
 | moment/luxon | 151 | 303,032 | 250,093 | 0.83 | 806,740 |
 | psf/requests | 117 | 382,695 | 687,333 | 1.80 | 524,712 |
 | pallets/click | 177 | 470,265 | 335,153 | 0.71 | 1,413,342 |

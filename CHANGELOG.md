@@ -30,6 +30,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.56
+
+**The ten-repository benchmark was re-run, not assumed.**
+
+- `node scripts/benchmark-suite.mjs --json` cloned all ten default repositories shallow, packed each
+  with ours, repomix 1.19.0 and gitingest: **10/10 succeeded for all three tools**, and every file
+  count, token count and byte count is identical to the table already in `docs/benchmarks.md`. The
+  scanner is deterministic across 0.14.5 → 0.17.55, which is the result a refresh is meant to
+  establish.
+- The page now says so, and the minimatch ratio carries its second decimal (202.72).
+
+Verified: the run itself (exit 0, 10 rows, no skips); site checks unchanged.
 ## 0.17.55
 
 **The output page's tree omitted two artifacts it documents elsewhere.**
