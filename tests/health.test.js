@@ -144,3 +144,16 @@ test("every artifact the manifest records is expected, and none is a warning", (
   assert.doesNotMatch(result.out, /unexpected path/);
   assert.match(result.out, /13 passed, 0 warning/);
 });
+
+test("a Windows home path is a warning in a plain text and in a string literal", (t) => {
+  // The doubled form is how the path appears inside a JavaScript or JSON string, and it used to be
+  // the one spelling the detector missed: the pattern demanded exactly one backslash.
+  const dir = repoWithSnapshot(t, {
+    "src/literal.ts": "export const p = \"C:\\\\Users\\\\someone\\\\key.txt\";\n",
+  });
+  const result = health(dir);
+  assert.equal(result.code, 0, result.out);
+  const section = result.out.slice(result.out.indexOf("No host path"));
+  assert.match(section, /hit\(s\)/, "the check warns");
+  assert.match(section, /C:\\\\Users\\\\someone/, "the string-literal spelling is reported");
+});

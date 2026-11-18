@@ -176,7 +176,10 @@ function findHostPaths(snapshotDir: string, repoDir: string): string[] {
   const patterns = [
     /\/home\/[A-Za-z0-9._-]+/g,
     /\/Users\/[A-Za-z0-9._-]+/g,
-    /[A-Za-z]:\\Users\\[A-Za-z0-9._-]+/g,
+    // One file may hold the path as plain text (`C:\Users\name`) and another as a JavaScript or
+    // JSON string literal (`C:\\Users\\name`); both name the same machine and both are a leak. The
+    // forward-slash form is how the same path is written when it has to be portable.
+    /[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z0-9._-]+/g,
   ];
   const repoPattern = new RegExp(escapeRegExp(repoDir), "g");
   const hits = new Set<string>();

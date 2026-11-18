@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.91
+
+- **The host-path check missed a Windows path written as a string literal.** `C:\Users\name` was
+  caught; `C:\\Users\\name` — the exact spelling inside a JavaScript or JSON string, which is how
+  such a path usually reaches a source file — was not, and `C:/Users/name` was not either. On a
+  Windows host that is the most likely shape of the leak the check exists to find. The pattern now
+  accepts one or more separators, either kind.
+
+Verified: a source file with the doubled form warns and reports `C:\\Users\\someone`; the plain and
+  forward-slash spellings still warn.
 ## 0.12.90
 
 - **The configuration page documents the transforms and the opt-in reports.** `stripComments`,
