@@ -30,6 +30,15 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.90
+
+- **The configuration page documents the transforms and the opt-in reports.** `stripComments`,
+  `removeEmptyLines`, `logCount` and `pack`, plus the `diff`, `log`, `tokenTree` and `sarif` artifacts,
+  were readable only in the CLI page or the source. The new section says which of them change line
+  numbering, that all four are part of the config digest, and that `validate` must be given the same
+  flags — the rule a user discovers the hard way otherwise.
+
+Verified: site builds 29 pages and `audit-site` reports no problems.
 ## 0.12.89
 
 - The goal log records the 0.12.87-0.12.88 round: the CLI page completed and guarded, and the

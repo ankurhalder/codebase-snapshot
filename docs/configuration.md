@@ -13,6 +13,7 @@ Nothing here is required: with no config at all the tool runs on the defaults be
 - [Classification: layers and kinds](#classification-layers-and-kinds)
 - [Sizing: byte budgets](#sizing-byte-budgets)
 - [Artifacts: what gets written](#artifacts-what-gets-written)
+- [Transforms and opt-in reports](#transforms-and-opt-in-reports)
 - [Secrets: redaction](#secrets-redaction)
 - [Output directories](#output-directories)
 - [Hooks](#hooks)
@@ -246,6 +247,32 @@ means `validate` and `report` cannot inspect the snapshot, and `parts` off with 
 on leaves links pointing at files that were never written. Both are allowed.
 
 The `.codebase-snapshot` ownership marker is always written, whatever the selection.
+
+## Transforms and opt-in reports
+
+Four settings change the *bytes* of a body or add a report. All four are part of the config digest,
+so `validate` must be given the same flags when it compares a snapshot with a configuration:
+without them it reports a configuration mismatch, which is the point of recording them.
+
+```js
+export default {
+  stripComments: false,     // remove comment text from JS/TS; newlines kept, so line numbers still match
+  removeEmptyLines: false,  // drop blank lines; line numbers move, and each file records emptyLinesRemoved
+  logCount: 20,             // commits in reports/log.md when `log` is on (1–500)
+  pack: null,               // "single" | "xml" | "json": one full-repository file
+  artifacts: {
+    diff: false,            // reports/diff.md, bounded to 200 KiB; absent when the tree is clean
+    log: false,             // reports/log.md
+    tokenTree: false,       // reports/tokens.md
+    sarif: false,           // reports/audit.sarif
+  },
+};
+```
+
+`removeEmptyLines` is the one transform that moves line numbers. Every affected file is marked
+`emptyLinesRemoved: true` in the manifest, and `PROMPT.md` says how many files were renumbered and
+that a line number cited from one of them does not point at the source. Prefer `stripComments` when
+a reader will quote line numbers.
 
 ## Delivering it: how many files the destination takes
 
