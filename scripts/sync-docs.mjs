@@ -30,6 +30,18 @@ const write = (...parts) => process.stdout.write(`${parts.join("")}\n`);
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const parts = pkg.version.split(".");
+// The version the registry actually carries. Publication happens only at `x.y.0`; docs that pin
+// the *current* version sent readers to `npx codebase-snapshot@0.17.36`, which does not exist. The
+// two numbers are deliberately separate: `version` moves every release, `published` only when a
+// milestone is uploaded. `PUBLISHED` is the record, and a test compares the docs with it.
+const publishedPath = path.join(ROOT, "PUBLISHED");
+if (!fs.existsSync(publishedPath)) {
+  throw new Error("PUBLISHED is missing: it records the last npm milestone (x.y.0) the docs may pin.");
+}
+const published = fs.readFileSync(publishedPath, "utf8").trim();
+if (!/^\d+\.\d+\.0$/.test(published)) {
+  throw new Error("PUBLISHED must hold one x.y.0 milestone (received " + JSON.stringify(published) + ").");
+}
 const VALUES = {
   version: pkg.version,
   majorMinor: `${parts[0]}.${parts[1]}`,
@@ -66,6 +78,8 @@ for (const relative of targets()) {
   // Code-block examples cannot carry HTML-comment markers: inside a fence the
   // comment is literal text, so the syntax leaks into the rendered page. They are
   // matched by shape instead, which keeps the source readable.
+  // This one stays the *current* version: it reproduces what `init` prints, and `init` writes the
+  // version it was installed at, not the last milestone on the registry.
   after = after.replace(
     /(Added devDependency: codebase-snapshot \^)\d+\.\d+\.\d+/g,
     `$1${VALUES.version}`
@@ -75,7 +89,7 @@ for (const relative of targets()) {
   // either. A pinned example naming the previous release is worse than a stale sentence —
   // copying it installs the wrong version — so it is rewritten by shape too. `@latest` does not
   // match, which is what the guides that do not want a pin use.
-  after = after.replace(/(codebase-snapshot@)\d+\.\d+\.\d+/g, `$1${VALUES.version}`);
+  after = after.replace(/(codebase-snapshot@)\d+\.\d+\.\d+/g, `$1${published}`);
   // The run banner prints the version it is running and where it came from:
   // `Generator: 1.2.3 (project dependency ^1.2.3)`. It is inside a fence too, so it is matched
   // by shape. Without this, the sample output in `docs/cli.md` silently described the previous

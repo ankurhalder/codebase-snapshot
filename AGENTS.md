@@ -114,6 +114,11 @@ only at `x.y.0`** (`0.13.0`, `0.14.0`, …): the registry stays clean while the 
 complete, buildable history. `publish-train.yml` exists for republishing a specific tag; it is
 not used for routine patches.
 
+`PUBLISHED` records the last milestone the registry carries, and `sync-docs` pins every
+`npx codebase-snapshot@x.y.z` example to **that**, not to the version being built — a pin to an
+unpublished patch is a command that 404s. Update `PUBLISHED` in the same commit that publishes a
+milestone; a test fails if a doc pin and `PUBLISHED` disagree.
+
 ## Conventions
 
 - Commits: `type: summary` (`feat`, `fix`, `docs`, `ci`, `chore`), with a body explaining the

@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.37
+
+**The docs told readers to install a version that does not exist.**
+
+- `sync-docs` rewrote every `npx -y codebase-snapshot@x.y.z` example to the **current** package
+  version. Under the publish-at-`x.y.0` policy that is an unpublished patch, so the install commands
+  in `README.md`, `docs/mcp.md` and `docs/deploy.md` named a version the registry does not carry and
+  a reader who copied one got a 404.
+- A `PUBLISHED` file now records the last milestone on npm (`0.17.0`), `sync-docs` pins the examples
+  to it, and a test fails when any doc pin disagrees or names a non-milestone. The devDependency
+  sample stays on the current version, because that is what `init` prints.
+- `AGENTS.md` says when to update `PUBLISHED` (in the same commit as the milestone publish).
+
+Verified: all five pins in the docs read `codebase-snapshot@0.17.0`, which is on the registry; the
+pin test passes and would fail on an unpublished patch.
 ## 0.17.36
 
 - The goal log records the 0.17.35 round: the history tool that repeated an edited report, and the

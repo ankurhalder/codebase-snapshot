@@ -64,3 +64,32 @@ test("the page has no command section for a command that does not exist", () => 
   const unknown = documentedCommands().filter((name) => !contract.has(name));
   assert.deepEqual([...new Set(unknown)], [], "unknown commands: " + unknown.join(", "));
 });
+
+/** Install pins in the docs: `npx -y codebase-snapshot@x.y.z`. */
+function documentedPins() {
+  const files = [
+    path.join(ROOT, "README.md"),
+    ...fs.readdirSync(path.join(ROOT, "docs")).filter((name) => name.endsWith(".md")).map((name) => path.join(ROOT, "docs", name)),
+  ];
+  const pins = [];
+  for (const file of files) {
+    const text = fs.readFileSync(file, "utf8");
+    for (const match of text.matchAll(/codebase-snapshot@(\d+\.\d+\.\d+)/g)) {
+      pins.push({ file: path.relative(ROOT, file), version: match[1] });
+    }
+  }
+  return pins;
+}
+
+test("every install pin names a published milestone, not an unpublished patch", () => {
+  const published = fs.readFileSync(path.join(ROOT, "PUBLISHED"), "utf8").trim();
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  assert.match(published, /^\d+\.\d+\.0$/, "PUBLISHED records an x.y.0 milestone");
+  assert.ok(
+    published.localeCompare(pkg.version, undefined, { numeric: true }) <= 0,
+    "PUBLISHED (" + published + ") cannot be newer than the package (" + pkg.version + ")"
+  );
+  const stale = documentedPins().filter((pin) => pin.version !== published);
+  assert.deepEqual(stale, [], "pins must match PUBLISHED " + published + ": " + JSON.stringify(stale));
+  assert.ok(documentedPins().length > 0, "the docs do pin a version");
+});
