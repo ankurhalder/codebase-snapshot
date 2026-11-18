@@ -719,3 +719,26 @@ test("snapshot_review validates as the snapshot was generated, flags included", 
   assert.equal(stale.structured.current, false, stale.text);
   assert.match(stale.text, /stale/);
 });
+
+test("diff_context resolves a tsconfig path alias when naming dependents", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "alias-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "a", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(
+    path.join(root, "tsconfig.json"),
+    JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["src/*"] } } }, null, 2) + "\n"
+  );
+  fs.writeFileSync(path.join(root, "src", "app.ts"), 'import { user } from "@/user";\nexport const app = user;\n');
+  fs.writeFileSync(path.join(root, "src", "user.ts"), "export const user = 1;\n");
+
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+  const result = await call("snapshot_diff_context", { paths: ["src/user.ts"] }, context);
+  assert.equal(result.isError, undefined, result.text);
+  assert.deepEqual(
+    result.structured.dependents.map((entry) => entry.path),
+    ["src/app.ts"],
+    "the alias importer is a dependent: " + result.text
+  );
+});

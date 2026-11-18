@@ -20,7 +20,7 @@ import { auditSnapshot } from "../auditor/health.js";
 import { planForQuestion } from "./retrieval.js";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
-import { buildImportResolver, resolveSpecifier } from "../index.js";
+import { buildImportResolver, resolveSpecifier, tsconfigPathsFor } from "../index.js";
 
 /** One search reads at most this many bytes of part text. */
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
@@ -1115,31 +1115,22 @@ const diffContextTool: ToolSpec = {
     const budget = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 15000);
     const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80);
     const byPath = new Map(read.manifest.files.map((file) => [file.relativePath.toLowerCase(), file]));
+    // The importers are resolved with the generator's resolver, not a hand-rolled one. The old
+    // loop handled only relative specifiers and a fixed extension list, so a tsconfig path alias
+    // (`@/user`) produced **no dependents at all** — silently, in the one tool whose description
+    // says the dependents are what a reviewer misses. `--delta` already used this resolver, so the
+    // client and the CLI disagreed about the same import graph.
+    const resolver = buildImportResolver(read.manifest.files, {
+      tsconfig: tsconfigPathsFor(workspace.root),
+    });
     const importers = new Map<string, string[]>();
     for (const entry of read.manifest.indexes.imports.byFile) {
       for (const specifier of entry.imports) {
-        if (!specifier.startsWith(".")) continue;
-        const base = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "";
-        const parts: string[] = [];
-        for (const segment of (base + "/" + specifier).split("/")) {
-          if (segment === "" || segment === ".") continue;
-          if (segment === "..") parts.pop();
-          else parts.push(segment);
-        }
-        const joined = parts.join("/").toLowerCase();
-        const withoutExtension = joined.replace(/\.[cm]?[jt]sx?$/, "");
-        const target =
-          byPath.get(joined) ??
-          byPath.get(withoutExtension + ".ts") ??
-          byPath.get(withoutExtension + ".tsx") ??
-          byPath.get(withoutExtension + ".js") ??
-          byPath.get(withoutExtension + ".py") ??
-          byPath.get(withoutExtension + "/index.ts") ??
-          byPath.get(withoutExtension);
-        if (target === undefined) continue;
-        const list = importers.get(target.relativePath) ?? [];
+        const target = resolveSpecifier(entry.path, specifier, resolver);
+        if (target === null) continue;
+        const list = importers.get(target) ?? [];
         list.push(entry.path);
-        importers.set(target.relativePath, list);
+        importers.set(target, list);
       }
     }
     const missing: string[] = [];

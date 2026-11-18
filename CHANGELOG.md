@@ -30,6 +30,19 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.25
+
+**`snapshot_diff_context` silently missed every alias import.**
+
+- Probed a repository whose `src/app.ts` imports `@/user` through tsconfig `paths`. Asking
+  `snapshot_diff_context` for `src/user.ts` returned **no dependents**; `generate --delta` on the same
+  tree included `src/app.ts`, because the generator uses the real resolver. The tool had its own
+  hand-rolled loop that skipped any specifier not starting with `.` and tried a fixed extension list.
+- The tool now builds the same `ImportResolver` the generator uses (`buildImportResolver` with
+  `tsconfigPathsFor`), so aliases, index files, `js`→`ts` mapping and non-JS languages resolve the
+  same way in the client and the CLI. The probe now reports `["src/app.ts"]`.
+
+Verified: an alias-only fixture returns the dependent; the delta suite and the tool suite pass.
 ## 0.17.24
 
 - The goal log records the 0.17.23 round: the delta flow reproduced clean, and the signed manifest
