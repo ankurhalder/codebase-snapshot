@@ -701,3 +701,21 @@ Full `verify` at 0.17.28: 1351 tests, 1343 pass, 0 fail, 8 host skips; tarball 5
 Next: the wizard was probed clean (`init --yes` refuses to overwrite, preserves BRIEF.md, is
 idempotent; the bare command exits 2 with the three alternatives). Next is the `diff` command against
 two snapshots, then `report --format json` against the manifest.
+
+### 0.17.30-0.17.32 - the routes without their paths
+
+- Probed the graph tools on a fixture with an import cycle, two Express routes and an index entry
+  point: cycles, entry points and neighbors were right. `snapshot_routes` printed `GET  (file)` and
+  `POST  (file)` — the extractor had pushed only the verb and discarded the path literal, so every
+  Express/Hono/Koa/Fastify route in every snapshot lost its path.
+- The extractor now records `METHOD /path`; method-only handlers (Next.js route exports, decorators)
+  stay method-only, and the renderer trims the dangling gap. Two tests asserted the old method-only
+  shape and failed the next full verify — they had pinned the defect as the contract, and now assert
+  the path.
+- Also probed `diff` (added/removed/changed/unchanged correct against two snapshots) and
+  `report --format json` (embeds the manifest, including `budget.headroomTokens`/`nextInLine`).
+
+Full `verify` at 0.17.31: 1352 tests, 1344 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: `snapshot_search` and `snapshot_locate` against the same graph fixture, then the error paths of
+`snapshot_plan` (preview without writing).

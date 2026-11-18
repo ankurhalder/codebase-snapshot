@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.32
+
+- The goal log records the 0.17.30-0.17.31 round: routes that lost their paths, and the tests that
+  had pinned the loss.
 ## 0.17.31
 
 - Two tests written before this round asserted the **method-only** route shape, so `verify` failed
