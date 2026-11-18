@@ -357,3 +357,17 @@ authenticated with the workflow scope), so the milestone can be dispatched after
 Full `verify` at 0.12.94: 1313 tests, 1305 pass, 0 fail, 8 host skips; tarball 52 files.
 
 Four sub-bumps to 0.12.99, then 0.13.0 and the first publish through the train.
+
+### 0.12.96-0.12.98 - the last gaps before the milestone
+
+- 0.12.96 `snapshot_generate` can pack (single/xml/json) and narrow (slice/sliceTokens/budgetTokens).
+  Both were CLI-only; the narrowing travels through the worker as generate options, and the
+  slice/budget pair is refused as the CLI refuses it.
+- 0.12.97 `GET /healthz` names the build (`version`, `uptimeSeconds`) without a token, and the
+  `--all-members` JSON shape is pinned by a test.
+- 0.12.98 this log and the last verify before the milestone.
+
+Full `verify` at 0.12.97: 1316 tests, 1308 pass, 0 fail, 8 host skips; tarball 52 files.
+
+One sub-bump to 0.12.99, then 0.13.0: the first publish under the clean-registry policy, through
+the publish train with a dry run first.

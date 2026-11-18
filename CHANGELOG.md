@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.98
+
+- The goal log records the 0.12.96-0.12.97 round and the last verify before the milestone: 1316
+  tests, 1308 pass, 0 fail.
 ## 0.12.97
 
 - **`GET /healthz` says which build is answering.** It returned `ok`, the name and a tool count; a
