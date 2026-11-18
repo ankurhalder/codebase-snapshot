@@ -5,7 +5,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildTools } from "../dist/mcp.js";
+import { buildPrompts, buildTools } from "../dist/mcp.js";
 
 /**
  * Repository hygiene, from the 0.9.10 audit.
@@ -75,29 +75,29 @@ test("the words those escapes ate are back", () => {
 
 test("every document that states the MCP tool count states the real one", () => {
   const count = buildTools().length;
-  const words = [
-    "zero",
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-    "eight",
-    "nine",
-    "ten",
-  ];
-  const expected = words[count] ?? String(count);
+  // Both spellings and both separators, including a number split across a line by wrapping:
+  // "serves the repository as 25\ntools" slipped past the previous word-only regex, which also
+  // stopped at ten and so could never fail for a bigger server.
+  const units = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+  const teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+  const tens = ["", "", "twenty", "thirty", "forty"];
+  const words = new Map();
+  units.forEach((word, index) => words.set(word, index));
+  teens.forEach((word, index) => words.set(word, 10 + index));
+  for (let ten = 2; ten < tens.length; ten += 1) {
+    words.set(tens[ten], ten * 10);
+    for (let unit = 1; unit < 10; unit += 1) words.set(tens[ten] + "-" + units[unit], ten * 10 + unit);
+  }
 
   const documents = ["AGENTS.md", "README.md", "docs/agent.md", "scripts/build-site.mjs"];
   const wrong = [];
   for (const document of documents) {
     const text = read(document);
-    for (const match of text.matchAll(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b[\s-]+tools\b/gi)) {
-      if (match[1].toLowerCase() !== expected) {
-        wrong.push(`${document}: says ${match[1]}, the server serves ${count}`);
-      }
+    for (const match of text.matchAll(/([A-Za-z0-9-]+)[\s-]+tools\b/gi)) {
+      const token = match[1].toLowerCase();
+      const value = /^\d+$/.test(token) ? Number(token) : words.get(token);
+      if (value === undefined) continue;
+      if (value !== count) wrong.push(`${document}: says ${match[1]}, the server serves ${count}`);
     }
   }
 
@@ -157,4 +157,20 @@ test("comparison-harness output is not tracked", () => {
     .filter(Boolean);
   const stray = tracked.filter((file) => /^(repomix-output\.xml|full-codebase\.(json|md|xml))$/.test(file));
   assert.deepEqual(stray, [], "generated tool output must not be committed: " + stray.join(", "));
+});
+
+test("every document that states the prompt count states the real one", () => {
+  const count = buildPrompts().length;
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const documents = ["AGENTS.md", "README.md", "docs/agent.md", "docs/mcp.md", "scripts/build-site.mjs"];
+  const wrong = [];
+  for (const document of documents) {
+    for (const match of fs.readFileSync(path.join(ROOT, document), "utf8").matchAll(/([A-Za-z0-9-]+)[\s-]+prompts\b/gi)) {
+      const token = match[1].toLowerCase();
+      const value = /^\d+$/.test(token) ? Number(token) : words[token];
+      if (value === undefined) continue;
+      if (value !== count) wrong.push(`${document}: says ${match[1]} prompts, the server serves ${count}`);
+    }
+  }
+  assert.deepEqual(wrong, []);
 });

@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.38
+
+**Two documents described a server that no longer exists, and the test could not notice.**
+
+- The hygiene test that compares the documented tool count with the real one matched only the words
+  `zero`…`ten`, so with 26 tools it could never fail, and it could not see a count split across a line
+  ("serves the repository as 25\ntools"). It now parses digits and hyphenated number words and
+  tolerates whitespace, and it immediately found `AGENTS.md` saying **25** and `docs/agent.md` saying
+  **eleven**.
+- A twin check for the prompt count found `README.md` and `docs/agent.md` saying **two** prompts where
+  the server serves **seven**, and the README's tool list was missing `budget`, `answer`, `history`,
+  `tests` and `workspace`. All corrected.
+
+Verified: both counts come from `buildTools().length` and `buildPrompts().length`, so the documents
+cannot drift from the server without failing.
 ## 0.17.37
 
 **The docs told readers to install a version that does not exist.**

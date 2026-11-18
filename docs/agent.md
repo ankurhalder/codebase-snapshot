@@ -115,8 +115,8 @@ devDependency and the `.gitignore` entries for the snapshot directory, and nothi
 
 ## When the client speaks MCP
 
-`codebase-snapshot mcp` serves the repository to a Model Context Protocol client over stdio: eleven
-tools, `snapshot://` resources and two prompts. Prefer it over shelling out when the agent already
+`codebase-snapshot mcp` serves the repository to a Model Context Protocol client over stdio: 26
+tools, `snapshot://` resources and seven prompts. Prefer it over shelling out when the agent already
 has an MCP connection, for two reasons that are properties of the design rather than of the wiring:
 
 - **Reads come from the snapshot, not the working tree.** `snapshot_read` extracts a file's section
