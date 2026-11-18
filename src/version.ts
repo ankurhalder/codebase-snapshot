@@ -10,7 +10,7 @@
  * `package.json` carries the same version; `npm run verify` compares the two.
  */
 export const GENERATOR_NAME = "codebase-snapshot";
-export const GENERATOR_VERSION = "0.13.10";
+export const GENERATOR_VERSION = "0.14.0";
 
 /**
  * The manifest and ownership-marker schema this build writes and understands.

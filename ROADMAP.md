@@ -90,7 +90,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | Version | Meaning | State |
 | :-- | :-- | :-- |
 | 0.13.0 | Retrieval server, browser, health, parity, beyond parity | **published** 2026-11-18; `latest` on npm |
-| 0.14.0 | next milestone | planned |
+| 0.14.0 | The audit proves the manifest: bodies, counts, packs, workspace index, metrics | tagged 2026-11-18 |
 
 ## Shipped so far
 

@@ -30,6 +30,40 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.14.0
+
+**The audit now proves the manifest, instead of trusting it.**
+
+0.13.x was the health service facing its own claims. Each sub-bump asked "what does this audit
+actually verify?", and five answers were uncomfortable:
+
+- **0.13.3** `GET /metrics`: request totals, per-method counts, refusals, rate limits, tool count and
+  uptime in Prometheus text, with no path or credential as a label.
+- **0.13.4** a workspace member is compared with its `WORKSPACE.json`: fingerprint and file count must
+  agree, and a stale index warns with the field that disagrees.
+- **0.13.6** every file body in a part is compared with the manifest's `includedBytes` and
+  `includedLines`, by anchor. A truncated part with an updated hash used to pass every check.
+- **0.13.7** `counts.totalFiles`, `counts.partsCount`, `counts.skippedCount`, `totals.totalContentBytes`
+  and the per-layer counts are recomputed from the manifest's own arrays. A manifest claiming five
+  more files than it held passed everything before this.
+- **0.13.9/0.13.10** each single-file pack (JSON, XML, markdown) must hold exactly the files the
+  manifest lists. A digest proves the pack is the recorded file, not that the recorded pack is
+  complete.
+
+### What this milestone changes for a reader
+
+- A snapshot that says it contains something it does not now fails the audit with the field and both
+  numbers, instead of scoring 100.
+- The audit is stricter about its own bookkeeping, so a hand-edited manifest is a failure even when
+  every hash was updated to match.
+- The JSON, XML and markdown packs are audited as deliverables rather than as opaque artifacts.
+
+### How it was verified
+
+Full `npm run verify`: 1323 tests, 1315 pass, 0 fail, 8 host skips; 29 site pages with no link or
+metadata problems; a 52-file tarball whose lockfile agrees with `package.json`. Each new check was
+probed by breaking the thing it checks: a truncated part, an edited count, a pack minus one entry, an
+index with a wrong fingerprint — and each probe became a test.
 ## 0.13.10
 
 - **Every single-file pack is checked for membership, not only the JSON one.** The XML pack writes
