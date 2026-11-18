@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.22
+
+- The goal log records the 0.17.19-0.17.21 round: the silent non-git report flags, the warning that
+  leaked the host path the audit then caught, and the docs row that claimed agreement it did not have.
 ## 0.17.21
 
 - **The warning leaked the host path it was warning about.** 0.17.19 wrote "…was requested, but

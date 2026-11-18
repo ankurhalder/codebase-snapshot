@@ -632,3 +632,19 @@ repository without git.
 Full `verify` at 0.17.17: 1346 tests, 1338 pass, 0 fail, 8 host skips; tarball 53 files.
 
 Next: `--include-diffs` on a repository without git, then the `--delta` flow against a real base.
+
+### 0.17.19-0.17.22 - the flag that did nothing, and the warning that leaked
+
+- `--include-diffs`/`--include-logs` outside a git repository accepted the flag, wrote no report,
+  recorded no artifact, warned nothing and exited 0. Both now warn with the reason, the contract and
+  `docs/cli.md` say so, and a test asserts both warnings on a non-git fixture.
+- The first version of that warning embedded the absolute cwd, and the **health audit failed the
+  snapshot it had just generated** for a host path in `manifest.json` — exactly the check that exists
+  for this. The message names no path; the test asserts a warning carries no drive-letter path.
+- 0.17.20 corrected the `--include-logs` docs row, which the 0.17.19 changelog had claimed agreed
+  with the contract but did not (the flag test checks names, not prose).
+
+Full `verify` at 0.17.21: 1347 tests, 1339 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the `--delta` flow against a real base snapshot, then the signature path end to end
+(generate --sign, validate, health, tampered manifest).
