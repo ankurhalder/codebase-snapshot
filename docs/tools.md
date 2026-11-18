@@ -66,9 +66,6 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 
 ## Reading
 
-- **`snapshot_generate`** also takes `only` and `ignore` arrays: `{ "only": ["src/**"] }` replaces
-  the config allow-list for that run, `ignore` adds to the deny-list. Both are part of the config
-  digest, so `snapshot_validate` takes the same arrays to compare like with like.
 - **`snapshot_answer`** — medium, read-only. One call from question to context: plans the
   question, then returns each chosen file as a head window with line numbers inside the token
   budget. Every file says why it is there; every planned file that did not fit says why not.
@@ -154,6 +151,8 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```json
   { "name": "snapshot_generate", "arguments": { "tokenTree": true, "pack": "xml" } }
   ```
+  It also takes `only` and `ignore` arrays — the CLI's per-run narrowing — which enter the config
+  digest, so `snapshot_validate` takes the same arrays to compare like with like.
   It can also narrow: `slice` with `sliceTokens`, or `budgetTokens` (not both — the tool refuses
   the pair, as the CLI does).
   ```json

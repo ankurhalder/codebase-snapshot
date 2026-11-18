@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.3
+
+- The 0.17.2 docs change put the `snapshot_generate` note in the reading list as its own bullet,
+  which left the real entry without its example call; the docs/schema test caught it after the
+  commit. The note now sits inside the generate entry, where it belongs.
 ## 0.17.2
 
 **An empty snapshot says it is empty.**
