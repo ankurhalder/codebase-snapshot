@@ -30,6 +30,29 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.18.2
+
+**The audit failed a snapshot for containing the redaction marker.**
+
+- Reviewing a real 0.18.0 snapshot of this repository: 343 files, 13 parts, 1.1M tokens, no
+  incomplete files — structurally clean, but `health` scored **70/100** with one critical failure:
+  "7 artifact(s) contain a secret-shaped value".
+- Every one of those hits was the marker itself: `token: [REDACTED: potential secret-like value
+  omitted from snapshot]`. The scanner did not recognise its own output, so a second pass over an
+  emitted artifact re-found lines the generator had already redacted. The audit also scanned each
+  part as a whole under `parts/part-007.md`, losing the source path — the generator had deliberately
+  left `DB_PASSWORD=envpass!@#$%^&*()` in a comment, because an unquoted value in a source file is an
+  expression, but the same text inside a part was read as markdown and flagged.
+- Three fixes: a candidate that already contains the marker is a placeholder; a finding whose original
+  line carried the marker is not reported (the mask still runs, so a credential added after the marker
+  is still removed); and the artifact scan is per section, under the section's own path, so the
+  path-aware rules see what the generator saw. Marker-only YAML blocks no longer count as masked
+  values either.
+
+The same snapshot regenerated: **95/100, 14 passed, 0 failed, 1 warning** — the warning is the
+host-path check finding `/Users/name` and `C:\Users\name` in the documentation examples, which are
+genuinely in the text. Tests: the marker shapes produce no finding, a real secret in the same shapes
+still does, and a health run over a snapshot that quotes the marker exits 0.
 ## 0.18.1
 
 - `PUBLISHED` moves to 0.18.0, so every `npx codebase-snapshot@…` example in the docs now pins the

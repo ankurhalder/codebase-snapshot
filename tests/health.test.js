@@ -265,3 +265,15 @@ test("every check id an audit emits is documented", (t) => {
   const missing = report.checks.map((check) => check.id).filter((id) => !doc.includes("`" + id + "`"));
   assert.deepEqual(missing, [], "undocumented check ids: " + missing.join(", "));
 });
+
+test("the marker text itself is not a leak", (t) => {
+  const dir = repoWithSnapshot(t, {
+    "src/redaction.md": "A masked value reads `token: [REDACTED: potential secret-like value omitted from snapshot]`.\n",
+    "src/notes.ts": "export const example = \"[REDACTED: potential secret-like value omitted from snapshot]\";\n",
+  });
+  const result = health(dir, "--format", "json");
+  const report = JSON.parse(result.stdout);
+  const secrets = report.checks.find((check) => check.id === "secrets.artifacts");
+  assert.equal(secrets.status, "pass", secrets.detail);
+  assert.equal(result.code, 0, result.out);
+});

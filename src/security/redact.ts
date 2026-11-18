@@ -775,7 +775,15 @@ export function scanAndRedactSecrets(
   finalText = redactStructuredValues(finalText, filePath, recordFinding);
   finalText = redactDockerfileEnv(finalText, filePath, recordFinding);
 
+  // A line that already carried the marker was redacted before this scan; reporting it again is
+  // how the audit came to fail a snapshot for containing the tool's own output. The masking above
+  // still runs — a credential added after the marker is still removed — only the finding is dropped.
+  const originalLines = content.split(/\r\n|\r|\n/);
   const findings: SecretFinding[] = [...findingsByLine.entries()]
+    .filter(([line]) => {
+      const original = originalLines[line - 1] ?? "";
+      return !original.includes(REDACTION_MARKER) && !original.includes(PEM_REDACTION_MARKER);
+    })
     .sort(([left], [right]) => left - right)
     .map(([line, rulesForLine]) => ({
       rules: [...rulesForLine],
@@ -891,8 +899,10 @@ function redactStructuredValues(
         if (body.trim() !== "") {
           const indent = (/^[ \t]*/.exec(body)?.[0] ?? "").length;
           if (indent <= baseIndent) break;
+          // Masking a line that is already the marker changes nothing; counting it as a finding
+          // made the audit flag the block the generator had just redacted.
+          if (!isMarkerLine(body)) masked = true;
           segments[cursor] = maskLineContent(body);
-          masked = true;
         }
         cursor += 2;
       }
@@ -913,8 +923,8 @@ function redactStructuredValues(
       if (body.trim() !== "") {
         const indent = (/^[ \t]*/.exec(body)?.[0] ?? "").length;
         if (indent < valueIndent) break;
+        if (!isMarkerLine(body)) masked = true;
         segments[cursor] = maskValueLine(body);
-        masked = true;
       }
       cursor += 2;
     }
@@ -1207,10 +1217,21 @@ const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /^(?:example|sample)(?:[-_ ].*)?$/i,
 ];
 
+/** True when the text already carries a redaction marker and needs no second mask. */
+function isMarkerLine(value: string): boolean {
+  return value.includes(REDACTION_MARKER) || value.includes(PEM_REDACTION_MARKER);
+}
+
 function isPlaceholderValue(value: string): boolean {
   const trimmed = value.trim().replace(/^["'`]+/, "").replace(/["'`]+$/, "");
   if (trimmed.length === 0) return false;
   if (PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(trimmed))) return true;
+  // A value that is already the marker is redaction, not a credential. `scanAndRedactSecrets` is
+  // applied to emitted text as well as source: the audit re-scans every artifact, and a snapshot
+  // of a repository that quotes a snapshot (these docs do) contains the marker literally. Without
+  // this check the audit re-found the tool's own marker and failed the snapshot it had just
+  // redacted — 7 artifacts, score 70/100, on a run that leaked nothing.
+  if (trimmed.includes(REDACTION_MARKER) || trimmed.includes(PEM_REDACTION_MARKER)) return true;
   return trimmed.includes("...") || /^<[^>]*$/.test(trimmed);
 }
 

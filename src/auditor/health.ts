@@ -564,9 +564,22 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     const text = readText(path.join(snapshotDir, relative));
     if (text === null) continue;
     scannedBytes += Buffer.byteLength(text, "utf8");
-    const found = scanAndRedactSecrets(text, rules, relative);
-    if (found.findings.length > 0) {
-      leakHits.push(relative + " (" + found.findings.length + " line(s))");
+    // A part is scanned section by section with the path the section came from. The generator
+    // redacted each file under that path, and the rules are path-aware: an unquoted right-hand
+    // side in a source file is an expression, not a credential, while the same text in a part is
+    // read as markdown. Scanning the whole part under `parts/part-007.md` therefore flagged
+    // comments that describe a rule (`DB_PASSWORD=envpass!@#$%^&*()`) as a leak — findings the
+    // generator had deliberately not made, because the source-file rule exempts them.
+    let findingCount = 0;
+    if (/^parts[\\/].*\.md$/i.test(relative)) {
+      for (const section of parsePartSections(text)) {
+        findingCount += scanAndRedactSecrets(section.body, rules, section.path).findings.length;
+      }
+    } else {
+      findingCount = scanAndRedactSecrets(text, rules, relative).findings.length;
+    }
+    if (findingCount > 0) {
+      leakHits.push(relative + " (" + findingCount + " line(s))");
     }
   }
   // The record's non-key fields are still scanned for secret shapes. Its public key, signature,
