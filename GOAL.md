@@ -540,3 +540,19 @@ Full `verify` at 0.17.5: 1337 tests, 1329 pass, 0 fail, 8 host skips; tarball 53
 
 The 0.17.x line continues: the backlog still holds the web page hardening, a wider fuzz pass over
 the part parser, and the per-command docs audit.
+
+### 0.17.7-0.17.8 - the web page and the workspace audit
+
+- Probing the web surface end to end: `POST /api/generate` with slice mode on a repository whose
+  question matched nothing returned `files: 0, dropped: 2, warning: null`. A slice that selects
+  nothing now carries the planner's reason as a warning, the way a budget already did.
+- `health --all-members` gave **100/100** to a member whose source directory had been deleted: every
+  hash was valid, but the workspace index still named a path that no longer exists. It now warns with
+  the path and "regenerate the workspace", and the combined score is the weakest member (95/100 in
+  the probe, still exit 0 — a warning, not a failure).
+- The zip from the page contains `reports/selection.md` for a slice, and the archive names are
+  forward-slashed as the format requires (verified by unpacking it).
+
+Full `verify` at 0.17.7: 1339 tests, 1331 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the parser fuzz pass (part sections with adversarial content) and the per-command docs audit.

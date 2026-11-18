@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.8
+
+- The goal log records the 0.17.7 round: the silent empty slice, the 100/100 member whose source was
+  gone, and the web page probe that found the first one.
 ## 0.17.7
 
 **A slice that selected nothing, and a member whose source is gone.**
