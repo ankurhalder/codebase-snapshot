@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.92
+
+- The goal log records the 0.12.90-0.12.91 round, including the three probes that found nothing: a
+  BOM+CRLF config parses, a zip round-trips non-ASCII and bracketed names through Expand-Archive, and
+  a path beyond 260 characters scans correctly on this host.
 ## 0.12.91
 
 - **The host-path check missed a Windows path written as a string literal.** `C:\Users\name` was

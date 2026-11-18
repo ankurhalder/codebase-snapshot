@@ -325,3 +325,19 @@ pages, audit-site clean.
 
 Ten sub-bumps to 0.12.99, then 0.13.0. What remains is the milestone publish itself and the last
 pass the plan asks for: every page opened beside the command it documents.
+
+### 0.12.90-0.12.92 - the Windows-shaped leaks
+
+- 0.12.90 the configuration page documents the transforms and the opt-in reports: stripComments,
+  removeEmptyLines, logCount, pack, and the diff/log/tokenTree/sarif artifacts, with the rule that
+  validate must be given the same flags because all four are in the config digest.
+- 0.12.91 the host-path check missed `C:\\Users\\name` — the doubled spelling a JavaScript or JSON
+  string literal uses — and `C:/Users/name`. On Windows that is the most likely leak shape, and it
+  was invisible. The pattern now accepts one or more separators of either kind.
+- 0.12.92 the round log. Also probed without findings: a BOM+CRLF config parses, a zip round-trips
+  non-ASCII and bracketed names through Expand-Archive, and a path beyond 260 characters scans.
+
+Full `verify` at 0.12.91: 1311 tests, 1303 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Seven sub-bumps to 0.12.99, then 0.13.0. The publish train is reachable from here (`gh` is
+authenticated with the workflow scope), so the milestone can be dispatched after its tag.
