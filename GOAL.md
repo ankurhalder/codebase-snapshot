@@ -802,3 +802,18 @@ Full `verify` at 0.17.43: 1360 tests, 1352 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the serve page's slice and budget responses under the browser flow, then the last read of
 `docs/output.md` against what a run actually writes.
+
+### 0.17.45-0.17.46 - the browser ignored the configuration
+
+- The serve page called `generateSnapshot({ cwd })` and the library never loads a config file, so a
+  project with `snapshot.config.json` got one snapshot from the browser and another from the
+  terminal. It also **silently ignored an executable config**, while the MCP server and the security
+  review both promise that surface refuses repository code.
+- The page now loads the config with `allowExecutableConfig: false`: JSON settings are honoured, and
+  a `.ts`/`.mjs`/`.cjs` config is a 400 with the same message the MCP server gives. A probe with a
+  config that writes `EXECUTED` confirms the side effect never runs.
+
+Full `verify` at 0.17.45: 1362 tests, 1354 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: `docs/output.md` against what a run actually writes, then the last probe of the remote-clone
+path (ref selection, provenance in the manifest).

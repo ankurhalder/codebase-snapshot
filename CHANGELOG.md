@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.46
+
+- The goal log records the 0.17.45 round: the browser surface that ignored the repository config,
+  and the executable config it silently skipped.
 ## 0.17.45
 
 **The web page generated on defaults and silently ignored the repository's config.**
