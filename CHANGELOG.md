@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.10
+
+- The goal log records the 0.17.9 round: the adversarial-content pass (parser sound) and the 200 KB
+  block it found leaving through `snapshot_answer`.
 ## 0.17.9
 
 **A block cannot flood the transport.**

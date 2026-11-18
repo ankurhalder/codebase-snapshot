@@ -556,3 +556,19 @@ the part parser, and the per-command docs audit.
 Full `verify` at 0.17.7: 1339 tests, 1331 pass, 0 fail, 8 host skips; tarball 53 files.
 
 Next: the parser fuzz pass (part sections with adversarial content) and the per-command docs audit.
+
+### 0.17.9-0.17.10 - the parser holds, the transport did not
+
+- Adversarial content was pushed through the whole pipeline: files containing a fake `### FILE:`
+  heading, embedded 3/4/6-backtick fences, anchor-like lines, CRLF, and a body ending on a fence.
+  All round-trip, and the audit's per-file body accounting agrees — the parser's fence tracking is
+  sound.
+- The fuzz found the one hole next door: a 200 KB single-line file under a 60k budget came back from
+  `snapshot_answer` whole — a 200 KB response with no note, while `snapshot_read` caps one response
+  at 64 KiB. Blocks are now capped and labelled (`first 64 KiB of the window`), and `usedTokens` is
+  measured on the returned text instead of the pre-clip window.
+
+Full `verify` at 0.17.9: 1340 tests, 1332 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the per-command docs audit (every `describe` command and option has a docs row, and every row
+names a real option), then the web page accessibility pass.
