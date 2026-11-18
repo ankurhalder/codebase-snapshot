@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.42
+
+- The goal log records the 0.17.40-0.17.41 round: the concurrency probes that held, and the validate
+  tool that used to disagree with the snapshot it was validating.
 ## 0.17.41
 
 - A test from an earlier release asserted that `snapshot_validate` **without** the generating flags

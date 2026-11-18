@@ -766,3 +766,23 @@ Full `verify` at 0.17.38: 1357 tests, 1349 pass, 0 fail, 8 host skips; tarball 5
 
 Next: a final sweep for docs that state sizes/counts (`25 presets`, `30 pages`), then the last
 large-surface probe: `serve` under concurrent requests.
+
+### 0.17.40-0.17.42 - concurrency holds, validate agrees with itself
+
+- Probed the generate lock with three concurrent `snapshot_generate` calls over HTTP: two were refused
+  with the lock message, one succeeded, and the snapshot validated — by design, and it holds. The
+  lock reclaims a dead pid immediately and a live-but-stale heartbeat after two minutes; both paths
+  were exercised by writing locks by hand. No defect.
+- `snapshot_validate` (the MCP tool) resolved a bare config file, so a snapshot generated with
+  `tokenTree`, `includeDiffs`, `removeEmptyLines`, `stripComments`, a pack or `maxParts` reported
+  "2 setting(s) changed" straight after generating — the same defect `snapshot_review` had in 0.17.17,
+  in the other tool that makes the claim. Both now share `configAsGenerated`, which takes the
+  artifact selection and flag-only settings from the manifest while leaving config-file settings
+  live, so real configuration drift is still reported.
+- 0.17.41 updated the older scope-parity test that had asserted the opposite ("the flag has to be
+  doing something"), and `docs/tools.md` now states the contract.
+
+Full `verify` at 0.17.41: 1358 tests, 1350 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the docs sweep for the remaining numeric claims (presets, pages), then the `serve` page under
+a slice/budget generation to confirm what the browser shows.
