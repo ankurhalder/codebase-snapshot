@@ -30,6 +30,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.14.1
+
+## 0.14.1
+
+- The goal log records the second published milestone: 0.14.0 tagged, released on GitHub and
+  published to npm (the registry reports `latest = 0.14.0`), after the same few-minute processing
+  window that 0.13.0 had. `ROADMAP.md` marks it published.
+
 ## 0.14.0
 
 **The audit now proves the manifest, instead of trusting it.**

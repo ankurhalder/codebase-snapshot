@@ -425,3 +425,19 @@ Full `verify` at 0.13.7: 1321 tests, 1313 pass, 0 fail, 8 host skips; tarball 52
 Next: the rest of the 0.14.0 theme is the health service, then the 0.14.0 milestone publish. The
 questions left: does the token estimate match the tokenizer it claims, and does the audit cover the
 monolith packs.
+
+### 0.13.9-0.14.1 - the audit stops trusting the manifest
+
+- 0.13.9 the JSON monolith must hold exactly the files the manifest lists: a digest proves the pack
+  is the recorded file, not that the recorded pack is complete. 0.13.10 extended the same check to
+  the XML and markdown packs, each with a small reader.
+- **0.14.0 is the second published milestone**: the health service now verifies bodies, counts,
+  packs and the workspace index against the data they describe, and the HTTP transport has
+  Prometheus metrics. Tagged, released on GitHub, and published to npm; the registry reports
+  `latest = 0.14.0` (it again spent about four minutes "being processed" before the version appeared).
+
+Full `verify` at 0.14.0: 1323 tests, 1315 pass, 0 fail, 8 host skips; tarball 52 files; site 29
+pages, audit-site clean.
+
+Next: 0.14.x toward 0.15.0 (parity where it matters), then 0.16.0 (beyond parity) and 0.17.0 (the
+endgame the plan describes). Two milestones are published; three remain.
