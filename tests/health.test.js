@@ -142,7 +142,8 @@ test("every artifact the manifest records is expected, and none is a warning", (
   const result = health(dir);
   assert.equal(result.code, 0, result.out);
   assert.doesNotMatch(result.out, /unexpected path/);
-  assert.match(result.out, /13 passed, 0 warning/);
+  assert.match(result.out, /\d+ passed, 0 warning/);
+  assert.match(result.out, /0 failed/);
 });
 
 test("a Windows home path is a warning in a plain text and in a string literal", (t) => {
@@ -156,4 +157,28 @@ test("a Windows home path is a warning in a plain text and in a string literal",
   const section = result.out.slice(result.out.indexOf("No host path"));
   assert.match(section, /hit\(s\)/, "the check warns");
   assert.match(section, /C:\\\\Users\\\\someone/, "the string-literal spelling is reported");
+});
+
+test("a part whose body is shorter than the manifest says is a failure", (t) => {
+  const dir = repoWithSnapshot(t);
+  const ok = health(dir);
+  assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /Every file body matches the manifest accounting/);
+
+  // Remove a line from the part without touching the manifest: the hashes still agree because the
+  // part hash is only checked against the manifest, which was not edited.
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+  const part = manifest.parts[0];
+  const partPath = path.join(dir, "snapshot", "parts", part.filename);
+  const text = fs.readFileSync(partPath, "utf8");
+  const marker = "export const";
+  const at = text.indexOf(marker);
+  assert.ok(at > 0, "the fixture part holds source");
+  const lineEnd = text.indexOf("\n", at);
+  fs.writeFileSync(partPath, text.slice(0, at) + text.slice(lineEnd + 1));
+
+  const broken = health(dir);
+  assert.equal(broken.code, 1, broken.out);
+  assert.match(broken.out, /Every file body matches the manifest accounting/);
+  assert.match(broken.out, /disagree/);
 });

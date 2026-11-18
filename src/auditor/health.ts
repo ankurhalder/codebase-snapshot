@@ -7,6 +7,7 @@ import { compileSecretRules, scanAndRedactSecrets } from "../security/redact.js"
 import { estimateTokens } from "../tokenize.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
 import { verifySnapshotSignature } from "../signing.js";
+import { findSection, parsePartSections } from "../partitioner/part-format.js";
 import type { Manifest, SecretRule } from "../types.js";
 
 /**
@@ -359,6 +360,46 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
         "No signature.json; the snapshot cannot prove who produced it.")
     );
   }
+
+  // The manifest says how many bytes and lines each file contributed. The parts are the only
+  // place that claim can be checked, and a part whose section is shorter than the manifest says
+  // is a snapshot that under-delivers while its hashes still agree. One parse per part, then
+  // every file in it is looked up by anchor.
+  const bodyProblems: string[] = [];
+  let bodiesChecked = 0;
+  for (const part of manifest.parts) {
+    const partText = readText(path.join(snapshotDir, "parts", part.filename));
+    if (partText === null) continue;
+    const sections = parsePartSections(partText);
+    for (const file of manifest.files) {
+      if (file.part !== part.filename) continue;
+      const section = findSection(sections, file.relativePath);
+      if (section === null) {
+        bodyProblems.push(file.relativePath + " has no section in " + part.filename);
+        continue;
+      }
+      bodiesChecked += 1;
+      const bytes = Buffer.byteLength(section.body, "utf8");
+      // The body keeps the file's final newline, so a split counts one more than the manifest's
+      // line count (countLines does not count the empty element after a trailing newline).
+      const bodyLines =
+        section.body === ""
+          ? 0
+          : section.body.split("\n").length - (section.body.endsWith("\n") ? 1 : 0);
+      if (bytes !== file.includedBytes) {
+        bodyProblems.push(file.relativePath + ": manifest says " + file.includedBytes + " B, part holds " + bytes + " B");
+      } else if (bodyLines !== file.includedLines) {
+        bodyProblems.push(file.relativePath + ": manifest says " + file.includedLines + " line(s), part holds " + bodyLines);
+      }
+    }
+  }
+  checks.push(
+    bodyProblems.length === 0
+      ? check("pipeline.bodies", "Every file body matches the manifest accounting", "critical", "pass",
+          bodiesChecked + " file body/bodies match their recorded bytes and lines.")
+      : check("pipeline.bodies", "Every file body matches the manifest accounting", "critical", "fail",
+          bodyProblems.length + " file(s) disagree: " + sample(bodyProblems))
+  );
 
   // A workspace index describes its members. When this snapshot is one of them, the two records
   // have to agree, or the deliverable says two different things about the same directory.

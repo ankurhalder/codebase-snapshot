@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.6
+
+**The audit checks every file body against the manifest accounting.**
+
+- The manifest records `includedBytes` and `includedLines` per file; nothing verified them against
+  the parts. A part could be truncated or edited, its hash updated in the manifest, and every
+  integrity check would agree while the reader received less than the manifest promised.
+- Each part is parsed once with the same parser the MCP reader uses (moved to
+  `src/partitioner/part-format.ts` so the auditor does not import the server), and every file's
+  section is compared by anchor: bytes must equal `includedBytes`, lines must equal `includedLines`.
+  A missing section is a failure with the path named.
+
+Verified: the check passes on this repository in five modes (full, strip-comments,
+remove-empty-lines, skeleton, forced previews); deleting one line from a part without touching the
+manifest fails the audit.
 ## 0.13.5
 
 - The goal log records the 0.13.3-0.13.4 round: Prometheus metrics on the HTTP transport and the

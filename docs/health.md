@@ -43,6 +43,14 @@ secret, but you may not want it in the payload either.
 The score starts at 100; each failure costs 25 and each warning 5, with a floor of zero. It is a
 summary, not a substitute for the checks — the report always lists every one.
 
+### Every body against the accounting
+
+The manifest says how many bytes and lines each file contributed. The audit now checks that
+claim against the part: each section is parsed out (by anchor, not by heading) and its body must
+match `includedBytes` and `includedLines` exactly. A truncated body, a missing section or a
+hand-edited part that still hashes correctly fails the audit, because the manifest would be
+describing a file the reader does not receive.
+
 ### A member of a workspace
 
 When a snapshot sits beside a `WORKSPACE.json`, the audit compares that member's record with the
