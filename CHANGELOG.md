@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.57
+
+- The goal log records the 0.17.52-0.17.56 backlog round: docs prose, SSE end to end, answer/query
+  edges, and a benchmark re-run that reproduced every published number.
 ## 0.17.56
 
 **The ten-repository benchmark was re-run, not assumed.**

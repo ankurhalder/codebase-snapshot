@@ -845,15 +845,29 @@ Next: `docs/output.md` read against a real run artifact by artifact, then the la
   exceeds the ceiling.
 - The 0.17.50 release was tagged while `node --test … | Select-String` reported failures: the exit
   code of a pipeline is the filter's, so the gate passed on a red run. One real failure was a fixture
-  the new test forgot to remove. The commit, tag and branch head were amended and force-pushed before
-  the round ended, and the changelog records the lesson: a gate reads the exit code of the command,
-  not of the pipe.
 
-Full `verify` at the corrected 0.17.50: 1365 tests, 1357 pass, 0 fail, 8 host skips; tarball 53 files.
+### 0.17.52-0.17.57 - the backlog the user asked to finish
 
-Probed clean: the three `--pack` formats (XML splits the CDATA terminator, JSON embeds `manifest` and
-`files[]`, markdown uses `## File:`); the pack/manifest `includedBytes` difference is documented and
-intentional (raw content vs emitted body).
+- **Docs prose audit.** `docs/mcp.md` said "the first four rows are always listed" above a table whose
+  first four rows included two conditional reports, and counted "the three reports" where six exist;
+  `docs/cli.md` still said "two prompts". Three places still described the browser as generating "with
+  the default settings" after 0.17.45. `docs/output.md` omitted `selection.md` and `audit.sarif` from
+  the tree and `selection`/`fullXml` from the artifacts row. URI constants are now exported so a test
+  compares the page with the server.
+- **SSE end to end.** Stream with `?token=`, endpoint event, `initialize` and `tools/list` over a POST
+  with the token in the query and no header: answered with 202 + `message` events; an unauthenticated
+  POST is 401; a supported version is echoed. The page now says to append `&token=` and a test drives
+  exactly that flow. A request for an unsupported `2024-11-05` is answered with `2025-11-25`, which is
+  what the version table already documents.
+- **answer/query edges.** `snapshot_answer` said "1 skipped for budget" while `omitted` stayed empty;
+  the planner skips now carry `{path, reason}` into text and structured reply. Query caps, empty
+  results and invalid regex were already correct.
+- **Benchmark refresh.** `benchmark-suite.mjs --json` on all ten default repositories: 10/10 succeeded
+  for ours, repomix and gitingest, and every number is identical to the published table — the scanner
+  is deterministic across 0.14.5 → 0.17.55. The page records the re-run.
+- **Site/links.** Rebuilt and audited on every release above: 66 files, 742 internal links, 52 anchors,
+  0 problems; `audit-site` clean.
 
-Still open for the remaining time: docs read-through page by page, the SSE transport, and whatever the
-next probe finds. The goal stays active until the deadline.
+Full `verify` at 0.17.56: 1369 tests, 1361 pass, 0 fail, 8 host skips; tarball 53 files.
+
+No npm publish: `latest` stays 0.17.0 by instruction. The goal stays active.
