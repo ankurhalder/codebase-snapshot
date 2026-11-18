@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.5
+
+- The goal log records the 0.13.3-0.13.4 round: Prometheus metrics on the HTTP transport and the
+  workspace-index check in the health audit.
 ## 0.13.4
 
 - **The health audit checks a workspace member against its index.** When `WORKSPACE.json` sits beside

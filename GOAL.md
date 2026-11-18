@@ -390,3 +390,19 @@ Full `verify` at 0.13.1: 1317 tests, 1309 pass, 0 fail, 8 host skips; tarball 52
 
 Next: the 0.13.x line toward 0.14.0. The queue from the plan: observability for the HTTP server,
 a last pass on the retrieval planner, and whatever the verify finds in between.
+
+### 0.13.3-0.13.5 - observability, and an index that has to agree
+
+- 0.13.3 `GET /metrics` on the HTTP transport: Prometheus text with request totals, per-method
+  counts, refusals, rate-limit rejections, tool count and uptime. No label carries a path or a
+  credential, because a label built from a URL is an unbounded map and would publish what was asked
+  for to the monitoring system.
+- 0.13.4 the health audit checks a workspace member against `WORKSPACE.json`: fingerprint and file
+  count must agree, an unreadable index warns with the parse error, and a member the index does not
+  list is a skip with its reason.
+- 0.13.5 this log.
+
+Full `verify` at 0.13.4: 1319 tests, 1311 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Next: the road to 0.14.0 (health service deepening), then 0.15.x parity, 0.16.x beyond parity,
+0.17.0 endgame - and a milestone publish at each x.y.0.
