@@ -733,3 +733,18 @@ Next: `snapshot_search` and `snapshot_locate` against the same graph fixture, th
 Full `verify` at 0.17.33: 1354 tests, 1346 pass, 0 fail, 8 host skips; tarball 53 files.
 
 Next: `snapshot_stats` against the manifest, then a last pass over `snapshot_explain` messages.
+
+### 0.17.35-0.17.36 - the history tool trusted an edited report
+
+- `snapshot_history` served the commits from `reports/log.md` without comparing the file to the digest
+  the manifest records. Appending one fake commit changed what an agent was told about the
+  repository, while the tool reported it as fact; `validate` and `health` would have flagged the edit,
+  but the tool that serves the history did not. It now hashes the report and refuses on mismatch.
+- Also probed clean: `snapshot_stats` agrees with the manifest (files, parts, tokens, layers),
+  `snapshot_explain` names the reason and the fix for every class (sensitive, default-ignore, binary,
+  missing, not-a-file), and `snapshot_tests` lists the test files with their import counts.
+
+Full `verify` at 0.17.35: 1355 tests, 1347 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the workspace tools against a real multi-repo index, then a final read of every docs page for
+stale numbers.

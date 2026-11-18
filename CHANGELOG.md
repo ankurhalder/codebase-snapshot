@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.36
+
+- The goal log records the 0.17.35 round: the history tool that repeated an edited report, and the
+  clean probes of stats, explain and tests.
 ## 0.17.35
 
 **`snapshot_history` repeated an edited report as fact.**
