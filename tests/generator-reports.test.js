@@ -114,3 +114,21 @@ test("the brief names the opt-in reports this run wrote", (t) => {
   assert.match(prompt, /reports\/diff\.md/);
   assert.doesNotMatch(prompt, /reports\/log\.md/, "log was not requested");
 });
+
+test("a requested report outside a git repository says why it was not written", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nogit-reports-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), '{"name":"n","version":"1.0.0"}\n');
+  fs.writeFileSync(path.join(root, "src", "a.ts"), "export const a = 1;\n");
+
+  const result = run(["generate", "--include-diffs", "--include-logs", "5"], root);
+  assert.equal(result.code, 0, result.out);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(manifest.artifacts.diff, undefined);
+  assert.equal(manifest.artifacts.log, undefined);
+  const warnings = manifest.warnings.join("\n");
+  assert.match(warnings, /--include-diffs was requested/);
+  assert.match(warnings, /--include-logs was requested/);
+  assert.match(warnings, /not a git repository/);
+});

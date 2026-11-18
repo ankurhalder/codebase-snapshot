@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.17.18 (project dependency ^0.17.18)
+   Branch: main | Part budget: 300 KB | Generator: 0.17.19 (project dependency ^0.17.19)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.17.18
+   Added devDependency: codebase-snapshot ^0.17.19
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.17.18
+   Added devDependency: codebase-snapshot ^0.17.19
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -503,7 +503,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--slice <question>` | string | unset | generate | Narrow the snapshot to what the retrieval planner picks for this question. Records a `slice` block and `skipped[]` reasons `not-selected`. See [slices](slice.md). |
 | `--slice-tokens <n>` | count | `30000` | generate | The token budget for `--slice`. |
 | `--delta <path>` | path | unset | generate | Narrow the snapshot to what changed since a base snapshot, plus the one-hop importers. Unchanged files are recorded in `delta.unchanged` and `skipped[]`. See [delta](delta.md). |
-| `--include-diffs` | flag | off | generate | Also write `reports/diff.md`: the unstaged and staged diff, with the commands, bounded to 200 KiB. Absent when the tree is clean. |
+| `--include-diffs` | flag | off | generate | Also write `reports/diff.md`: the unstaged and staged diff, with the commands, bounded to 200 KiB. Absent when the tree is clean; outside a git repository the run warns and writes nothing. |
 | `--include-logs <n>` | count | unset | generate | Also write `reports/log.md`: the last n commits (1–500), one line each. |
 | `--token-tree` | flag | off | generate | Also write `reports/tokens.md`: per-file token estimates sorted by cost, with directory rollups. |
 | `--max-parts <n>` | count | unset | generate, validate | **Experimental.** Grow the per-part budget until the snapshot has at most `n` parts, so the file count stays fixed as the code grows. The budget it settles on is recorded in `manifest.budgets.maxPartBytes` and may exceed `--max-part-bytes`; a warning says so. `0` is a usage error. |

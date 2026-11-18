@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.19
+
+**A requested report that could not be written now says so.**
+
+- `generate --include-diffs` outside a git repository accepted the flag, wrote no `reports/diff.md`,
+  recorded no artifact, printed no warning and exited 0. `--include-logs` did the same. The one
+  silent fallback this project forbids was in a documented feature.
+- Both now warn with the reason and the path: "…was requested, but <cwd> is not a git repository;
+  reports/diff.md was not written." A clean tree in a real repository is a different fact — there is
+  nothing to show — and stays silent.
+- The contract and `docs/cli.md` say the same thing, so the flag is not advertised as unconditional.
+
+Verified: a non-git fixture generates with both flags, exit 0, neither artifact recorded, and both
+warnings in `manifest.warnings`; the git tests still see their reports on a real repository.
 ## 0.17.18
 
 - The goal log records the 0.17.17 round: the review that called a freshly generated snapshot stale,

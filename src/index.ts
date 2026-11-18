@@ -29,7 +29,7 @@ import { generateSelectionReport } from "./generator/selection.js";
 import { planForQuestion } from "./mcp/retrieval.js";
 import { generateMonolithXml } from "./generator/monolith.js";
 import { isCommentStrippable, stripComments } from "./generator/comments.js";
-import { generateDiffReport } from "./generator/diff.js";
+import { generateDiffReport, isGitRepository } from "./generator/diff.js";
 import { generateLogReport } from "./generator/log.js";
 import { generateTokenTree } from "./generator/tokens.js";
 import { generatePrompt } from "./generator/prompt.js";
@@ -3446,6 +3446,22 @@ export function generateSnapshot(
   const logReport = artifacts.log
     ? generateLogReport(config.cwd, { count: config.logCount })
     : null;
+  // A requested report that could not be produced has to say so. `--include-diffs` outside a git
+  // repository accepted the flag, wrote nothing, recorded nothing and exited 0: the one silent
+  // fallback this project forbids, and it was in the release notes as a feature. A clean tree in a
+  // real repository is a different fact — there is nothing to show — and stays silent.
+  if (artifacts.diff && diffReport === null && !isGitRepository(config.cwd)) {
+    manifest.warnings.push(
+      "--include-diffs was requested, but " + config.cwd + " is not a git repository; reports/diff.md was not written."
+    );
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
+  if (artifacts.log && logReport === null && !isGitRepository(config.cwd)) {
+    manifest.warnings.push(
+      "--include-logs was requested, but " + config.cwd + " is not a git repository; reports/log.md was not written."
+    );
+    manifest.totals.warningCount = manifest.warnings.length;
+  }
   if (logReport !== null) manifest.artifacts.log = artifactRecord(logReport.text);
   const tokenTree = artifacts.tokenTree ? generateTokenTree(manifest) : null;
   if (tokenTree !== null) manifest.artifacts.tokenTree = artifactRecord(tokenTree.text);

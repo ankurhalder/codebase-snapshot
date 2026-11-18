@@ -757,7 +757,8 @@ export function buildAgentContract(): AgentContract {
         appliesTo: optionAppliesTo("include-diffs"),
         summary:
           "Also write reports/diff.md: the unstaged and staged diff, with the command that produced " +
-          "each, bounded to 200 KiB and truncated with a note. Absent when there is no change.",
+          "each, bounded to 200 KiB and truncated with a note. Absent when there is no change; " +
+          "outside a git repository the run warns and writes nothing.",
       },
       {
         flag: "--include-logs",
@@ -765,7 +766,8 @@ export function buildAgentContract(): AgentContract {
         default: "unset",
         appliesTo: optionAppliesTo("include-logs"),
         summary:
-          "Also write reports/log.md: the last n commits (1-500), one line each, newest first.",
+          "Also write reports/log.md: the last n commits (1-500), one line each, newest first. " +
+          "Outside a git repository the run warns and writes nothing.",
       },
       {
         flag: "--token-tree",
