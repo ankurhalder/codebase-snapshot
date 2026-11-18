@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { generateSnapshot } from "../index.js";
+import { loadConfigFileDetailed } from "../config.js";
 import { createServer } from "../mcp/run.js";
 import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
@@ -262,9 +263,18 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             send(400, { error: "not a directory: " + target });
             return;
           }
+          // The page used to generate on built-in defaults: a repository with a snapshot.config.json
+          // produced a different snapshot from the browser than from the CLI, and an executable
+          // config was silently ignored rather than refused — the one thing the MCP server and the
+          // security review both promise this surface does not do.
+          const loaded = await loadConfigFileDetailed(target, { allowExecutableConfig: false });
+          if (loaded.errors.length > 0) {
+            send(400, { error: loaded.errors.join("; ") });
+            return;
+          }
           const started = Date.now();
           try {
-            const manifest = generateSnapshot({ cwd: target }, {
+            const manifest = generateSnapshot({ ...(loaded.config ?? {}), cwd: target }, {
               ...(provenance === undefined ? {} : { source: provenance }),
               ...(mode === "slice" ? { slice: { question } } : {}),
               ...(mode === "budget" && budgetTokens !== undefined ? { budgetTokens } : {}),

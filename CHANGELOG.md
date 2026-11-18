@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.45
+
+**The web page generated on defaults and silently ignored the repository's config.**
+
+- `POST /api/generate` called `generateSnapshot({ cwd })` directly, and the library never loads a
+  config file — the CLI and the MCP server do that before calling it. So a project with
+  `snapshot.config.json` got one snapshot from the browser and a different one from the terminal.
+- Worse, an **executable** config (`snapshot.config.ts`) was silently ignored: the page generated on
+  defaults and said nothing, while the MCP server and the security review both promise this surface
+  refuses repository code. It now loads the config with `allowExecutableConfig: false` and answers
+  400 with the same message the server gives (`… is an executable config, and this server does not
+  run repository code.`).
+
+Verified: a JSON config excluding `src/generated/**` removes the path from the browser snapshot and
+records the skip; a `.ts` config is refused and its side effect never runs.
 ## 0.17.44
 
 - The goal log records the 0.17.43 round: the health page covering 14 of 18 checks, and the

@@ -247,3 +247,60 @@ test("the page is usable without seeing it: labels on every control and a live s
   const unlabeled = controls.filter((control) => !/aria-label=|<label/.test(control));
   assert.deepEqual(unlabeled, [], "every control has an accessible name");
 });
+
+test("the page refuses an executable config instead of ignoring it", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "serve-exec-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "x", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n");
+  fs.writeFileSync(
+    path.join(repo, "snapshot.config.ts"),
+    'import fs from "node:fs";\nfs.writeFileSync("EXECUTED", "yes");\nexport default {};\n'
+  );
+
+  const server = await serve(t, repo);
+  const response = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers: { ...auth(server), "content-type": "application/json" },
+    body: JSON.stringify({ source: ".", mode: "full" }),
+  });
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /executable config/);
+  assert.equal(fs.existsSync(path.join(repo, "EXECUTED")), false, "the config was not executed");
+});
+
+test("the page honours a JSON config instead of generating on defaults", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "serve-config-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(path.join(repo, "src", "generated"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ name: "c", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(repo, "src", "a.ts"), "export const a = 1;\n");
+  fs.writeFileSync(path.join(repo, "src", "generated", "skip.ts"), "export const skip = 1;\n");
+  fs.writeFileSync(
+    path.join(repo, "snapshot.config.json"),
+    JSON.stringify({ excludePatterns: ["src/generated/**"] }, null, 2) + "\n"
+  );
+
+  const server = await serve(t, repo);
+  const response = await fetch(server.url + "api/generate", {
+    method: "POST",
+    headers: { ...auth(server), "content-type": "application/json" },
+    body: JSON.stringify({ source: ".", mode: "full" }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  const manifest = JSON.parse(fs.readFileSync(path.join(body.path, "manifest.json"), "utf8"));
+  assert.equal(
+    manifest.files.some((file) => file.relativePath === "src/generated/skip.ts"),
+    false,
+    "the JSON config excluded the path"
+  );
+  assert.ok(
+    manifest.skipped.some((record) => record.path === "src/generated/skip.ts"),
+    "and the exclusion is recorded"
+  );
+});

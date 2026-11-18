@@ -39,6 +39,14 @@ a path outside the directory it was started for, or outside a clone it created i
 decides who may ask; this decides what may be asked about — otherwise a leaked token would be an
 arbitrary-file-read primitive over the whole disk.
 
+## The repository's configuration
+
+The page loads the repository's `snapshot.config.json` (or the `snapshot` key of `package.json`),
+so a project configured to exclude a directory generates the same snapshot in the browser as it
+does on the command line. An **executable** config (`snapshot.config.ts`, `.mjs`, `.cjs`) is
+refused with the reason, exactly as the MCP server refuses it: this surface does not run
+repository code.
+
 ## The token
 
 The page is HTML and is served without a token; everything that reads or writes a repository needs
