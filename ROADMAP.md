@@ -70,7 +70,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | # | Task | Status |
 | - | :--- | :--- |
 | 36 | Benchmarks against repomix and gitingest on 10 public repos | shipped 0.14.5: `scripts/benchmark-suite.mjs` ran ten public repositories in one pass; results in `docs/benchmarks.md` |
-| 37 | Site pages for every new feature | planned |
+| 37 | Site pages for every new feature | shipped 0.16.2-0.17.0: 30 pages, `docs/answer.md` added, audit-site clean |
 | 38 | Security review of the server and the remote ingestion path | shipped 0.12.34 (threat model, controls, residual risks) |
 | 39 | Migration guide for the 0.13-0.17 changes | shipped 0.12.37 |
 
@@ -92,7 +92,8 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 0.13.0 | Retrieval server, browser, health, parity, beyond parity | **published** 2026-11-18; `latest` on npm |
 | 0.14.0 | The audit proves the manifest: bodies, counts, packs, workspace index, metrics | **published** 2026-11-18 |
 | 0.15.0 | Parity measured on ten public repositories; per-run `--only`/`--ignore` | **published** 2026-11-18 |
-| 0.16.0 | Beyond parity: selections that explain themselves, budgets that answer "what if", `snapshot_answer` | **published** 2026-11-18; `latest` on npm |
+| 0.16.0 | Beyond parity: selections that explain themselves, budgets that answer "what if", `snapshot_answer` | **published** 2026-11-18 |
+| 0.17.0 | Endgame: a page per feature, refreshed security review, current migration guide, final numbers | tagged 2026-11-18 |
 
 ## Shipped so far
 

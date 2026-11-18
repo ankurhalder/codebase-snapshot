@@ -30,6 +30,64 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.0
+
+**The endgame: what this is, and how it is proven.**
+
+`codebase-snapshot` reads a repository and writes a text representation of it that an AI reader can
+use: budgeted parts, a manifest that accounts for every path, and — since 0.12.15 — a server that
+answers questions about the repository instead of making the reader open all of it.
+
+### What a reader gets
+
+- **A dump that fits.** Byte-budgeted parts, a per-file accounting of what was written, previewed,
+  stripped or skipped, and an audit that recomputes those claims from the parts.
+- **A selection, when the question is narrower than the repository**: `--slice` for a question,
+  `--budget-tokens` for a ceiling, `--delta` for a change set. Each explains itself in
+  `reports/selection.md`, and each records what it left out.
+- **A server that answers questions.** 26 MCP tools over stdio or Streamable HTTP with bearer tokens,
+  from `snapshot_answer` (question to cited windows) to `snapshot_health` (an audit of the snapshot
+  itself), plus prompts and resources. Reads come from the snapshot, so redaction and exclusions
+  still apply.
+- **Proof of its own output.** Ed25519 signatures, artifact digests, a workspace index that must
+  agree with its members, and `snapshot health` with a score and a strict exit code.
+
+### The program, by milestone
+
+| Version | Theme | Published |
+| :--- | :--- | :--- |
+| 0.13.0 | The MCP server, remote ingestion, signing, slicing, delta packs, multi-repo | 2026-11-18 |
+| 0.14.0 | The audit proves the manifest: bodies, counts, packs, workspace index, metrics | 2026-11-18 |
+| 0.15.0 | Parity measured on ten public repositories; per-run `--only`/`--ignore` | 2026-11-18 |
+| 0.16.0 | Beyond parity: self-explaining selections, what-if budgets, `snapshot_answer` | 2026-11-18 |
+| 0.17.0 | This milestone: the site, the security review, the migration guide, the final number | 2026-11-18 |
+
+Every version in between was committed, tagged and pushed; `x.y.0` is what the registry carries, and
+`latest` never points at a patch. The number is not the promise — the changelog entry is.
+
+### How it is proven
+
+- **Tests**: 1333 in the suite, 1325 passing, 0 failing, 8 skipped because they need a host this
+  runner is not. The suite treats the tool as a black box where it can: generate, validate, serve,
+  ask, and check the answer.
+- **The audit**: every generated snapshot in the suite is audited, and the audit is itself probed by
+  breaking what it claims to check — a truncated part, an edited count, a pack minus one entry, an
+  index with a wrong fingerprint, an edited selection report.
+- **Measurement**: ten public repositories through this tool, repomix and gitingest in one command
+  (`scripts/benchmark-suite.mjs`), with the page saying where the numbers are comparable and where
+  they are a policy difference.
+- **The artifact**: a 53-file tarball whose lockfile agrees with `package.json`, checked before every
+  publish by the same `verify` a reader can run.
+- **The site**: 30 pages, every one with a description, a canonical URL and no broken link
+  (`audit-site`), generated from the same documents the repository ships.
+
+### What is deliberately not here
+
+- **No 1.0.0.** The line ends at 0.17.0 because a version number is a promise about stability, and
+  this project would rather make the next promise in a changelog than in a semver jump.
+- **No runtime dependencies.** Node built-ins and the TypeScript compiler (a dev dependency) only.
+- **No silent fallback.** An unknown flag, preset, budget or config key is an error, and a path that
+  leaves the snapshot is recorded with the reason it left.
 ## 0.16.2
 
 **The endgame pages.**
