@@ -59,6 +59,18 @@ const WRITES: ToolAnnotations = {
 /** Largest text block any one tool returns. Past this an agent should ask for a window. */
 const MAX_RESULT_BYTES = 64 * 1024;
 
+/**
+ * Caps one block at the per-response limit, the same way `snapshot_read` does.
+ *
+ * Three tools render file bodies (`context`, `diff_context`, `symbol`) and only `read` enforced the
+ * limit. A single 200 KB line came back whole from `context`, measured, and unlabelled; the response
+ * a client received was four times what any of its siblings would send.
+ */
+function capResultText(text: string): { text: string; clipped: boolean } {
+  const clipped = truncateToBytes(text, MAX_RESULT_BYTES);
+  return { text: clipped.isTruncated ? clipped.content : text, clipped: clipped.isTruncated };
+}
+
 const ROOT_PROPERTY = {
   type: "string" as const,
   description: "Repository root. Defaults to the directory this server was started in.",
@@ -1165,9 +1177,12 @@ const diffContextTool: ToolSpec = {
         continue;
       }
       used += tokens;
+      const capped = capResultText(window.text);
       changed.push({ path: file.relativePath, part: file.part, tokens });
-      text.push("### " + file.relativePath + " (" + file.part + ")");
-      text.push(window.text);
+      text.push(
+        "### " + file.relativePath + " (" + file.part + (capped.clipped ? ", first 64 KiB" : "") + ")"
+      );
+      text.push(capped.text);
     }
     const dependents: Array<{ path: string; imports: string }> = [];
     for (const entry of changed) {
@@ -1262,11 +1277,13 @@ const symbolTool: ToolSpec = {
       if (index === -1) continue;
       const from = Math.max(0, index - 3);
       const to = Math.min(lines.length, index + windowSize);
+      const capped = capResultText(lines.slice(from, to).join("\n"));
       matches.push({
         path: file.relativePath,
         part: file.part,
         line: index + 1,
-        text: lines.slice(from, to).join("\n"),
+        text: capped.text,
+        ...(capped.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
       });
     }
     if (matches.length === 0) {
@@ -1417,7 +1434,8 @@ const contextTool: ToolSpec = {
         continue;
       }
       const window = windowText(section.body, 1, linesPerFile);
-      const body = window.text;
+      const capped = capResultText(window.text);
+      const body = capped.text;
       let tokens = Math.max(1, Math.ceil(Buffer.byteLength(body, "utf8") / 4));
       if (used + tokens > budget) {
         const keep = Math.max(4, Math.floor(((budget - used) / tokens) * linesPerFile));
@@ -1426,14 +1444,20 @@ const contextTool: ToolSpec = {
           missing.push(file.relativePath + " (budget)");
           continue;
         }
-        const partial = Math.max(1, Math.ceil(Buffer.byteLength(smaller.text, "utf8") / 4));
-        text.push("### " + file.relativePath + " (" + file.part + ", first " + Math.max(4, keep) + " lines)");
-        text.push(smaller.text);
+        const smallerCapped = capResultText(smaller.text);
+        const partial = Math.max(1, Math.ceil(Buffer.byteLength(smallerCapped.text, "utf8") / 4));
+        text.push(
+          "### " + file.relativePath + " (" + file.part + ", first " + Math.max(4, keep) + " lines" +
+            (smallerCapped.clipped ? ", first 64 KiB" : "") + ")"
+        );
+        text.push(smallerCapped.text);
         blocks.push({ path: file.relativePath, part: file.part, lines: Math.max(4, keep), tokens: partial });
         used += partial;
         continue;
       }
-      text.push("### " + file.relativePath + " (" + file.part + ")");
+      text.push(
+        "### " + file.relativePath + " (" + file.part + (capped.clipped ? ", first 64 KiB" : "") + ")"
+      );
       text.push(body);
       blocks.push({ path: file.relativePath, part: file.part, lines: window.text === "" ? 0 : window.text.split("\n").length, tokens });
       used += tokens;

@@ -742,3 +742,24 @@ test("diff_context resolves a tsconfig path alias when naming dependents", async
     "the alias importer is a dependent: " + result.text
   );
 });
+
+test("every tool that renders a body caps it at 64 KiB", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flood-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "f", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(root, "src", "blob.ts"), "export const blob = \"" + "x".repeat(200000) + "\";\n");
+  fs.writeFileSync(path.join(root, "src", "imports.ts"), 'import { blob } from "./blob.js";\nexport const value = blob;\n');
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const contextBlock = await call("snapshot_context", { files: ["src/blob.ts"], maxTokens: 60000 }, context);
+  assert.ok(Buffer.byteLength(contextBlock.text) < 80 * 1024, "context is capped");
+  assert.match(contextBlock.text, /first 64 KiB/);
+
+  const diffBlock = await call("snapshot_diff_context", { paths: ["src/blob.ts"], maxTokens: 60000 }, context);
+  assert.ok(Buffer.byteLength(diffBlock.text) < 80 * 1024, "diff_context is capped");
+
+  const symbol = await call("snapshot_symbol", { name: "blob", lines: 200 }, context);
+  assert.ok(Buffer.byteLength(symbol.text) < 80 * 1024, "symbol is capped");
+});

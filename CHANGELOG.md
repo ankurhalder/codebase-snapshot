@@ -30,6 +30,19 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.27
+
+**One limit, four tools, three of them ignoring it.**
+
+- The 64 KiB per-response cap was applied in `snapshot_read` and, after 0.17.9, in `snapshot_answer`.
+  `snapshot_context`, `snapshot_diff_context` and `snapshot_symbol` rendered file bodies without it:
+  a 200 KB single-line file came back whole from `snapshot_context` — a 200 KB response measured and
+  unlabelled, while its siblings would have refused.
+- One helper (`capResultText`) now applies the same limit and the same code-point-safe truncation in
+  all four places, and a clipped block says `first 64 KiB` in its heading.
+
+Verified: the same 200 KB fixture returns under 80 KiB from all three formerly unbounded tools;
+`snapshot_read` and `snapshot_answer` are unchanged.
 ## 0.17.26
 
 - The goal log records the 0.17.25 round: the two resolvers that disagreed about the same import
