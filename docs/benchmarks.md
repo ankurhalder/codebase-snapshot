@@ -52,15 +52,17 @@ tokens in full.
 node scripts/compare.mjs --repomix      # add --json for machine-readable output
 ```
 
-repomix is fetched through `npx` at run time; it is never a dependency of this package. Measured on
-this repository at 0.12.65, repomix 1.19.0, same machine:
+repomix is fetched through `npx` at run time and gitingest through `python -m gitingest`;
+neither is a dependency of this package. Measured on this repository at 0.14.2, repomix 1.19.0,
+gitingest from PyPI, same machine:
 
 | Tool / mode | Files | Content bytes | Tokens | vs full | Time |
 | :-- | --: | --: | --: | --: | --: |
-| codebase-snapshot (full) | 330 | 3,197,091 | 1,027,911 | 100% | 2.14 s |
-| codebase-snapshot (slice) | 4 | 239,395 | 66,653 | 6.5% | 2.13 s |
-| codebase-snapshot (budget 30,000) | 24 | 119,701 | 36,261 | 3.5% | 2.07 s |
-| repomix 1.19.0 | 329 | 3,386,284 | 854,178 | 83.1% | n/a |
+| codebase-snapshot (full) | 336 | 3,301,883 | 1,060,727 | 100% | 2.22 s |
+| codebase-snapshot (slice) | 4 | 239,837 | 66,903 | 6.3% | 2.14 s |
+| codebase-snapshot (budget 30,000) | 22 | 119,915 | 36,107 | 3.4% | 2.09 s |
+| repomix 1.19.0 | 335 | 3,519,653 | 888,168 | 83.7% | n/a |
+| gitingest | ? | 3,123,817 | n/a | n/a | n/a |
 
 Read that honestly:
 
@@ -72,8 +74,10 @@ Read that honestly:
   which includes its own wrappers), and the file sets differ slightly: 330 against 329.
 - **The modes are what the other tool does not have.** repomix packs the repository; a slice and a
   budget are the same snapshot narrowed after scanning, at 6.5% and 3.5% of the tokens.
-- **gitingest is not installed here** (`python -m gitingest` is missing). The harness supports it —
-  `--gitingest` — and reports its digest size, not a token count, because it does not publish one.
+- **gitingest's digest is smaller in bytes** (3.12 MB against our 3.30 MB of file content), and it
+  publishes no token count at all; the harness reports its digest size and says so. Its output is
+  one flat document with a tree and a separator per file, which is why a byte comparison is the
+  only honest one.
 
 The same caveats apply to any comparison: different ignore rules, different wrappers, different
 tokenizers. What is comparable is the shape — full packs are too large for a context window, and a

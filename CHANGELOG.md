@@ -30,7 +30,14 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
-## 0.14.1
+## 0.14.2
+
+- **The comparison harness runs gitingest, and now does.** `--gitingest` reported "not available" here
+  because gitingest aborts on Windows with `charmap codec can't encode` while printing its tree; the
+  harness sets `PYTHONIOENCODING=utf-8` for that child process and it completes.
+- `docs/benchmarks.md` carries the three-way table from a real run: our full pack 336 files /
+  1,060,727 estimated tokens, repomix 335 / 888,168, gitingest 3.12 MB of digest with no token count.
+  The caveats say which numbers are comparable (bytes) and which are not (tokenizers).
 
 ## 0.14.1
 

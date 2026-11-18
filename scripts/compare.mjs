@@ -86,6 +86,9 @@ function gitingest() {
     encoding: "utf8",
     timeout: 300000,
     maxBuffer: 64 * 1024 * 1024,
+    // gitingest prints a directory tree; on Windows its stdout is cp1252 unless told otherwise and
+    // it aborts with "charmap codec can't encode" before writing anything.
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
   });
   if (result.status !== 0) return { available: false, reason: ((result.stderr ?? "") + (result.stdout ?? "")).trim().split("\n").pop() };
   return { available: true, bytes: Buffer.byteLength(result.stdout ?? "", "utf8") };
