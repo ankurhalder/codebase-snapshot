@@ -210,11 +210,15 @@ export function planForQuestion(
     return { question, budgetTokens: budget, usedTokens: 0, files: [], skipped: [], notes };
   }
   if (scored.length === 0) {
-    notes.push("No file matched the question's terms; the plan falls back to the most-imported files.");
     const hubs = manifest.indexes.imports.centralFiles.slice(0, 12);
     for (const hub of hubs) {
       const file = byPath.get(hub.path);
       if (file !== undefined) scored.push({ file, score: 1, why: "hub, " + hub.importedByCount + " importers" });
+    }
+    // Say the fallback only when it produced something; otherwise the later note says plainly that
+    // nothing matched and there was nothing to fall back on, and two notes would say it twice.
+    if (scored.length > 0) {
+      notes.push("No file matched the question's terms; the plan falls back to the most-imported files.");
     }
   }
 
@@ -294,7 +298,17 @@ export function planForQuestion(
     }
   }
 
-  if (chosen.size === 0) notes.push("Nothing fit the budget: every candidate file costs more than the remaining tokens.");
+  // "Nothing fit the budget" used to be printed even when there was no candidate at all, which
+  // sent the reader looking at the budget for a problem that was in the question. Three states,
+  // three sentences.
+  if (chosen.size === 0) {
+    if (scored.length === 0) {
+      notes.push("No candidate file matched the question, and this snapshot has no centrality data to fall back on.");
+    } else {
+      const cheapest = scored.reduce((minimum, item) => Math.min(minimum, Math.ceil(item.file.includedBytes / 4)), Infinity);
+      notes.push("Nothing fit the budget: the cheapest candidate costs about " + formatNumber(cheapest) + " tokens.");
+    }
+  }
   notes.push(
     formatNumber(chosen.size) + " file(s) chosen of " +
       formatNumber(manifest.files.length) + " in the snapshot; " +

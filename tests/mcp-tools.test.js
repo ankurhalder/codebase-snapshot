@@ -641,3 +641,30 @@ test("an empty snapshot is reported as empty, not as a question that matched not
   const budget = await call("snapshot_budget", { budgets: [1000] }, context);
   assert.match(budget.text, /holds no files/);
 });
+
+test("a question that matches nothing explains itself instead of returning bare zeros", async (t) => {
+  // With imports the normal scoring already finds centrality-heavy files; the plan says why per file.
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+  const withHubs = await call("snapshot_plan_for", { question: "zzzz-no-such-term", maxTokens: 1000 }, context);
+  assert.match(withHubs.text, /centrality/, "the reason for each file is stated");
+  assert.doesNotMatch(withHubs.text, /Nothing fit the budget/);
+
+  // Without imports there is nothing to fall back on, and the plan must say that rather than blaming
+  // the budget for a question that matched nothing.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "bare-"));
+  t.after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(bare, "package.json"), JSON.stringify({ name: "b", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(bare, "a.ts"), "export const a = 1;\n");
+  const bareContext = contextFor(bare);
+  await call("snapshot_generate", {}, bareContext);
+
+  const plan = await call("snapshot_plan_for", { question: "zzzz-no-such-term", maxTokens: 1000 }, bareContext);
+  assert.match(plan.text, /no centrality data/);
+  assert.doesNotMatch(plan.text, /Nothing fit the budget/, "the budget is not blamed for a missing match");
+
+  const answer = await call("snapshot_answer", { question: "zzzz-no-such-term", maxTokens: 1000 }, bareContext);
+  assert.match(answer.text, /Notes:/);
+  assert.match(answer.text, /no centrality data/);
+});

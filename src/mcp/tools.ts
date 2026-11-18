@@ -1689,6 +1689,13 @@ const answerTool: ToolSpec = {
       lines.push("Not included:");
       for (const entry of omitted) lines.push("- " + entry.path + " - " + entry.reason);
     }
+    // The planner's own notes are the explanation when nothing was assembled: without them an
+    // empty answer looks like the tool failed rather than like the question matched nothing.
+    if (plan.notes.length > 0) {
+      lines.push("");
+      lines.push("Notes:");
+      for (const note of plan.notes) lines.push("- " + note);
+    }
     return {
       text: lines.join("\n"),
       structured: { question, budgetTokens: maxTokens, usedTokens: used, files: blocks, omitted },

@@ -30,6 +30,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.4
+
+**When the answer is empty, say why.**
+
+- `snapshot_answer` dropped the planner's notes entirely, so a zero-file answer was a header and
+  nothing else. The notes now close the block under `Notes:`.
+- The planner had one budget sentence for two different failures: "Nothing fit the budget" was
+  printed even when no file matched at all, sending the reader to the wrong number. It now says
+  "No candidate file matched the question…" when there were no candidates, and only blames the
+  budget when candidates existed and the cheapest one did not fit — with its cost named.
+- The fallback sentence is emitted only when the centrality fallback produced files; saying "the
+  plan falls back to the most-imported files" and then "<no files> and no fallback to offer" said it
+  twice and contradicted itself.
+
+Verified: an unmatched question on a repository without imports reports "no centrality data"; one
+  with imports lists its centrality reasons; neither claims the budget was the problem.
 ## 0.17.3
 
 - The 0.17.2 docs change put the `snapshot_generate` note in the reading list as its own bullet,
