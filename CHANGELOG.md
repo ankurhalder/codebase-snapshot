@@ -30,6 +30,26 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.28
+
+**`--sign` failed its own health check, about one run in forty.**
+
+- Reproduced a full-`verify` failure: `health` reported `signature.json` as containing a
+  secret-shaped value, for a snapshot the tool had just signed with a fresh key. The rule was
+  `known-vendor-token-prefix`, whose Azure DevOps shape is **52 mixed-case alphanumerics** — a random
+  ed25519 public key or signature contains such a run often enough to match. A brute-force scan of
+  5,000 generated records put the false-positive rate at 2.6%.
+- The audit now exempts the record's **key material** (`publicKey`, `signature`, `manifestSha256`,
+  `fingerprint`) from the artifact scan and scans every other field of the record, so a token
+  smuggled into `keyOrigin` or `signedAt` is still a critical failure. The exempt bytes are random
+  by construction and are verified against the manifest by the signature check.
+- The first test I wrote for this replaced the public key with a fake one and expected health to
+  pass; it failed for the right reason (the signature no longer verified). The test now finds a real
+  ed25519 key whose base64 contains the token shape and signs the manifest with it, so it exercises
+  the false positive without lying about validity.
+
+Verified: 12 consecutive signed snapshots pass health; the crafted token-shaped-but-valid signature
+passes; the same record with a vendor token in `keyOrigin` fails.
 ## 0.17.27
 
 **One limit, four tools, three of them ignoring it.**

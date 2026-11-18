@@ -6,7 +6,7 @@ import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { compileSecretRules, scanAndRedactSecrets } from "../security/redact.js";
 import { estimateTokens } from "../tokenize.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
-import { verifySnapshotSignature } from "../signing.js";
+import { SIGNATURE_FILE, verifySnapshotSignature } from "../signing.js";
 import { findSection, parsePartSections } from "../partitioner/part-format.js";
 import type { Manifest, SecretRule } from "../types.js";
 
@@ -555,6 +555,12 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   let scannedBytes = 0;
   for (const relative of walk(snapshotDir)) {
     if (!TEXT_ARTIFACT.test(relative) || scannedBytes > scanBudget) continue;
+    // The signature record is scanned below, without its key material: a random ed25519 public
+    // key or signature contains a 52-character alphanumeric run often enough (about one run in
+    // forty) to match the Azure DevOps token shape, and the audit then failed the snapshot it had
+    // just signed. That is a false positive with a concrete cost: `--sign` failed `health`
+    // intermittently.
+    if (relative === SIGNATURE_FILE) continue;
     const text = readText(path.join(snapshotDir, relative));
     if (text === null) continue;
     scannedBytes += Buffer.byteLength(text, "utf8");
@@ -563,6 +569,33 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
       leakHits.push(relative + " (" + found.findings.length + " line(s))");
     }
   }
+  // The record's non-key fields are still scanned for secret shapes. Its public key, signature,
+  // fingerprint and manifest digest are random by construction and are verified against the
+  // manifest by the signature check, so scanning those bytes can only produce false positives.
+  const signatureRecordPath = path.join(snapshotDir, SIGNATURE_FILE);
+  if (fs.existsSync(signatureRecordPath)) {
+    const recordText = readText(signatureRecordPath);
+    if (recordText !== null) {
+      scannedBytes += Buffer.byteLength(recordText, "utf8");
+      let scanText = recordText;
+      try {
+        const record = JSON.parse(recordText) as Record<string, unknown>;
+        const rest: Record<string, unknown> = { ...record };
+        delete rest.publicKey;
+        delete rest.signature;
+        delete rest.manifestSha256;
+        delete rest.fingerprint;
+        scanText = JSON.stringify(rest, null, 2);
+      } catch {
+        // A malformed record is a signature-check failure; scan it as text as well.
+      }
+      const found = scanAndRedactSecrets(scanText, rules, SIGNATURE_FILE);
+      if (found.findings.length > 0) {
+        leakHits.push(SIGNATURE_FILE + " (" + found.findings.length + " line(s))");
+      }
+    }
+  }
+
   checks.push(
     leakHits.length === 0
       ? check("secrets.artifacts", "No unmasked secret survives in an artifact", "critical", "pass",
