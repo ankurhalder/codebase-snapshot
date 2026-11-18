@@ -30,6 +30,19 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.15.3
+
+**A narrowed snapshot explains itself.**
+
+- A slice or a budget now writes `reports/selection.md`: the question and budget, every chosen file
+  with its token cost and the reason it was chosen, the count of files left out, and for a budget
+  the files a larger budget would buy next. The numbers come from the manifest blocks, so the report
+  and the data cannot drift.
+- The report is a recorded artifact: `validate` fails when it is edited or deleted, and the audit
+  expects it only when the manifest records it.
+
+Verified: `--slice` writes the question and the chosen path; `--budget-tokens 500` names the
+headroom and the next files; appending one line to the report makes `validate` fail with the path.
 ## 0.15.2
 
 **Budgets answer "what if", not only "what fits".**

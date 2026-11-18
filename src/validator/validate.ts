@@ -1368,6 +1368,7 @@ export function validateSnapshot(
     ["reports/diff.md", manifest.artifacts?.diff],
     ["reports/log.md", manifest.artifacts?.log],
     ["reports/tokens.md", manifest.artifacts?.tokenTree],
+    ["reports/selection.md", manifest.artifacts?.selection],
     ["full-codebase.json", manifest.artifacts?.fullJson],
     ["full-codebase.md", manifest.artifacts?.fullMarkdown],
     ["full-codebase.xml", manifest.artifacts?.fullXml],

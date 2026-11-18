@@ -61,6 +61,7 @@ const ARTIFACT_FILES: Record<string, string> = {
   diff: "reports/diff.md",
   log: "reports/log.md",
   tokenTree: "reports/tokens.md",
+  selection: "reports/selection.md",
   fullJson: "full-codebase.json",
   fullMarkdown: "full-codebase.md",
   fullXml: "full-codebase.xml",

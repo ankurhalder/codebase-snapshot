@@ -521,6 +521,8 @@ export interface Manifest {
     prompt?: ManifestArtifact;
     navigation?: ManifestArtifact;
     projectTree?: ManifestArtifact;
+    /** Why a slice or budget snapshot holds what it holds (written only when narrowed). */
+    selection?: ManifestArtifact;
     audit?: ManifestArtifact;
     /** `reports/diff.md`, when `diff` was requested and the repository had changes. */
     diff?: ManifestArtifact;

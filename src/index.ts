@@ -25,6 +25,7 @@ import { generateAuditReport } from "./generator/audit.js";
 import { generateSarifReport } from "./generator/sarif.js";
 import { generateMonolithJson, generateMonolithMarkdown } from "./generator/monolith.js";
 import { generateNavigation } from "./generator/navigation.js";
+import { generateSelectionReport } from "./generator/selection.js";
 import { planForQuestion } from "./mcp/retrieval.js";
 import { generateMonolithXml } from "./generator/monolith.js";
 import { isCommentStrippable, stripComments } from "./generator/comments.js";
@@ -2852,6 +2853,9 @@ export function generateSnapshot(
   // supplied directly: the files (with their parsed imports) and an empty centrality table, which
   // the planner recomputes from `byFile`.
   let sliceBlock: Manifest["slice"] | undefined;
+  // One human-readable record of why the selection holds what it holds. Written as
+  // `reports/selection.md`; `selectionReport` stays null when nothing was narrowed.
+  let selectionReport: { kind: "slice" | "budget"; detail: string; files: Array<{ path: string; tokens: number; why: string }> } | null = null;
   if (options?.slice !== undefined) {
     const byFile = files
       .filter((file) => isSourceSummary(file.summary))
@@ -2876,6 +2880,11 @@ export function generateSnapshot(
       usedTokens: plan.usedTokens,
       files: plan.files.map((file) => file.path),
       dropped: scanned - plan.files.length,
+    };
+    selectionReport = {
+      kind: "slice",
+      detail: "Question: " + options.slice.question + "\nBudget: " + plan.budgetTokens.toLocaleString("en-US") + " tokens",
+      files: plan.files.map((file) => ({ path: file.path, tokens: file.tokens, why: file.why })),
     };
   }
 
@@ -2920,10 +2929,19 @@ export function generateSnapshot(
     const keep = new Set<string>();
     let used = 0;
     const selected: string[] = [];
+    const chosen: Array<{ path: string; tokens: number; why: string }> = [];
     for (const item of ranked) {
       if (used + item.tokens > budget) continue;
       keep.add(item.file.relativePath);
       selected.push(item.file.relativePath);
+      chosen.push({
+        path: item.file.relativePath,
+        tokens: item.tokens,
+        why:
+          (entry(item.file.relativePath) ? "entry point" : "not an entry point") +
+          "; " + (importers.get(item.file.relativePath) ?? 0) + " importer(s)" +
+          "; layer " + item.file.layer,
+      });
       used += item.tokens;
     }
     // What the next budget would buy: the first few files the current one could not fit, in the
@@ -2968,6 +2986,11 @@ export function generateSnapshot(
       coverage: { byLayer, entryPoints: { kept: entryKept, total: entryTotal }, symbols: { kept: symbolsKept, total: symbolsTotal } },
       headroomTokens: Math.max(0, budget - used),
       nextInLine,
+    };
+    selectionReport = {
+      kind: "budget",
+      detail: "Budget: " + budget.toLocaleString("en-US") + " tokens",
+      files: chosen,
     };
     if (entryTotal > 0 && entryKept < entryTotal) {
       warnings.push(
@@ -3420,6 +3443,10 @@ export function generateSnapshot(
       : null;
   if (promptText !== null) manifest.artifacts.prompt = artifactRecord(promptText);
   if (projectTree !== null) manifest.artifacts.projectTree = artifactRecord(projectTree);
+  // A narrowed snapshot explains its own selection. Rendered here, before the monolith embeds the
+  // manifest, so the embedded copy records it too.
+  const selectionText = selectionReport === null ? null : generateSelectionReport(manifest, selectionReport);
+  if (selectionText !== null) manifest.artifacts.selection = artifactRecord(selectionText);
 
   // Monolith artefacts are serialised LAST, after every warning they have to
   // describe and after the markdown digest they embed, so the manifest inside
@@ -3665,6 +3692,9 @@ export function generateSnapshot(
     }
     if (tokenTree !== null) {
       writeArtifact(reportsDir, "tokens.md", tokenTree.text);
+    }
+    if (selectionText !== null) {
+      writeArtifact(reportsDir, "selection.md", selectionText);
     }
     if (sarifText !== null) {
       // Written beside audit.md rather than instead of it: a human reads one and a CI gate

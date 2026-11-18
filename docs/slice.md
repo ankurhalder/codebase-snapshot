@@ -38,6 +38,14 @@ Every path that was scanned and not chosen is in `skipped[]` with reason `not-se
 `unchanged`, which would be a different and untrue statement. The brief says at the top that the
 snapshot is a slice, quotes the question, and warns that unselected paths are not in the parts.
 
+## The snapshot explains its own selection
+
+A slice writes `reports/selection.md`: the question, the budget, every chosen file with its token
+cost and the reason it was chosen, how many files were left out, and — for `--budget-tokens` — the
+files a larger budget would buy next, with their costs. The same numbers are in the manifest
+(`slice`, `budget.headroomTokens`, `budget.nextInLine`), and `validate` checks the report like any
+other artifact, so an edited report is drift.
+
 ## What it does not do
 
 - It does not read files that were excluded: sensitive files stay out, so a question about them
