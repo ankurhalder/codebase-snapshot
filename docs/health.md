@@ -43,6 +43,13 @@ secret, but you may not want it in the payload either.
 The score starts at 100; each failure costs 25 and each warning 5, with a floor of zero. It is a
 summary, not a substitute for the checks — the report always lists every one.
 
+### A member of a workspace
+
+When a snapshot sits beside a `WORKSPACE.json`, the audit compares that member's record with the
+snapshot: fingerprint and file count must agree. A workspace index that describes a different
+snapshot than the one beside it is a warning, not a failure — the member itself is intact — and
+`--strict` makes it exit 1.
+
 ## A workspace, all at once
 
 `health --all-members` reads `WORKSPACE.json` and audits every snapshot a `--workspace` run wrote,

@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.4
+
+- **The health audit checks a workspace member against its index.** When `WORKSPACE.json` sits beside
+  the snapshot, the member's recorded fingerprint and file count must match the snapshot; a stale or
+  edited index warns (and `--strict` exits 1) rather than leaving the deliverable saying two things
+  about one directory. An index that cannot be read warns with the parse error; an index that does not
+  list this member is a skip with the reason.
+
+Verified: editing a member's fingerprint makes the audit warn with the field that disagrees, and
+regenerating the workspace makes it pass again.
 ## 0.13.3
 
 - **`GET /metrics` on the HTTP transport.** Prometheus text, no dependency: request totals, a count

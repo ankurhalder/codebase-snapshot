@@ -123,3 +123,22 @@ test("health --all-members --format json returns one record per member", (t) => 
   }
   assert.equal(report.score, Math.min(...report.members.map((member) => member.score)));
 });
+
+test("health notices an index that disagrees with a member", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--workspace", "api,web"], root).code, 0);
+  const index = path.join(root, "snapshot", "WORKSPACE.json");
+  const document = JSON.parse(fs.readFileSync(index, "utf8"));
+  const api = document.members.find((member) => member.name === "api");
+  api.fingerprint = "f".repeat(64);
+  fs.writeFileSync(index, JSON.stringify(document, null, 2) + "\n");
+
+  const audited = run(["health", "--cwd", "api", "--out-dir", "../snapshot/api"], root);
+  assert.match(audited.out, /The workspace index agrees with this member/);
+  assert.match(audited.out, /disagrees with this member on: fingerprint/);
+
+  // Regenerating the workspace makes the index agree again.
+  assert.equal(run(["generate", "--workspace", "api,web"], root).code, 0);
+  const clean = run(["health", "--cwd", "api", "--out-dir", "../snapshot/api"], root);
+  assert.match(clean.out, /matches the index fingerprint/);
+});

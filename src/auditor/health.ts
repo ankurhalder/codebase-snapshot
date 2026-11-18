@@ -360,6 +360,45 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     );
   }
 
+  // A workspace index describes its members. When this snapshot is one of them, the two records
+  // have to agree, or the deliverable says two different things about the same directory.
+  const indexParent = path.dirname(snapshotDir);
+  const indexPath = path.join(indexParent, "WORKSPACE.json");
+  if (fs.existsSync(indexPath)) {
+    const indexText = readText(indexPath);
+    let members: Array<{ name?: unknown; path?: unknown; fingerprint?: unknown; files?: unknown }> = [];
+    let problem: string | null = null;
+    try {
+      const parsed = JSON.parse(indexText ?? "null") as { members?: unknown };
+      if (!Array.isArray(parsed?.members)) problem = "its members field is not an array";
+      else members = parsed.members as typeof members;
+    } catch (error) {
+      problem = (error as Error).message;
+    }
+    const memberName = path.basename(snapshotDir);
+    const member = members.find((entry) => entry.name === memberName);
+    if (problem !== null) {
+      checks.push(check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
+        "WORKSPACE.json could not be read: " + problem));
+    } else if (member === undefined) {
+      checks.push(check("workspace.index", "The workspace index agrees with this member", "warning", "skip",
+        "WORKSPACE.json lists no member named " + memberName + "."));
+    } else {
+      const disagreements: string[] = [];
+      if (member.fingerprint !== manifest.fingerprint) disagreements.push("fingerprint");
+      if (typeof member.files === "number" && member.files !== manifest.counts.totalFiles) {
+        disagreements.push("file count");
+      }
+      checks.push(
+        disagreements.length === 0
+          ? check("workspace.index", "The workspace index agrees with this member", "warning", "pass",
+              "Member " + memberName + " matches the index fingerprint and file count.")
+          : check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
+              "The index disagrees with this member on: " + disagreements.join(", ") + ". Regenerate the workspace.")
+      );
+    }
+  }
+
   // Leaks
   const rules = [...compileSecretRules(DEFAULT_SECRET_PATTERNS), ...(options.secretRules ?? [])];
   const scanBudget = options.maxScanBytes ?? 32 * 1024 * 1024;
