@@ -3450,15 +3450,18 @@ export function generateSnapshot(
   // repository accepted the flag, wrote nothing, recorded nothing and exited 0: the one silent
   // fallback this project forbids, and it was in the release notes as a feature. A clean tree in a
   // real repository is a different fact — there is nothing to show — and stays silent.
+  // The warning names no path: a warning is written into the manifest, and the health audit scans
+  // every written artifact for host paths. The first version of this message embedded `config.cwd`
+  // and the audit failed the snapshot it had just generated — correctly.
   if (artifacts.diff && diffReport === null && !isGitRepository(config.cwd)) {
     manifest.warnings.push(
-      "--include-diffs was requested, but " + config.cwd + " is not a git repository; reports/diff.md was not written."
+      "--include-diffs was requested, but the generated directory is not a git repository; reports/diff.md was not written."
     );
     manifest.totals.warningCount = manifest.warnings.length;
   }
   if (artifacts.log && logReport === null && !isGitRepository(config.cwd)) {
     manifest.warnings.push(
-      "--include-logs was requested, but " + config.cwd + " is not a git repository; reports/log.md was not written."
+      "--include-logs was requested, but the generated directory is not a git repository; reports/log.md was not written."
     );
     manifest.totals.warningCount = manifest.warnings.length;
   }

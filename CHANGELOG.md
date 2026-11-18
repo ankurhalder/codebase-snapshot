@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.21
+
+- **The warning leaked the host path it was warning about.** 0.17.19 wrote "…was requested, but
+  C:\Users\… is not a git repository" into `manifest.warnings`; the health audit scans every written
+  artifact for host paths and failed the snapshot the run had just produced. That is the audit doing
+  its job.
+- The message now says "the generated directory is not a git repository" and names no path. The
+  report test additionally asserts that a warning contains no drive-letter path.
+
+Verified: the full health suite passes (15 tests), including the host-path check that caught this;
+the non-git fixture still gets both warnings.
 ## 0.17.20
 
 - `docs/cli.md` still described `--include-logs` as if it always wrote its report, and the 0.17.19

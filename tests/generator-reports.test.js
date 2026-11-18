@@ -131,4 +131,5 @@ test("a requested report outside a git repository says why it was not written", 
   assert.match(warnings, /--include-diffs was requested/);
   assert.match(warnings, /--include-logs was requested/);
   assert.match(warnings, /not a git repository/);
+  assert.doesNotMatch(warnings, /[A-Za-z]:\\/, "a warning must not carry a host path");
 });
