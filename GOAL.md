@@ -617,3 +617,18 @@ Full `verify` at 0.17.15: 1345 tests, 1337 pass, 0 fail, 8 host skips; tarball 5
 
 Next: `snapshot_review` against a real working-tree diff, then the `--include-diffs` behaviour on a
 repository without git.
+
+### 0.17.17-0.17.18 - the review that called a fresh snapshot stale
+
+- Probed `snapshot_review` on a real git working-tree diff: the review said **"Snapshot: stale; run
+  snapshot_generate"** immediately after generating, because `validate` compares the config digest,
+  the digest covers the artifact selection (`--include-diffs`), and review has no flags to pass.
+- Fixed on two sides: the manifest now records `removeEmptyLines`, `pack` and `logCount` (the three
+  digest inputs it lacked, so any no-flag validator can reconstruct the run), and the review takes
+  the artifact selection and flag-only settings from `manifest.config` before validating. Config-file
+  drift (budgets, include/exclude, layers, kinds, preset) is still reported.
+- The same probe now reads "current" after generate and "stale" after one appended line.
+
+Full `verify` at 0.17.17: 1346 tests, 1338 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: `--include-diffs` on a repository without git, then the `--delta` flow against a real base.

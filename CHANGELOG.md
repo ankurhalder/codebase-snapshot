@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.18
+
+- The goal log records the 0.17.17 round: the review that called a freshly generated snapshot stale,
+  the manifest fields added so it cannot happen again, and the two-sided fix.
 ## 0.17.17
 
 **`snapshot_review` said "stale" about a snapshot it had just generated.**
