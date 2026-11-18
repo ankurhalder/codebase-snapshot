@@ -648,3 +648,19 @@ Full `verify` at 0.17.21: 1347 tests, 1339 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the `--delta` flow against a real base snapshot, then the signature path end to end
 (generate --sign, validate, health, tampered manifest).
+
+### 0.17.23-0.17.24 - the signature nobody checked
+
+- The delta flow was reproduced end to end first: a changed file plus its importer, an added file, a
+  removed file and one unchanged path, with `delta.removed` and `skipped[reason=unchanged]` both
+  recorded and `validate` clean. It holds.
+- The signature flow did not. `--sign` with `SNAPSHOT_SIGNING_KEY` writes a `configured` record and
+  `health` verifies it, but **`validate` never looked at `signature.json`**: a manifest edited after
+  signing passed the drift check. `validate` now verifies and exits 1 with
+  `signature: manifest.json changed after it was signed.`
+- `docs/signing.md` said health verifies; it now says both do, with the message.
+
+Full `verify` at 0.17.23: 1348 tests, 1340 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the MCP `snapshot_diff_context` and `snapshot_context` against a real base, then the wizard
+(`init --yes`, non-interactive refusals) as the last untested surface.

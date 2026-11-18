@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.24
+
+- The goal log records the 0.17.23 round: the delta flow reproduced clean, and the signed manifest
+  that `validate` called valid after it had been edited.
 ## 0.17.23
 
 **`validate` did not verify signatures, and the docs implied it did.**
