@@ -521,3 +521,22 @@ metadata problems; a 53-file tarball whose lockfile agrees with `package.json`.
 
 The program reached 0.17.0, but the work does not stop at the milestone: 0.17.x continues with
 hardening, coverage and the items listed in the roadmap's "after 0.17.0" note, until the deadline.
+
+### 0.17.1-0.17.6 - hardening after the milestone
+
+- 0.17.1 documented the final milestone; the registry carries exactly the five `x.y.0` versions with
+  `latest = 0.17.0`.
+- 0.17.2 `--only` matching nothing warned nowhere (exit 0, "integrity passed"); the planner described
+  an empty snapshot with two false statements; `snapshot_generate` lacked `only`/`ignore`. All three
+  fixed and pinned.
+- 0.17.3 the docs/schema test caught that the 0.17.2 docs note had stolen the generate entry's
+  example call. Fixed, and the release command now gates on test failure before tagging.
+- 0.17.4 `snapshot_answer` dropped the planner notes, so an empty answer had no explanation; the
+  planner blamed the budget when nothing had matched. Three states now have three sentences.
+- 0.17.5 `snapshot_read` clamped `lines: 0`, `lines: -3`, `fromLine: -5` and `fromLine: 2.7` to one
+  line and said nothing; impossible requests are errors that name the argument and the value.
+
+Full `verify` at 0.17.5: 1337 tests, 1329 pass, 0 fail, 8 host skips; tarball 53 files.
+
+The 0.17.x line continues: the backlog still holds the web page hardening, a wider fuzz pass over
+the part parser, and the per-command docs audit.

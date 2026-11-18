@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.6
+
+- The goal log records the 0.17.1-0.17.5 hardening round: the empty snapshot that warned nowhere, the
+  planner notes that blamed the wrong thing, the impossible line windows that were clamped, and the
+  docs slip the schema test caught.
 ## 0.17.5
 
 - **`snapshot_read` refused nothing it could not do.** `lines: 0`, `lines: -3`, `fromLine: -5` and
