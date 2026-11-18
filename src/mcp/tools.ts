@@ -1629,7 +1629,15 @@ const answerTool: ToolSpec = {
         structured: { question, budgetTokens: maxTokens, usedTokens: 0, files: [], omitted: [] },
       };
     }
-    const blocks: Array<{ path: string; why: string; tokens: number; text: string; truncated: boolean; totalLines: number }> = [];
+    const blocks: Array<{
+      path: string;
+      why: string;
+      tokens: number;
+      text: string;
+      truncated: boolean;
+      totalLines: number;
+      clippedAtBytes?: number;
+    }> = [];
     const omitted: Array<{ path: string; reason: string }> = [];
     let used = 0;
     const parts = new Map<string, string>();
@@ -1659,17 +1667,31 @@ const answerTool: ToolSpec = {
         continue;
       }
       const window = windowText(section.body, 1, linesPerFile);
-      const text = window.text;
-      const tokens = estimateTokens(text);
+      const numbered = window.text
+        .split("\n")
+        .map((line, index) => String(index + 1).padStart(5, " ") + "  " + line)
+        .join("\n");
+      // `snapshot_read` caps one response at MAX_RESULT_BYTES; this tool did not, so a single long
+      // line came back as a 200 KB block with no note. The same cap, applied per block, keeps one
+      // tool from being the one that floods the transport.
+      const clipped = truncateToBytes(numbered, MAX_RESULT_BYTES);
+      const bodyText = clipped.isTruncated ? clipped.content : numbered;
+      // Measure what is actually returned, not the window before clipping: `usedTokens` used to
+      // describe 200 KB of text while 64 KB was sent.
+      const tokens = estimateTokens(bodyText);
       if (used + tokens > maxTokens && blocks.length > 0) {
         omitted.push({ path: planned.path, reason: "did not fit the remaining budget" });
         continue;
       }
-      const numbered = text
-        .split("\n")
-        .map((line, index) => String(index + 1).padStart(5, " ") + "  " + line)
-        .join("\n");
-      blocks.push({ path: planned.path, why: planned.why, tokens, text: numbered, truncated: window.truncated, totalLines: window.totalLines });
+      blocks.push({
+        path: planned.path,
+        why: planned.why,
+        tokens,
+        text: bodyText,
+        truncated: window.truncated || clipped.isTruncated,
+        totalLines: window.totalLines,
+        ...(clipped.isTruncated ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      });
       used += tokens;
     }
     const lines = [
@@ -1678,7 +1700,15 @@ const answerTool: ToolSpec = {
     ];
     for (const block of blocks) {
       lines.push("");
-      lines.push("## " + block.path + " (" + block.tokens + " tokens, " + (block.truncated ? "first lines of " + block.totalLines : "whole file") + ")");
+      lines.push(
+        "## " + block.path + " (" + block.tokens + " tokens, " +
+          (block.clippedAtBytes !== undefined
+            ? "first " + Math.round(block.clippedAtBytes / 1024) + " KiB of the window"
+            : block.truncated
+              ? "first lines of " + block.totalLines
+              : "whole file") +
+          ")"
+      );
       lines.push("Why: " + block.why);
       lines.push("```");
       lines.push(block.text);

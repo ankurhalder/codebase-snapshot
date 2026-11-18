@@ -39,6 +39,9 @@ the server, not in every client.
 - **It will not exceed the budget silently.** If the first planned file alone is larger than the
   budget it is still returned, and the block says `first lines of N`; an empty answer would be
   worse than an oversized one that admits it.
+- **It will not flood the transport.** One block is capped at 64 KiB, the same cap `snapshot_read`
+  applies to one response; a block that hits it says `first 64 KiB of the window`. Without the cap
+  a single 200 KB line came back whole, and `usedTokens` described text the client never got.
 
 ## The CLI version of the same question
 

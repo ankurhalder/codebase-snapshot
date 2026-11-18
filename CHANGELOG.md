@@ -30,6 +30,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.9
+
+**A block cannot flood the transport.**
+
+- Probing adversarial content found the circular risk that survived the earlier checks: a file whose
+  body is one 200 KB line. The planner accepted it under a 60k budget, and `snapshot_answer`
+  returned the whole line — a 200 KB response, no note, while `snapshot_read` caps one response at
+  64 KiB.
+- Each block is now capped at `MAX_RESULT_BYTES` (64 KiB) with the same code-point-safe truncation;
+  the header says `first 64 KiB of the window` and the structured entry carries `clippedAtBytes`.
+- `usedTokens` is measured on **what is returned** rather than on the window before clipping: it used
+  to describe 200 KB while 64 KB was sent, which is the contract lying about its own size.
+
+Verified: a 200 KB single-line file under a 60k budget returns under 80 KiB, labels the cap, and
+keeps `usedTokens` consistent with the text; the other adversarial cases (fake `### FILE:` headings,
+embedded fences, anchors, CRLF, EOF fence) all round-trip and pass the audit's body accounting.
 ## 0.17.8
 
 - The goal log records the 0.17.7 round: the silent empty slice, the 100/100 member whose source was

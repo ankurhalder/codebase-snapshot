@@ -685,3 +685,22 @@ test("snapshot_read rejects a line window that cannot exist", async (t) => {
     assert.match(result.text, /integer of at least 1/);
   }
 });
+
+test("snapshot_answer caps a block at 64 KiB instead of flooding the transport", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "longline-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "l", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(root, "src", "blob.ts"), "export const blob = \"" + "x".repeat(200000) + "\";\n");
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const result = await call("snapshot_answer", { question: "blob", maxTokens: 60000 }, context);
+  assert.equal(result.isError, undefined, result.text);
+  const bytes = Buffer.byteLength(result.text, "utf8");
+  assert.ok(bytes < 80 * 1024, "the response stays near the 64 KiB block cap, got " + bytes);
+  assert.match(result.text, /first 64 KiB of the window/);
+  const block = result.structured.files[0];
+  assert.equal(block.clippedAtBytes, 64 * 1024);
+  assert.ok(result.structured.usedTokens > 0);
+});
