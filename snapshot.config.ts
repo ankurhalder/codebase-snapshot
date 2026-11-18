@@ -32,6 +32,10 @@ const config = {
     default: "300k",
     byLayer: {},
   },
+  // Gemini accepts at most ten uploaded files. Cap the parts at eight so the eight part files
+  // plus README.md and manifest.json fit, while PROMPT.md is pasted as text (it costs no slot).
+  // The cap grows the part budget instead of dropping files, so the payload stays complete.
+  maxParts: 8,
 
   // ── What goes in ───────────────────────────────────────────────────────
   // Allow-list. Empty means "everything that is not ignored".
@@ -41,7 +45,19 @@ const config = {
   // The audit trail and the changelog are records of work, not code. They were 490 KB of the
   // 3.1 MB this repository emitted — a third of a 300 KB budget's worth of parts — and neither
   // answers a question about how the code works.
-  excludePatterns: ["audit/**", "CHANGELOG.md"],
+  //
+  // tests/** is excluded for the Gemini hand-off: the destination accepts ten files, and the test
+  // suite alone is 158 files and 1.26 MiB (37 % of the payload). GOAL.md, seo-log.jsonl and
+  // llms.txt are internal records, not code. The snapshot still records every excluded path in
+  // skipped[] with its reason, so nothing disappears silently.
+  excludePatterns: [
+    "audit/**",
+    "CHANGELOG.md",
+    "tests/**",
+    "GOAL.md",
+    "seo-log.jsonl",
+    "llms.txt",
+  ],
   // How candidate files are found: "auto" lists them through git when git can
   // and walks the tree otherwise; "git" and "walk" force one path, and "walk" is
   // the escape hatch when .git exists but git cannot list it.
