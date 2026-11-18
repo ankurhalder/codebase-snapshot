@@ -817,3 +817,19 @@ Full `verify` at 0.17.45: 1362 tests, 1354 pass, 0 fail, 8 host skips; tarball 5
 
 Next: `docs/output.md` against what a run actually writes, then the last probe of the remote-clone
 path (ref selection, provenance in the manifest).
+
+### 0.17.47-0.17.48 - "Branch: main" in a directory with no git
+
+- Remote ingestion was probed end to end on `octocat/Hello-World --ref master`: the manifest records
+  url, host, owner, repo, ref, the cloned commit and `fetchedAt`, and the run took 0.19 s. No defect.
+- The same probe showed `Branch: main` for a directory that is not a repository. That value is the
+  documented `branch` fallback, but nothing said so: README, the audit, PROMPT.md, the CLI header
+  and `snapshot_status` printed it exactly like a real branch.
+- `GitInfo` now carries `branchFromGit`, the manifest records it, and every surface that prints the
+  branch says `fallback` when git did not report one (detached HEAD included). Old manifests without
+  the field still read: absent means unknown, not "from git".
+
+Full `verify` at 0.17.47: 1363 tests, 1355 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: `docs/output.md` read against a real run artifact by artifact, then the last probe of the
+`--pack` formats against the documented shapes.

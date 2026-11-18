@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.48
+
+- The goal log records the 0.17.47 round: remote provenance (clean), and the fallback branch that
+  every surface presented as fact.
 ## 0.17.47
 
 **A directory that is not a repository was described as being on `main`.**
