@@ -2568,6 +2568,15 @@ const readTool: ToolSpec = {
       );
     }
 
+    // The JSON Schema declares the minimums, but a handler is called by handlers and by tests,
+    // and a schema is not enforcement. A request for zero or −3 lines returned one line and said
+    // nothing; asking for the impossible now says so.
+    if (typeof args.fromLine === "number" && (!Number.isInteger(args.fromLine) || args.fromLine < 1)) {
+      return failure('"fromLine" must be an integer of at least 1 (received ' + String(args.fromLine) + ").");
+    }
+    if (typeof args.lines === "number" && (!Number.isInteger(args.lines) || args.lines < 1)) {
+      return failure('"lines" must be an integer of at least 1 (received ' + String(args.lines) + ").");
+    }
     const fromLine = typeof args.fromLine === "number" ? args.fromLine : 1;
     const lineCount = typeof args.lines === "number" ? args.lines : 200;
     const window = windowText(section.body, fromLine, lineCount);

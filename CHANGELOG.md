@@ -30,6 +30,15 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.5
+
+- **`snapshot_read` refused nothing it could not do.** `lines: 0`, `lines: -3`, `fromLine: -5` and
+  `fromLine: 2.7` all returned a one-line window and said nothing: the schema declared a minimum, the
+  handler clamped. A request that cannot be honoured is now an error naming the argument and the
+  value.
+
+Verified: the four impossible requests are refused with an explanatory message; a valid window is
+  unchanged.
 ## 0.17.4
 
 **When the answer is empty, say why.**

@@ -668,3 +668,20 @@ test("a question that matches nothing explains itself instead of returning bare 
   assert.match(answer.text, /Notes:/);
   assert.match(answer.text, /no centrality data/);
 });
+
+test("snapshot_read rejects a line window that cannot exist", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  for (const args of [
+    { path: "src/user.ts", lines: 0 },
+    { path: "src/user.ts", lines: -3 },
+    { path: "src/user.ts", fromLine: 0 },
+    { path: "src/user.ts", fromLine: 2.7 },
+  ]) {
+    const result = await call("snapshot_read", args, context);
+    assert.equal(result.isError, true, JSON.stringify(args) + " is refused");
+    assert.match(result.text, /integer of at least 1/);
+  }
+});
