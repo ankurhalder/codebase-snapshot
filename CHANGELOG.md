@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.31
+
+- Two tests written before this round asserted the **method-only** route shape, so `verify` failed
+  after 0.17.30 fixed the extractor. They had pinned the defect as the contract; both now assert
+  `METHOD /path`, and their names say so.
 ## 0.17.30
 
 **`snapshot_routes` printed a method and no route.**
@@ -51,6 +56,9 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 Verified: the fixture reports `GET /health` and `POST /users/:id`, in text and in the structured
 reply; the cycle/entrypoints/neighbors outputs are unchanged.
+
+Two older tests asserted the method-only shape (`["DELETE", "GET", "POST"]`) — they had pinned the
+defect as the contract. Both now assert `METHOD /path`, which is what the snapshot actually knows.
 ## 0.17.29
 
 - The goal log records the 0.17.27-0.17.28 round: the response cap missing in half the tools, and the

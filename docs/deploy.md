@@ -61,8 +61,8 @@ After=network.target
 Type=oneshot
 User=deploy
 WorkingDirectory=/srv/app
-ExecStart=/usr/bin/npx -y codebase-snapshot@0.17.30 generate --cwd /srv/app
-ExecStartPost=/usr/bin/npx -y codebase-snapshot@0.17.30 validate --cwd /srv/app
+ExecStart=/usr/bin/npx -y codebase-snapshot@0.17.31 generate --cwd /srv/app
+ExecStartPost=/usr/bin/npx -y codebase-snapshot@0.17.31 validate --cwd /srv/app
 ```
 
 ```ini

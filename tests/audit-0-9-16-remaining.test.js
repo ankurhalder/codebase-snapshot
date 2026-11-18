@@ -491,12 +491,12 @@ test("a real credential in the same formats is still masked", () => {
   }
 });
 
-test("Express route registrations populate the route methods", () => {
+test("Express route registrations record the method and the path", () => {
   const summary = summarizeTypeScriptSource(
     "src/routes.js",
     'router.get("/a", handler);\napp.post("/b", handler);\nserver.delete("/c", handler);\n'
   );
-  assert.deepEqual(summary.routeHandlers, ["DELETE", "GET", "POST"]);
+  assert.deepEqual(summary.routeHandlers, ["DELETE /c", "GET /a", "POST /b"]);
 });
 
 test("README and audit label source and emitted lines separately", (t) => {
@@ -512,7 +512,7 @@ test("README and audit label source and emitted lines separately", (t) => {
   assert.match(audit, /\*\*Emitted Lines:\*\*/);
 });
 
-test("an Express route file's methods reach manifest.indexes.routes", (t) => {
+test("an Express route file's methods and paths reach manifest.indexes.routes", (t) => {
   const dir = makeTempDir(t, "cbs-express-");
   write(dir, "package.json", '{"name":"fixture","version":"1.0.0","dependencies":{"express":"^4"}}\n');
   write(
@@ -523,7 +523,7 @@ test("an Express route file's methods reach manifest.indexes.routes", (t) => {
   const manifest = generateSnapshot({ cwd: dir, preset: "node-express" });
   const route = manifest.indexes.routes.find((entry) => entry.path === "src/server/routes/users.js");
   assert.ok(route, "the file is classified as a route");
-  assert.deepEqual(route.methods, ["GET", "POST"]);
+  assert.deepEqual(route.methods, ["GET /users", "POST /users"]);
 });
 
 test("CFG-05: explain rejects the parser flags it never read", () => {
