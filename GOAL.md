@@ -341,3 +341,19 @@ Full `verify` at 0.12.91: 1311 tests, 1303 pass, 0 fail, 8 host skips; tarball 5
 
 Seven sub-bumps to 0.12.99, then 0.13.0. The publish train is reachable from here (`gh` is
 authenticated with the workflow scope), so the milestone can be dispatched after its tag.
+
+### 0.12.93-0.12.95 - answers that do not overclaim
+
+- 0.12.93 `snapshot_status` reported an unreadable manifest as a normal `present: false`, so a client
+  planned around a snapshot it could never read. "No snapshot yet" stays an answer; a manifest that
+  fails the shape check sets `isError`.
+- 0.12.94 `snapshot_context` answered a missing path with an empty text block (the path was only in
+  `structuredContent.missing`), and `snapshot_diff_context` claimed "no file imports the changed
+  paths" for paths it had never read. Both name what they could not return now.
+- 0.12.95 the round log. Also probed without findings: an empty repository generates, validates and
+  audits as 0 files / 0 parts; two concurrent generates are serialised by a lock with a clear
+  message; a path beyond 260 characters scans.
+
+Full `verify` at 0.12.94: 1313 tests, 1305 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Four sub-bumps to 0.12.99, then 0.13.0 and the first publish through the train.

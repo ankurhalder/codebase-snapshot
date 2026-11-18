@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.95
+
+- The goal log records the 0.12.93-0.12.94 round, including the probes that found nothing: an empty
+  repository generates as 0 files / 0 parts and still validates, and two concurrent generates are
+  serialised by the staging lock with a message that says which lock and how old its heartbeat is.
 ## 0.12.94
 
 **Two tools answered a missing path with silence.**
