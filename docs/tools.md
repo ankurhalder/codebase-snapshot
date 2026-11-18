@@ -1,6 +1,6 @@
 # MCP tools
 
-The server exposes 25 tools. This page is the reference: what each answers, what it costs, and one
+The server exposes 26 tools. This page is the reference: what each answers, what it costs, and one
 call you can send as it stands. [MCP](mcp.md) covers the transports and the protocol; this page is
 the catalogue.
 
@@ -66,6 +66,12 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 
 ## Reading
 
+- **`snapshot_answer`** — medium, read-only. One call from question to context: plans the
+  question, then returns each chosen file as a head window with line numbers inside the token
+  budget. Every file says why it is there; every planned file that did not fit says why not.
+  ```json
+  { "name": "snapshot_answer", "arguments": { "question": "how does redaction work", "maxTokens": 20000 } }
+  ```
 - **`snapshot_budget`** — medium, read-only. The planner at several budgets, with what each
   one adds: files, tokens used, and the paths gained over the previous budget. The answer to
   "should I raise the budget, and what would I get?"

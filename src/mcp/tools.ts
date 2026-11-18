@@ -1,5 +1,5 @@
 /**
- * The 25 tools this server exposes.
+ * The 26 tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -29,6 +29,7 @@ import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
 import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
+import { estimateTokens } from "../tokenize.js";
 import type { JsonObject, JsonSchema } from "./protocol.js";
 import type { FileEntry, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolCost, ToolOutcome } from "./types.js";
@@ -68,7 +69,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the 25 tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the 26 tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -1572,6 +1573,117 @@ const planForTool: ToolSpec = {
   },
 };
 
+const answerTool: ToolSpec = {
+  name: "snapshot_answer",
+  title: "Question in, budgeted context out",
+  description:
+    "The one-call version of plan-then-read: plan a question, then return each chosen file as a " +
+    "head window with line numbers within the token budget. Every included file says why it is " +
+    "there; every planned file that did not fit says so. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      question: { type: "string", description: "What you need to answer." },
+      maxTokens: { type: "integer", description: "Budget for the whole block (default 20000).", minimum: 500 },
+      linesPerFile: { type: "integer", description: "Head lines per file (default 60).", minimum: 10 },
+      includeTests: { type: "boolean", description: "Include test files (default false)." },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    required: ["question"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      question: { type: "string" },
+      budgetTokens: { type: "integer" },
+      usedTokens: { type: "integer" },
+      files: { type: "array", items: { type: "object" } },
+      omitted: { type: "array", items: { type: "object" } },
+    },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const question = typeof args.question === "string" ? args.question.trim() : "";
+    if (question.length === 0) return { text: "question must be a non-empty string", isError: true };
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const maxTokens = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 20000);
+    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 60);
+    const plan = planForQuestion(read.manifest, question, {
+      maxTokens,
+      ...(args.includeTests === true ? { includeTests: true } : {}),
+    });
+    const blocks: Array<{ path: string; why: string; tokens: number; text: string; truncated: boolean; totalLines: number }> = [];
+    const omitted: Array<{ path: string; reason: string }> = [];
+    let used = 0;
+    const parts = new Map<string, string>();
+    for (const planned of plan.files) {
+      if (used >= maxTokens) {
+        omitted.push({ path: planned.path, reason: "the budget was spent on earlier files" });
+        continue;
+      }
+      const partPath = partPathFor(prepared.workspace, planned.part);
+      if (partPath === null) {
+        omitted.push({ path: planned.path, reason: "its part is not in the snapshot" });
+        continue;
+      }
+      let partText = parts.get(partPath);
+      if (partText === undefined) {
+        try {
+          partText = fs.readFileSync(partPath, "utf8");
+        } catch {
+          omitted.push({ path: planned.path, reason: "its part could not be read" });
+          continue;
+        }
+        parts.set(partPath, partText);
+      }
+      const section = findSection(parsePartSections(partText), planned.path);
+      if (section === null) {
+        omitted.push({ path: planned.path, reason: "no section in its part" });
+        continue;
+      }
+      const window = windowText(section.body, 1, linesPerFile);
+      const text = window.text;
+      const tokens = estimateTokens(text);
+      if (used + tokens > maxTokens && blocks.length > 0) {
+        omitted.push({ path: planned.path, reason: "did not fit the remaining budget" });
+        continue;
+      }
+      const numbered = text
+        .split("\n")
+        .map((line, index) => String(index + 1).padStart(5, " ") + "  " + line)
+        .join("\n");
+      blocks.push({ path: planned.path, why: planned.why, tokens, text: numbered, truncated: window.truncated, totalLines: window.totalLines });
+      used += tokens;
+    }
+    const lines = [
+      "# Answer context: " + question,
+      "Budget: " + used + " of " + maxTokens + " tokens; " + blocks.length + " file(s).",
+    ];
+    for (const block of blocks) {
+      lines.push("");
+      lines.push("## " + block.path + " (" + block.tokens + " tokens, " + (block.truncated ? "first lines of " + block.totalLines : "whole file") + ")");
+      lines.push("Why: " + block.why);
+      lines.push("```");
+      lines.push(block.text);
+      lines.push("```");
+    }
+    if (omitted.length > 0) {
+      lines.push("");
+      lines.push("Not included:");
+      for (const entry of omitted) lines.push("- " + entry.path + " - " + entry.reason);
+    }
+    return {
+      text: lines.join("\n"),
+      structured: { question, budgetTokens: maxTokens, usedTokens: used, files: blocks, omitted },
+    };
+  },
+};
+
 const healthTool: ToolSpec = {
   name: "snapshot_health",
   title: "Snapshot health audit",
@@ -2612,6 +2724,7 @@ const TOOL_COSTS: Record<string, ToolCost> = {
   snapshot_context: "medium",
   snapshot_query: "cheap",
   snapshot_plan_for: "cheap",
+  snapshot_answer: "medium",
   snapshot_plan: "expensive",
   snapshot_generate: "expensive",
   snapshot_validate: "medium",
@@ -2641,6 +2754,7 @@ export function buildTools(): McpTool[] {
     contextTool,
     queryTool,
     planForTool,
+    answerTool,
     planTool,
     generateTool,
     validateTool,

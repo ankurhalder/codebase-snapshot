@@ -97,7 +97,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main | Part budget: 300 KB | Generator: 0.15.4 (project dependency ^0.15.4)
+   Branch: main | Part budget: 300 KB | Generator: 0.15.5 (project dependency ^0.15.5)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +218,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.15.4
+   Added devDependency: codebase-snapshot ^0.15.5
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +270,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.15.4
+   Added devDependency: codebase-snapshot ^0.15.5
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -450,7 +450,7 @@ codebase-snapshot mcp                 # serve the current directory over stdio
 codebase-snapshot mcp --cwd <path>    # serve another repository
 ```
 
-Serves the repository to a Model Context Protocol client over stdio: 25 tools, `snapshot://`
+Serves the repository to a Model Context Protocol client over stdio: 26 tools, `snapshot://`
 resources and two prompts. Stdout carries JSON-RPC messages and nothing else; every note goes to
 stderr. It speaks both protocol eras — the legacy `initialize` handshake and the stateless
 `2026-07-28` revision — and answers whichever the client starts with.

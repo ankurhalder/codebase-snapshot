@@ -30,6 +30,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.15.5
+
+**`snapshot_answer`: question in, cited context out, in one call.**
+
+- The 26th tool. `snapshot_plan_for` says which files to read and `snapshot_read` returns one of
+  them; an agent that wants an answer had to make a call per file and do its own budget arithmetic.
+  `snapshot_answer` plans the question, then returns each chosen file as a head window with line
+  numbers, within one token budget.
+- Every included file carries its `why` from the planner. Every planned file that did not fit is
+  listed under "Not included" with the reason — the budget, a missing part, or a missing section —
+  so a truncated answer never looks like a complete one.
+- The block is measured with the same estimator as the manifest, so `usedTokens` is comparable with
+  every other token figure this tool prints.
+
+Verified: a question about a fixture module returns line-numbered windows, each with a reason;
+`usedTokens` stays within the requested budget.
 ## 0.15.4
 
 - The goal log records the 0.15.2-0.15.3 round: `snapshot_budget`, budget headroom and `nextInLine`,

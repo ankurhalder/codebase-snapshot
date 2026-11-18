@@ -87,7 +87,7 @@ async function call(name, args, context) {
   return tool.handler(args, context);
 }
 
-test("exposes exactly the 25 documented tools", () => {
+test("exposes exactly the 26 documented tools", () => {
   assert.deepEqual([...tools.keys()], [
     "snapshot_status",
     "snapshot_health",
@@ -107,6 +107,7 @@ test("exposes exactly the 25 documented tools", () => {
     "snapshot_context",
     "snapshot_query",
     "snapshot_plan_for",
+    "snapshot_answer",
     "snapshot_plan",
     "snapshot_generate",
     "snapshot_validate",
@@ -606,4 +607,19 @@ test("snapshot_budget says what a larger budget buys", async (t) => {
   assert.ok(large.files >= small.files, "a larger budget never selects fewer files");
   assert.ok(Array.isArray(large.gained));
   assert.match(result.text, /tokens:/);
+});
+
+test("snapshot_answer returns cited windows within the budget", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const result = await call("snapshot_answer", { question: "how does the user module work", maxTokens: 3000 }, context);
+  assert.equal(result.isError, undefined, result.text);
+  assert.match(result.text, /# Answer context:/);
+  assert.ok(result.structured.files.length > 0, result.text);
+  const first = result.structured.files[0];
+  assert.match(first.text, /^\s+1\s+/m, "the window carries line numbers");
+  assert.ok(first.why.length > 0, "every included file says why");
+  assert.ok(result.structured.usedTokens <= 3000);
 });
