@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -196,4 +197,32 @@ test("a manifest whose counts disagree with its own data fails the audit", (t) =
   assert.equal(broken.code, 1, broken.out);
   assert.match(broken.out, /The counts equal the data they summarise/);
   assert.match(broken.out, /counts\.totalFiles/);
+});
+
+test("the JSON pack must hold every file, even when its digest is updated", (t) => {
+  const dir = repoWithSnapshot(t, {}, ["--pack", "json"]);
+  const clean = health(dir);
+  assert.equal(clean.code, 0, clean.out);
+  assert.match(clean.out, /The JSON pack holds every file/);
+
+  const packPath = path.join(dir, "snapshot", "full-codebase.json");
+  const pack = JSON.parse(fs.readFileSync(packPath, "utf8"));
+  const removed = pack.files.shift();
+  assert.ok(removed, "the fixture pack holds files");
+  fs.writeFileSync(packPath, JSON.stringify(pack, null, 2) + "\n");
+
+  // Re-digest the edited pack so the artifact check passes: this is the attack the check exists for.
+  const manifestPath = path.join(dir, "snapshot", "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const bytes = fs.readFileSync(packPath);
+  manifest.artifacts.fullJson = {
+    ...manifest.artifacts.fullJson,
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+
+  const broken = health(dir);
+  assert.equal(broken.code, 1, broken.out);
+  assert.match(broken.out, /is in the manifest but not the pack/);
 });

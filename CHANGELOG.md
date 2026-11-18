@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.9
+
+- **The JSON monolith must hold every file the manifest lists.** The pack's digest proves it is the
+  file the manifest recorded, not that the manifest recorded a complete pack. The audit parses it and
+  compares the file set both ways: an entry removed and the digest updated is now a critical failure.
+- Membership only, deliberately: the pack keeps a file's final newline and a part body does not, and
+  normalising that difference would duplicate the per-file body accounting with a fragile check.
+
+Verified: a clean `--pack json` snapshot passes; removing one entry and re-digesting the artifact
+fails with `is in the manifest but not the pack`.
 ## 0.13.8
 
 - The goal log records the 0.13.6-0.13.7 round: per-file body accounting and the count recomputation,

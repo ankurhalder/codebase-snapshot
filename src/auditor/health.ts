@@ -392,6 +392,49 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
           bookkeeping.length + " mismatch(es): " + sample(bookkeeping))
   );
 
+  // The JSON monolith is the machine-readable whole-repository artifact. Its digest is checked
+  // above, but a digest only proves the file is what the manifest recorded — not that the manifest
+  // recorded a pack holding every file. Compare the two directly: the set of paths, and each
+  // entry's body length against the accounting.
+  // null is the "not written" value in the artifacts block, so truthiness is the right test.
+  if (manifest.artifacts?.fullJson != null) {
+    const packText = readText(path.join(snapshotDir, "full-codebase.json"));
+    const packProblems: string[] = [];
+    if (packText === null) {
+      packProblems.push("full-codebase.json is recorded but unreadable");
+    } else {
+      type PackEntry = { relativePath?: unknown; includedBytes?: unknown; content?: unknown };
+      let entries: PackEntry[] | null = null;
+      try {
+        const parsed = JSON.parse(packText) as { files?: unknown };
+        entries = Array.isArray(parsed?.files) ? (parsed.files as PackEntry[]) : null;
+      } catch (error) {
+        packProblems.push("full-codebase.json is not valid JSON: " + (error as Error).message);
+      }
+      if (entries !== null) {
+        const packed = new Set(entries.map((entry) => String(entry?.relativePath)));
+        for (const file of manifest.files) {
+          if (!packed.has(file.relativePath)) packProblems.push(file.relativePath + " is in the manifest but not the pack");
+        }
+        const known = new Set(manifest.files.map((file) => file.relativePath));
+        for (const path of packed) {
+          if (!known.has(path)) packProblems.push(path + " is in the pack but not the manifest");
+        }
+        // The set is what this check exists for. Byte counts are deliberately not compared: the
+        // pack carries the file's final newline and the part body does not, and chasing that
+        // difference with a normalisation would make a fragile check out of a duplicate of the
+        // per-file body accounting above.
+      }
+    }
+    checks.push(
+      packProblems.length === 0
+        ? check("pipeline.monolith", "The JSON pack holds every file the manifest lists", "critical", "pass",
+            manifest.files.length + " file(s) present in full-codebase.json, and nothing extra.")
+        : check("pipeline.monolith", "The JSON pack holds every file the manifest lists", "critical", "fail",
+            packProblems.length + " problem(s): " + sample(packProblems))
+    );
+  }
+
   // The manifest says how many bytes and lines each file contributed. The parts are the only
   // place that claim can be checked, and a part whose section is shorter than the manifest says
   // is a snapshot that under-delivers while its hashes still agree. One parse per part, then

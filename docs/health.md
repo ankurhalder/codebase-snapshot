@@ -43,6 +43,13 @@ secret, but you may not want it in the payload either.
 The score starts at 100; each failure costs 25 and each warning 5, with a floor of zero. It is a
 summary, not a substitute for the checks — the report always lists every one.
 
+### The JSON pack against the manifest
+
+When the run wrote `full-codebase.json`, the audit parses it and compares its file set with
+`manifest.files` in both directions. The artifact digest proves the pack is the file the manifest
+recorded; it does not prove the manifest recorded a pack holding every file. An entry removed and
+the digest updated would otherwise be invisible.
+
 ### The counts against the data
 
 A manifest edited to claim more files, parts, skips or content bytes than it holds used to pass
