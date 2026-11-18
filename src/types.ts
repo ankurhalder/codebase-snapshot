@@ -392,6 +392,12 @@ export interface ManifestConfigSnapshot {
   includeSensitiveFiles: boolean;
   /** Whether comment text was stripped from JS/TS bodies in this run. */
   stripComments?: boolean;
+  /** Whether blank lines were dropped from emitted bodies in this run. */
+  removeEmptyLines?: boolean;
+  /** The single-file pack this run wrote, when one was requested. */
+  pack?: "single" | "xml" | "json";
+  /** How many commits `reports/log.md` carries, when the report was written. */
+  logCount?: number;
   /**
    * The file-slot ceiling `PROMPT.md` was planned for; `0` for no limit.
    *

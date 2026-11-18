@@ -989,9 +989,25 @@ const reviewTool: ToolSpec = {
     const read = readManifest(workspace);
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
 
+    // Validate as the snapshot was generated, not as a bare config file resolves. The run flags
+    // that wrote `reports/diff.md`, `--remove-empty-lines` or a pack are part of what `validate`
+    // compares, and the review tool has no flags: without the manifest's own record a fresh
+    // snapshot generated with `includeDiffs` was reported "stale; run snapshot_generate".
+    const recordedConfig = read.manifest.config;
+    const reviewConfig: typeof workspace.config = {
+      ...workspace.config,
+      ...(recordedConfig?.artifacts === undefined ? {} : { artifacts: recordedConfig.artifacts }),
+      ...(recordedConfig?.stripComments === undefined ? {} : { stripComments: recordedConfig.stripComments }),
+      ...(recordedConfig?.removeEmptyLines === undefined ? {} : { removeEmptyLines: recordedConfig.removeEmptyLines }),
+      ...(recordedConfig?.pack === undefined ? {} : { pack: recordedConfig.pack }),
+      ...(recordedConfig?.logCount === undefined ? {} : { logCount: recordedConfig.logCount }),
+      ...(recordedConfig?.skeleton === undefined ? {} : { skeleton: recordedConfig.skeleton }),
+      ...(recordedConfig?.sarif === undefined ? {} : { sarif: recordedConfig.sarif }),
+      ...(recordedConfig?.maxParts === undefined ? {} : { maxParts: recordedConfig.maxParts }),
+    };
     let validation;
     try {
-      validation = validateSnapshot(workspace.config);
+      validation = validateSnapshot(reviewConfig);
     } catch (error) {
       return { text: (error as Error).message, isError: true };
     }

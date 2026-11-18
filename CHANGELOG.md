@@ -30,6 +30,26 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.17
+
+**`snapshot_review` said "stale" about a snapshot it had just generated.**
+
+- A review of a snapshot generated with `includeDiffs` (or `tokenTree`, `removeEmptyLines`, a pack,
+  `stripComments`, `sarif`) reported **"Snapshot: stale; run snapshot_generate before trusting it"**
+  immediately after the generate. The cause was honest and narrow: `validate` compares the config
+  digest, the digest covers the artifact selection and the run flags, and `snapshot_review` has no
+  flags — so it validated with a bare config file and blamed the user for a difference the review
+  tool itself could not see.
+- The review now validates **as the snapshot was generated**: it takes the artifact selection and the
+  flag-only settings from `manifest.config`, where the run recorded them. Configuration drift the
+  config file still shows (budgets, include/exclude, layers, kinds, preset) is still reported.
+- The manifest now records `removeEmptyLines`, `pack` and `logCount`, the three digest inputs it did
+  not carry, so a no-flag validator can reconstruct the run. The fields are optional; older
+  manifests are unaffected, and the digest does not change.
+
+Verified: a review immediately after `snapshot_generate { tokenTree: true, removeEmptyLines: true }`
+reports current; after appending one line to a file it reports stale. Same probe with a real git
+diff and `includeDiffs`.
 ## 0.17.16
 
 - The goal log records the 0.17.15 round: the HTTP probe that found the refusal counter counting

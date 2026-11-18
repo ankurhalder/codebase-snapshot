@@ -115,7 +115,10 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 
 ## Reviewing a change
 
-- **`snapshot_review`** — expensive, read-only. Is the snapshot current, what does the health audit
+- **`snapshot_review`**
+  > Validates with the settings the manifest recorded, not with a bare config file: a snapshot
+  > generated with `--token-tree`, `--include-diffs`, `--remove-empty-lines` or a pack is current
+  > if the files are, and the review says so instead of telling you to regenerate. — expensive, read-only. Is the snapshot current, what does the health audit
   say, what do the given paths contain, and which route methods do they touch?
   ```json
   { "name": "snapshot_review", "arguments": { "paths": ["src/mcp/tools.ts"] } }

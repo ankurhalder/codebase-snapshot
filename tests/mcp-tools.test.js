@@ -704,3 +704,18 @@ test("snapshot_answer caps a block at 64 KiB instead of flooding the transport",
   assert.equal(block.clippedAtBytes, 64 * 1024);
   assert.ok(result.structured.usedTokens > 0);
 });
+
+test("snapshot_review validates as the snapshot was generated, flags included", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", { tokenTree: true, removeEmptyLines: true }, context);
+
+  const current = await call("snapshot_review", { paths: ["src/user.ts"] }, context);
+  assert.equal(current.structured.current, true, current.text);
+  assert.match(current.text, /Snapshot: current/);
+
+  fs.appendFileSync(path.join(root, "src", "user.ts"), "export const later = true;\n");
+  const stale = await call("snapshot_review", { paths: ["src/user.ts"] }, context);
+  assert.equal(stale.structured.current, false, stale.text);
+  assert.match(stale.text, /stale/);
+});

@@ -3230,6 +3230,12 @@ export function generateSnapshot(
       maxMonolithBytes: config.maxMonolithBytes ?? null,
       includeSensitiveFiles: config.includeSensitiveFiles,
       ...(config.stripComments === true ? { stripComments: true } : {}),
+      // The other three settings the digest covers and the manifest did not record: without them a
+      // validator (or `snapshot_review`) had no way to reconstruct the run, so a snapshot taken
+      // with `--remove-empty-lines`, `--pack` or `--include-logs 3` looked stale forever.
+      ...(config.removeEmptyLines === true ? { removeEmptyLines: true } : {}),
+      ...(config.pack === null ? {} : { pack: config.pack }),
+      logCount: config.logCount,
       // The destination the instructions were written for. Not part of `digest`: the payload is
       // identical whatever this says, and a new delivery preference must not make an existing
       // snapshot fail `validate` as configuration drift.
