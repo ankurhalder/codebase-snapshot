@@ -263,3 +263,52 @@ test("/metrics counts every refusal and the rate limit it applies", async (t) =>
   assert.match(text, /snapshot_tools 26\n/);
   assert.match(text, /snapshot_requests_by_method_total\{method="DELETE"\} 1\n/);
 });
+
+test("the SSE message endpoint accepts the token in the query", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const rootUrl = transport.url.replace("/mcp", "");
+
+  const stream = await fetch(rootUrl + "/sse?token=" + transport.token, {
+    headers: { accept: "text/event-stream" },
+    signal: controller.signal,
+  });
+  assert.equal(stream.status, 200);
+  const reader = stream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const nextEvent = async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stream closed");
+      buffer += decoder.decode(value, { stream: true });
+      const end = buffer.indexOf("\n\n");
+      if (end !== -1) {
+        const event = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        return event;
+      }
+    }
+  };
+  const messagePath = /data: (\S+)/.exec(await nextEvent())[1];
+
+  // No Authorization header: a client that only has EventSource can still drive the session.
+  const posted = await fetch(rootUrl + messagePath + "&token=" + transport.token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(rpc(9, "initialize", { protocolVersion: "2025-06-18", capabilities: {} })),
+  });
+  assert.equal(posted.status, 202);
+  const answer = JSON.parse(/data: (.+)/.exec(await nextEvent())[1]);
+  assert.equal(answer.id, 9);
+  assert.equal(answer.result.protocolVersion, "2025-06-18", "a supported version is echoed");
+
+  const anonymous = await fetch(rootUrl + messagePath, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(rpc(10, "ping", {})),
+  });
+  assert.equal(anonymous.status, 401, "without the header or the query token the POST is refused");
+});

@@ -30,6 +30,22 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.53
+
+**SSE probed end to end for the first time outside its unit tests.**
+
+- Stream with `?token=`: 200, `event: endpoint`, then `initialize` and `tools/list` answered over a
+  `POST /messages` that carries no Authorization header but the token in the query — the pattern a
+  browser client with only `EventSource` needs. Both replies arrived as `message` events; a POST with
+  neither form of the token is 401.
+- The page told clients to POST "to that path" without saying how a header-less client authenticates.
+  It now says to append `&token=<token>`, and a test drives the whole session that way and asserts a
+  supported version (`2025-06-18`) is echoed rather than upgraded.
+- Also confirmed what the page already documents: a client asking for `2024-11-05` is answered with the
+  newest legacy revision (`2025-11-25`) because that request names a version this server does not
+  support; the version table in `docs/mcp.md` is accurate.
+
+Verified: `mcp-http` 13/13, including the new query-token session.
 ## 0.17.52
 
 **The resource page described a layout the server did not have.**

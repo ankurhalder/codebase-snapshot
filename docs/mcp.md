@@ -87,7 +87,8 @@ data: /messages?sessionId=<id>
 ```
 
 The client POSTs JSON-RPC to that path, receives `202`, and reads the answer as a `message`
-event on the open stream. This exists for browsers and older clients where `EventSource` cannot
+event on the open stream. A client that cannot set an `Authorization` header appends
+`&token=<token>` to the announced path; the POST accepts the same query token the stream did. This exists for browsers and older clients where `EventSource` cannot
 set `Authorization`; the token may travel as `?token=` **on this path only**, which is a leak
 into logs and is documented as such. A heartbeat every 15 s keeps the connection alive, and
 shutdown ends the streams rather than waiting on them. Request bodies are capped at 2 MB, the rate is
