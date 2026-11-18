@@ -30,6 +30,12 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.15.4
+
+- The goal log records the 0.15.2-0.15.3 round: `snapshot_budget`, budget headroom and `nextInLine`,
+  and `reports/selection.md` for narrowed snapshots.
+- `AGENTS.md` said the MCP server exposes 21 tools; it exposes 25. The count is part of the contract
+  and a wrong one is a lie, however small.
 ## 0.15.3
 
 **A narrowed snapshot explains itself.**

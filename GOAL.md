@@ -473,3 +473,18 @@ pages, audit-site clean.
 
 Next: 0.15.x toward 0.16.0 (things neither product has) and then 0.17.0, the endgame the plan
 describes. Three milestones published, two to go.
+
+### 0.15.2-0.15.4 - budgets that answer "what if", selections that explain themselves
+
+- 0.15.2 `snapshot_budget` (25th tool) runs the planner at several budgets and reports what each adds.
+  The manifest budget block gained `headroomTokens` and `nextInLine`; `report` prints both, so the
+  CLI and the tool say the same thing.
+- 0.15.3 `reports/selection.md`: a slice or budget snapshot lists every chosen file with its cost and
+  reason, what was left out, and what more budget would buy. Recorded as an artifact, so `validate`
+  fails when it is edited — a selection that cannot explain itself is a claim without evidence.
+- 0.15.4 documents both and corrects the tool count in `AGENTS.md` (it still said 21).
+
+Full `verify` at 0.15.3: 1332 tests, 1324 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Next: 0.16.0 (things neither competitor has), then the 0.17.0 endgame. Four milestones published,
+one to go.
