@@ -188,3 +188,14 @@ test("the README lists every tool the server builds, in order", () => {
   const built = buildTools().map((tool) => tool.name.replace(/^snapshot_/, ""));
   assert.deepEqual(listed, built, "the README list must match buildTools() exactly");
 });
+
+test("every release tag has a changelog section", () => {
+  const tags = execFileSync("git", ["tag", "--list", "v0.*"], { cwd: ROOT, encoding: "utf8" })
+    .split("\n")
+    .filter(Boolean)
+    .map((tag) => tag.slice(1));
+  assert.ok(tags.length > 100, "the tag list was read: " + tags.length);
+  const changelog = read("CHANGELOG.md");
+  const missing = tags.filter((version) => !changelog.includes("\n## " + version + "\n"));
+  assert.deepEqual(missing, [], "tagged versions with no changelog section: " + missing.join(", "));
+});
