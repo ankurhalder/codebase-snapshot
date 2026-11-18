@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isPrivateHost, parseRemoteSource } from "../dist/index.js";
 
 test("a repository URL becomes host, owner, repo and ref", () => {
@@ -83,7 +83,7 @@ test("generate --remote records provenance and writes into the caller's director
 
   const workdir = path.join(root, "work");
   fs.mkdirSync(workdir, { recursive: true });
-  const bin = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..", "dist", "bin.js");
+  const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
   const result = spawnSync(
     process.execPath,
     [bin, "generate", "--remote", pathToFileURL(source).href, "--allow-private", "--out-dir", "snap-out"],

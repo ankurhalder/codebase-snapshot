@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.1
+
+**The test suite could not run on Linux, so the release workflow never passed.**
+
+- Twelve test files built the binary path with `new URL(import.meta.url).pathname` and stripped a
+  leading slash. On Windows that yields `C:/…` and works; on Linux it yields `home/runner/…` — a
+  *relative* path — so `dist/bin.js` resolved under the scratch directory and the test failed with
+  `Cannot find module`. The release workflow runs the suite on Ubuntu, so the first milestone release
+  failed there even though every local run was green.
+- All twelve now use `fileURLToPath(import.meta.url)`, which is absolute on both platforms. The
+  rewrite was mechanical; the eleven suites it touches were re-run.
+
+Verified: 49 tests across the eleven rewritten suites pass locally, and the construct no longer
+depends on the platform.
 ## 0.13.0
 
 **The first published milestone.** Every release from 0.12.15 to 0.12.99 is tagged in this

@@ -9,9 +9,10 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const BIN = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..", "dist", "bin.js");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
 
 const TRICKY = "// a leading comment\nexport const url = \"https://example.com/a//b\";\nexport const template = `// not a comment ${1}`;\nconst pattern = /a\\/\\/b/; // a trailing comment\n/* a block\n   comment spanning lines */\nexport function answer() {\n  return 42; // the answer\n}\n";
 

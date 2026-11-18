@@ -10,9 +10,10 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const BIN = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..", "dist", "bin.js");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
 
 const FIXTURES = {
   "app.py": "import os\nfrom flask import Flask\n\nclass Service:\n    pass\n\ndef run():\n    return 1\n\n@app.get('/health')\ndef health():\n    return 'ok'\n",

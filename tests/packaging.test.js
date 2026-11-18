@@ -8,9 +8,10 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("every COPY source in the Dockerfile exists", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
