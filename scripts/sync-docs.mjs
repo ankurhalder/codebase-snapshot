@@ -30,17 +30,26 @@ const write = (...parts) => process.stdout.write(`${parts.join("")}\n`);
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const parts = pkg.version.split(".");
-// The version the registry actually carries. Publication happens only at `x.y.0`; docs that pin
-// the *current* version sent readers to `npx codebase-snapshot@0.17.36`, which does not exist. The
-// two numbers are deliberately separate: `version` moves every release, `published` only when a
-// milestone is uploaded. `PUBLISHED` is the record, and a test compares the docs with it.
+// The version the registry actually carries. Publication normally happens only at `x.y.0`; docs
+// that pin the *current* version sent readers to `npx codebase-snapshot@0.17.36`, which does not
+// exist. The two numbers are deliberately separate: `version` moves every release, `published`
+// only when a release is uploaded. `PUBLISHED` is the record, and a test compares the docs with it.
+//
+// The 0.20 line is being patched in place at the maintainer's request (0.20.1, 0.20.2, ...), so a
+// published patch on that line is allowed. Any other line still publishes only at x.y.0, and a pin
+// to a version that was never uploaded would still 404.
 const publishedPath = path.join(ROOT, "PUBLISHED");
 if (!fs.existsSync(publishedPath)) {
-  throw new Error("PUBLISHED is missing: it records the last npm milestone (x.y.0) the docs may pin.");
+  throw new Error("PUBLISHED is missing: it records the last npm version the docs may pin.");
 }
 const published = fs.readFileSync(publishedPath, "utf8").trim();
-if (!/^\d+\.\d+\.0$/.test(published)) {
-  throw new Error("PUBLISHED must hold one x.y.0 milestone (received " + JSON.stringify(published) + ").");
+const milestone = /^\d+\.\d+\.0$/.test(published);
+const patchedLine = /^0\.20\.\d+$/.test(published);
+if (!milestone && !patchedLine) {
+  throw new Error(
+    "PUBLISHED must hold an x.y.0 milestone, or a published patch in the 0.20 line (received " +
+      JSON.stringify(published) + ")."
+  );
 }
 const VALUES = {
   version: pkg.version,

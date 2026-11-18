@@ -15,7 +15,15 @@ export function generateMonolithJson(
       "This manifest is embedded in full-codebase.json, which cannot record its own digest. " +
       "manifest.json holds the byteSize and sha256 of this file.",
   };
-  return JSON.stringify({ manifest: embedded, files: filesWithContent }, null, 2);
+  // The parts and the other two packs are written with LF; this one used to keep the source's
+  // CRLF, so the same file had two different byte shapes depending on which pack a reader opened,
+  // and the manifest's includedBytes counted the LF body. Normalise here too.
+  const files = filesWithContent.map((file) =>
+    file.content === undefined
+      ? file
+      : { ...file, content: file.content.replace(/\r\n|\r/g, "\n") }
+  );
+  return JSON.stringify({ manifest: embedded, files }, null, 2);
 }
 
 /** Attributes and text are escaped; bodies ride in CDATA with the one illegal sequence split. */

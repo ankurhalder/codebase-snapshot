@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.20.1",
+  "version": "0.20.2",
   "description": "Create a codebase snapshot an LLM can read: budgeted Markdown parts for Claude, ChatGPT and Cursor, a manifest of every included and skipped file, secret redaction, and validate, which fails when the snapshot drifts. Local CLI and MCP server.",
   "keywords": [
     "codebase-snapshot",
@@ -110,7 +110,10 @@
     "seo-rank": "node scripts/seo-rank.mjs",
     "verify": "npm run check && npm run check:workflows && npm run sync-docs -- --check && npm run site && node scripts/check-site-links.mjs && npm run audit-site && npm run readme-lint && npm run pack-check",
     "snapshot": "node ./dist/bin.js generate",
-    "snapshot:validate": "node ./dist/bin.js validate"
+    "snapshot:validate": "node ./dist/bin.js validate",
+    "coverage-diff": "node scripts/coverage-diff.mjs",
+    "reproducible": "node scripts/reproducible.mjs",
+    "verify:deep": "npm run verify && node scripts/verify-deep.mjs"
   },
   "dependencies": {
     "typescript": "^5.0.0"

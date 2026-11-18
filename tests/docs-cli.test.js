@@ -84,7 +84,13 @@ function documentedPins() {
 test("every install pin names a published milestone, not an unpublished patch", () => {
   const published = fs.readFileSync(path.join(ROOT, "PUBLISHED"), "utf8").trim();
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  assert.match(published, /^\d+\.\d+\.0$/, "PUBLISHED records an x.y.0 milestone");
+  // A pin to a patch that was never uploaded is a command that 404s. The 0.20 line is patched in
+  // place, so a published patch there is valid; every other line publishes only at x.y.0.
+  assert.match(
+    published,
+    /^(?:\d+\.\d+\.0|0\.20\.\d+)$/,
+    "PUBLISHED records an x.y.0 milestone or a published 0.20 patch"
+  );
   assert.ok(
     published.localeCompare(pkg.version, undefined, { numeric: true }) <= 0,
     "PUBLISHED (" + published + ") cannot be newer than the package (" + pkg.version + ")"

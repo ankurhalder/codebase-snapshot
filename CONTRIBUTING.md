@@ -22,7 +22,14 @@ npm run check      # lint, tsc --noEmit, node --test
 
 ```bash
 npm run verify     # the above, plus a check of the tarball that would be published
+npm run verify:deep  # verify, then generate, replay from source, validate, coverage and determinism
 ```
+
+`verify:deep` is the release gate for changes that touch generation: it writes a snapshot of the
+repository into a temporary directory, audits every full body against the source (`health --deep`),
+validates it, checks that every path in `git ls-files` is in `files[]` or `skipped[]`
+(`coverage-diff`), and generates twice to prove the fingerprint and parts are reproducible. The
+individual pieces are `npm run coverage-diff` and `npm run reproducible`.
 
 Verification is local, deliberately, and `npm run verify` is the same command every workflow
 runs. GitHub Actions does more than publish: `pr.yml` verifies pull requests, `publish.yml`

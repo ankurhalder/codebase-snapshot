@@ -30,6 +30,46 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.2
+
+**The release gate now proves the snapshot against the repository, and the JSON pack stops carrying
+CRLF.**
+
+The canary fixture added here found the one artifact that disagreed with the parts about line
+endings: `full-codebase.json` was built from the raw redacted body, while the parts, the XML pack
+and the markdown pack all normalise to LF. The same file therefore had two byte shapes depending
+on which pack a reader opened, and the manifest's `includedBytes` counted the LF body. The JSON
+pack now normalises like the others, and the canary asserts it.
+
+- `npm run verify:deep` is the release gate for generation changes: it writes a snapshot into a
+  temporary directory, runs `health --deep` (every full body replayed from source), runs
+  `validate`, checks differential coverage, and generates twice to prove determinism.
+- `scripts/coverage-diff.mjs` compares the snapshot against `git ls-files` (tracked plus
+  untracked, ignored excluded) — an oracle that does not share the generator's walker. Every path
+  must be in `files[]` or `skipped[]`; any other is a silent omission. `--from <file-list>` runs
+  the same comparison against repomix, gitingest or another tool's list. Masked skip paths are
+  matched with their redaction spans wildcarded rather than dropped.
+- `scripts/reproducible.mjs` generates the same tree twice and compares the fingerprint, every
+  `files[]` record, `skipped[]`, the counts and totals, and every part's bytes. `generatedAt`
+  and the reports that quote it are the only intended differences.
+- `tests/mcp-dogfood.test.js` calls all 26 MCP tools against one generated snapshot and requires
+  a non-empty, non-error answer from each (except the workspace tool's documented "no index").
+- `tests/canary-pipeline.test.js` is the end-to-end fixture the audit history asked for: a
+  sensitive `.env`, a source credential, CRLF, a BOM, a binary, an ignored file and a preview over
+  the large-file budget must generate, redact, skip, validate and pass the deep audit together.
+- `tests/fuzz-invariants.test.js` is seeded-random: source containing headings, runs of backticks
+  and CRLF must round-trip through the part writer and reader; feeding the redactor its own output
+  must change nothing and find nothing across generated credential shapes.
+- `tests/coverage-diff.test.js`, `tests/reproducible.test.js` and `tests/verify-deep.test.js`
+  pin the new gates themselves, including the failure case where a path disappears from
+  `files[]`.
+- The 0.20 line is patched in place: `PUBLISHED` moves to this version, the docs pins follow it,
+  and the `sync-docs` guard accepts a published patch on 0.20 while still refusing patches on any
+  other line. This release is published, not only tagged.
+- Verified with `npm run verify` (1,398 tests, 1,390 pass, 0 fail, 8 host skips; 30 site pages,
+  docs and tarball clean) and `npm run verify:deep` (health 95/100 with only the repository's known
+  host-path warning; coverage and reproducibility clean).
+
 ## 0.20.1
 
 **The audit now checks the snapshot's claims, not only its hashes.**

@@ -109,12 +109,16 @@ version — `0.12.15`, `0.12.16`, … up to `0.12.99`, then `0.13.0` and the sam
 number is not the promise; the changelog entry is. Never `1.0.0`. `sync-docs` keeps every marked
 surface at the same value, and `pack-check` fails when the lockfile disagrees.
 
-Tags are created for every version, and `main` carries every commit. **npm publication happens
-only at `x.y.0`** (`0.13.0`, `0.14.0`, …): the registry stays clean while the repository keeps a
-complete, buildable history. `publish-train.yml` exists for republishing a specific tag; it is
-not used for routine patches.
+Tags are created for every version, and `main` carries every commit. **npm publication normally
+happens only at `x.y.0`** (`0.13.0`, `0.14.0`, …): the registry stays clean while the repository
+keeps a complete, buildable history. `publish-train.yml` exists for republishing a specific tag;
+it is not used for routine patches.
 
-`PUBLISHED` records the last milestone the registry carries, and `sync-docs` pins every
+**The 0.20 line is the deliberate exception**: it is patched in place at the maintainer's request,
+so `0.20.1`, `0.20.2`, … may be published and pinned. Do not extend that exception to another
+line, and do not go past `0.20` while it applies.
+
+`PUBLISHED` records the last published version the registry carries, and `sync-docs` pins every
 `npx codebase-snapshot@x.y.z` example to **that**, not to the version being built — a pin to an
 unpublished patch is a command that 404s. Update `PUBLISHED` in the same commit that publishes a
 milestone; a test fails if a doc pin and `PUBLISHED` disagree.
