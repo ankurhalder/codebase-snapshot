@@ -30,6 +30,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.13
+
+**A prompt cannot be requested without its subject.**
+
+- `prompts/list` marks `review`'s `change` and `explain`'s `path` as required, and `prompts/get` did
+  not check: a client that omitted one received "Review a change" with no change named, and the
+  model had nothing to review. The request is now refused with `-32602`, the argument names and the
+  descriptions, in the same place the other argument checks live.
+- Optional arguments stay optional: `orient` without `focus` still works.
+
+Verified: `review` without `change` is refused and names the argument; with it, the text carries the
+change; `orient` without `focus` is accepted.
 ## 0.17.12
 
 - The goal log records the 0.17.11 round: accessible names and a live status on the serve page, and

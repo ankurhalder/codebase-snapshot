@@ -157,3 +157,32 @@ test("every static resource the contract publishes is served, before the report 
     assert.ok(contract.mcp.reportResources.includes(uri), `${uri} is a declared report resource`);
   }
 });
+
+test("a prompt with a required argument refuses a request that omits it", async () => {
+  const { server } = await liveSession().then((live) => ({ server: live.server }));
+  const refused = await server.handle({
+    jsonrpc: "2.0",
+    id: 90,
+    method: "prompts/get",
+    params: { name: "review", arguments: {} },
+  });
+  assert.ok(refused.error, "the request is refused");
+  assert.match(refused.error.message, /requires the "change"/);
+
+  const accepted = await server.handle({
+    jsonrpc: "2.0",
+    id: 91,
+    method: "prompts/get",
+    params: { name: "review", arguments: { change: "the login fix" } },
+  });
+  assert.match(accepted.result.messages[0].content.text, /the login fix/);
+
+  // Optional arguments stay optional: `orient` takes focus but does not require it.
+  const optional = await server.handle({
+    jsonrpc: "2.0",
+    id: 92,
+    method: "prompts/get",
+    params: { name: "orient", arguments: {} },
+  });
+  assert.ok(optional.result, "orient works without focus");
+});

@@ -326,6 +326,23 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     if (!isJsonObject(rawArguments)) {
       return errorResponse(id, ERROR_CODES.invalidParams, '"arguments" must be a JSON object.');
     }
+    // `prompts/list` marks these required, and a client that skips one used to receive the prompt
+    // with its subject missing — "Review a change" with no change. A required argument that is
+    // absent is refused here, where the request is, rather than in the model reading the prompt.
+    const missing = (prompt.arguments ?? []).filter((argument) => {
+      if (argument.required !== true) return false;
+      const value = rawArguments[argument.name];
+      return typeof value !== "string" || value.trim() === "";
+    });
+    if (missing.length > 0) {
+      return errorResponse(
+        id,
+        ERROR_CODES.invalidParams,
+        'Prompt "' + name + '" requires the ' +
+          missing.map((argument) => '"' + argument.name + '"').join(", ") +
+          " argument(s): " + missing.map((argument) => argument.description).join(" ")
+      );
+    }
     const built = prompt.build(rawArguments);
     const messages: PromptMessage[] = built.messages.map((message) => ({
       role: message.role,
