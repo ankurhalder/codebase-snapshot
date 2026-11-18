@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.51
+
+- The goal log records the 0.17.49-0.17.50 round: the README tool list that disagreed with the
+  server, the monolith warning about a pack that was never built, and the release gate that read a
+  pipe's exit code instead of the test run's.
 ## 0.17.50
 
 **A warning about a file the run never tried to build.**

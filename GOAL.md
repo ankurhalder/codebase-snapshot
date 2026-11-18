@@ -833,3 +833,27 @@ Full `verify` at 0.17.47: 1363 tests, 1355 pass, 0 fail, 8 host skips; tarball 5
 
 Next: `docs/output.md` read against a real run artifact by artifact, then the last probe of the
 `--pack` formats against the documented shapes.
+
+### 0.17.49-0.17.51 - the tool list, the pack warning, and a gate that did not gate
+
+- The README named 26 tools but a **different set in a different order** than `buildTools()`
+  (`budget` before `health`, `stats` after `search`, `history`/`tests`/`workspace` appended). The
+  count test could not see it. A comparison of the sentence with `buildTools()` name by name now
+  pins it; the sentence was rewritten to the server's order.
+- `--pack json --max-monolith-bytes 100` warned that `full-codebase.md`, 0 B, exceeded the ceiling —
+  a file the run never tried to build. The warning now fires only for a built pack whose real size
+  exceeds the ceiling.
+- The 0.17.50 release was tagged while `node --test … | Select-String` reported failures: the exit
+  code of a pipeline is the filter's, so the gate passed on a red run. One real failure was a fixture
+  the new test forgot to remove. The commit, tag and branch head were amended and force-pushed before
+  the round ended, and the changelog records the lesson: a gate reads the exit code of the command,
+  not of the pipe.
+
+Full `verify` at the corrected 0.17.50: 1365 tests, 1357 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Probed clean: the three `--pack` formats (XML splits the CDATA terminator, JSON embeds `manifest` and
+`files[]`, markdown uses `## File:`); the pack/manifest `includedBytes` difference is documented and
+intentional (raw content vs emitted body).
+
+Still open for the remaining time: docs read-through page by page, the SSE transport, and whatever the
+next probe finds. The goal stays active until the deadline.
