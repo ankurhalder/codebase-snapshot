@@ -680,3 +680,24 @@ Full `verify` at 0.17.25: 1349 tests, 1341 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the wizard (`init --yes`, non-interactive refusals) as the last largely untested surface, then
 the `mcp` tool list against `snapshot_locate`/`snapshot_search` semantics.
+
+### 0.17.27-0.17.29 - the audit failed its own signature
+
+- 0.17.27 found the 64 KiB response cap applied in two tools out of four: `snapshot_context`,
+  `snapshot_diff_context` and `snapshot_symbol` returned a 200 KB single line whole. One helper now
+  applies it in all four, with a label.
+- 0.17.28 explained a full-verify failure that looked flaky: `health` reported `signature.json` as a
+  secret for a snapshot it had just signed. The Azure DevOps token shape (52 mixed-case
+  alphanumerics) matches a random ed25519 public key about 2.6% of the time — measured over 5,000
+  signatures. The audit now exempts the record's key material and scans the rest, so a token
+  smuggled into `keyOrigin` is still a failure.
+- The first test for 0.17.28 replaced the public key with a fake and expected health to pass; it
+  failed correctly, because the signature no longer verified. The rewritten test finds a real key
+  whose base64 contains the shape, signs with it, and therefore exercises the false positive without
+  pretending a broken signature is valid.
+
+Full `verify` at 0.17.28: 1351 tests, 1343 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the wizard was probed clean (`init --yes` refuses to overwrite, preserves BRIEF.md, is
+idempotent; the bare command exits 2 with the three alternatives). Next is the `diff` command against
+two snapshots, then `report --format json` against the manifest.

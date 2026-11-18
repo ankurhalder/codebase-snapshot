@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.29
+
+- The goal log records the 0.17.27-0.17.28 round: the response cap missing in half the tools, and the
+  audit that failed its own signature about one run in forty.
 ## 0.17.28
 
 **`--sign` failed its own health check, about one run in forty.**
