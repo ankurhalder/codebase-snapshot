@@ -504,3 +504,20 @@ pages, audit-site clean.
 Next: 0.17.0 - the endgame: every feature on a site page, the security review refreshed, the
 migration guide current, and the final measurement. Then 0.17.x until the deadline, because the
 program does not stop at the milestone.
+
+### 0.16.2-0.17.1 - the endgame, and the registry exactly as promised
+
+- 0.16.2 `docs/answer.md` (30 pages), the security review extended for every surface added since it
+  was written, and the 0.13.0-0.17.0 migration table. The site builder still said "All 22 MCP
+  tools"; it says 26.
+- **0.17.0 is the fifth and final milestone**: the capstone changelog states what the tool is, the
+  milestone table with publish dates, and how each claim is proven. Tagged, released on GitHub,
+  published to npm.
+- The registry now carries exactly `0.13.0, 0.14.0, 0.15.0, 0.16.0, 0.17.0`, with `latest = 0.17.0`
+  (02:03Z). Every sub-bump in between is committed, tagged and pushed; the npm line is clean.
+
+Full `verify` at 0.17.0: 1333 tests, 1325 pass, 0 fail, 8 host skips; 30 site pages with no link or
+metadata problems; a 53-file tarball whose lockfile agrees with `package.json`.
+
+The program reached 0.17.0, but the work does not stop at the milestone: 0.17.x continues with
+hardening, coverage and the items listed in the roadmap's "after 0.17.0" note, until the deadline.

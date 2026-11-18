@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.1
+
+- The goal log records the final milestone: 0.17.0 published, and the registry carrying exactly the
+  five `x.y.0` versions with `latest = 0.17.0`. `ROADMAP.md` marks it published.
+- What follows is 0.17.x: hardening and coverage until the deadline, with no new milestone promised.
 ## 0.17.0
 
 **The endgame: what this is, and how it is proven.**

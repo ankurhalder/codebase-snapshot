@@ -93,7 +93,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 0.14.0 | The audit proves the manifest: bodies, counts, packs, workspace index, metrics | **published** 2026-11-18 |
 | 0.15.0 | Parity measured on ten public repositories; per-run `--only`/`--ignore` | **published** 2026-11-18 |
 | 0.16.0 | Beyond parity: selections that explain themselves, budgets that answer "what if", `snapshot_answer` | **published** 2026-11-18 |
-| 0.17.0 | Endgame: a page per feature, refreshed security review, current migration guide, final numbers | tagged 2026-11-18 |
+| 0.17.0 | Endgame: a page per feature, refreshed security review, current migration guide, final numbers | **published** 2026-11-18; `latest` on npm |
 
 ## Shipped so far
 
