@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.18.1
+
+- `PUBLISHED` moves to 0.18.0, so every `npx codebase-snapshot@…` example in the docs now pins the
+  milestone that is actually on the registry (`publish-train` run 44312176554: `+
+  codebase-snapshot@0.18.0`, provenance published).
 ## 0.18.0
 
 **"A newer version is available" now has a command, and stops hiding after one failure.**

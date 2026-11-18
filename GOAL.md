@@ -848,26 +848,17 @@ Next: `docs/output.md` read against a real run artifact by artifact, then the la
 
 ### 0.17.52-0.17.57 - the backlog the user asked to finish
 
-- **Docs prose audit.** `docs/mcp.md` said "the first four rows are always listed" above a table whose
-  first four rows included two conditional reports, and counted "the three reports" where six exist;
-  `docs/cli.md` still said "two prompts". Three places still described the browser as generating "with
-  the default settings" after 0.17.45. `docs/output.md` omitted `selection.md` and `audit.sarif` from
-  the tree and `selection`/`fullXml` from the artifacts row. URI constants are now exported so a test
-  compares the page with the server.
-- **SSE end to end.** Stream with `?token=`, endpoint event, `initialize` and `tools/list` over a POST
-  with the token in the query and no header: answered with 202 + `message` events; an unauthenticated
-  POST is 401; a supported version is echoed. The page now says to append `&token=` and a test drives
-  exactly that flow. A request for an unsupported `2024-11-05` is answered with `2025-11-25`, which is
-  what the version table already documents.
-- **answer/query edges.** `snapshot_answer` said "1 skipped for budget" while `omitted` stayed empty;
-  the planner skips now carry `{path, reason}` into text and structured reply. Query caps, empty
-  results and invalid regex were already correct.
-- **Benchmark refresh.** `benchmark-suite.mjs --json` on all ten default repositories: 10/10 succeeded
-  for ours, repomix and gitingest, and every number is identical to the published table — the scanner
-  is deterministic across 0.14.5 → 0.17.55. The page records the re-run.
-- **Site/links.** Rebuilt and audited on every release above: 66 files, 742 internal links, 52 anchors,
-  0 problems; `audit-site` clean.
+### 0.18.0-0.18.1 - the update notice, and why the user never saw it
 
-Full `verify` at 0.17.56: 1369 tests, 1361 pass, 0 fail, 8 host skips; tarball 53 files.
+- The user reported an old global 0.12.0 that never mentioned 0.18.x. The mechanism existed since
+  0.9.6; the cause was in the cache file: `{"checkedAt":…,"latest":null}` — a **failed** request
+  remembered for an hour. One slow answer (1.2 s deadline) silenced every run for the next hour,
+  which is indistinguishable from "you are current".
+- A failed check is now remembered for 5 minutes, the deadline is 2.5 s, and `snapshot update` asks
+  directly: cache bypassed, works without a terminal, prints the version it compared against, and
+  exits 0/1/2 (current / newer / unreachable). Five tests drive it against a local registry, including
+  a directory whose executable config the command must not load.
+- 0.18.0 published through `publish-train` (run 44312176554): registry took ~5 minutes to serve it, as
+  the "being processed" notice says. `latest` and `PUBLISHED` now 0.18.0; `0.18.1` moves the doc pins.
 
-No npm publish: `latest` stays 0.17.0 by instruction. The goal stays active.
+Full `verify` at 0.18.1: 1375 tests, 1367 pass, 0 fail, 8 host skips; tarball 53 files.
