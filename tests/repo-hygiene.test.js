@@ -174,3 +174,17 @@ test("every document that states the prompt count states the real one", () => {
   }
   assert.deepEqual(wrong, []);
 });
+
+test("the README lists every tool the server builds, in order", () => {
+  const readme = read("README.md");
+  const sentence = /The MCP server exposes [0-9]+ tools — ([^.]*?) — plus/s.exec(readme.replace(/\n/g, " "));
+  assert.ok(sentence, "the README still introduces the tool list with an em dash");
+  const listed = sentence[1]
+    .replace(/, and /g, ", ")
+    .replace(/ and /g, ", ")
+    .split(/,\s*/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const built = buildTools().map((tool) => tool.name.replace(/^snapshot_/, ""));
+  assert.deepEqual(listed, built, "the README list must match buildTools() exactly");
+});

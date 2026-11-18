@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.49
+
+**The README listed the tools in a different order than the server builds them — and was missing five.
+**
+
+- The tool-count test guaranteed the number, not the list. The README sentence introduced "26 tools"
+  and then named a different set in a different order: `budget` before `health`, `stats` after
+  `search`, and `history`, `tests`, `workspace` tacked on at the end.
+- A test now parses the sentence and compares it with `buildTools()` name by name, in order. The
+  sentence was rewritten to the server's own order.
+
+Also probed this round, and clean: the three `--pack` formats. XML escapes the CDATA terminator by
+splitting it (`]]]]><![CDATA[>`), the JSON pack embeds `manifest` and `files[]`, and the markdown
+pack uses `## File:`. The pack's `includedBytes` differing from the manifest is documented, not a
+bug: it counts the raw content including the trailing newline.
 ## 0.17.48
 
 - The goal log records the 0.17.47 round: remote provenance (clean), and the fallback branch that
