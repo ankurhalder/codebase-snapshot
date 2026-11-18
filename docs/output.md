@@ -171,7 +171,7 @@ diff the manifest only when you need to know that a run happened.
 | `schemaVersion` | Manifest format version (`3.0.0`). |
 | `generatedAt` | ISO timestamp of the run. |
 | `generator` | `{ name, version }` of the tool that wrote it. |
-| `git` | `{ branch, commit, isDirty }`. `branch` falls back to the configured branch on a detached HEAD and outside a repository; `commit` is `"unknown"` and `isDirty` is `false` when git cannot report. A `false` there means "not known to be dirty", not "clean tree" — check `commit` to tell the two apart. |
+| `git` | `{ branch, commit, isDirty, branchFromGit }`. `branch` falls back to the configured branch on a detached HEAD and outside a repository, and `branchFromGit: false` marks that fallback — the reports print "fallback; git reported no branch here" so a reader cannot mistake it for a real branch. `commit` is `"unknown"` and `isDirty` is `false` when git cannot report. A `false` there means "not known to be dirty", not "clean tree" — check `commit` to tell the two apart. |
 | `budgets` | The effective byte limits for the run: `{ maxPartBytes, largeFileBytes }`. The per-layer overrides live at `config.budgets`, which is `{ default, byLayer }`. With the experimental `maxParts`, `maxPartBytes` here is the budget the run grew to and `config.maxPartBytes` keeps the configured ceiling. |
 | `config` | The resolved configuration actually used (preset, artifacts, sizing, scoping). |
 | `counts` | `{ totalFiles, totalSizeBytes, totalLines, partsCount, skippedCount, largeFileCount, truncatedPreviewCount, incompleteCount }`. |

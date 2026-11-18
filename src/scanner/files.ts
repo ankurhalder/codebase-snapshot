@@ -11,6 +11,12 @@ export interface GitInfo {
   branch: string;
   commit: string;
   isDirty: boolean;
+  /**
+   * Whether `branch` came from git. In a directory that is not a repository (or on a detached
+   * HEAD) the configured fallback is recorded instead, and a reader who is not told that cannot
+   * distinguish "on main" from "there is no main here".
+   */
+  branchFromGit: boolean;
 }
 
 /** How candidate files are discovered (the type itself lives in `types.ts`). */
@@ -179,6 +185,7 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
     let branch = fallbackBranch;
     let commit = "unknown";
     let isDirty = false;
+    let branchFromGit = false;
 
     const records = output.split("\0").flatMap((record) => record.split("\n"));
     for (const record of records) {
@@ -195,10 +202,11 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
       const head = record.match(/^# branch\.head (.+)$/);
       if (head) {
         branch = head[1] === "(detached)" ? fallbackBranch : head[1];
+        branchFromGit = head[1] !== "(detached)";
       }
     }
 
-    return { branch, commit, isDirty };
+    return { branch, commit, isDirty, branchFromGit };
   } catch (err) {
     // An overflowed buffer is *evidence*, not a failure to answer: `git status` only exceeds
     // the ceiling when it has an enormous number of entries, which is the definition of a dirty
@@ -206,7 +214,7 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
     // claims its own contents match the commit that is being described.
     const code = (err as { code?: unknown }).code;
     const isDirty = code === "ENOBUFS";
-    return { branch: fallbackBranch, commit: "unknown", isDirty };
+    return { branch: fallbackBranch, commit: "unknown", isDirty, branchFromGit: false };
   }
 }
 

@@ -673,7 +673,8 @@ function snapshotSection(
   out.push("- Fingerprint: " + code(manifest.fingerprint) + " - quote it verbatim in your answer.");
   out.push(
     "- Generated: " + code(manifest.generatedAt) + " from branch " + code(manifest.git.branch) +
-      " at commit " + code(manifest.git.commit.slice(0, 8)) + "."
+      " at commit " + code(manifest.git.commit.slice(0, 8)) +
+      (manifest.git.branchFromGit === false ? " (the branch is a configured fallback; git reported none)." : ".")
   );
   out.push(
     manifest.git.isDirty

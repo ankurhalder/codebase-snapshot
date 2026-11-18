@@ -574,7 +574,7 @@ values with no config at all.
 const config = {
   // ── Project ──────────────────────────────────────────────
   preset: "detected",            // "detected" auto-detects; or name one of the 25
-  branch: "main",                // recorded when git cannot report one
+  branch: "main",                // recorded when git cannot report one, and marked branchFromGit: false
 
   // ── Output ───────────────────────────────────────────────
   outDir: "snapshot",

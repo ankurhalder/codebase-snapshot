@@ -57,7 +57,7 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
     "",
     `- **Generated At:** \`${manifest.generatedAt}\``,
     `- **Schema Version:** \`${manifest.schemaVersion}\``,
-    `- **Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})`,
+    `- **Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})${manifest.git.branchFromGit === false ? " — fallback; git reported no branch here" : ""}`,
     `- **Total Tracked Files:** \`${manifest.counts.totalFiles}\``,
     `- **Source Lines:** \`${formatNumber(manifest.counts.totalLines)}\``,
     `- **Emitted Lines:** \`${formatNumber(manifest.totals.emittedLines ?? manifest.counts.totalLines)}\``,

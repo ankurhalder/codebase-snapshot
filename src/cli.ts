@@ -32,7 +32,7 @@ import {
   validateSnapshot,
 } from "./validator/validate.js";
 import { getPreset, unknownPresetMessage } from "./presets/index.js";
-import { isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
+import { getGitInfo, isDiscoveryMode, type DiscoveryMode } from "./scanner/files.js";
 import { buildAgentContract, renderContractText } from "./agent/contract.js";
 import { runWithStdoutCapture } from "./stdout.js";
 import { stripJsonComments } from "./ast/structured.js";
@@ -2339,8 +2339,11 @@ async function runCommand(argv: string[]): Promise<number> {
 
   const started = performance.now();
   info(`📸 ${invocation.dryRun ? "Planning snapshot (dry run)" : "Generating snapshot"} for: ${resolved.cwd}`);
+  // The header used to print the configured fallback as if it were a branch: in a directory that is
+  // not a repository it read "Branch: main". Ask git once and say so when the answer is a fallback.
+  const headerGit = getGitInfo(resolved.cwd, resolved.branch);
   info(
-    `   Branch: ${resolved.branch} | Part budget: ${(resolved.maxPartBytes / 1024).toFixed(0)} KB | ` +
+    `   Branch: ${resolved.branch}${headerGit.branchFromGit ? "" : " (fallback)"} | Part budget: ${(resolved.maxPartBytes / 1024).toFixed(0)} KB | ` +
       `Generator: ${GENERATOR_VERSION} (${generatorOrigin(resolved.cwd)})`
   );
 

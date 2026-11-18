@@ -30,7 +30,7 @@ export function generateAuditReport(
     "# Codebase Health & Security Audit",
     "",
     `**Generated:** ${manifest.generatedAt}  `,
-    `**Git Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})  `,
+    `**Git Branch:** ${inlineCode(escapeControls(manifest.git.branch))} (\`${manifest.git.commit.slice(0, 8)}\`${manifest.git.isDirty ? " - dirty" : ""})${manifest.git.branchFromGit === false ? " — fallback; git reported no branch here" : ""}  `,
     `**Total Files:** ${formatNumber(manifest.counts.totalFiles)}  `,
     `**Source Lines:** ${formatNumber(manifest.counts.totalLines)}  `,
     `**Emitted Lines:** ${formatNumber(manifest.totals.emittedLines ?? manifest.counts.totalLines)}  `,

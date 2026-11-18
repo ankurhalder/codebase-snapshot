@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.47
+
+**A directory that is not a repository was described as being on `main`.**
+
+- The `branch` setting exists so a tree with no git history still gets deterministic metadata — but
+  nothing downstream said the value was a fallback. `README.md`, the audit, `PROMPT.md`, the CLI
+  header and `snapshot_status` all printed `Branch: main` (or `Git: main @ unknown`) for a plain
+  directory: a claim about a branch that does not exist, indistinguishable from a real one.
+- `GitInfo` now carries `branchFromGit`, the manifest records it (optional, so older manifests still
+  read), and every surface that prints the branch says `fallback` when git did not report one.
+  Detached HEAD counts as a fallback too, which is what the recorded value always was.
+
+Verified: a non-repository fixture prints `Branch: main (fallback)` on the terminal and `fallback;
+git reported no branch here` in README, with `"branchFromGit": false` in the manifest; a repository
+keeps the plain form.
 ## 0.17.46
 
 - The goal log records the 0.17.45 round: the browser surface that ignored the repository config,

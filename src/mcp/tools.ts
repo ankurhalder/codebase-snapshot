@@ -1904,7 +1904,7 @@ const statusTool: ToolSpec = {
         `${plural(manifest.counts.partsCount, "part")}`,
       `Content: ${formatBytes(manifest.counts.totalSizeBytes)} of source in ${formatBytes(manifest.totals.totalContentBytes)} emitted`,
       `Fingerprint: ${manifest.fingerprint}`,
-      `Git: ${manifest.git.branch} @ ${manifest.git.commit}${manifest.git.isDirty ? " (dirty)" : " (clean)"}`,
+      `Git: ${manifest.git.branch}${manifest.git.branchFromGit === false ? " (fallback; no git branch)" : ""} @ ${manifest.git.commit}${manifest.git.isDirty ? " (dirty)" : " (clean)"}`,
     ];
     if (manifest.totals.warningCount > 0) lines.push(`Warnings: ${manifest.totals.warningCount}`);
     if (!versionMatches) {

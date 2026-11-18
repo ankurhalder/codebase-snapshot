@@ -477,6 +477,8 @@ export interface Manifest {
     branch: string;
     commit: string;
     isDirty: boolean;
+    /** Absent in manifests written before 0.17.47; false means `branch` is the configured fallback. */
+    branchFromGit?: boolean;
   };
   /**
    * Where the described tree came from, when it was fetched rather than found on disk.

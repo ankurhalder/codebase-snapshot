@@ -133,3 +133,20 @@ test("a requested report outside a git repository says why it was not written", 
   assert.match(warnings, /not a git repository/);
   assert.doesNotMatch(warnings, /[A-Za-z]:\\/, "a warning must not carry a host path");
 });
+
+test("a branch the configuration supplied is marked as a fallback", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "branch-fallback-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "b", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(dir, "src", "a.ts"), "export const a = 1;\n");
+
+  const result = spawnSync(process.execPath, [BIN, "generate"], { cwd: dir, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Branch: main \(fallback\)/);
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(manifest.git.branch, "main");
+  assert.equal(manifest.git.branchFromGit, false, "no repository, so the branch is the fallback");
+  const readme = fs.readFileSync(path.join(dir, "snapshot", "README.md"), "utf8");
+  assert.match(readme, /fallback; git reported no branch here/);
+});
