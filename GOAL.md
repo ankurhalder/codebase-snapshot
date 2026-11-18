@@ -456,3 +456,20 @@ Full `verify` at 0.14.3: 1324 tests, 1316 pass, 0 fail, 8 host skips; tarball 52
 
 Next: 0.15.0 (parity where it matters) - the remaining items are the ten-repository benchmark run
 and whatever parity gaps the comparison pages still name.
+
+### 0.14.5-0.15.1 - parity on someone else's repositories
+
+- 0.14.5 `scripts/benchmark-suite.mjs`: ten public repositories, shallow-cloned, packed by this
+  tool, repomix and gitingest in one pass. Results in `docs/benchmarks.md`: nine of ten within about
+  plus or minus 30% of repomix's tokenizer count; minimatch is a policy difference (its 20–25 MB
+  fixtures are emitted by repomix and bounded-previewed by us), and the page says so.
+- 0.14.6 `--only` and `--ignore` for a single run, in the config digest so `validate` and `explain`
+  compare like with like.
+- **0.15.0 is the third published milestone** (`latest` on npm at 01:33Z), tagged and released on
+  GitHub with the parity summary.
+
+Full `verify` at 0.15.0: 1328 tests, 1320 pass, 0 fail, 8 host skips; tarball 52 files; site 29
+pages, audit-site clean.
+
+Next: 0.15.x toward 0.16.0 (things neither product has) and then 0.17.0, the endgame the plan
+describes. Three milestones published, two to go.
