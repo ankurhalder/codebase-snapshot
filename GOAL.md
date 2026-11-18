@@ -848,17 +848,14 @@ Next: `docs/output.md` read against a real run artifact by artifact, then the la
 
 ### 0.17.52-0.17.57 - the backlog the user asked to finish
 
-### 0.18.0-0.18.1 - the update notice, and why the user never saw it
+### 0.19.0 - the audit agreed with the generator
 
-- The user reported an old global 0.12.0 that never mentioned 0.18.x. The mechanism existed since
-  0.9.6; the cause was in the cache file: `{"checkedAt":…,"latest":null}` — a **failed** request
-  remembered for an hour. One slow answer (1.2 s deadline) silenced every run for the next hour,
-  which is indistinguishable from "you are current".
-- A failed check is now remembered for 5 minutes, the deadline is 2.5 s, and `snapshot update` asks
-  directly: cache bypassed, works without a terminal, prints the version it compared against, and
-  exits 0/1/2 (current / newer / unreachable). Five tests drive it against a local registry, including
-  a directory whose executable config the command must not load.
-- 0.18.0 published through `publish-train` (run 44312176554): registry took ~5 minutes to serve it, as
-  the "being processed" notice says. `latest` and `PUBLISHED` now 0.18.0; `0.18.1` moves the doc pins.
+- Reviewing a real snapshot: 344 files, 13 parts, 3.37 MiB, ~1.0M tokens, zero incomplete/preview
+  files, deterministic fingerprint across runs. Structurally clean; `health` said 70/100.
+- Every failing hit was the redaction marker itself, and three more were comments the generator
+  deliberately left because an unquoted value in a source file is an expression. The audit scanned
+  parts as markdown instead of section-by-section under the source path.
+- Fixed both: marker-aware placeholders and findings, per-section scanning with the header still
+  scanned as the part. Regenerated: 95/100, only the host-path warning (documentation examples).
 
-Full `verify` at 0.18.1: 1375 tests, 1367 pass, 0 fail, 8 host skips; tarball 53 files.
+Full `verify` at 0.19.0: 1379 tests, 1371 pass, 0 fail, 8 host skips; tarball 53 files.

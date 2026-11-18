@@ -30,6 +30,25 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.19.0
+
+**The audit now agrees with the generator about what a secret is.**
+
+- Two false positives made `health` fail a snapshot it had just written: it did not recognise its own
+  `[REDACTED: …]` marker as a placeholder, and it scanned each part as one markdown document instead
+  of section by section under the source path, so a comment the generator had deliberately left
+  (`DB_PASSWORD=envpass!@#$%^&*()` in prose) was read as a credential. A real snapshot of this
+  repository scored **70/100** for leaks that did not exist.
+- Fixed: a candidate containing the marker is a placeholder; a finding whose original line carried the
+  marker is not reported (masking still runs); marker-only YAML blocks are not counted as masked
+  values; and parts are scanned per section under their source paths, while the heading, meta,
+  summaries and file list are still scanned as the part — removing bodies from a copy keeps that
+  coverage instead of trading a false positive for a blind spot.
+
+The same snapshot regenerated: **95/100, 14 passed, 0 failed, 1 warning** — the warning is
+`pii.paths` finding `/Users/name` and `C:\Users\name` in documentation examples, which are genuinely
+in the text. Tests cover the marker shapes, a real secret in the same shapes, and a health run over a
+snapshot that quotes the marker.
 ## 0.18.2
 
 **The audit failed a snapshot for containing the redaction marker.**

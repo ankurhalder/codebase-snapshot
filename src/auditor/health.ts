@@ -572,9 +572,16 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     // generator had deliberately not made, because the source-file rule exempts them.
     let findingCount = 0;
     if (/^parts[\\/].*\.md$/i.test(relative)) {
+      // Bodies are scanned under their source path; everything else in the part (the heading, the
+      // meta and summary lines, the file list) is scanned as the part. Removing the bodies from a
+      // copy keeps that coverage — a path or summary is text too, and dropping it would trade one
+      // false positive for a blind spot.
+      let headerText = text;
       for (const section of parsePartSections(text)) {
         findingCount += scanAndRedactSecrets(section.body, rules, section.path).findings.length;
+        headerText = headerText.replace(section.body, "");
       }
+      findingCount += scanAndRedactSecrets(headerText, rules, relative).findings.length;
     } else {
       findingCount = scanAndRedactSecrets(text, rules, relative).findings.length;
     }
