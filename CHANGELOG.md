@@ -30,6 +30,12 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.20
+
+- `docs/cli.md` still described `--include-logs` as if it always wrote its report, and the 0.17.19
+  changelog said the contract and the page agreed. They did not: the row now carries the same
+  warning as the contract. The docs row is hand-written, which is why the flag test (names only)
+  did not catch it.
 ## 0.17.19
 
 **A requested report that could not be written now says so.**
