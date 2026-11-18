@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.23
+
+**`validate` did not verify signatures, and the docs implied it did.**
+
+- Reproducing the signing flow end to end: `--sign` with `SNAPSHOT_SIGNING_KEY` writes a `configured`
+  record, `health` verifies it, and `validate` passed a manifest edited **after** signing — it never
+  looked at `signature.json`. A signature only matters if the tool that says "is this snapshot what
+  it claims" checks it.
+- `validate` now verifies the record whenever it exists and fails with the reason:
+  `signature: manifest.json changed after it was signed.` (exit 1).
+- `docs/signing.md` said health verifies; it now says validate does too, and shows the message.
+
+Verified: a signed snapshot validates clean; editing one field of the manifest afterwards makes
+`validate` exit 1 with the signature reason; `health` agrees.
 ## 0.17.22
 
 - The goal log records the 0.17.19-0.17.21 round: the silent non-git report flags, the warning that

@@ -14,6 +14,7 @@ import { resolveChangedScope } from "../scanner/changed.js";
 import { buildImportResolver, importsChangedFile } from "../scanner/dependents.js";
 import type { ImportResolver } from "../scanner/dependents.js";
 import { importsOfFile } from "../ast/imports.js";
+import { verifySnapshotSignature } from "../signing.js";
 import { SCHEMA_VERSION, isOurGeneratorName } from "../version.js";
 import { BINARY_SCAN_BYTES, decodeText, isBinaryExtension, isBinaryFile } from "../scanner/binary.js";
 import type {
@@ -1468,6 +1469,15 @@ export function validateSnapshot(
     errors.push(
       `${drift.configMismatches.length} configuration mismatch(es) between the manifest and this run.`
     );
+  }
+
+  // A signed snapshot is only signed if the signature still matches the manifest. `health` always
+  // checked this; `validate` did not, so editing a signed manifest passed the drift check while
+  // the documentation said validate verified signatures.
+  const signaturePath = path.join(path.dirname(manifestPath), "signature.json");
+  if (fs.existsSync(signaturePath)) {
+    const outcome = verifySnapshotSignature(path.dirname(manifestPath));
+    if (!outcome.ok) errors.push("signature: " + outcome.reason + ".");
   }
 
   if (manifest.slice !== undefined || manifest.budget !== undefined) {

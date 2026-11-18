@@ -77,3 +77,18 @@ test("a snapshot without a signature reports it as a skip, not a failure", (t) =
   assert.equal(health.code, 0, health.out);
   assert.match(health.out, /No signature\.json/);
 });
+
+test("validate reports a signature that no longer matches, not only health", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--sign"], root).code, 0);
+  assert.equal(run(["validate"], root).code, 0, "a signed snapshot validates");
+
+  const manifestPath = path.join(root, "snapshot", "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.warnings = [...(manifest.warnings ?? []), "edited after signing"];
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+
+  const validated = run(["validate"], root);
+  assert.equal(validated.code, 1, validated.out);
+  assert.match(validated.out, /signature: manifest\.json changed after it was signed/);
+});

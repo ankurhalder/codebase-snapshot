@@ -39,7 +39,9 @@ public half.
 
 ## Verifying
 
-`snapshot health` verifies the signature when `signature.json` exists:
+Both `snapshot validate` and `snapshot health` verify the signature when `signature.json`
+exists. `validate` reports it as an error (`signature: manifest.json changed after it was signed.`)
+and exits 1; `health` reports it as a critical check with the same reason:
 
 - **critical failure** when the manifest changed after signing, the record is malformed, or the
   signature does not match;
