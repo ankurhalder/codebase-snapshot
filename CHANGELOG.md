@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.7
+
+**A slice that selected nothing, and a member whose source is gone.**
+
+- `--slice "question"` that matched no file wrote an empty snapshot with no warning (`web` reported
+  `files: 0, dropped: 2, warning: null`). It now carries a warning with the planner's own reason,
+  the same way `--budget-tokens` already did.
+- `health --all-members` reported **100/100** for a member whose source directory had been deleted:
+  the written snapshot is intact, so every hash passed, but the workspace index still names a path
+  that no longer exists. The audit now warns with the path and "regenerate the workspace"; the
+  combined score drops to the weakest member (95/100 in the probe).
+
+Verified: an empty slice has exactly one warning naming the reason; a matching slice has none; a
+deleted member loses five points, names the path, and keeps exit 0 (a warning, not a failure).
 ## 0.17.6
 
 - The goal log records the 0.17.1-0.17.5 hardening round: the empty snapshot that warned nowhere, the

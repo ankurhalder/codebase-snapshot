@@ -43,6 +43,13 @@ secret, but you may not want it in the payload either.
 The score starts at 100; each failure costs 25 and each warning 5, with a floor of zero. It is a
 summary, not a substitute for the checks — the report always lists every one.
 
+### A member whose source is gone
+
+`health --all-members` audits the written member snapshots. If a member's source directory has
+been deleted since the workspace was generated, the snapshot is still intact but no longer
+describes that workspace: the audit warns, names the missing path and says to regenerate.
+Before this it scored 100/100 for a member nobody could refresh.
+
 ### The JSON pack against the manifest
 
 When the run wrote `full-codebase.json`, the audit parses it and compares its file set with

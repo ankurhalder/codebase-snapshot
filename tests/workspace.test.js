@@ -142,3 +142,18 @@ test("health notices an index that disagrees with a member", (t) => {
   const clean = run(["health", "--cwd", "api", "--out-dir", "../snapshot/api"], root);
   assert.match(clean.out, /matches the index fingerprint/);
 });
+
+test("a member whose source directory is gone is a warning, not a 100/100", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--workspace", "api,web"], root).code, 0);
+  assert.equal(run(["health", "--all-members"], root).code, 0);
+
+  fs.rmSync(path.join(root, "web"), { recursive: true, force: true });
+  const audited = run(["health", "--all-members"], root);
+  assert.equal(audited.code, 0, audited.out);
+  assert.match(audited.out, /web\s+95\/100/, "the member with a missing source loses five points");
+  assert.match(audited.out, /Combined score: 95\/100/);
+
+  const detail = run(["health", "--out-dir", "snapshot/web"], root);
+  assert.match(detail.out, /source directory is gone/);
+});

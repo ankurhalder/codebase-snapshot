@@ -2886,6 +2886,15 @@ export function generateSnapshot(
       detail: "Question: " + options.slice.question + "\nBudget: " + plan.budgetTokens.toLocaleString("en-US") + " tokens",
       files: plan.files.map((file) => ({ path: file.path, tokens: file.tokens, why: file.why })),
     };
+    // A slice that selected nothing is the same class of fact as a budget that fit nothing, and
+    // it was the one place the run stayed silent about an empty result. The planner notes say
+    // which of the two reasons it was (no match, or nothing fit), so quote them.
+    if (plan.files.length === 0) {
+      warnings.push(
+        "The slice selected no files for this question, so the snapshot is empty. " +
+          (plan.notes.length > 0 ? plan.notes[0] : "See the plan notes in the manifest.")
+      );
+    }
   }
 
   // `--budget-tokens` fits the repository into a budget instead of truncating files: whole files

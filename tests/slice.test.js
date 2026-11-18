@@ -104,3 +104,20 @@ test("explain says a selection dropped the file", (t) => {
   assert.match(explained.out, /not-selected/);
   assert.match(explained.out, /selection|slice/);
 });
+
+test("a slice that selects nothing says so instead of writing a silent empty snapshot", (t) => {
+  const root = makeRepo(t);
+  const result = run(["generate", "--slice", "zzzz-no-such-term"], root);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /The slice selected no files/);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(manifest.slice.files.length, 0);
+  assert.equal(manifest.warnings.length, 1);
+  assert.match(manifest.warnings[0], /slice selected no files/);
+
+  // A slice that selected files says nothing about selection being empty.
+  const matched = run(["generate", "--slice", "how does chargeCard work", "--out-dir", "snap2"], root);
+  assert.equal(matched.code, 0, matched.out);
+  const second = JSON.parse(fs.readFileSync(path.join(root, "snap2", "manifest.json"), "utf8"));
+  assert.equal(second.warnings.filter((line) => /slice selected no files/.test(line)).length, 0);
+});

@@ -532,12 +532,18 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
       if (typeof member.files === "number" && member.files !== manifest.counts.totalFiles) {
         disagreements.push("file count");
       }
+      const sourceGone =
+        typeof member.path === "string" && !fs.existsSync(member.path)
+          ? "Member " + memberName + " source directory is gone (" + member.path + "); the snapshot still describes it. Regenerate the workspace."
+          : null;
       checks.push(
-        disagreements.length === 0
-          ? check("workspace.index", "The workspace index agrees with this member", "warning", "pass",
-              "Member " + memberName + " matches the index fingerprint and file count.")
-          : check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
-              "The index disagrees with this member on: " + disagreements.join(", ") + ". Regenerate the workspace.")
+        sourceGone !== null
+          ? check("workspace.index", "The workspace index agrees with this member", "warning", "warn", sourceGone)
+          : disagreements.length === 0
+            ? check("workspace.index", "The workspace index agrees with this member", "warning", "pass",
+                "Member " + memberName + " matches the index fingerprint and file count.")
+            : check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
+                "The index disagrees with this member on: " + disagreements.join(", ") + ". Regenerate the workspace.")
       );
     }
   }
