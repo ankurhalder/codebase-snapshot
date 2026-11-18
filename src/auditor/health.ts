@@ -361,6 +361,37 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     );
   }
 
+  // Bookkeeping: the counts are what a summary quotes, and nothing else in the audit compares them
+  // with the arrays they summarise. A manifest edited to say "5 more files" passed every check
+  // while the parts held one.
+  const bookkeeping: string[] = [];
+  const expect = (name: string, recorded: number, computed: number): void => {
+    if (recorded !== computed) bookkeeping.push(name + ": manifest says " + recorded + ", the data has " + computed);
+  };
+  expect("counts.totalFiles", manifest.counts.totalFiles, manifest.files.length);
+  expect("counts.partsCount", manifest.counts.partsCount, manifest.parts.length);
+  expect("counts.skippedCount", manifest.counts.skippedCount, manifest.skipped.length);
+  if (typeof manifest.totals.includedFiles === "number") {
+    expect("totals.includedFiles", manifest.totals.includedFiles, manifest.files.length);
+  }
+  const contentBytes = manifest.files.reduce((sum, file) => sum + file.includedBytes, 0);
+  expect("totals.totalContentBytes", manifest.totals.totalContentBytes, contentBytes);
+  const layerCounts = new Map<string, number>();
+  for (const file of manifest.files) layerCounts.set(file.layer, (layerCounts.get(file.layer) ?? 0) + 1);
+  for (const [layer, count] of layerCounts) {
+    expect("layers." + layer, manifest.layers[layer] ?? -1, count);
+  }
+  for (const layer of Object.keys(manifest.layers)) {
+    if (!layerCounts.has(layer)) expect("layers." + layer, manifest.layers[layer], 0);
+  }
+  checks.push(
+    bookkeeping.length === 0
+      ? check("bookkeeping", "The counts equal the data they summarise", "critical", "pass",
+          "Files, parts, skips, content bytes and layer counts all agree.")
+      : check("bookkeeping", "The counts equal the data they summarise", "critical", "fail",
+          bookkeeping.length + " mismatch(es): " + sample(bookkeeping))
+  );
+
   // The manifest says how many bytes and lines each file contributed. The parts are the only
   // place that claim can be checked, and a part whose section is shorter than the manifest says
   // is a snapshot that under-delivers while its hashes still agree. One parse per part, then

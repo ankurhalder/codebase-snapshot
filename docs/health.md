@@ -43,6 +43,15 @@ secret, but you may not want it in the payload either.
 The score starts at 100; each failure costs 25 and each warning 5, with a floor of zero. It is a
 summary, not a substitute for the checks — the report always lists every one.
 
+### The counts against the data
+
+A manifest edited to claim more files, parts, skips or content bytes than it holds used to pass
+every check: each part hashed correctly, the artifacts were present, and the numbers a summary
+quotes were never compared with the arrays they summarise. The audit now recomputes
+`counts.totalFiles`, `counts.partsCount`, `counts.skippedCount`, `totals.totalContentBytes` and the
+per-layer counts from the manifest's own arrays; any disagreement is a critical failure naming the
+field and both numbers.
+
 ### Every body against the accounting
 
 The manifest says how many bytes and lines each file contributed. The audit now checks that

@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.7
+
+**The audit checks the counts against the data they summarise.**
+
+- `counts.totalFiles`, `counts.partsCount`, `counts.skippedCount`, `totals.totalContentBytes` and the
+  per-layer counts were quoted, never verified. A manifest edited to claim five more files than the
+  parts hold passed every check — each part hashed correctly and the artifacts were present.
+- The audit recomputes all of them from the manifest's own arrays and fails with the field and both
+  numbers when they disagree (probed: `counts.totalFiles: manifest says 7, the data has 2`).
+
+Verified: a clean snapshot passes the check, and one edited count field fails with its name.
 ## 0.13.6
 
 **The audit checks every file body against the manifest accounting.**

@@ -182,3 +182,18 @@ test("a part whose body is shorter than the manifest says is a failure", (t) => 
   assert.match(broken.out, /Every file body matches the manifest accounting/);
   assert.match(broken.out, /disagree/);
 });
+
+test("a manifest whose counts disagree with its own data fails the audit", (t) => {
+  const dir = repoWithSnapshot(t);
+  assert.equal(health(dir).code, 0);
+
+  const manifestPath = path.join(dir, "snapshot", "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.counts.totalFiles += 5;
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+
+  const broken = health(dir);
+  assert.equal(broken.code, 1, broken.out);
+  assert.match(broken.out, /The counts equal the data they summarise/);
+  assert.match(broken.out, /counts\.totalFiles/);
+});
