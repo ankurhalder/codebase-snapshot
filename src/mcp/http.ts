@@ -2,6 +2,7 @@ import * as http from "node:http";
 import * as crypto from "node:crypto";
 import { createServer } from "./run.js";
 import { buildTools } from "./tools.js";
+import { GENERATOR_VERSION } from "../version.js";
 import type { McpServer } from "./server.js";
 import type { JsonRpcResponse } from "./protocol.js";
 
@@ -146,7 +147,19 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
 
     if (request.method === "GET" && request.url === "/healthz") {
-      send(200, { ok: true, name: "codebase-snapshot", tools: toolCount }, cors);
+      // A load balancer needs liveness and a human needs to know which build answered. Both
+      // are cheap; uptime is seconds since this server started listening.
+      send(
+        200,
+        {
+          ok: true,
+          name: "codebase-snapshot",
+          version: GENERATOR_VERSION,
+          tools: toolCount,
+          uptimeSeconds: Math.round(process.uptime()),
+        },
+        cors
+      );
       return;
     }
 

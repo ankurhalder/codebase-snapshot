@@ -189,3 +189,17 @@ test("an unknown SSE session is a 404", async (t) => {
   });
   assert.equal(response.status, 404);
 });
+
+test("healthz reports the build that answers, without a token", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const url = new URL(transport.url);
+  const response = await fetch(url.origin + "/healthz");
+  assert.equal(response.status, 200, "liveness must not need the token");
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.name, "codebase-snapshot");
+  assert.match(body.version, /^\d+\.\d+\.\d+$/);
+  assert.ok(body.tools >= 20);
+  assert.equal(typeof body.uptimeSeconds, "number");
+});

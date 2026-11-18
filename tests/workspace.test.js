@@ -103,3 +103,22 @@ test("health --all-members names the missing index", (t) => {
   assert.equal(result.code, 1);
   assert.match(result.out, /No workspace index/);
 });
+
+test("health --all-members --format json returns one record per member", (t) => {
+  const root = makeRepo(t);
+  assert.equal(run(["generate", "--workspace", "api,web"], root).code, 0);
+  const result = spawnSync(process.execPath, [BIN, "health", "--all-members", "--format", "json"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.members.length, 2);
+  for (const member of report.members) {
+    assert.ok(["api", "web"].includes(member.name));
+    assert.equal(typeof member.score, "number");
+    assert.ok(member.counts.pass > 0);
+    assert.equal(member.error, undefined);
+  }
+  assert.equal(report.score, Math.min(...report.members.map((member) => member.score)));
+});

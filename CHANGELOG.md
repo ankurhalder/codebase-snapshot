@@ -30,6 +30,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.97
+
+- **`GET /healthz` says which build is answering.** It returned `ok`, the name and a tool count; a
+  probe that reaches a stale process had no way to tell. It now carries `version` and
+  `uptimeSeconds`, needs no token, and is covered by a test.
+- `health --all-members --format json` is pinned by a test: one record per member with its score and
+  counts, the combined score equal to the weakest, and no `error` field for a healthy member.
 ## 0.12.96
 
 - **`snapshot_generate` can pack and can narrow.** `pack` (single/xml/json) is a config setting the
