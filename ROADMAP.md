@@ -85,6 +85,13 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 - Zero runtime dependencies.
 - Every release is a real change with a regression test.
 
+## Milestones
+
+| Version | Meaning | State |
+| :-- | :-- | :-- |
+| 0.13.0 | Retrieval server, browser, health, parity, beyond parity | **published** 2026-11-18; `latest` on npm |
+| 0.14.0 | next milestone | planned |
+
 ## Shipped so far
 
 | Version | Change |

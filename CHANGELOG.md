@@ -30,6 +30,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.2
+
+- The goal log records the milestone: 0.13.0 tagged, released on GitHub and **published to npm**
+  through the train (the registry reports `latest = 0.13.0`), plus the 0.12.99 security fix and the
+  0.13.1 portability fix the release workflow exposed.
+- `ROADMAP.md` carries a milestone table with the published state, so the next milestone has a place
+  to be recorded rather than being inferred from the changelog.
 ## 0.13.1
 
 **The test suite could not run on Linux, so the release workflow never passed.**

@@ -371,3 +371,22 @@ Full `verify` at 0.12.97: 1316 tests, 1308 pass, 0 fail, 8 host skips; tarball 5
 
 One sub-bump to 0.12.99, then 0.13.0: the first publish under the clean-registry policy, through
 the publish train with a dry run first.
+
+### 0.12.99-0.13.2 - the milestone, published
+
+- 0.12.99 closed the last sub-bump with a security fix: the serve API took a `path` and resolved it
+  with `path.resolve`, so a bearer token doubled as an arbitrary-file-read primitive. The server now
+  allows its working directory and the clones it created, and answers `403` otherwise.
+- **0.13.0 is the first published milestone.** Tagged, released on GitHub with notes, and published
+  to npm through `publish-train.yml`: the registry now reports `latest = 0.13.0`. The train's first
+  attempt printed "Your package is being processed" and the registry showed nothing for about five
+  minutes; the retry found the version already there. That is npm's asynchronous processing, not a
+  failure — worth knowing before calling a publish dead.
+- 0.13.1 fixed the portability bug the failed release-event workflow exposed: twelve test files built
+  paths from `URL.pathname` and stripped a leading slash, which is absolute on Windows and relative
+  on Linux. All twelve use `fileURLToPath` now.
+
+Full `verify` at 0.13.1: 1317 tests, 1309 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Next: the 0.13.x line toward 0.14.0. The queue from the plan: observability for the HTTP server,
+a last pass on the retrieval planner, and whatever the verify finds in between.
