@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.93
+
+- **`snapshot_status` reports an unreadable manifest as an error, not as a status.** "No snapshot
+  yet" and "the manifest is not a snapshot manifest" were both returned as a normal result with
+  `present: false`, so a client reading the second planned around a snapshot it could never read. The
+  missing case stays a successful answer (that is what the tool is for); a manifest that exists and
+  fails the shape check sets `isError`.
+
+Verified: a repository without a snapshot answers with `present: false` and no error; a manifest with
+  `indexes` removed answers with `isError` and the shape message.
 ## 0.12.92
 
 - The goal log records the 0.12.90-0.12.91 round, including the three probes that found nothing: a

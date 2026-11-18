@@ -1541,8 +1541,12 @@ const statusTool: ToolSpec = {
     const read = readManifest(workspace);
 
     if (!read.ok) {
+      // "No snapshot yet" is an answer; "the manifest is not a snapshot" is a failure, and a
+      // client that receives it as a normal status will plan around a snapshot that cannot be
+      // read. The two are different results, so they are reported differently.
       return {
         text: read.message,
+        isError: read.missing === true ? undefined : true,
         structured: {
           present: false,
           root: workspace.root,

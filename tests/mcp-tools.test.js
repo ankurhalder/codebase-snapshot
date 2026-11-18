@@ -510,3 +510,22 @@ test("snapshot_history reads the log report, and says how to make one", async (t
     assert.ok(commit.subject.length > 0);
   }
 });
+
+test("status separates a missing snapshot from an unreadable one", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+
+  const missing = await call("snapshot_status", {}, context);
+  assert.equal(missing.isError, undefined, "no snapshot yet is an answer, not an error");
+  assert.equal(missing.structured.present, false);
+
+  assert.equal((await call("snapshot_generate", {}, context)).isError, undefined);
+  const manifestPath = path.join(root, "snapshot", "manifest.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  delete manifest.indexes;
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest) + "\n");
+
+  const broken = await call("snapshot_status", {}, context);
+  assert.equal(broken.isError, true, "a manifest that is not a snapshot is an error");
+  assert.match(broken.text, /not a snapshot manifest/);
+});
