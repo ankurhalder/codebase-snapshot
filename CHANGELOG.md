@@ -30,6 +30,13 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.41
+
+- A test from an earlier release asserted that `snapshot_validate` **without** the generating flags
+  reports drift ("the flag has to be doing something"). That was the documented behaviour then; with
+  0.17.40 it is the bug, because a no-flag validate now compares against the manifest's recorded
+  settings. The assertion and its comment were updated to the new contract, and `docs/tools.md` says
+  it: validate uses the recorded settings, and a changed config file is still drift.
 ## 0.17.40
 
 **`snapshot_validate` called a fresh snapshot "out of date".**

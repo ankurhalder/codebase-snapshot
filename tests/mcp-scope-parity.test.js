@@ -121,10 +121,12 @@ test("snapshot_validate accepts the flags the snapshot was generated with", asyn
   assert.equal(structured.current, true, `the snapshot validates: ${validated.text}`);
   assert.equal(structured.drift.configMismatches.count, 0, "no configuration drift");
 
-  // Without the flag the comparison is against a different configuration, which is real drift and
-  // must still be reported — the flag has to be *doing* something.
+  // Since 0.17.40 a no-flag validate compares against the settings the manifest recorded, so the
+  // snapshot validates either way. The flag is still accepted, and it is what generated the snapshot:
+  // the failure this test exists for was a snapshot that could not be validated over MCP at all.
   const withoutFlag = await call("snapshot_validate", {}, root);
-  assert.equal(withoutFlag.structured.current, false, "the flag is not ignored");
+  assert.equal(withoutFlag.structured.current, true, "the recorded settings are used: " + withoutFlag.text);
+  assert.equal(withoutFlag.structured.drift.configMismatches.count, 0);
 });
 
 test("snapshot_plan honours a token budget the same way the CLI does", async (t) => {

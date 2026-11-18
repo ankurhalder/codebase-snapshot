@@ -165,6 +165,9 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   { "name": "snapshot_generate", "arguments": { "slice": "how is auth done", "sliceTokens": 20000 } }
   ```
 - **`snapshot_validate`** — medium, read-only. Drift check: files changed or deleted since the
+  snapshot, part damage, bookkeeping, **and the settings the manifest recorded** — a snapshot
+  generated with `tokenTree`, `includeDiffs`, `removeEmptyLines` or `skeleton` validates clean
+  without re-passing the flags, while a changed config file is still drift.
   snapshot, part hashes, bookkeeping. A selection snapshot is not second-guessed, and says so.
   ```json
   { "name": "snapshot_validate", "arguments": {} }
