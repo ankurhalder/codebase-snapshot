@@ -3548,17 +3548,23 @@ export function generateSnapshot(
 
     const markdown =
       definitelyTooLarge || !wantsMarkdown ? null : generateMonolithMarkdown(manifest, fullFiles);
-    const markdownBytes = markdown === null ? 0 : Buffer.byteLength(markdown, "utf8");
-    if (markdown !== null && (!config.maxMonolithBytes || markdownBytes <= config.maxMonolithBytes)) {
-      monolithMarkdown = markdown;
-      manifest.artifacts.fullMarkdown = {
-        byteSize: markdownBytes,
-        sha256: sha256Hex(markdown),
-      };
-    } else if (!definitelyTooLarge) {
-      manifest.warnings.push(
-        `full-codebase.md skipped: ${markdownBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
-      );
+    // Only a pack that was actually built can be "too large". The old shape fell through to a
+    // warning when the pack was simply not requested, so `--pack json` printed
+    // "full-codebase.md skipped: 0 B exceeds maxMonolithBytes 100 B" — a statement about a
+    // file the run never tried to build.
+    if (markdown !== null) {
+      const markdownBytes = Buffer.byteLength(markdown, "utf8");
+      if (config.maxMonolithBytes === null || markdownBytes <= config.maxMonolithBytes) {
+        monolithMarkdown = markdown;
+        manifest.artifacts.fullMarkdown = {
+          byteSize: markdownBytes,
+          sha256: sha256Hex(markdown),
+        };
+      } else {
+        manifest.warnings.push(
+          `full-codebase.md skipped: ${markdownBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
+        );
+      }
     }
     // XML embeds no manifest, so it can be built before the JSON re-embeds the warning list; it
     // still records its digest so `validate` can require the file to exist and match.
@@ -3579,14 +3585,16 @@ export function generateSnapshot(
     // Last: the JSON embeds the manifest, so it now carries the markdown digest and
     // every warning produced above (artifact warnings, monolith skips).
     const json = definitelyTooLarge || !wantsJson ? null : generateMonolithJson(manifest, fullFiles);
-    const jsonBytes = json === null ? 0 : Buffer.byteLength(json, "utf8");
-    if (json !== null && (!config.maxMonolithBytes || jsonBytes <= config.maxMonolithBytes)) {
-      monolithJson = json;
-      manifest.artifacts.fullJson = { byteSize: jsonBytes, sha256: sha256Hex(json) };
-    } else if (!definitelyTooLarge) {
-      manifest.warnings.push(
-        `full-codebase.json skipped: ${jsonBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
-      );
+    if (json !== null) {
+      const jsonBytes = Buffer.byteLength(json, "utf8");
+      if (config.maxMonolithBytes === null || jsonBytes <= config.maxMonolithBytes) {
+        monolithJson = json;
+        manifest.artifacts.fullJson = { byteSize: jsonBytes, sha256: sha256Hex(json) };
+      } else {
+        manifest.warnings.push(
+          `full-codebase.json skipped: ${jsonBytes} B exceeds maxMonolithBytes ${config.maxMonolithBytes} B`
+        );
+      }
     }
     manifest.totals.warningCount = manifest.warnings.length;
   }

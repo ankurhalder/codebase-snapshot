@@ -1031,3 +1031,19 @@ test("fingerprint: a changed tree moves it", () => {
   assert.notEqual(after.fingerprint, before.fingerprint, "a source edit changes the snapshot");
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("a pack that was not requested does not get a skip warning", () => {
+  const dir = repo({ "src/big.ts": "export const big = 'x';\n".repeat(2000) });
+  const manifest = generate(dir, { pack: "json", maxMonolithBytes: 200 });
+  const warnings = manifest.warnings.filter((warning) => warning.includes("full-codebase"));
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /full-codebase\.json skipped/);
+  assert.doesNotMatch(warnings[0], /skipped: 0 B/, "the size is the built pack's, not a placeholder");
+  assert.equal(
+    manifest.warnings.some((warning) => warning.includes("full-codebase.md")),
+    false,
+    "markdown was never requested"
+  );
+  assert.equal(manifest.artifacts.fullMarkdown, null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
