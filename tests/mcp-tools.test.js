@@ -808,3 +808,33 @@ test("search distinguishes files with a match from files searched", async (t) =>
   const none = await call("snapshot_search", { query: "zzzz-not-present" }, context);
   assert.match(none.text, /^No match in \d+ file\(s\)\./);
 });
+
+test("snapshot_history refuses a report edited after generation", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "history-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "h", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(root, "src", "a.ts"), "export const a = 1;\n");
+
+  const git = (args) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  if (git(["init", "-q"]).status !== 0) {
+    t.skip("git is not available");
+    return;
+  }
+  git(["-c", "user.email=t@e.c", "-c", "user.name=T", "add", "-A"]);
+  git(["-c", "user.email=t@e.c", "-c", "user.name=T", "commit", "-q", "-m", "first"]);
+
+  const context = contextFor(root);
+  await call("snapshot_generate", { includeLogs: 5 }, context);
+  const logPath = path.join(root, "snapshot", "reports", "log.md");
+  assert.ok(fs.existsSync(logPath), "the report was written");
+
+  const intact = await call("snapshot_history", {}, context);
+  assert.equal(intact.isError, undefined, intact.text);
+  assert.match(intact.text, /first/);
+
+  fs.appendFileSync(logPath, "\n- fake commit\n");
+  const history = await call("snapshot_history", {}, context);
+  assert.equal(history.isError, true, history.text);
+  assert.match(history.text, /changed after the snapshot was generated/);
+});

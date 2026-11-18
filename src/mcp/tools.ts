@@ -30,6 +30,7 @@ import { GENERATOR_VERSION } from "../version.js";
 import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import { estimateTokens } from "../tokenize.js";
+import { createHash } from "node:crypto";
 import type { JsonObject, JsonSchema } from "./protocol.js";
 import type { FileEntry, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolCost, ToolOutcome } from "./types.js";
@@ -348,6 +349,22 @@ const historyTool: ToolSpec = {
           "the report is opt-in because the commit subjects are repository content.",
         isError: true,
       };
+    }
+    // The manifest records a digest for reports/log.md when it wrote one. A tool that reports
+    // commit subjects from a file edited after generation is repeating unverifiable repository
+    // content as history, so the digest is checked here the way `validate` checks artifacts.
+    const manifestRead = readManifest(prepared.workspace);
+    const recordedLog = manifestRead.ok ? manifestRead.manifest.artifacts?.log : undefined;
+    if (recordedLog !== undefined && recordedLog !== null) {
+      const digest = createHash("sha256").update(text, "utf8").digest("hex");
+      if (digest !== recordedLog.sha256) {
+        return {
+          text:
+            "reports/log.md changed after the snapshot was generated (its digest no longer matches " +
+            "the manifest). Regenerate the snapshot rather than trusting this history.",
+          isError: true,
+        };
+      }
     }
     const limit = Math.max(1, typeof args.limit === "number" ? args.limit : 20);
     const commits = parseHistoryReport(text).slice(0, limit);

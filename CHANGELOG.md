@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.35
+
+**`snapshot_history` repeated an edited report as fact.**
+
+- The tool read `reports/log.md` and printed its commits. It never compared the file with the digest
+  the manifest records for it, so appending `- fake commit` to the report changed the history an agent
+  received, with no signal; `validate` and `health` would have caught the edit, the tool that serves
+  the history did not.
+- It now hashes the file and refuses a report whose digest no longer matches the manifest, naming the
+  reason and telling the caller to regenerate. A snapshot without the recorded artifact (older
+  manifests) is read as before.
+
+Verified: a git fixture lists its commits; after one line is appended the tool is an error; the
+snapshot without a recorded digest (pre-0.12 log) still reads.
 ## 0.17.34
 
 - The goal log records the 0.17.33 round: the search summary that conflated searched with matched,
