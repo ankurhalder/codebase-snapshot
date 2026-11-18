@@ -52,7 +52,9 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```json
   { "name": "snapshot_locate", "arguments": { "query": "src/mcp/tools.ts", "by": "path" } }
   ```
-- **`snapshot_symbol`** — medium, read-only. A symbol by name: defining file, kind, signature and
+- **`snapshot_symbol`** — medium, read-only. A symbol by name: defining file, kind, signature,
+  and — unless `references: false` — the call sites where the name appears, with line numbers.
+
   the exports that reference it.
   ```json
   { "name": "snapshot_symbol", "arguments": { "name": "generateSnapshot" } }

@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.14.3
+
+- **`snapshot_symbol` reports call sites.** The definition says what a symbol is; the call sites say
+  who depends on it. Unless `references: false`, the tool scans the parts (never the working tree) for
+  the name, bounded by `MAX_SEARCH_BYTES` and `maxReferences` (default 20), and returns path, line and
+  the line text — marking the definition line itself.
+- Case-sensitive matching on purpose: a case-insensitive scan of a common word is noise. Import lines
+  count as sites, which is why a rename sees them.
+
+Verified: a call in `src/auth.ts` is reported with its line, the import line is included, and
+`references: false` skips the scan.
 ## 0.14.2
 
 - **The comparison harness runs gitingest, and now does.** `--gitingest` reported "not available" here

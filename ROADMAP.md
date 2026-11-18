@@ -61,7 +61,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 30 | Task-scoped slicing from the CLI (`--slice "question"`), sharing the MCP planner | shipped 0.12.26 |
 | 31 | Delta packs: what changed since a previous snapshot, with context | shipped 0.12.25 |
 | 32 | Multi-repo / monorepo workspace snapshots with cross-references | shipped 0.12.38–0.12.45: per-member snapshots, WORKSPACE.json, cross-member import links |
-| 33 | Symbol-level packs with call-site evidence | planned |
+| 33 | Symbol-level packs with call-site evidence | shipped 0.14.3: definition window plus call sites from the parts |
 | 34 | Signed manifests (Ed25519) behind `--sign` | shipped 0.12.32 |
 | 35 | Budget planner: "fit this repo into N tokens" with a quality report | shipped 0.12.33 + coverage report in 0.12.44 |
 

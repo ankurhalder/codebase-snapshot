@@ -567,3 +567,28 @@ test("generate can pack and can narrow, and refuses the slice/budget pair", asyn
   assert.equal(both.isError, true);
   assert.match(both.text, /pass one/);
 });
+
+test("symbol lookup reports where the symbol is called", async (t) => {
+  const root = makeFixture(t);
+  fs.writeFileSync(
+    path.join(root, "src", "auth.ts"),
+    'import { user } from "./user.js";\nexport function check() {\n  return user();\n}\n'
+  );
+  await call("snapshot_generate", {}, contextFor(root));
+
+  const result = await call("snapshot_symbol", { name: "user" }, contextFor(root));
+  assert.equal(result.isError, undefined, result.text);
+  assert.ok(result.structured.found >= 1, result.text);
+  const site = result.structured.references.find((entry) => entry.path === "src/auth.ts");
+  assert.ok(site, "the call site is reported: " + JSON.stringify(result.structured.references));
+  assert.equal(typeof site.line, "number");
+  assert.ok(
+    result.structured.references.some((entry) => entry.text.includes("user()")),
+    "the call itself is among the sites: " + JSON.stringify(result.structured.references)
+  );
+  assert.match(result.text, /Call sites/);
+
+  const quiet = await call("snapshot_symbol", { name: "user", references: false }, contextFor(root));
+  assert.equal(quiet.structured.references.length, 0, "references:false skips the scan");
+  assert.doesNotMatch(quiet.text, /Call sites/);
+});

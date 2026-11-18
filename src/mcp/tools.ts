@@ -1127,6 +1127,11 @@ const symbolTool: ToolSpec = {
       name: { type: "string", description: "Symbol name, case-insensitive." },
       lines: { type: "integer", description: "Window size around the definition (default 40).", minimum: 5 },
       maxFiles: { type: "integer", description: "Cap on files searched (default 5).", minimum: 1 },
+      references: {
+        type: "boolean",
+        description: "Also report call sites: other files whose body mentions the name (default true).",
+      },
+      maxReferences: { type: "integer", description: "Cap on reported call sites (default 20).", minimum: 1 },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
     },
@@ -1138,6 +1143,7 @@ const symbolTool: ToolSpec = {
     properties: {
       found: { type: "integer" },
       matches: { type: "array", items: { type: "object" } },
+      references: { type: "array", items: { type: "object" } },
     },
   },
   annotations: READ_ONLY,
@@ -1190,10 +1196,56 @@ const symbolTool: ToolSpec = {
         structured: { found: 0, matches: [] },
       };
     }
+    // Call sites: the definition alone says what a symbol is, not who depends on it. The parts
+    // are the only source — reading the working tree would hand back the file the snapshot
+    // excluded. Case-sensitive on purpose: a case-insensitive scan of a common word is noise.
+    const callSites: Array<{ path: string; line: number; text: string; definition: boolean }> = [];
+    if (args.references !== false) {
+      const limit = Math.max(1, typeof args.maxReferences === "number" ? args.maxReferences : 20);
+      const definitionKeys = new Set(matches.map((match) => match.path + ":" + match.line));
+      const word = new RegExp("\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
+      const parts = new Map<string, string>();
+      let scanned = 0;
+      for (const file of read.manifest.files) {
+        if (callSites.length >= limit) break;
+        const partPath = partPathFor(workspace, file.part);
+        if (partPath === null) continue;
+        let partText = parts.get(partPath);
+        if (partText === undefined) {
+          try {
+            partText = fs.readFileSync(partPath, "utf8");
+          } catch {
+            continue;
+          }
+          parts.set(partPath, partText);
+        }
+        if (scanned > MAX_SEARCH_BYTES) break;
+        scanned += Buffer.byteLength(partText, "utf8");
+        const section = findSection(parsePartSections(partText), file.relativePath);
+        if (section === null) continue;
+        const bodyLines = section.body.split("\n");
+        for (let index = 0; index < bodyLines.length && callSites.length < limit; index += 1) {
+          if (!word.test(bodyLines[index])) continue;
+          callSites.push({
+            path: file.relativePath,
+            line: index + 1,
+            text: bodyLines[index].trim().slice(0, 200),
+            definition: definitionKeys.has(file.relativePath + ":" + (index + 1)),
+          });
+        }
+      }
+    }
+
     const text = matches
       .map((match) => "### " + match.path + " (" + match.part + ", line " + match.line + ")\n" + match.text)
-      .join("\n\n");
-    return { text, structured: { found: matches.length, matches } };
+      .join("\n\n") +
+      (args.references === false
+        ? ""
+        : "\n\n" + (callSites.length === 0
+            ? "No call site was found in the snapshot."
+            : "Call sites (" + callSites.length + "):\n" +
+              callSites.map((site) => "  " + site.path + ":" + site.line + "  " + site.text).join("\n")));
+    return { text, structured: { found: matches.length, matches, references: callSites } };
   },
 };
 
