@@ -600,3 +600,20 @@ Full `verify` at 0.17.13: 1344 tests, 1336 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the HTTP transport surface (rate limiting, /metrics under load, session teardown), then a
 pass over `snapshot_review` with a real diff.
+
+### 0.17.15-0.17.16 - the counter that counted almost nothing
+
+- Probed the HTTP transport instead of the tools: initialize, an unauthorized POST, a cross-origin
+  POST, a wrong method, 90 requests into a 60-per-10s window, then `/metrics`. The transport behaved
+  correctly (401/403/405/429 as documented); the metric did not.
+- `snapshot_requests_refused_total` claimed "requests refused before dispatch" and counted only a
+  rejected CORS origin. A missing token, a wrong method, an oversize body and an unknown SSE
+  session were served and counted as nothing, so a probed server reported **zero refusals**.
+- Counting moved into `send()` for every 4xx except 429 (which keeps its own counter, because the
+  question is different). The same probe now reads 3 refusals and 30 rate-limited, and a test pins
+  both numbers plus the 429 count the client actually saw.
+
+Full `verify` at 0.17.15: 1345 tests, 1337 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: `snapshot_review` against a real working-tree diff, then the `--include-diffs` behaviour on a
+repository without git.

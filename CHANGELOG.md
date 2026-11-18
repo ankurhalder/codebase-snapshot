@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.16
+
+- The goal log records the 0.17.15 round: the HTTP probe that found the refusal counter counting
+  only CORS refusals while 401/405/413/404 passed uncounted.
 ## 0.17.15
 
 **The refusal counter counted almost no refusals.**
