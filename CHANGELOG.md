@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.10
+
+- **Every single-file pack is checked for membership, not only the JSON one.** The XML pack writes
+  paths as `<file path="…">` and the markdown pack as `## File: …`; each has a small reader and the
+  same both-directions comparison against `manifest.files`. A pack entry deleted and the digest
+  updated is a critical failure in all three formats.
+
+Verified: clean `--pack xml`, `--pack single` and `--pack json` snapshots pass their checks; removing
+one file section from the XML and the markdown pack and re-digesting fails with
+`is in the manifest but not the pack`.
 ## 0.13.9
 
 - **The JSON monolith must hold every file the manifest lists.** The pack's digest proves it is the

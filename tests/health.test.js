@@ -226,3 +226,32 @@ test("the JSON pack must hold every file, even when its digest is updated", (t) 
   assert.equal(broken.code, 1, broken.out);
   assert.match(broken.out, /is in the manifest but not the pack/);
 });
+
+test("the XML and markdown packs must hold every file too", (t) => {
+  for (const [mode, file, cut] of [
+    ["xml", "full-codebase.xml", /\n  <file path="src\/a\.ts"[\s\S]*?<\/file>/],
+    ["single", "full-codebase.md", /\n## File: src\/a\.ts[\s\S]*?(?=\n## File: |\n---\n|$)/],
+  ]) {
+    const dir = repoWithSnapshot(t, { "src/a.ts": "export const a = 1;\n", "src/b.ts": "export const b = 2;\n" }, ["--pack", mode]);
+    const packPath = path.join(dir, "snapshot", file);
+    const text = fs.readFileSync(packPath, "utf8");
+    const without = text.replace(cut, "\n");
+    assert.notEqual(without, text, file + ": the fixture holds the section to cut");
+    fs.writeFileSync(packPath, without);
+
+    const manifestPath = path.join(dir, "snapshot", "manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    const packed = fs.readFileSync(packPath);
+    const key = file.endsWith(".xml") ? "fullXml" : "fullMarkdown";
+    manifest.artifacts[key] = {
+      ...manifest.artifacts[key],
+      bytes: packed.length,
+      sha256: createHash("sha256").update(packed).digest("hex"),
+    };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+
+    const broken = health(dir);
+    assert.equal(broken.code, 1, file + ": " + broken.out);
+    assert.match(broken.out, /is in the manifest but not the pack/, file);
+  }
+});
