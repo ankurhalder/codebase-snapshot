@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.16.2
+
+**The endgame pages.**
+
+- `docs/answer.md` is a site page of its own: one call from question to cited, line-numbered
+  context, the four-way comparison with `plan_for`/`read`/`budget`, and what the tool deliberately
+  will not do (invent a path, truncate silently, read the working tree, exceed the budget without
+  saying so). 30 pages, audit-site clean.
+- The site builder still described the tool reference as "All 22 MCP tools"; it is 26, and the
+  number now matches `tools/list`.
+- `docs/security-review.md` gains "What changed since this review was written": metrics labels, the
+  web server's allowed roots, the audit that stopped trusting the manifest, `snapshot_answer`, and
+  `--only`/`--ignore` — each reviewed for what new input arrives and what it can reach.
+- `docs/migration.md` gains the 0.13.0-0.17.0 table: what a reader upgrading across those milestones
+  will notice, and why nothing was removed.
 ## 0.16.1
 
 - The goal log records the fourth published milestone: 0.16.0 tagged, released on GitHub and

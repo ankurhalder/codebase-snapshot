@@ -78,6 +78,26 @@ file content faithfully, and **this tool cannot sanitise prose without changing 
 carry**. The brief says what the snapshot is and what it omits, and the security prompt tells an agent
 to treat file content as data. This is a real, documented limitation, not a solved problem.
 
+## What changed since this review was written
+
+The review was written at 0.12.34. Between then and 0.17.0 the surfaces it covers grew; each
+addition was reviewed with the same question — what new input arrives, and what does it reach?
+
+- **`GET /metrics`** (0.13.3) publishes counters with a fixed label set. Repo paths, tokens and
+  query strings are not labels, so the endpoint cannot leak what the snapshot redacted.
+- **The web server's allowed roots** (0.12.46, tightened since): `/api/snapshot`, `/snapshot.zip`
+  and `/api/health` answer 403 for an output directory outside the working directory or a clone
+  this process created, so the page cannot be pointed at an arbitrary path on disk.
+- **The audit stopped trusting the manifest** (0.13.6-0.13.10): bodies, counts and pack membership
+  are recomputed. An attacker who edits a part and updates its hash, or edits a manifest count,
+  now fails the audit; before, both passed. This turns a tampered snapshot into a detected one.
+- **`snapshot_answer`** (0.15.5) reads only `parts/` through the same parser, so redaction and
+  exclusions apply exactly as they do to `snapshot_read`; it adds no file-system surface.
+- **`--only`/`--ignore`** (0.14.6) widen nothing: `--ignore` adds excludes, and `--only` can only
+  narrow the allow-list the config already permits. Sensitive files stay excluded by default.
+
+The residual risks below are unchanged, including the two that are deliberate rather than solved.
+
 ## What the test suite pins
 
 | Property | Test |

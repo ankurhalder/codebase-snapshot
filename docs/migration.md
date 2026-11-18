@@ -60,6 +60,25 @@ one port with `serve`.
    you pin an exact patch version, install from the git tag or build from source until the next
    minor.
 
+## What changed after 0.12.x
+
+The line from `0.13.0` to `0.17.0` added checks and two tools; it removed nothing. What a reader
+upgrading across those milestones should know:
+
+| Change | Since | Why it matters to you |
+| :--- | :--- | :--- |
+| The audit verifies bodies and counts | 0.13.6-0.13.7 | A snapshot whose parts disagree with its manifest now scores below 100 — correctly. Regenerate if a hand-edited snapshot fails. |
+| Single-file packs are audited | 0.13.9-0.13.10 | JSON, XML and markdown packs must hold exactly the manifest's files. |
+| `GET /metrics` on the HTTP transport | 0.13.3 | Prometheus text: request totals, per-method counts, refusals, rate limits. No path or credential is a label. |
+| `--only` / `--ignore` | 0.14.6 | One-run narrowing without editing a config. Both enter the digest, so `validate` takes them too. |
+| `reports/selection.md` | 0.15.3 | Written for `--slice` and `--budget-tokens`; it is a recorded artifact, so editing it is drift. |
+| `snapshot_budget` | 0.15.2 | The planner at several budgets; the manifest also records `headroomTokens` and `nextInLine`. |
+| `snapshot_answer` | 0.15.5 | Question to cited, line-numbered windows in one call. |
+| 26 MCP tools | 0.15.5 | The tool count is documented and tested; a client that hard-coded 15 should read `tools/list`. |
+
+`validate` on a snapshot written by an older version still works: the new manifest keys are
+optional, and an artifact the manifest does not record is not required to exist.
+
 ## If you are on an older 0.12.x
 
 Upgrade to the latest 0.12.x first; every change since 0.12.14 is a patch on the same line, and the
