@@ -572,3 +572,17 @@ Full `verify` at 0.17.9: 1340 tests, 1332 pass, 0 fail, 8 host skips; tarball 53
 
 Next: the per-command docs audit (every `describe` command and option has a docs row, and every row
 names a real option), then the web page accessibility pass.
+
+### 0.17.11-0.17.12 - the page without a mouse, the docs without a test
+
+- The serve page had four controls with no accessible names (placeholder and title only) and a status
+  line that screen readers never announced. Every control now has an `aria-label`, `#status` is a
+  live region, and a test fails if a new control arrives unnamed.
+- `docs/cli.md` promises every command and nothing compared the list with the contract. A test now
+  diffs `describe --commands` against the page's sections both ways — the options tests had this,
+  the commands did not.
+
+Full `verify` at 0.17.11: 1343 tests, 1335 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the MCP resource list against the docs, and a pass over the prompts (each prompt should name
+the tool that answers its step).

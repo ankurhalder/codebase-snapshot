@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.12
+
+- The goal log records the 0.17.11 round: accessible names and a live status on the serve page, and
+  command/docs parity now pinned by a test.
 ## 0.17.11
 
 **The page works without a mouse, and the docs page is pinned.**
