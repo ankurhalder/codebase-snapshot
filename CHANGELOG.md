@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.94
+
+**Two tools answered a missing path with silence.**
+
+- `snapshot_context` returned an empty text block for a path that is not in the snapshot, with the
+  path only in `structuredContent.missing`. Most clients render the text, so "not here" read as "this
+  file is empty". It now ends with `Not returned: <paths>.`
+- `snapshot_diff_context` said "No file in the snapshot imports the changed paths" when the changed
+  paths were never read. That is a fact it had not checked; it now says
+  `Not in the snapshot: <paths>.` — and names any path it could not include alongside the dependents
+  it did find.
+
+Verified: both tools name the missing path in their text, and the diff context no longer claims a
+dependent fact it did not check.
 ## 0.12.93
 
 - **`snapshot_status` reports an unreadable manifest as an error, not as a status.** "No snapshot

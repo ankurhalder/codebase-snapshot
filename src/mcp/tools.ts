@@ -1096,12 +1096,19 @@ const diffContextTool: ToolSpec = {
         if (!dependents.some((item) => item.path === importer)) dependents.push({ path: importer, imports: entry.path });
       }
     }
+    // "Nothing imports the changed paths" is only true when the changed paths were read. When they
+    // were not, the honest answer is that they are not in the snapshot — otherwise a caller reads
+    // "no dependent" as a fact about a file it never received.
     const note =
-      dependents.length === 0
-        ? "No file in the snapshot imports the changed paths."
-        : dependents.length + " dependent(s): " + dependents.map((item) => item.path).join(", ");
+      changed.length === 0 && missing.length > 0
+        ? "Not in the snapshot: " + missing.join(", ") + "."
+        : dependents.length === 0
+          ? "No file in the snapshot imports the changed paths."
+          : dependents.length + " dependent(s): " + dependents.map((item) => item.path).join(", ");
+    const missingNote =
+      missing.length === 0 || changed.length === 0 ? "" : "Also not returned: " + missing.join(", ") + ".";
     return {
-      text: text.join("\n\n") + "\n\n" + note,
+      text: [text.join("\n\n"), note, missingNote].filter((part) => part !== "").join("\n\n"),
       structured: { budgetTokens: budget, usedTokens: used, changed, dependents, missing },
     };
   },
@@ -1301,8 +1308,14 @@ const contextTool: ToolSpec = {
       used += tokens;
     }
 
+    // Whatever was asked for and not returned is named in the text, not only in the structured
+    // field: most clients show the text, and an empty block for a path that does not exist reads
+    // as "this file is empty" when it means "this file is not here".
+    const notes = [];
+    if (missing.length > 0) notes.push("Not returned: " + missing.join(", ") + ".");
+    if (blocks.length === 0 && notes.length === 0) notes.push("Nothing was requested.");
     return {
-      text: text.join("\n\n"),
+      text: [text.join("\n\n"), ...notes].filter((part) => part !== "").join("\n\n"),
       structured: { budgetTokens: budget, usedTokens: used, files: blocks, missing },
     };
   },

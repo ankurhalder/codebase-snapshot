@@ -529,3 +529,17 @@ test("status separates a missing snapshot from an unreadable one", async (t) => 
   assert.equal(broken.isError, true, "a manifest that is not a snapshot is an error");
   assert.match(broken.text, /not a snapshot manifest/);
 });
+
+test("a tool that returns nothing says what it could not return", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const block = await call("snapshot_context", { files: ["src/not-here.ts"] }, context);
+  assert.equal(block.isError, undefined, "a missing path is not a tool failure");
+  assert.match(block.text, /Not returned: src\/not-here\.ts/, "the text names the missing path");
+
+  const diff = await call("snapshot_diff_context", { paths: ["src/not-here.ts"] }, context);
+  assert.match(diff.text, /Not in the snapshot: src\/not-here\.ts/);
+  assert.doesNotMatch(diff.text, /No file in the snapshot imports/, "it does not claim a fact it did not check");
+});
