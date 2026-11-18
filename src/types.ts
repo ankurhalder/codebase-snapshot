@@ -568,6 +568,10 @@ export interface Manifest {
       entryPoints: { kept: number; total: number };
       symbols: { kept: number; total: number };
     };
+    /** Tokens left unspent in the budget. */
+    headroomTokens?: number;
+    /** The next files a larger budget would take, in the order it would take them. */
+    nextInLine?: Array<{ path: string; tokens: number }>;
     /** Paths chosen, in the order they were selected. */
     files: string[];
     /** Scanned paths that did not fit. */

@@ -87,10 +87,11 @@ async function call(name, args, context) {
   return tool.handler(args, context);
 }
 
-test("exposes exactly the 24 documented tools", () => {
+test("exposes exactly the 25 documented tools", () => {
   assert.deepEqual([...tools.keys()], [
     "snapshot_status",
     "snapshot_health",
+    "snapshot_budget",
     "snapshot_history",
     "snapshot_tests",
     "snapshot_workspace",
@@ -591,4 +592,18 @@ test("symbol lookup reports where the symbol is called", async (t) => {
   const quiet = await call("snapshot_symbol", { name: "user", references: false }, contextFor(root));
   assert.equal(quiet.structured.references.length, 0, "references:false skips the scan");
   assert.doesNotMatch(quiet.text, /Call sites/);
+});
+
+test("snapshot_budget says what a larger budget buys", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const result = await call("snapshot_budget", { budgets: [500, 5000] }, context);
+  assert.equal(result.isError, undefined, result.text);
+  assert.equal(result.structured.budgets.length, 2);
+  const [small, large] = result.structured.budgets;
+  assert.ok(large.files >= small.files, "a larger budget never selects fewer files");
+  assert.ok(Array.isArray(large.gained));
+  assert.match(result.text, /tokens:/);
 });

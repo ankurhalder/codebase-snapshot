@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.15.2
+
+**Budgets answer "what if", not only "what fits".**
+
+- **`snapshot_budget`, the 25th tool**: run the planner at several budgets and report what each one
+  adds — files, tokens used, and the paths gained over the previous budget. The question a budget
+  raises ("should I raise it, and what would I get?") is now answerable without writing a snapshot.
+- The budget block in the manifest records `headroomTokens` and `nextInLine` — the files a larger
+  budget would take, in the order it would take them. `report` prints both, so the CLI shows the same
+  answer as the tool.
+
+Verified: a 500-token budget on a fixture selects 3 of 8 files, reports 2 tokens of headroom and
+names the next six by cost; `snapshot_budget` at 500 and 5,000 returns a superset with the gained
+paths listed.
 ## 0.15.1
 
 - The goal log records the third published milestone: 0.15.0 tagged, released on GitHub and

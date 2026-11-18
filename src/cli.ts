@@ -2144,6 +2144,17 @@ async function runCommand(argv: string[]): Promise<number> {
           info(`     - Entry points:   ${coverage.entryPoints.kept} of ${coverage.entryPoints.total}`);
           info(`     - Symbols:        ${coverage.symbols.kept} of ${coverage.symbols.total}`);
         }
+        if (manifest.budget.headroomTokens !== undefined) {
+          info(`     - Headroom:       ${formatNumber(manifest.budget.headroomTokens)} tokens`);
+        }
+        if (manifest.budget.nextInLine !== undefined && manifest.budget.nextInLine.length > 0) {
+          const next = manifest.budget.nextInLine.slice(0, 5);
+          info(
+            "     - Next in line:   " +
+              next.map((item) => item.path + " (" + formatNumber(item.tokens) + ")").join(", ") +
+              (manifest.budget.nextInLine.length > next.length ? ", …" : "")
+          );
+        }
       }
       if (manifest.delta !== undefined) {
         const delta = manifest.delta;

@@ -124,7 +124,7 @@ const DESCRIPTIONS = {
   tools:
     "All 22 MCP tools in one reference: what each answers, its cost class, and a call you can " +
     "send as it stands, from status and search to the planner, review and health.",
-  mcp:    "Serve a repository to Claude, Cursor or any MCP client: 24 tools and snapshot:// " +
+  mcp:    "Serve a repository to Claude, Cursor or any MCP client: 25 tools and snapshot:// " +
     "resources, so an agent reads the one part it needs instead of all of them.",
   health:
     "Audit a generated snapshot: part hashes, artifact claims, unmasked secrets, host paths, " +

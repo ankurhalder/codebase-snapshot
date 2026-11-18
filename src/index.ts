@@ -2926,6 +2926,17 @@ export function generateSnapshot(
       selected.push(item.file.relativePath);
       used += item.tokens;
     }
+    // What the next budget would buy: the first few files the current one could not fit, in the
+    // same order a larger budget would pick them. "Raise it and this is what you get" is the
+    // question a budget report invites and could not answer.
+    const nextInLine: Array<{ path: string; tokens: number }> = [];
+    let headroom = budget - used;
+    for (const item of ranked) {
+      if (keep.has(item.file.relativePath)) continue;
+      if (nextInLine.length >= 10) break;
+      nextInLine.push({ path: item.file.relativePath, tokens: item.tokens });
+      headroom = Math.max(headroom, item.tokens);
+    }
     const scanned = files.length;
     const byLayer: Record<string, { kept: number; total: number }> = {};
     let entryKept = 0;
@@ -2955,6 +2966,8 @@ export function generateSnapshot(
       files: selected,
       dropped: scanned - selected.length,
       coverage: { byLayer, entryPoints: { kept: entryKept, total: entryTotal }, symbols: { kept: symbolsKept, total: symbolsTotal } },
+      headroomTokens: Math.max(0, budget - used),
+      nextInLine,
     };
     if (entryTotal > 0 && entryKept < entryTotal) {
       warnings.push(

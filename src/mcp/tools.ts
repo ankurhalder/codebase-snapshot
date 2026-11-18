@@ -1,5 +1,5 @@
 /**
- * The 24 tools this server exposes.
+ * The 25 tools this server exposes.
  *
  * Each one answers a question an agent actually asks, and nothing else: what is here, what would
  * be here, make it, is it still true, where is it, show me, why is it missing. A tool that does
@@ -68,7 +68,7 @@ const ROOT_PROPERTY = {
  *
  * Every read tool takes it, not just `snapshot_generate`. Without it a snapshot generated into
  * a custom directory — the one thing `generate` lets a caller choose — could not be inspected by
- * a single one of the 24 tools: `snapshot_generate` wrote it, and everything else looked in
+ * a single one of the 25 tools: `snapshot_generate` wrote it, and everything else looked in
  * the configured directory and reported "there is no snapshot manifest here".
  */
 const OUT_DIR_PROPERTY = {
@@ -345,6 +345,73 @@ const historyTool: ToolSpec = {
           : [commits.length + " commit(s), newest first:", ...commits.map((commit) => "  " + commit.hash + "  " + commit.date + "  " + commit.subject)].join("\n"),
       structured: { commits, recorded: parseHistoryReport(text).length },
     };
+  },
+};
+
+const budgetTool: ToolSpec = {
+  name: "snapshot_budget",
+  title: "What a larger budget would buy",
+  description:
+    "Run the planner at several token budgets and report what each one adds: files, tokens used, " +
+    "entry points kept and the files gained over the previous budget. Answers \"should I raise the " +
+    "budget, and what would I get?\" without writing a snapshot. Read-only.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      budgets: {
+        type: "array",
+        items: { type: "integer", minimum: 500 },
+        description: "Token budgets to compare, ascending (default 10000, 30000, 60000).",
+      },
+      question: { type: "string", description: "Optional question to plan for; absent plans for the repository as a whole." },
+      includeTests: { type: "boolean", description: "Include test files (default false)." },
+      root: ROOT_PROPERTY,
+      outDir: OUT_DIR_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: { budgets: { type: "array", items: { type: "object" } } },
+  },
+  annotations: READ_ONLY,
+  async handler(args, context) {
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const read = readManifest(prepared.workspace);
+    if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
+    const requested = Array.isArray(args.budgets)
+      ? args.budgets.filter((value) => typeof value === "number").map((value) => Math.max(500, value))
+      : [10000, 30000, 60000];
+    const budgets = [...new Set(requested)].sort((left, right) => left - right);
+    if (budgets.length === 0) return { text: "budgets must hold at least one number", isError: true };
+    const question = typeof args.question === "string" ? args.question : "";
+    const rows = [];
+    let previous = new Set<string>();
+    for (const budget of budgets) {
+      const plan = planForQuestion(read.manifest, question, {
+        maxTokens: budget,
+        ...(args.includeTests === true ? { includeTests: true } : {}),
+      });
+      const paths = new Set(plan.files.map((file) => file.path));
+      const gained = [...paths].filter((path) => !previous.has(path)).sort();
+      previous = paths;
+      rows.push({
+        budget,
+        files: plan.files.length,
+        usedTokens: plan.usedTokens,
+        gained,
+      });
+    }
+    const lines = [question === "" ? "No question: planning for the repository as a whole." : "Question: " + question];
+    for (const row of rows) {
+      lines.push(
+        row.budget.toLocaleString("en-US") + " tokens: " + row.files + " file(s), " +
+          row.usedTokens.toLocaleString("en-US") + " used" +
+          (row.gained.length === 0 ? "" : ", " + row.gained.length + " gained (" + row.gained.slice(0, 4).join(", ") + (row.gained.length > 4 ? ", …" : "") + ")")
+      );
+    }
+    return { text: lines.join("\n"), structured: { budgets: rows } };
   },
 };
 
@@ -2529,6 +2596,7 @@ type ToolSpec = Omit<McpTool, "cost">;
 const TOOL_COSTS: Record<string, ToolCost> = {
   snapshot_status: "cheap",
   snapshot_health: "expensive",
+  snapshot_budget: "medium",
   snapshot_history: "cheap",
   snapshot_tests: "cheap",
   snapshot_workspace: "cheap",
@@ -2557,6 +2625,7 @@ export function buildTools(): McpTool[] {
   return [
     statusTool,
     healthTool,
+    budgetTool,
     historyTool,
     testsTool,
     workspaceTool,

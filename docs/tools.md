@@ -1,6 +1,6 @@
 # MCP tools
 
-The server exposes 24 tools. This page is the reference: what each answers, what it costs, and one
+The server exposes 25 tools. This page is the reference: what each answers, what it costs, and one
 call you can send as it stands. [MCP](mcp.md) covers the transports and the protocol; this page is
 the catalogue.
 
@@ -66,6 +66,12 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 
 ## Reading
 
+- **`snapshot_budget`** — medium, read-only. The planner at several budgets, with what each
+  one adds: files, tokens used, and the paths gained over the previous budget. The answer to
+  "should I raise the budget, and what would I get?"
+  ```json
+  { "name": "snapshot_budget", "arguments": { "budgets": [10000, 30000, 60000] } }
+  ```
 - **`snapshot_history`** — cheap, read-only. The commits behind the snapshot, from
   `reports/log.md`; says how to generate the report when it is absent.
   ```json
