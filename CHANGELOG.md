@@ -30,6 +30,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.87
+
+**The CLI reference was missing ten options.**
+
+- `docs/cli.md` is described as "Every command and option". It was missing the six transport flags
+  (`--http`, `--port`, `--host`, `--token`, `--no-auth`, `--allow-origin`) and `--all-members`,
+  `--strict`, `--mode`, `--no-update-check`. All ten have rows now, in the same five-column shape as
+  the rest, with the contract's own defaults and applies-to text.
+- A new test compares the page with `describe --format json` in both directions: a published option
+  the page omits, and a documented option the contract no longer publishes, both fail.
+
+Verified: 60 contract options, 60 documented, none missing and none unknown.
 ## 0.12.86
 
 - The phase checklists in `GOAL.md` are ticked against what actually shipped, with the two judgment
