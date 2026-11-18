@@ -366,7 +366,13 @@ export async function resolveLatest(options: UpdateCheckOptions): Promise<string
     const cached = readCache(options.cacheFile);
     let needsFetch = cached === null || options.force === true;
 
-    if (cached) {
+    // The cached value is a fallback for a failed request, never the answer when the caller forced
+    // a check. The age branch below used to overwrite `needsFetch`, so `snapshot update` — whose
+    // whole contract is "bypass the cache" — answered with the version the cache remembered for
+    // up to an hour. A cached 0.18.0 made it say "the registry publishes 0.18.0" while the
+    // registry served 0.19.0.
+    if (cached) latest = cached.latest;
+    if (cached && options.force !== true) {
       const age = now() - cached.checkedAt;
       if (cached.latest === null) {
         // A remembered failure: retried on the shorter interval, never on every run.

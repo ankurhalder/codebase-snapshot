@@ -102,3 +102,31 @@ test("update does not need a readable configuration", async () => {
   });
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("a forced check ignores a fresh cache", async () => {
+  const { resolveLatest } = await import("../dist/index.js");
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "update-force-"));
+  const cacheFile = path.join(dir, "update-check.json");
+  fs.writeFileSync(cacheFile, JSON.stringify({ checkedAt: Date.now(), latest: "0.18.0" }) + "\n");
+
+  const fetched = await resolveLatest({
+    current: "0.19.1",
+    cacheFile,
+    force: true,
+    fetchLatest: async () => "0.19.1",
+  });
+  assert.equal(fetched, "0.19.1", "force bypasses the cached value");
+
+  // And when the forced request fails, the cached answer is still better than nothing.
+  const fallback = await resolveLatest({
+    current: "0.19.1",
+    cacheFile,
+    force: true,
+    fetchLatest: async () => null,
+  });
+  assert.equal(fallback, "0.19.1", "the successful write from the previous call is the fallback");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

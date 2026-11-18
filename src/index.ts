@@ -119,6 +119,7 @@ export {
   isNewer,
   shouldCheck,
   updateCommand,
+  resolveLatest,
 } from "./update-check.js";
 export type { InstallKind, UpdateCheckOptions, UpdateNotice } from "./update-check.js";
 

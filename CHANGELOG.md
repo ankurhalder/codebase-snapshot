@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.0
+
+**`snapshot update` did not bypass the cache, which is the one thing it promises.**
+
+- The command forces a check, but `resolveLatest` let the cache-age branch overwrite the `force`
+  decision. While the registry's edge still served the previous document, a cached `0.18.0` made
+  `snapshot update` print "the registry publishes 0.18.0" for up to an hour after 0.19.0 was live.
+- `force` now wins: the cache is read only as a **fallback** for a failed request, never as the
+  answer, and the age intervals are skipped entirely. A test with an injected cache and fetch pins
+  both halves — the forced answer, and the cached fallback when the request fails.
 ## 0.19.0
 
 **The audit now agrees with the generator about what a secret is.**
