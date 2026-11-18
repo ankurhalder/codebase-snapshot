@@ -234,3 +234,16 @@ test("the API refuses a path outside the served directory", async (t) => {
   });
   assert.equal(inside.status, 200, "the directory it was started for is still served");
 });
+
+test("the page is usable without seeing it: labels on every control and a live status", async (t) => {
+  const root = fixture(t);
+  const server = await serve(t, path.join(root, "repo"));
+  const html = await (await fetch(server.url)).text();
+
+  assert.match(html, /<html lang="en">/);
+  assert.match(html, /id="status" role="status" aria-live="polite"/);
+  const controls = [...html.matchAll(/<(input|select)\b[^>]*>/g)].map((match) => match[0]);
+  assert.ok(controls.length >= 4, "the page has its controls");
+  const unlabeled = controls.filter((control) => !/aria-label=|<label/.test(control));
+  assert.deepEqual(unlabeled, [], "every control has an accessible name");
+});

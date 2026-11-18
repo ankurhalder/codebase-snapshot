@@ -51,6 +51,14 @@ off and is refused on a non-loopback bind.
 `POST /mcp` on the same port is the MCP endpoint from [MCP](mcp.md), with the same token. A browser
 agent and a human look at the same snapshot.
 
+## Using it without a mouse, or without sight
+
+The page is a form with four controls, and each has an accessible name (`aria-label`) rather than
+only a placeholder that disappears when you type. The status line is a `role="status"` live region,
+so a screen reader announces "Generating…" and the result without the focus jumping. The mode
+`select`, the token field and the budget field behave the same way, and the token is never
+rendered into the page.
+
 ## Limits, stated
 
 | Limit | Value | Why |

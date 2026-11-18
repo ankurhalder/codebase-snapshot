@@ -39,3 +39,28 @@ test("the page documents no flag the contract does not publish", () => {
   const unknown = documentedFlags().filter((flag) => !contract.has(flag));
   assert.deepEqual([...new Set(unknown)], [], "unknown: " + unknown.join(", "));
 });
+
+/** Command sections on the page: `### `generate`` or `### `validate` / `check``. */
+function documentedCommands() {
+  return [...PAGE.matchAll(/^### `([a-z]+)/gm)].map((match) => match[1]);
+}
+
+function contractCommands() {
+  const stdout = execFileSync(process.execPath, ["dist/bin.js", "describe", "--format", "json"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  return JSON.parse(stdout).commands.map((command) => command.name);
+}
+
+test("every command the contract publishes has a section on the page", () => {
+  const documented = new Set(documentedCommands());
+  const missing = contractCommands().filter((name) => !documented.has(name));
+  assert.deepEqual(missing, [], "undocumented commands: " + missing.join(", "));
+});
+
+test("the page has no command section for a command that does not exist", () => {
+  const contract = new Set(contractCommands());
+  const unknown = documentedCommands().filter((name) => !contract.has(name));
+  assert.deepEqual([...new Set(unknown)], [], "unknown commands: " + unknown.join(", "));
+});

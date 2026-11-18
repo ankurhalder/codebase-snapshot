@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.11
+
+**The page works without a mouse, and the docs page is pinned.**
+
+- The web form had four controls with no accessible names — only placeholders and `title` — and a
+  status line that screen readers never announced. Each control now carries an `aria-label`, and
+  `#status` is a `role="status" aria-live="polite"` region. A test fails if a future control arrives
+  without a name.
+- `docs/cli.md` claims to document every command; nothing compared that list with the contract. A
+  new test compares `describe --format json` commands with the page's `### `command`` sections in
+  both directions, the way the options tests already did.
+
+Verified: the page test asserts `lang`, the live region and a name on every control; the command
+test fails on either an undocumented command or a section for a command that does not exist.
 ## 0.17.10
 
 - The goal log records the 0.17.9 round: the adversarial-content pass (parser sound) and the 200 KB

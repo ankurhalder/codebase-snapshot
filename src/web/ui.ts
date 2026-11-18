@@ -43,20 +43,20 @@ export const SERVE_PAGE = `<!doctype html>
 <header><b>codebase-snapshot</b><span>a snapshot an agent can trust</span></header>
 <main>
   <form id="gen">
-    <input id="source" placeholder="/absolute/path/to/repo   or   https://github.com/owner/repo" spellcheck="false" autofocus>
-    <select id="mode" title="What to generate">
+    <input id="source" aria-label="repository path or URL" placeholder="/absolute/path/to/repo   or   https://github.com/owner/repo" spellcheck="false" autofocus>
+    <select id="mode" aria-label="What to generate" title="What to generate">
       <option value="full">whole repository</option>
       <option value="slice">a slice for a question</option>
       <option value="budget">fit a token budget</option>
     </select>
-    <input id="question" placeholder="the question (slice mode)" spellcheck="false" hidden>
-    <input id="budget" type="number" min="500" step="500" value="30000" title="token budget" hidden>
+    <input id="question" aria-label="Question for the slice" placeholder="the question (slice mode)" spellcheck="false" hidden>
+    <input id="budget" type="number" min="500" step="500" value="30000" aria-label="Token budget" title="token budget" hidden>
     <button id="run" type="submit">Generate</button>
     <button id="download" type="button" disabled>Download .zip</button>
   </form>
-  <div id="status">Paste an absolute path, or a repository URL (https://github.com/owner/repo). Remote fetches are shallow and public-only.</div>
+  <div id="status" role="status" aria-live="polite">Paste an absolute path, or a repository URL (https://github.com/owner/repo). Remote fetches are shallow and public-only.</div>
   <div id="auth" hidden>
-    <form id="token-form"><input id="token" type="password" placeholder="paste the token printed by snapshot serve" style="flex:1"><button type="submit">Use token</button></form>
+    <form id="token-form"><input id="token" type="password" aria-label="Server token" placeholder="paste the token printed by snapshot serve" style="flex:1"><button type="submit">Use token</button></form>
   </div>
   <div class="row">
     <section><h2>Brief <span id="fingerprint"></span> <span id="health"></span></h2><pre id="brief">No snapshot loaded.</pre></section>
