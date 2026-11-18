@@ -30,6 +30,16 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.88
+
+- **Unusual files are a pinned test, not a one-off probe.** An empty file, a CRLF file, a file that
+  is nothing but comments under `--strip-comments`, a non-ASCII name, spaces and brackets in a name,
+  and a path deep enough to make a Windows path long: generate, `validate` and `health` all pass, the
+  manifest records the right line counts and mode, and `snapshot_read` and `snapshot_locate` answer
+  for `src/odd [name] (v2).ts`.
+- The probes ran against the built binary before they became tests; nothing needed fixing, which is
+  worth recording too — the scan and part code handles these cases already, and now a regression
+  would be caught rather than discovered.
 ## 0.12.87
 
 **The CLI reference was missing ten options.**
