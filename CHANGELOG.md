@@ -30,6 +30,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.14.5
+
+**Ten public repositories, three tools, one run.**
+
+- `scripts/benchmark-suite.mjs` shallow-clones a list of repositories, packs each with this tool,
+  repomix and gitingest, and prints one table (or `--json`). A repository it cannot clone is a skip
+  with the reason, never a missing row.
+- `docs/benchmarks.md` carries the run: ten repositories from `jonschlinkert/is-odd` (5,450 tokens)
+  to `colinhacks/zod` (1.76M). Nine of ten land within about plus or minus 30% of repomix's own
+  token count — expected for two estimators.
+- The tenth is the interesting one: `isaacs/minimatch` holds five 20–25 MB benchmark fixtures.
+  repomix emits them (64.8M tokens); our large-file rule emits a bounded preview and records the
+  omission, so the pack is 319,879 tokens. The page says exactly that instead of celebrating a ratio
+  that a policy difference produced.
+
+Verified: the suite runs end to end, and a test pins that an uncloneable input becomes a skip with
+its reason.
 ## 0.14.4
 
 - The goal log records the 0.14.2-0.14.3 round. `ROADMAP.md` marks item 27 (`--remove-empty-lines`)

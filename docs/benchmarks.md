@@ -37,6 +37,47 @@ tokens in full.
 4. **Generation is not the bottleneck.** All three modes take about the same time; the saving is in
    what gets written, not in what gets read.
 
+## Ten public repositories
+
+```bash
+node scripts/benchmark-suite.mjs              # the ten default repositories
+node scripts/benchmark-suite.mjs --json       # the same run, as data
+node scripts/benchmark-suite.mjs <url> ...    # your own list
+```
+
+Each repository is cloned shallow into a scratch directory, packed by all three tools, and the
+clone is deleted. A repository that cannot be cloned is reported as skipped with the reason, never
+dropped from the table. Measured at 0.14.5, repomix 1.19.0, gitingest from PyPI:
+
+| Repository | Ours files | Ours tokens | repomix tokens | repomix / ours | gitingest bytes |
+| :-- | --: | --: | --: | --: | --: |
+| jonschlinkert/is-odd | 11 | 5,450 | 4,291 | 0.79 | 29,392 |
+| chalk/chalk | 32 | 77,684 | 79,006 | 1.02 | 238,864 |
+| tj/co | 19 | 12,996 | 9,189 | 0.71 | 74,613 |
+| isaacs/minimatch | 85 | 319,879 | 64,846,987 | 202.7 | 1,800,672 |
+| moment/luxon | 151 | 303,032 | 250,093 | 0.83 | 806,740 |
+| psf/requests | 117 | 382,695 | 687,333 | 1.80 | 524,712 |
+| pallets/click | 177 | 470,265 | 335,153 | 0.71 | 1,413,342 |
+| expressjs/express | 215 | 261,829 | 198,639 | 0.76 | 792,177 |
+| colinhacks/zod | 686 | 1,762,835 | 1,748,187 | 0.99 | 4,468,877 |
+| anuraghazra/github-readme-stats | 131 | 205,009 | 169,079 | 0.82 | 553,367 |
+
+Read it carefully:
+
+- **The ratio is not a contest.** Our estimate is one token per four bytes of emitted body; repomix
+  uses a tokenizer. Across nine repositories the two land within about plus or minus 30%, which is
+  what two reasonable estimates of the same text do.
+- **minimatch is the exception, and it is a policy difference, not an estimate.** That repository
+  carries five benchmark fixtures of 20 to 25 MB of JSON. repomix emits them (64.8M tokens); our
+  large-file rule emits a bounded preview and records the omission, so the pack stays 319,879 tokens.
+  A pack that will not fit in a context window has not helped the reader, however complete it is.
+- **gitingest publishes no token count**, so its column is the size of its one-document digest.
+- **File counts agree within one or two** everywhere except minimatch, where our preview keeps the
+  files and repomix keeps their bytes.
+
+The point of ten repositories is not a leaderboard; it is that the shape holds outside the
+repository the tool was written in.
+
 ## Honest limits
 
 - Self-benchmark. This repository is TypeScript with a clean import graph; a vendored monorepo with

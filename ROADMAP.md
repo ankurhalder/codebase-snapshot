@@ -69,7 +69,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 
 | # | Task | Status |
 | - | :--- | :--- |
-| 36 | Benchmarks against repomix and gitingest on 10 public repos | partial: three-way head-to-head measured on this repository (0.14.2); ten public repos still to run |
+| 36 | Benchmarks against repomix and gitingest on 10 public repos | shipped 0.14.5: `scripts/benchmark-suite.mjs` ran ten public repositories in one pass; results in `docs/benchmarks.md` |
 | 37 | Site pages for every new feature | planned |
 | 38 | Security review of the server and the remote ingestion path | shipped 0.12.34 (threat model, controls, residual risks) |
 | 39 | Migration guide for the 0.13-0.17 changes | shipped 0.12.37 |
