@@ -50,7 +50,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 | 24a | The opt-in reports as MCP resources (`snapshot://reports/diff`, `log`, `tokens`) | shipped 0.12.36 |
 | 25 | `--token-tree`: per-file token counts in a table | shipped 0.12.24 |
 | 26 | `--pack single|xml|json`: one file, as a mode, never the default | shipped 0.12.31 |
-| 27 | Comment and blank-line stripping (`--strip-comments`, `--strip-empty-lines`) | planned |
+| 27 | Comment and blank-line stripping (`--strip-comments`, `--remove-empty-lines`) | shipped 0.12.85: the blank-line flag moves line numbers and says so per file |
 | 28 | Multi-language structural parsers: Python, Go, Rust, Java, C#, Ruby, PHP | shipped before 0.12.15; pinned by `tests/languages.test.js` in 0.12.42 |
 | 29 | Base64/binary truncation policy | not applicable: binaries are skipped by extension and content, never base64-encoded |
 
@@ -69,7 +69,7 @@ one that shipped it. Nothing here is a promise about a date; it is the order wor
 
 | # | Task | Status |
 | - | :--- | :--- |
-| 36 | Benchmarks against repomix and gitingest on 10 public repos | partial 0.12.34: reproducible self-benchmark of the three modes; head-to-head still planned |
+| 36 | Benchmarks against repomix and gitingest on 10 public repos | partial: three-way head-to-head measured on this repository (0.14.2); ten public repos still to run |
 | 37 | Site pages for every new feature | planned |
 | 38 | Security review of the server and the remote ingestion path | shipped 0.12.34 (threat model, controls, residual risks) |
 | 39 | Migration guide for the 0.13-0.17 changes | shipped 0.12.37 |

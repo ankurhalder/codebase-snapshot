@@ -441,3 +441,18 @@ pages, audit-site clean.
 
 Next: 0.14.x toward 0.15.0 (parity where it matters), then 0.16.0 (beyond parity) and 0.17.0 (the
 endgame the plan describes). Two milestones are published; three remain.
+
+### 0.14.2-0.14.4 - three tools, and who calls what
+
+- 0.14.2 gitingest is measured: the harness sets `PYTHONIOENCODING=utf-8` for the child (without it
+  gitingest aborts on Windows while printing its tree) and `docs/benchmarks.md` carries the
+  three-way table: 3.30 MB / 1,060,727 tokens for us, 3.52 MB / 888,168 for repomix, 3.12 MB of
+  digest for gitingest with no token count.
+- 0.14.3 `snapshot_symbol` reports call sites: the parts are scanned for the name, bounded and
+  case-sensitive, with the definition line marked and `references: false` to skip it. This closes
+  roadmap item 33 (symbol-level packs with call-site evidence).
+
+Full `verify` at 0.14.3: 1324 tests, 1316 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Next: 0.15.0 (parity where it matters) - the remaining items are the ten-repository benchmark run
+and whatever parity gaps the comparison pages still name.

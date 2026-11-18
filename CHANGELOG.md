@@ -30,6 +30,11 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.14.4
+
+- The goal log records the 0.14.2-0.14.3 round. `ROADMAP.md` marks item 27 (`--remove-empty-lines`)
+  and item 33 (call-site evidence) as shipped, and item 36 as measured three ways on this repository
+  with ten public repositories still to run.
 ## 0.14.3
 
 - **`snapshot_symbol` reports call sites.** The definition says what a symbol is; the call sites say
