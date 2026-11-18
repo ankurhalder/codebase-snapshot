@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.17.14 mcp
+npx -y codebase-snapshot@0.17.15 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.17.14", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.17.15", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.17.14 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.17.15 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,14 +43,15 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.17.14 mcp --http --port 4789
+npx -y codebase-snapshot@0.17.15 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
 the JSON-RPC answer from the response body. `GET /healthz` answers
 `{ ok, name, version, tools, uptimeSeconds }` without a token, and `GET /metrics` answers Prometheus
 text: `snapshot_requests_total`, `snapshot_requests_by_method_total{method="…"}` (fixed labels,
-never a path or a credential), `snapshot_requests_refused_total`,
+never a path or a credential), `snapshot_requests_refused_total` (every 4xx except 429: an
+unauthorized token, a refused origin, a wrong method, an oversize body),
 `snapshot_requests_rate_limited_total`, `snapshot_tools`, `snapshot_uptime_seconds`.
 
 The first run prints the URL and a generated bearer token:

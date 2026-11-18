@@ -138,6 +138,10 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     noteRequest(request);
     const send = (status: number, body: unknown, extra: Record<string, string> = {}): void => {
       const text = typeof body === "string" ? body : JSON.stringify(body);
+      // One place counts refusals, so a future early return cannot forget to. A 4xx is a
+      // refusal (the client's request was not dispatched); 429 has its own counter because the
+      // question it answers is different, and a 5xx is our failure, not a refusal.
+      if (status >= 400 && status < 500 && status !== 429) metrics.refused += 1;
       response.writeHead(status, {
         "content-type": typeof body === "string" ? "text/plain; charset=utf-8" : "application/json",
         "content-length": Buffer.byteLength(text, "utf8"),
@@ -150,7 +154,6 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     const allowed = allowedOrigin(origin);
     if (origin !== undefined && allowed === null) {
-      metrics.refused += 1;
       send(403, { error: "origin not allowed" });
       return;
     }
@@ -197,7 +200,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         "# HELP snapshot_requests_total HTTP requests received.",
         "# TYPE snapshot_requests_total counter",
         "snapshot_requests_total " + metrics.requests,
-        "# HELP snapshot_requests_refused_total Requests refused before dispatch.",
+        "# HELP snapshot_requests_refused_total Requests refused before dispatch (4xx other than 429).",
         "# TYPE snapshot_requests_refused_total counter",
         "snapshot_requests_refused_total " + metrics.refused,
         "# HELP snapshot_requests_rate_limited_total Requests rejected by the rate limit.",

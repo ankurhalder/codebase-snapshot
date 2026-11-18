@@ -30,6 +30,21 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.15
+
+**The refusal counter counted almost no refusals.**
+
+- `GET /metrics` published `snapshot_requests_refused_total` with the help text "Requests refused
+  before dispatch", and only one path incremented it: a rejected CORS origin. A missing token (401),
+  a wrong method (405), an oversize body (413) and an unknown SSE session (404) were all served and
+  counted as nothing, so a server being probed with bad credentials reported **zero refusals**.
+- Counting now happens in `send()` for every 4xx except 429, which keeps its own counter. The probe
+  that found it (401 + 403 + 405, then 90 requests into a 60-per-10s limit) now reads exactly 3
+  refusals and 30 rate-limited responses, and the test asserts both the totals and the 429 count.
+
+Verified: `/metrics` after a 401, a cross-origin 403 and a 405 reports `refused 3`; the rate limit
+fires at the documented threshold and `snapshot_requests_rate_limited_total` equals the number of
+429 responses the client saw.
 ## 0.17.14
 
 - The goal log records the 0.17.13 round: the prompts and resources probe, and the required argument

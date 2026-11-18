@@ -225,3 +225,41 @@ test("metrics reports counters in Prometheus format", async (t) => {
   assert.match(text, /snapshot_requests_by_method_total\{method="GET"\} \d+/);
   assert.doesNotMatch(text, /healthz|5000|token/i, "no request path or credential is a metric label");
 });
+
+test("/metrics counts every refusal and the rate limit it applies", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const metricsUrl = transport.url.replace(/\/mcp$/, "") + "/metrics";
+  const rpc = (id, method) => JSON.stringify({ jsonrpc: "2.0", id, method });
+  const auth = { authorization: "Bearer " + transport.token, "content-type": "application/json" };
+
+  const unauthorized = await fetch(transport.url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: rpc(1, "ping"),
+  });
+  assert.equal(unauthorized.status, 401);
+  const crossOrigin = await fetch(transport.url, {
+    method: "POST",
+    headers: { ...auth, origin: "https://evil.example" },
+    body: rpc(2, "ping"),
+  });
+  assert.equal(crossOrigin.status, 403);
+  const wrongMethod = await fetch(transport.url, { method: "DELETE", headers: auth });
+  assert.equal(wrongMethod.status, 405);
+
+  let limited = 0;
+  for (let index = 0; index < 90; index += 1) {
+    const response = await fetch(transport.url, { method: "POST", headers: auth, body: rpc(100 + index, "ping") });
+    if (response.status === 429) limited += 1;
+  }
+  assert.ok(limited > 0, "the rate limit applies");
+
+  const text = await (await fetch(metricsUrl)).text();
+  assert.match(text, /snapshot_requests_refused_total 3\n/, "the 401, 403 and 405 are all refusals");
+  assert.match(text, /snapshot_requests_rate_limited_total \d+\n/);
+  const rateLimited = Number(/snapshot_requests_rate_limited_total (\d+)/.exec(text)[1]);
+  assert.equal(rateLimited, limited, "the counter matches the 429 responses");
+  assert.match(text, /snapshot_tools 26\n/);
+  assert.match(text, /snapshot_requests_by_method_total\{method="DELETE"\} 1\n/);
+});
