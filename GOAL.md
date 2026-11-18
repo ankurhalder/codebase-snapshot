@@ -586,3 +586,17 @@ Full `verify` at 0.17.11: 1343 tests, 1335 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the MCP resource list against the docs, and a pass over the prompts (each prompt should name
 the tool that answers its step).
+
+### 0.17.13-0.17.14 - prompts without their subject
+
+- Probed the prompt surface: every prompt names only tools that exist, and every listed resource is
+  readable (parts appear in `resources/list` only when the manifest has them).
+- The gap was `prompts/get`: `review` without `change` and `explain` without `path` returned the
+  prompt with no subject, because the server read `arguments` but never enforced `required`. It now
+  refuses with `-32602`, names the argument and quotes its description; optional arguments (orient's
+  `focus`) stay optional.
+
+Full `verify` at 0.17.13: 1344 tests, 1336 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the HTTP transport surface (rate limiting, /metrics under load, session teardown), then a
+pass over `snapshot_review` with a real diff.

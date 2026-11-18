@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.14
+
+- The goal log records the 0.17.13 round: the prompts and resources probe, and the required argument
+  that `prompts/get` was not enforcing.
 ## 0.17.13
 
 **A prompt cannot be requested without its subject.**
