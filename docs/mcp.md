@@ -178,13 +178,17 @@ stays responsive.
 
 Resources are the browse surface; tools are the act surface.
 
-The first four rows are always listed. The report resources are listed only when the run wrote
-the file — a resource in `resources/list` has to be readable — and `describe --format json`
+`snapshot://manifest`, `snapshot://contract`, `snapshot://skill` and `snapshot://prompt` are always
+listed, as is one `snapshot://parts/{index}` per part. The report resources are listed only when the
+run wrote the file — a resource in `resources/list` has to be readable — and `describe --format json`
 publishes them separately as `reportResources`.
 
 | URI | Contents |
 | :-- | :-- |
-| `snapshot://manifest` | Every included file with layer, kind, part and hash, every skip reason, and `incomplete[]` — the files whose body is not the whole file, with their missing line ranges |
+| `snapshot://manifest` | Every included file with layer, kind, part and hash, every skip reason, and `incomplete[]` — the files whose body was reduced |
+| `snapshot://contract` | The machine-readable CLI contract |
+| `snapshot://skill` | The agent skill, as one read |
+| `snapshot://prompt` | `PROMPT.md` — the brief: the job, what the snapshot contains and omits, the history it was built from, and the owner |
 | `snapshot://parts/{index}` | One budgeted part, by 1-based index |
 | `snapshot://reports/audit` | Secret findings, large files, parse diagnostics |
 | `snapshot://reports/tree` | The directory tree of included files |
@@ -192,17 +196,13 @@ publishes them separately as `reportResources`.
 | `snapshot://reports/diff` | `reports/diff.md`, when the snapshot was generated with `--include-diffs` |
 | `snapshot://reports/log` | `reports/log.md`, when generated with `--include-logs` |
 | `snapshot://reports/tokens` | `reports/tokens.md`, when generated with `--token-tree` |
-| `snapshot://prompt` | `PROMPT.md` — the brief: the job, what the snapshot contains and omits, the history it was built from, and the owner half when a `brief` is configured |
-| `snapshot://contract` | The machine-readable CLI contract |
-| `snapshot://skill` | The agent skill, as one read |
-
 A resource read is **all-or-nothing**. Above the 512 kB single-read limit the read fails with
 JSON-RPC error `-32000` (the implementation-defined server-error range) and
 `data: { uri, bytes, limit }`; the message says what to use instead — `snapshot_locate`,
 `snapshot_read` or `snapshot_status` for a manifest or part, the file on disk for a report, and
 the CLI for the contract or the skill. It never returns a truncated document: half a JSON manifest
 does not parse, and half a part is a fragment that looks complete. The rule applies to every
-resource — `snapshot://manifest`, each `snapshot://parts/{index}`, the three reports,
+resource — `snapshot://manifest`, each `snapshot://parts/{index}`, the report resources,
 `snapshot://prompt`, `snapshot://contract` and `snapshot://skill`.
 
 A URI this build serves but this snapshot does not contain — `snapshot://prompt` when the prompt

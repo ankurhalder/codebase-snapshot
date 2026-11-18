@@ -21,10 +21,10 @@ Serving http://127.0.0.1:4788/
    files to fit the number you give. The result line reports how many paths were not selected.
 2. **Generate.** Paste an absolute path or a public repository URL and press Generate. A URL is
    cloned shallowly into a temporary directory (removed when the server exits) with the same
-   provenance record the CLI writes. The page calls the same
-   `generateSnapshot` the CLI calls, with the default settings — the defaults are what a browser
-   session can honestly promise, because a config file can run code and this process will not run
-   repository code on a page's request. For a project config, use the CLI.
+   provenance record the CLI writes. The page calls the same `generateSnapshot` the CLI calls,
+   with the repository's `snapshot.config.json` (or the `snapshot` key of `package.json`) applied, so
+   the browser and the terminal produce the same snapshot. An executable config is refused rather
+   than run: this process does not execute repository code on a page's request.
 3. **Preview.** The brief (`PROMPT.md`) and the file list come back from the written snapshot, not
    from the working tree. If the snapshot is wrong, the page shows the wrongness.
 4. **See the health score.** The page audits what it just wrote and shows the score, with the

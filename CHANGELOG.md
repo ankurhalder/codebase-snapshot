@@ -30,6 +30,26 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.52
+
+**The resource page described a layout the server did not have.**
+
+- `docs/mcp.md` said "the first four rows are always listed" above a table whose first four rows were
+  manifest, `parts/{index}`, `reports/audit` and `reports/tree` — two of which are conditional. The
+  always-listed set is `manifest`, `contract`, `skill`, `prompt`; the table now leads with those, then
+  the part template, then the six reports that appear only when written. The same page counted "the
+  three reports" when there are six.
+- `docs/cli.md` still said "resources and two prompts"; the server serves seven.
+- Three statements still described the browser surface as generating "with the default settings"
+  after 0.17.45 made it apply the repository's JSON configuration: `docs/serve.md`,
+  `docs/security-review.md` and the header comment in `src/web/server.ts`. All three now say the JSON
+  config is applied and an executable config is refused.
+- The URI constants are exported from the MCP entry (`STATIC_RESOURCE_URIS`, `REPORT_RESOURCE_URIS`,
+  `RESOURCE_TEMPLATE_URIS`) so a test can compare the page with the server: every published URI must
+  appear on the page, and the page's prompt count must equal `buildPrompts().length`.
+
+Verified: `check-site-links` (66 files, 742 links, 0 problems), `audit-site` clean, and both new docs
+tests pass.
 ## 0.17.51
 
 - The goal log records the 0.17.49-0.17.50 round: the README tool list that disagreed with the

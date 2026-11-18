@@ -35,8 +35,8 @@ untrusted input can arrive.
 
 A `snapshot.config.ts` is code. The CLI runs it because the user invoked the repository's own
 command; the **MCP server and the web page refuse it** and say so. A repository fetched with
-`--remote` is generated on the defaults for the same reason: a fetched repository is not a trusted
-one.
+`--remote` is treated the same way: its JSON configuration is applied (it is data), and an
+executable config in it is refused, because a fetched repository is not a trusted one.
 
 ### MCP over HTTP
 

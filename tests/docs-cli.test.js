@@ -93,3 +93,21 @@ test("every install pin names a published milestone, not an unpublished patch", 
   assert.deepEqual(stale, [], "pins must match PUBLISHED " + published + ": " + JSON.stringify(stale));
   assert.ok(documentedPins().length > 0, "the docs do pin a version");
 });
+
+test("the MCP page documents every resource URI the server publishes", async () => {
+  const { STATIC_RESOURCE_URIS, REPORT_RESOURCE_URIS, RESOURCE_TEMPLATE_URIS } = await import("../dist/mcp.js");
+  const page = fs.readFileSync(path.join(ROOT, "docs", "mcp.md"), "utf8");
+  const missing = [...STATIC_RESOURCE_URIS, ...REPORT_RESOURCE_URIS, ...RESOURCE_TEMPLATE_URIS].filter(
+    (uri) => !page.includes("`" + uri + "`")
+  );
+  assert.deepEqual(missing, [], "undocumented resource URIs: " + missing.join(", "));
+});
+
+test("the CLI page states the real prompt count", async () => {
+  const { buildPrompts } = await import("../dist/mcp.js");
+  const page = fs.readFileSync(path.join(ROOT, "docs", "cli.md"), "utf8");
+  const counts = [...page.matchAll(/(\w+) prompts/g)].map((match) => match[1]);
+  const words = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const wrong = counts.filter((word) => words[word.toLowerCase()] !== undefined && words[word.toLowerCase()] !== buildPrompts().length);
+  assert.deepEqual(wrong, [], "the page says " + wrong.join(", ") + " prompts; the server serves " + buildPrompts().length);
+});

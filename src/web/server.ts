@@ -20,7 +20,8 @@ import { SERVE_PAGE } from "./ui.js";
  *  - Loopback by default, a bearer token always (generated on first run, printed once). The page
  *    asks for the token and keeps it in localStorage, so serving / can never leak the credential.
  *  - The API only ever writes where a person pointed it: a local path that exists, with the
- *    default settings. A remote URL is refused with a message that says what is missing, rather
+ *    repository's own JSON settings and its executable config refused. A remote URL is refused
+ *    with a message that says what is missing, rather
  *    than pretending to fetch.
  *  - Every response is bounded. The preview is the first 64 KiB of PROMPT.md, the file list is
  *    capped, the zip is built in memory and streamed once.
