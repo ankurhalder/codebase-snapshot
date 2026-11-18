@@ -30,6 +30,24 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.18.0
+
+**"A newer version is available" now has a command, and stops hiding after one failure.**
+
+- The notice has existed since 0.9.6, and a reader running an old global copy reported seeing it
+  never. The cause was in their cache file: `{"checkedAt":…,"latest":null}` — a **failed** request
+  remembered for an hour. One slow answer (the deadline was 1.2 s) made every run in the next hour
+  silent, which is indistinguishable from "you are current".
+- A failed check is now remembered for **five minutes**, and the request deadline is **2.5 s**. The
+  request overlaps the command, so the longer deadline adds no wall time to real work.
+- New command: **`snapshot update`**. It bypasses the cache, works without a terminal, prints the
+  version it compared against even when that answer is "current", and sets an exit code a script can
+  branch on: `0` current, `1` newer release, `2` registry unreachable. `--format json` returns
+  `{ current, latest, updateAvailable, command }`. `CODEBASE_SNAPSHOT_REGISTRY_URL` points it at a
+  mirror.
+- The command is registered in the contract, the option scope, the usage text, the README table and
+  the CLI reference; five tests drive it against a local registry, including a directory whose
+  `snapshot.config.ts` this server refuses to run.
 ## 0.17.58
 
 **The changelog lost its first 4,278 lines, and nothing noticed for eight releases.**

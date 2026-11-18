@@ -42,13 +42,20 @@ export const UP_TO_DATE_INTERVAL_MS = 60 * 60 * 1000;
 /**
  * How long a *failed* check is remembered.
  *
- * Shorter than the success interval on purpose: one offline moment must not hide a release for a
- * day, and one hostile network must not cause a retry on every single run.
+ * One offline moment must not hide a release for a day, and one hostile network must not cause a
+ * retry on every single run. An hour was on the wrong side of that trade — a transient failure
+ * made every run in the next hour silent, which is indistinguishable from "you are current" —
+ * so the memory is five minutes, and `snapshot update` bypasses it entirely.
  */
-export const FAILURE_INTERVAL_MS = 60 * 60 * 1000;
+export const FAILURE_INTERVAL_MS = 5 * 60 * 1000;
 
-/** Bounds the whole request. A slow registry is not the user's problem. */
-export const REQUEST_TIMEOUT_MS = 1200;
+/**
+ * Bounds the whole request. A slow registry is not the user's problem — but neither is a notice
+ * nobody sees: 1.2 s was short enough that a cold registry or a slow DNS answer turned into a
+ * cached failure, and a cached failure is silence for the next hour. The request overlaps the
+ * command, so a longer deadline costs nothing on real work and only bounds the tail.
+ */
+export const REQUEST_TIMEOUT_MS = 2500;
 
 export interface UpdateNotice {
   current: string;
@@ -105,6 +112,10 @@ export interface UpdateCheckOptions {
   /** Returns the published version, or null when it could not be determined. */
   fetchLatest?: (url: string, timeoutMs: number) => Promise<string | null>;
   enabled?: boolean;
+  /** The registry document to read; `PACKAGE_LATEST_URL` unless a mirror is configured. */
+  latestUrl?: string;
+  /** Ignore the cache and ask now — what `snapshot update` does. */
+  force?: boolean;
 }
 
 interface CacheEntry {
@@ -191,7 +202,9 @@ export function shouldCheck(argv: readonly string[], env: NodeJS.ProcessEnv): bo
   const args = argv.map((argument) => argument.toLowerCase());
   if (args.includes("--no-update-check")) return false;
   // Commands that are not a human watching a terminal.
-  for (const skip of ["mcp", "describe", "skill", "--version", "-v", "--help", "-h"]) {
+  // `update` is the explicit form of this check: it asks once, prints its own answer and sets its
+  // own exit code, so the passive check must not run a second time behind it.
+  for (const skip of ["mcp", "describe", "skill", "update", "--version", "-v", "--help", "-h"]) {
     if (args.includes(skip)) return false;
   }
   // A JSON payload owns stdout, so the check is skipped when the output *format* is JSON —
@@ -329,15 +342,29 @@ export function fetchLatestVersion(
  * Never throws: the caller runs this alongside a real command and must not be affected by it.
  */
 export async function checkForUpdate(options: UpdateCheckOptions): Promise<UpdateNotice | null> {
+  const latest = await resolveLatest(options);
+  if (!latest) return null;
+  return isNewer(latest, options.current) ? { current: options.current, latest } : null;
+}
+
+/**
+ * The published version, from the cache when it is fresh or the registry when it is not.
+ *
+ * `checkForUpdate` only answers "is there a newer one"; `snapshot update` has to print the
+ * version it compared against even when the answer is no, so the cache and fetch rules live here
+ * once and both callers share them.
+ */
+export async function resolveLatest(options: UpdateCheckOptions): Promise<string | null> {
   if (options.enabled === false) return null;
   const now = options.now ?? (() => Date.now());
   const fetchLatest = options.fetchLatest ?? fetchLatestVersion;
+  const latestUrl = options.latestUrl ?? PACKAGE_LATEST_URL;
 
   let latest: string | null = null;
 
   try {
     const cached = readCache(options.cacheFile);
-    let needsFetch = cached === null;
+    let needsFetch = cached === null || options.force === true;
 
     if (cached) {
       const age = now() - cached.checkedAt;
@@ -356,17 +383,18 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
     }
 
     if (needsFetch) {
-      const fetched = await fetchLatest(PACKAGE_LATEST_URL, REQUEST_TIMEOUT_MS);
+      const fetched = await fetchLatest(latestUrl, REQUEST_TIMEOUT_MS);
       writeCache(options.cacheFile, { checkedAt: now(), latest: fetched });
-      latest = fetched;
+      // A forced check that fails still has a cached answer; `snapshot update` would rather print
+      // a version it knows than "could not reach the registry" when the last check succeeded.
+      latest = fetched ?? latest;
     }
   } catch {
     // A check must never be the reason a command fails.
     return null;
   }
 
-  if (!latest) return null;
-  return isNewer(latest, options.current) ? { current: options.current, latest } : null;
+  return latest;
 }
 
 /** The two lines a user sees, or an empty string when there is nothing to say. */

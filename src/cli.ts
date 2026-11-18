@@ -54,7 +54,10 @@ import {
   checkForUpdate,
   formatUpdateNotice,
   installKind,
+  isNewer,
+  resolveLatest,
   shouldCheck,
+  updateCommand,
 } from "./update-check.js";
 import { installPreCommitHook } from "./agent/hook.js";
 import type { CommandName } from "./agent/option-scope.js";
@@ -87,6 +90,7 @@ type Command =
   | "describe"
   | "skill"
   | "mcp"
+  | "update"
   | "serve";
 
 const COMMAND_ALIASES = new Map<string, Command>([
@@ -102,6 +106,7 @@ const COMMAND_ALIASES = new Map<string, Command>([
   ["describe", "describe"],
   ["skill", "skill"],
   ["mcp", "mcp"],
+  ["update", "update"],
   ["serve", "serve"],
 ]);
 
@@ -118,6 +123,7 @@ const COMMAND_ARITY: Record<Command, number> = {
   describe: 0,
   skill: 0,
   mcp: 0,
+  update: 0,
   serve: 0,
 };
 
@@ -216,6 +222,7 @@ Commands:
   explain <path>       Show how one path would be treated: layer, kind, part, skips
   diff <a> <b>         Compare two snapshots (directories or manifest.json files)
   describe             Print the machine-readable contract (--format json for agents)
+  update               Ask the registry whether a newer release exists (exit 1 if one does)
   skill                Print the bundled agent skill; --install writes it into the repo
   mcp                  Serve this repository to an MCP client (stdio, or --http for the web)
   serve                Open a browser UI: generate, preview, download a zip; MCP at /mcp
@@ -1607,6 +1614,49 @@ async function firstRun(invocation: ParsedInvocation): Promise<number | null> {
  * Printing goes to **stdout** (not the usual stderr progress stream) so an agent
  * can capture the skill directly: `codebase-snapshot skill > SKILL.md`.
  */
+/**
+ * `snapshot update`: ask the registry now, and say what was compared.
+ *
+ * The passive notice is silent in CI and in machine formats, and it can be silent for five
+ * minutes after a failed check. This is the explicit question, so it bypasses the cache, works
+ * without a terminal and prints the answer even when it is "you are current". Exit 0 when
+ * current, 1 when a newer release exists (so a script can branch on it), 2 when the registry
+ * could not be reached.
+ */
+async function runUpdateCommand(invocation: ParsedInvocation): Promise<number> {
+  const current = GENERATOR_VERSION;
+  const latestUrl = process.env.CODEBASE_SNAPSHOT_REGISTRY_URL;
+  const latest = await resolveLatest({
+    current,
+    cacheFile: cacheFilePath(),
+    force: true,
+    ...(latestUrl === undefined || latestUrl === "" ? {} : { latestUrl }),
+  });
+  if (latest === null) {
+    emit(invocation.format, { current, latest: null, updateAvailable: false }, () => {
+      info(
+        "Could not reach the npm registry, so the installed version could not be compared. " +
+          "Nothing was changed; try again when the network is available."
+      );
+    });
+    return 2;
+  }
+  const kind = installKind();
+  const updateAvailable = isNewer(latest, current);
+  const command = updateCommand(kind);
+  emit(invocation.format, { current, latest, updateAvailable, command }, () => {
+    if (updateAvailable) {
+      info(formatUpdateNotice({ current, latest }, kind));
+    } else {
+      info(
+        `You are on codebase-snapshot ${current}, and the registry publishes ${latest}. ` +
+          "No update is available."
+      );
+    }
+  });
+  return updateAvailable ? 1 : 0;
+}
+
 function runSkillCommand(invocation: ParsedInvocation): number {
   if (!invocation.install) {
     // `--format json` used to print markdown anyway, which silently produced a
@@ -1802,6 +1852,10 @@ async function runCommand(argv: string[]): Promise<number> {
 
   if (invocation.command === "skill") {
     return runSkillCommand(invocation);
+  }
+
+  if (invocation.command === "update") {
+    return runUpdateCommand(invocation);
   }
 
   // `mcp` speaks JSON-RPC on stdout and resolves the repository configuration per tool call, so it

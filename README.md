@@ -192,6 +192,7 @@ to trust it.
 | `explain <path>` | Why one path is included, which part it lands in, or why it was skipped. |
 | `diff <a> <b>` | Compare two snapshots. |
 | `describe` | The machine-readable contract (`--format json`). |
+| `update` | Ask npm whether a newer release exists; exit `1` if it does. |
 | `skill` | Print or install the agent skill. |
 | `mcp` | Serve the repository to an MCP client over stdio. |
 

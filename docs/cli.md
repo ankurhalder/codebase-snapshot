@@ -63,6 +63,7 @@ as it makes it.
   - [`explain <path>`](#explain-path)
   - [`diff <before> <after>`](#diff-before-after)
   - [`describe`](#describe)
+  - [`update`](#update)
   - [`skill`](#skill)
 - [Options](#options)
 - [Exit codes](#exit-codes)
@@ -97,7 +98,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.17.58 (project dependency ^0.17.58)
+   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.18.0 (project dependency ^0.18.0)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -218,7 +219,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.17.58
+   Added devDependency: codebase-snapshot ^0.18.0
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -270,7 +271,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.17.58
+   Added devDependency: codebase-snapshot ^0.18.0
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -414,6 +415,29 @@ command, every option with its default, the exit-code meanings, all presets, the
 list, config filenames, output layout, safety rules and a troubleshooting table. The JSON
 form is what an agent should read instead of `--help`. See [Using this with an AI
 agent](agent.md).
+
+### `update`
+
+Ask the npm registry whether a newer release exists, and print the version it compared against:
+
+```bash
+npx codebase-snapshot@0.17.0 update          # is 0.17.0 still current? print the answer
+npx codebase-snapshot@0.17.0 update --format json
+```
+
+```text
+↑ codebase-snapshot 0.18.0 is available — you have 0.17.0.
+  npm install -g codebase-snapshot
+```
+
+Exit `0` when the installed version is current, `1` when a newer release exists, `2` when the
+registry could not be reached. It always asks — the cache is bypassed — and it works without a
+terminal, so a script can branch on the exit code. Set `CODEBASE_SNAPSHOT_REGISTRY_URL` to a
+mirror's `latest` document to check against something other than npmjs.org.
+
+You do not have to run it: an interactive command prints the same notice after its own work, unless
+`--format json`, `--no-update-check`, a pipe or CI is in play. That notice is cached for a day when it
+finds a release, an hour when it finds none, and five minutes after a failed request.
 
 ### `skill`
 
@@ -637,9 +661,14 @@ a global install would leave a second copy shadowing the pinned one.
 The request goes to `registry.npmjs.org/codebase-snapshot/latest` and carries no identifier of any
 kind. Its answer is remembered for 24 hours when it names a newer release — the upgrade command is
 already known — and for one hour when it says you are current, because that is the only answer a
-new release can change. A machine therefore makes at most one request an hour while it is current,
-and at most one a day while an upgrade is waiting. It is skipped when stdout is not a terminal, in
-CI, in any `--format json` run, and in `mcp`, whose server makes no outbound connections at all.
+new release can change. A **failed** request is remembered for five minutes: long enough that a
+hostile network is not retried on every run, short enough that one transient failure does not look
+like "you are current" for an hour. It is skipped when stdout is not a terminal, in CI, in any
+`--format json` run, in `mcp` (whose server makes no outbound connections at all), and in
+`--version`.
+
+If the notice never appears and you want the answer now, `snapshot update` asks directly, bypasses
+the cache and prints the comparison even when it is "current" (see [`update`](#update)).
 
 `--no-update-check` or `CODEBASE_SNAPSHOT_NO_UPDATE_CHECK=1` turns it off entirely.
 

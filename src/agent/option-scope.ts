@@ -24,6 +24,7 @@ export type CommandName =
   | "describe"
   | "skill"
   | "mcp"
+  | "update"
   | "serve";
 
 /**
@@ -141,6 +142,8 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   // — the exact "flag that parses but changes nothing" this table exists to prevent — while
   // `--discovery` was already rejected. Both the parser and `describe`'s `appliesTo` read this
   // list, so removing them narrows the two together.
+  // It asks the registry, not the repository: no cwd, no out-dir, nothing a config could change.
+  update: ["format", "help"],
   report: [
     "cwd",
     "out-dir",

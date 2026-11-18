@@ -391,6 +391,17 @@ export function buildAgentContract(): AgentContract {
         exits: [0],
       },
       {
+        name: "update",
+        aliases: [],
+        summary:
+          "Ask the npm registry whether a newer release exists and print the version it compared " +
+          "against. Exit 0 when current, 1 when an update is available, 2 when the registry could " +
+          "not be reached. The passive notice is suppressed in CI and JSON output; this command " +
+          "always asks and bypasses the cache.",
+        positionals: [],
+        exits: [0, 1, 2],
+      },
+      {
         name: "skill",
         aliases: [],
         summary:
