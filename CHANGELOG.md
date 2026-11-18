@@ -30,6 +30,39 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.15.0
+
+**Parity, measured on someone else's repositories.**
+
+0.15.x was the parity phase, and the honest test of parity is not a feature list — it is running the
+same repositories through both tools and publishing what happened.
+
+- **Ten public repositories, three tools, one command** (`scripts/benchmark-suite.mjs`): is-odd,
+  chalk, co, minimatch, luxon, requests, click, express, zod and github-readme-stats, cloned shallow
+  and packed by this tool, repomix 1.19.0 and gitingest. Nine of ten land within about plus or minus
+  30% of repomix's own token count. The tenth, minimatch, is a policy difference: five 20–25 MB
+  benchmark fixtures are emitted by repomix (64.8M tokens) and bounded-previewed by us (319,879).
+  The page says which is which instead of celebrating a ratio.
+- **`--only` and `--ignore`** narrow a single run without editing a configuration: `--only` replaces
+  the allow-list, `--ignore` adds to the deny-list, and both enter the config digest so `validate`
+  and `explain` compare like with like. An ignored path is recorded in `skipped[]`, never dropped.
+- **gitingest runs in the harness** now, with `PYTHONIOENCODING=utf-8` for the child process;
+  without it, gitingest aborts on Windows while printing its tree and the comparison silently
+  degrades to two tools.
+
+### What parity means here
+
+Feature-for-feature, the floor is covered: diffs, logs, a token tree, single-file packs in three
+formats, comment stripping, blank-line stripping, and structural parsers for seven non-TypeScript
+languages. What is different is deliberate and stated: a selection (slice, budget, delta) that neither
+competitor produces, an audit that verifies the manifest instead of trusting it, and a token estimate
+that is documented as an estimate.
+
+### How it was verified
+
+Full `npm run verify`: 1328 tests, 1320 pass, 0 fail, 8 host skips; 29 site pages with no link or
+metadata problems; a 52-file tarball whose lockfile agrees with `package.json`. The ten-repository
+run is reproducible with one command and reports its own skips.
 ## 0.14.6
 
 **Per-run narrowing: `--only` and `--ignore`.**
