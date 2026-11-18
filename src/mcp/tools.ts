@@ -721,7 +721,7 @@ const routesTool: ToolSpec = {
         ? "No route was recorded. Routes come from decorators, framework attributes and route tables."
         : [
             routes.length + " route(s):",
-            ...routes.map((route) => route.route + "  (" + route.path + ", " + route.part + ")"),
+            ...routes.map((route) => route.route.trim() + "  (" + route.path + ", " + route.part + ")"),
           ].join("\n");
     return { text, structured: { total: routes.length, routes } };
   },

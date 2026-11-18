@@ -763,3 +763,32 @@ test("every tool that renders a body caps it at 64 KiB", async (t) => {
   const symbol = await call("snapshot_symbol", { name: "blob", lines: 200 }, context);
   assert.ok(Buffer.byteLength(symbol.text) < 80 * 1024, "symbol is capped");
 });
+
+test("snapshot_routes names the path, not only the method", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "routes-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "r", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(
+    path.join(root, "src", "index.ts"),
+    [
+      'import express from "express";',
+      "const app = express();",
+      'app.get("/health", (_req, res) => res.json({ ok: true }));',
+      'app.post("/users/:id", (_req, res) => res.json({ id: _req.params.id }));',
+      "export const start = () => app.listen(3000);",
+      "",
+    ].join("\n")
+  );
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const routes = await call("snapshot_routes", {}, context);
+  assert.equal(routes.isError, undefined, routes.text);
+  assert.match(routes.text, /GET \/health/);
+  assert.match(routes.text, /POST \/users\/:id/);
+  assert.deepEqual(
+    routes.structured.routes.map((entry) => entry.route),
+    ["GET /health", "POST /users/:id"]
+  );
+});

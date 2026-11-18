@@ -59,7 +59,10 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```json
   { "name": "snapshot_symbol", "arguments": { "name": "generateSnapshot" } }
   ```
-- **`snapshot_routes`** — cheap, read-only. Every route the summaries recorded, with file and part.
+- **`snapshot_routes`**
+  > Records the **path** with the method for framework route registration (`GET /health`). A
+  > method-only handler (`export async function GET()` in Next.js) has no literal path to record and
+  > is reported as the method alone. — cheap, read-only. Every route the summaries recorded, with file and part.
   ```json
   { "name": "snapshot_routes", "arguments": { "pattern": "users" } }
   ```

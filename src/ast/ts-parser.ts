@@ -311,6 +311,11 @@ export function summarizeTypeScriptSource(
         if (isDynamicImport || isRequire) summary.imports.push(firstArgument.text);
       }
       // Express/Hono/Koa/Fastify route registration: `router.get("/x", handler)`.
+      //
+      // The path is the point. The first version pushed only the verb, so `snapshot_routes`
+      // printed `GET  (src/index.ts)` — a method with no route — for every Express application,
+      // and a reader could not tell `/health` from `/users/:id`. Method-only handlers (Next.js
+      // `export async function GET()`) stay method-only, because there is no literal to record.
       const callee = node.expression;
       if (
         ts.isPropertyAccessExpression(callee) &&
@@ -320,7 +325,7 @@ export function summarizeTypeScriptSource(
         firstArgument !== undefined &&
         ts.isStringLiteral(firstArgument)
       ) {
-        summary.routeHandlers.push(callee.name.text.toUpperCase());
+        summary.routeHandlers.push(callee.name.text.toUpperCase() + " " + firstArgument.text);
       }
     }
 

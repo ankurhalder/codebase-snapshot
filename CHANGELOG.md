@@ -30,6 +30,27 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.30
+
+**`snapshot_routes` printed a method and no route.**
+
+- Probed the graph tools on a fixture with an import cycle and two Express routes. The cycle, the
+  entry points and the neighbors were right. The routes read:
+
+  ```text
+  GET  (src/index.ts, part-001.md)
+  POST  (src/index.ts, part-001.md)
+  ```
+
+- The extractor pushed only the verb (`callee.name.text.toUpperCase()`) and **discarded the path
+  argument**. Every Express/Hono/Koa/Fastify route in every snapshot was recorded without its path,
+  and `/health` was indistinguishable from `/users/:id`.
+- The handler now records `METHOD /path`; method-only handlers (Next.js route exports, decorators)
+  stay method-only because there is no literal to record, and the renderer trims so they do not print
+  a dangling double space.
+
+Verified: the fixture reports `GET /health` and `POST /users/:id`, in text and in the structured
+reply; the cycle/entrypoints/neighbors outputs are unchanged.
 ## 0.17.29
 
 - The goal log records the 0.17.27-0.17.28 round: the response cap missing in half the tools, and the
