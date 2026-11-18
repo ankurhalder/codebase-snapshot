@@ -30,6 +30,12 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.86
+
+- The phase checklists in `GOAL.md` are ticked against what actually shipped, with the two judgment
+  calls written down rather than left as unticked boxes: base64/binary is closed as not applicable
+  (binaries are skipped, never encoded), and gitingest is supported by the comparison harness but not
+  installed in this environment, so only repomix appears in the measured table.
 ## 0.12.85
 
 **`--remove-empty-lines`: the last parity flag.**

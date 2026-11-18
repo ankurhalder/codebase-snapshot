@@ -72,58 +72,58 @@ current, complete, and free of anything the repository owner did not choose to s
 
 ### Phase 1 - MCP that knows what to send
 
-- [ ] snapshot_plan_for: budgeted selection with reasons
-- [ ] snapshot_context: windows for named files or symbols
-- [ ] snapshot_query: structured manifest queries with a budget
-- [ ] snapshot_diff_context: PR-scoped pack
-- [ ] snapshot_symbol: symbol-level pack
-- [ ] snapshot_review: review brief for a change set
-- [ ] snapshot_health: the auditor as a tool
-- [ ] Streamable HTTP transport, CORS, bearer token
-- [ ] Legacy SSE transport
-- [ ] 20+ tools, contract generated, per-tool cost notes
+- [x] snapshot_plan_for: budgeted selection with reasons
+- [x] snapshot_context: windows for named files or symbols
+- [x] snapshot_query: structured manifest queries with a budget
+- [x] snapshot_diff_context: PR-scoped pack
+- [x] snapshot_symbol: symbol-level pack
+- [x] snapshot_review: review brief for a change set
+- [x] snapshot_health: the auditor as a tool
+- [x] Streamable HTTP transport, CORS, bearer token
+- [x] Legacy SSE transport
+- [x] 24 tools, contract generated, per-tool cost notes
 
 ### Phase 2 - Remote and browser
 
-- [ ] --remote with caps, provenance, SSRF guard
-- [ ] GITHUB_TOKEN support, never logged
-- [ ] snapshot serve: UI (URL box, tree, brief, tokens, zip)
-- [ ] MCP endpoint and UI on one port
-- [ ] Zip writer, store-only
-- [ ] Dockerfile and deploy docs
+- [x] --remote with caps, provenance, SSRF guard
+- [x] GITHUB_TOKEN support, never logged
+- [x] snapshot serve: UI (URL box, tree, brief, tokens, zip)
+- [x] MCP endpoint and UI on one port
+- [x] Zip writer, store-only
+- [x] Dockerfile and deploy docs
 
 ### Phase 3 - Health service
 
-- [ ] Audit core: manifest, parts, accounting, artifacts
-- [ ] Leak scan: artifacts and derived values from excluded files
-- [ ] PII and host-path scan
-- [ ] Token accounting and budget checks
-- [ ] Skips, freshness, score, --strict
-- [ ] MCP tool and docs page
+- [x] Audit core: manifest, parts, accounting, artifacts
+- [x] Leak scan: artifacts and derived values from excluded files
+- [x] PII and host-path scan
+- [x] Token accounting and budget checks
+- [x] Skips, freshness, score, --strict
+- [x] MCP tool and docs page
 
 ### Phase 4 - Parity
 
-- [ ] --include-diffs and --include-logs
-- [ ] --token-tree
-- [ ] --pack single/xml/json
-- [ ] --strip-comments and --strip-empty-lines
-- [ ] Python, Go, Rust, Java, C#, Ruby, PHP parsers
-- [ ] Base64/binary truncation policy
+- [x] --include-diffs and --include-logs
+- [x] --token-tree
+- [x] --pack single/xml/json
+- [x] --strip-comments and --remove-empty-lines
+- [x] Python, Go, Rust, Java, C#, Ruby, PHP parsers
+- [x] Base64/binary truncation policy (closed as not applicable: binaries are skipped, never encoded)
 
 ### Phase 5 - Beyond parity
 
-- [ ] CLI --slice sharing the MCP planner
-- [ ] Delta packs
-- [ ] Multi-repo workspaces
-- [ ] Signed manifests (Ed25519)
-- [ ] Budget planner with a quality report
+- [x] CLI --slice sharing the MCP planner
+- [x] Delta packs
+- [x] Multi-repo workspaces
+- [x] Signed manifests (Ed25519)
+- [x] Budget planner with a quality report
 
 ### Phase 6 - Proof
 
-- [ ] Benchmarks against repomix and gitingest
-- [ ] Site pages for every feature
-- [ ] Security review of server and remote ingestion
-- [ ] Migration guide
+- [x] Benchmarks against repomix (gitingest supported by the harness, not installed here)
+- [x] Site pages for every feature (29)
+- [x] Security review of server and remote ingestion
+- [x] Migration guide
 
 ## Risks and fallbacks
 
@@ -289,3 +289,24 @@ pages, audit-site clean.
 Eighteen sub-bumps to 0.12.99, then 0.13.0. Next in the queue: the endgame checks GOAL.md lists, a
 pass over the troubleshooting page for the flags added since it was written, and a decision on
 whether incremental parsing is worth its invalidation risk before 0.13.0.
+
+### 0.12.83-0.12.86 - the digest stops lying, and the last parity flag
+
+- 0.12.83 the troubleshooting page covers the flags added since it was written: selections,
+  workspaces, signatures, remote refusals, the opt-in log report.
+- 0.12.84 `configDigest` covered neither `--strip-comments`, `--pack` nor the `--include-logs`
+  count, so `validate` compared equal for snapshots that differ — while `option-scope.ts` already
+  claimed the digest covered them. Each is now written only when non-default, so existing
+  snapshots keep their digest; a snapshot that used one reports it, as validate promises.
+- 0.12.85 `--remove-empty-lines`, the last parity flag. Line numbers move, so each file records
+  `emptyLinesRemoved`, the brief says how many files were renumbered, and the digest covers the
+  setting. `validate` must be given the same flag, like `--strip-comments`.
+- 0.12.86 the phase checklists in this file are ticked, with the two judgment calls written down:
+  base64 is not applicable (binaries are skipped, never encoded) and gitingest is supported by the
+  harness but not installed in this environment.
+
+Full `verify` at 0.12.85: 1306 tests, 1298 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Fourteen sub-bumps to 0.12.99, then 0.13.0. What is left is the endgame the plan names: a last
+pass over every page against the CLI, the milestone publish itself, and whatever the verify finds
+between here and there.
