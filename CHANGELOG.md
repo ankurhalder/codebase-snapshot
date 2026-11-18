@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.44
+
+- The goal log records the 0.17.43 round: the health page covering 14 of 18 checks, and the
+  stats field named "sizes" that carried tokens.
 ## 0.17.43
 
 **The health page listed 14 of the 18 checks, and its sample output was from an older tool.**

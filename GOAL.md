@@ -786,3 +786,19 @@ Full `verify` at 0.17.41: 1358 tests, 1350 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the docs sweep for the remaining numeric claims (presets, pages), then the `serve` page under
 a slice/budget generation to confirm what the browser shows.
+
+### 0.17.43-0.17.44 - the health page listed 14 of 18 checks
+
+- `docs/health.md` had a 14-row table and no ids; the audit emits 18 ids (`bookkeeping`,
+  `pipeline.bodies`, `pipeline.monolith` and `workspace.index` were absent). Every row now carries
+  the id, and a test runs a real audit and fails if an emitted id is undocumented.
+- The page's sample output was from an older tool ("13 passed"); it now matches a clean snapshot
+  (15 passed, 1 skipped) and the JSON example says the same.
+- `snapshot_stats` `partSizes` carried `{filename, tokens}` under a name that promises bytes: it now
+  reports both, and the two fields it returned but did not declare (`heaviest`, `partSizes`) are in
+  the output schema.
+
+Full `verify` at 0.17.43: 1360 tests, 1352 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the serve page's slice and budget responses under the browser flow, then the last read of
+`docs/output.md` against what a run actually writes.
