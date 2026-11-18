@@ -22,7 +22,9 @@ snapshot/
     ├── audit.md                secrets, large files, parse diagnostics, git state
     ├── diff.md                 uncommitted changes (--include-diffs)
     ├── log.md                  recent commits (--include-logs <n>)
-    └── tokens.md               per-file token estimates (--token-tree)
+    ├── tokens.md               per-file token estimates (--token-tree)
+    ├── selection.md            question, budget and every chosen file (--slice, --budget-tokens)
+    └── audit.sarif              the audit as SARIF for code scanning (--sarif)
 ```
 
 With `--include-monolith` you also get `full-codebase.json` and `full-codebase.md` — the
@@ -178,7 +180,7 @@ diff the manifest only when you need to know that a run happened.
 | `totals` | Bookkeeping: `{ candidateFiles, includedFiles, fullFiles, previewFiles, skippedFiles, totalSourceBytes, totalContentBytes, sourceLines, emittedLines, estimatedTokens, partCount, warningCount, redactedLines }`. `sourceLines` is the source line count before previews and part budgets; `emittedLines` is what the parts actually carry. `redactedLines` counts the lines whose values were masked — one per line, not one per matching rule — and is what the summary's `Redacted:` line prints. |
 | `fingerprint` | Stable hash of the snapshot content **and** the settings that shaped it. Two runs over unchanged input and unchanged settings produce the same value; changing the budget, a preset, a layer rule or the secret rules moves it, because the parts move too. It is recomputed by `validate` from `files[]` and `config.digest`, so an edited file list cannot keep the recorded value — and because the partitioner may change a file's `inclusionMode` after the fingerprint is taken, the mode is not part of the hash. |
 | `validation` | `{ status: "passed" \| "failed", errors: [] }` for the run's own integrity check. |
-| `artifacts` | A digest of every artifact the run wrote: `readme`, `prompt`, `navigation`, `projectTree`, `audit`, `fullJson`, `fullMarkdown` and `sarif` when present, each `{ byteSize, sha256 }`. `validate` requires each recorded file to exist and match, so deleting the README or the navigation index is a failure rather than a silent omission. Monolith entries are `null` when the file was not written; a key absent for an older manifest is not drift. |
+| `artifacts` | A digest of every artifact the run wrote: `readme`, `prompt`, `navigation`, `projectTree`, `audit`, `selection` (slice or budget runs), `fullJson`, `fullMarkdown`, `fullXml` and `sarif`, each `{ byteSize, sha256 }` when present. `validate` requires each recorded file to exist and match, so deleting the README or the navigation index is a failure rather than a silent omission. Monolith entries are `null` when the file was not written; a key absent for an older manifest is not drift. |
 | `layers`, `kinds` | File counts per layer and per kind. |
 | `indexes` | Cross-references: `routes`, `components`, `handlers`, `features`, `imports`, `directives`. `imports.byFile` holds one entry per file whose import edges are known — including a previewed or oversized file, whose specifiers are still extracted because they are what makes it a dependent. Such an entry has `exportsOmitted: true`: its `exports` list was never read, and an empty array there would claim "no exports". |
 | `parts` | One entry per part (below). |

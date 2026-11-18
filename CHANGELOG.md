@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.55
+
+**The output page's tree omitted two artifacts it documents elsewhere.**
+
+- `reports/selection.md` (written by `--slice` and `--budget-tokens`, referenced in `slice.md`,
+  `answer.md` and `migration.md`) and `reports/audit.sarif` (`--sarif`) were missing from the tree in
+  `docs/output.md`.
+- The `artifacts` row counted "a digest of every artifact" and listed eight keys, leaving out
+  `selection` and `fullXml` — both real keys in the manifest's digest map.
+
+Verified: site rebuilt, 66 files / 742 links / 0 problems, `audit-site` clean.
 ## 0.17.54
 
 **`snapshot_answer` said "1 skipped for budget" and named nothing.**
