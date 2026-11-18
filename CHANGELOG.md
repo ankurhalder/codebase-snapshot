@@ -30,6 +30,42 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.16.0
+
+**Things neither competitor has.**
+
+Parity was the floor. This milestone is what the snapshot does that repomix and gitingest do not:
+
+- **Selections, not dumps.** `--slice "question"`, `--budget-tokens N` and `--delta <base>` each
+  narrow the snapshot to what answers a question, fits a budget, or changed. The three are mutually
+  exclusive on purpose: each is a different claim, and letting two win silently would make the
+  manifest describe a selection nobody asked for.
+- **The selection explains itself.** `reports/selection.md` (0.15.3) lists every chosen file with its
+  cost and reason, what was left out, and what a larger budget would buy next; it is a recorded
+  artifact, so `validate` treats an edited one as drift.
+- **Budgets answer "what if".** `snapshot_budget` (0.15.2) runs the planner at several budgets and
+  reports what each adds; the manifest records `headroomTokens` and `nextInLine`.
+- **Question in, cited context out.** `snapshot_answer` (0.15.5) plans a question and returns
+  line-numbered windows within one budget, each with its reason, every omission named.
+- **Multi-repo workspaces** with `WORKSPACE.json`, cross-member import links and a workspace-wide
+  audit (`health --all-members`).
+- **Signed manifests** (Ed25519) behind `--sign`, verified by `validate` and the audit.
+- **An audit that proves the manifest** rather than trusting it: bodies, counts, packs, the workspace
+  index, host paths and secrets — the work of 0.14.x, now part of what a snapshot is.
+
+### The shape of the whole
+
+A reader should be able to take a snapshot and answer three questions without the working tree:
+what is in it (manifest, navigation, tree), why it is in it (selection report, skip records), and
+whether it is what it says it is (hashes, signatures, audit). None of the three depends on the other
+two agreeing by accident.
+
+### How it was verified
+
+Full `npm run verify`: 1333 tests, 1325 pass, 0 fail, 8 host skips; 29 site pages with no link or
+metadata problems; a 52-file tarball whose lockfile agrees with `package.json`. The new tools are
+pinned by tests that call them over the real MCP registry, and the docs/schema parity test fails if a
+tool is documented but absent or present but undocumented.
 ## 0.15.5
 
 **`snapshot_answer`: question in, cited context out, in one call.**
