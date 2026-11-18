@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.34
+
+- The goal log records the 0.17.33 round: the search summary that conflated searched with matched,
+  and the 3.5 MB harness artefact that had been tracked since 0.14.2.
 ## 0.17.33
 
 **A 3.5 MB benchmark artefact was hiding in the repository.**

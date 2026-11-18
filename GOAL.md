@@ -719,3 +719,17 @@ Full `verify` at 0.17.31: 1352 tests, 1344 pass, 0 fail, 8 host skips; tarball 5
 
 Next: `snapshot_search` and `snapshot_locate` against the same graph fixture, then the error paths of
 `snapshot_plan` (preview without writing).
+
+### 0.17.33-0.17.34 - the search summary, and a stray 3.5 MB artefact
+
+- `snapshot_search` reported `3 match(es) in 4 file(s)`; the four was the snapshot's file count, not
+  the files with a hit. It now says `3 match(es) in 2 file(s) of 4 searched.` That is the kind of
+  sentence a reader acts on, and it was subtly false.
+- `repomix-output.xml`, 3.5 MB from an earlier benchmark run, was **tracked since 0.14.2** — swept in
+  by `git add -A`. Removed from the index and the tree, named in `.gitignore` beside the probe
+  patterns, and pinned by a hygiene test that fails if a generated monolith or harness output is ever
+  committed.
+
+Full `verify` at 0.17.33: 1354 tests, 1346 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: `snapshot_stats` against the manifest, then a last pass over `snapshot_explain` messages.
