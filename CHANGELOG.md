@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.40
+
+**`snapshot_validate` called a fresh snapshot "out of date".**
+
+- The tool resolved a bare config file and compared digests. A snapshot generated with `tokenTree`,
+  `includeDiffs`, `removeEmptyLines`, `stripComments`, a pack or `maxParts` therefore reported
+  "2 setting(s) changed since the snapshot" immediately after generating — the same defect
+  `snapshot_review` had (0.17.17), in the other tool that makes the same claim.
+- Both now share `configAsGenerated`: the artifact selection and flag-only settings come from the
+  manifest's own record, while everything the config file sets (budgets, include/exclude, layers,
+  kinds, preset) still comes from the current config, so real configuration drift is still reported.
+
+Verified: generate with `tokenTree` + `removeEmptyLines` then validate reports "matches the
+repository"; one appended line turns it into "1 file(s) changed on disk".
 ## 0.17.39
 
 - The goal log records the 0.17.37-0.17.38 round: docs that pinned an unpublished version, and a

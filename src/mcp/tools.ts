@@ -32,7 +32,7 @@ import { findSection, parsePartSections, windowText } from "./part.js";
 import { estimateTokens } from "../tokenize.js";
 import { createHash } from "node:crypto";
 import type { JsonObject, JsonSchema } from "./protocol.js";
-import type { FileEntry, ValidationDrift, ValidationResult } from "../types.js";
+import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolCost, ToolOutcome } from "./types.js";
 import { forgetManifest, manifestPathFor, openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
 import type { Workspace, WorkspaceOverrides } from "./workspace.js";
@@ -1024,25 +1024,9 @@ const reviewTool: ToolSpec = {
     const read = readManifest(workspace);
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
 
-    // Validate as the snapshot was generated, not as a bare config file resolves. The run flags
-    // that wrote `reports/diff.md`, `--remove-empty-lines` or a pack are part of what `validate`
-    // compares, and the review tool has no flags: without the manifest's own record a fresh
-    // snapshot generated with `includeDiffs` was reported "stale; run snapshot_generate".
-    const recordedConfig = read.manifest.config;
-    const reviewConfig: typeof workspace.config = {
-      ...workspace.config,
-      ...(recordedConfig?.artifacts === undefined ? {} : { artifacts: recordedConfig.artifacts }),
-      ...(recordedConfig?.stripComments === undefined ? {} : { stripComments: recordedConfig.stripComments }),
-      ...(recordedConfig?.removeEmptyLines === undefined ? {} : { removeEmptyLines: recordedConfig.removeEmptyLines }),
-      ...(recordedConfig?.pack === undefined ? {} : { pack: recordedConfig.pack }),
-      ...(recordedConfig?.logCount === undefined ? {} : { logCount: recordedConfig.logCount }),
-      ...(recordedConfig?.skeleton === undefined ? {} : { skeleton: recordedConfig.skeleton }),
-      ...(recordedConfig?.sarif === undefined ? {} : { sarif: recordedConfig.sarif }),
-      ...(recordedConfig?.maxParts === undefined ? {} : { maxParts: recordedConfig.maxParts }),
-    };
     let validation;
     try {
-      validation = validateSnapshot(reviewConfig);
+      validation = validateSnapshot(configAsGenerated(workspace, read.manifest));
     } catch (error) {
       return { text: (error as Error).message, isError: true };
     }
@@ -2180,6 +2164,32 @@ const generateTool: ToolSpec = {
   },
 };
 
+/**
+ * The configuration `validate` should compare against: the manifest's record of how the snapshot
+ * was generated, for the settings that only a run flag can carry.
+ *
+ * `validate` compares a configuration digest, and that digest covers the artifact selection
+ * (`tokenTree`, `includeDiffs`, …), `stripComments`, `removeEmptyLines`, `pack`, `logCount`,
+ * `skeleton`, `sarif` and `maxParts`. None of those is in the config file when they came from a
+ * flag, so a tool that resolves the bare config reported a freshly generated snapshot "out of
+ * date — 2 settings changed". The manifest records them now; use that record. Everything the
+ * config file does set (budgets, include/exclude, layers, kinds, preset) still comes from the
+ * current config, so real configuration drift is still reported. */
+function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace["config"] {
+  const recorded = manifest.config;
+  return {
+    ...workspace.config,
+    ...(recorded?.artifacts === undefined ? {} : { artifacts: recorded.artifacts }),
+    ...(recorded?.stripComments === undefined ? {} : { stripComments: recorded.stripComments }),
+    ...(recorded?.removeEmptyLines === undefined ? {} : { removeEmptyLines: recorded.removeEmptyLines }),
+    ...(recorded?.pack === undefined ? {} : { pack: recorded.pack }),
+    ...(recorded?.logCount === undefined ? {} : { logCount: recorded.logCount }),
+    ...(recorded?.skeleton === undefined ? {} : { skeleton: recorded.skeleton }),
+    ...(recorded?.sarif === undefined ? {} : { sarif: recorded.sarif }),
+    ...(recorded?.maxParts === undefined ? {} : { maxParts: recorded.maxParts }),
+  };
+}
+
 const validateTool: ToolSpec = {
   name: "snapshot_validate",
   title: "Validate the snapshot",
@@ -2204,9 +2214,11 @@ const validateTool: ToolSpec = {
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
 
+    const read = readManifest(workspace);
+    if (!read.ok) return failure(read.message);
     let result: ValidationResult;
     try {
-      result = validateSnapshot(workspace.config);
+      result = validateSnapshot(configAsGenerated(workspace, read.manifest));
     } catch (error) {
       return failure(error instanceof Error ? error.message : String(error));
     }

@@ -838,3 +838,18 @@ test("snapshot_history refuses a report edited after generation", async (t) => {
   assert.equal(history.isError, true, history.text);
   assert.match(history.text, /changed after the snapshot was generated/);
 });
+
+test("snapshot_validate validates as the snapshot was generated, flags included", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", { tokenTree: true, removeEmptyLines: true }, context);
+
+  const current = await call("snapshot_validate", {}, context);
+  assert.equal(current.structured.current, true, current.text);
+  assert.match(current.text, /matches the repository/);
+
+  fs.appendFileSync(path.join(root, "src", "user.ts"), "export const later = true;\n");
+  const stale = await call("snapshot_validate", {}, context);
+  assert.equal(stale.structured.current, false, stale.text);
+  assert.match(stale.text, /file\(s\) changed on disk/);
+});
