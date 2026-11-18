@@ -488,3 +488,19 @@ Full `verify` at 0.15.3: 1332 tests, 1324 pass, 0 fail, 8 host skips; tarball 52
 
 Next: 0.16.0 (things neither competitor has), then the 0.17.0 endgame. Four milestones published,
 one to go.
+
+### 0.15.5-0.16.1 - question in, cited context out
+
+- 0.15.5 `snapshot_answer` (26th tool): plan a question, return each chosen file as a line-numbered
+  head window within one budget, each with its reason, every omission named. The one-call version of
+  plan-then-read that the MCP surface was missing.
+- **0.16.0 is the fourth published milestone** (`latest` on npm at 01:52Z), tagged and released on
+  GitHub with the beyond-parity summary: selections that explain themselves, budgets that answer
+  "what if", multi-repo, signing, and an audit that proves the manifest.
+
+Full `verify` at 0.16.0: 1333 tests, 1325 pass, 0 fail, 8 host skips; tarball 52 files; site 29
+pages, audit-site clean.
+
+Next: 0.17.0 - the endgame: every feature on a site page, the security review refreshed, the
+migration guide current, and the final measurement. Then 0.17.x until the deadline, because the
+program does not stop at the milestone.

@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.16.1
+
+- The goal log records the fourth published milestone: 0.16.0 tagged, released on GitHub and
+  published to npm (`latest` at 01:52Z). `ROADMAP.md` marks it published.
 ## 0.16.0
 
 **Things neither competitor has.**
