@@ -792,3 +792,19 @@ test("snapshot_routes names the path, not only the method", async (t) => {
     ["GET /health", "POST /users/:id"]
   );
 });
+
+test("search distinguishes files with a match from files searched", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+
+  const result = await call("snapshot_search", { query: "getUser" }, context);
+  assert.equal(result.isError, undefined, result.text);
+  const matched = new Set(result.structured.matches.map((match) => match.path)).size;
+  const total = result.structured.matches.length;
+  assert.ok(matched < 6, "the fixture has more files than matches: " + result.text);
+  assert.match(result.text, new RegExp(total + " match\\(es\\) in " + matched + " file\\(s\\) of \\d+ searched\\.|No match"));
+
+  const none = await call("snapshot_search", { query: "zzzz-not-present" }, context);
+  assert.match(none.text, /^No match in \d+ file\(s\)\./);
+});

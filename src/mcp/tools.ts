@@ -896,9 +896,15 @@ const searchTool: ToolSpec = {
       }
     }
 
+    // "3 match(es) in 4 file(s)" read as "three matches spread over four files"; the four was
+    // the size of the snapshot, not the number of files with a hit. Both numbers, each labelled.
+    const matchedFiles = new Set(matches.map((match) => match.path)).size;
     const lines = [
-      matches.length + " match(es) in " + read.manifest.files.length + " file(s)." +
-        (truncated ? " Results are capped; narrow the query." : ""),
+      matches.length === 0
+        ? "No match in " + read.manifest.files.length + " file(s)."
+        : matches.length + " match(es) in " + matchedFiles + " file(s) of " +
+          read.manifest.files.length + " searched." +
+          (truncated ? " Results are capped, so not every file was searched; narrow the query." : ""),
       ...(skippedOversize.length > 0
         ? ["Skipped " + skippedOversize.length + " oversized part(s): " + skippedOversize.slice(0, 5).join(", ")]
         : []),

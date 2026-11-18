@@ -27,3 +27,9 @@ audit/poc/*.txt
 .docs-audit.*
 /.*.json
 /.*.txt
+
+# Comparison-harness output. `repomix-output.xml` is 3.5 MB of the same repository in another
+# tool's format, written by `scripts/compare.mjs` / `benchmark-suite.mjs` into the working
+# directory. One was swept into 0.14.2 by `git add -A` and sat in the tree until 0.17.33.
+repomix-output.xml
+

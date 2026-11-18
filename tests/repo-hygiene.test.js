@@ -150,3 +150,11 @@ test("the release notes and the version agree", () => {
     `CHANGELOG.md has no section for ${version}`
   );
 });
+
+test("comparison-harness output is not tracked", () => {
+  const tracked = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" })
+    .split("\n")
+    .filter(Boolean);
+  const stray = tracked.filter((file) => /^(repomix-output\.xml|full-codebase\.(json|md|xml))$/.test(file));
+  assert.deepEqual(stray, [], "generated tool output must not be committed: " + stray.join(", "));
+});

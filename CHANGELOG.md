@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.33
+
+**A 3.5 MB benchmark artefact was hiding in the repository.**
+
+- `snapshot_search` said `3 match(es) in 4 file(s)`, which reads as three matches spread over four
+  files; the four was the size of the snapshot, not the number of files with a hit. It now says
+  `3 match(es) in 2 file(s) of 4 searched.` and `No match in N file(s).` when there are none.
+- `repomix-output.xml` — 3.5 MB of this repository in repomix's format, written by the comparison
+  harness into the working directory — was **tracked in git** since 0.14.2, swept in by `git add -A`.
+  It is removed from the index and the working tree, and `.gitignore` now names it beside the probe
+  patterns. A hygiene test asserts that this and the `full-codebase.*` monoliths are never tracked.
+
+Verified: the search wording test covers both the match and no-match forms; the hygiene test fails
+if a generated monolith or the harness output is committed again.
 ## 0.17.32
 
 - The goal log records the 0.17.30-0.17.31 round: routes that lost their paths, and the tests that
