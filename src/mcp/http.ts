@@ -108,6 +108,26 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   };
   const sessions = new Map<string, { count: number; resetAt: number }>();
 
+  /**
+   * Request counters for `/metrics`.
+   *
+   * Deliberately tiny: a total, a count per method, and the number of rate-limited or refused
+   * requests. Nothing per-tool and nothing per-path — a metric label built from a URL is an
+   * unbounded map and a way to leak what was asked for into a monitoring system.
+   */
+  const metrics = {
+    requests: 0,
+    byMethod: new Map<string, number>(),
+    refused: 0,
+    rateLimited: 0,
+    started: Date.now(),
+  };
+  const noteRequest = (request: http.IncomingMessage): void => {
+    metrics.requests += 1;
+    const method = request.method ?? "UNKNOWN";
+    metrics.byMethod.set(method, (metrics.byMethod.get(method) ?? 0) + 1);
+  };
+
   const allowedOrigin = (origin: string | undefined): string | null => {
     if (origin === undefined) return null;
     if (isLoopbackOrigin(origin)) return origin;
@@ -115,6 +135,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   };
 
   const httpServer = http.createServer((request, response) => {
+    noteRequest(request);
     const send = (status: number, body: unknown, extra: Record<string, string> = {}): void => {
       const text = typeof body === "string" ? body : JSON.stringify(body);
       response.writeHead(status, {
@@ -129,6 +150,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     const allowed = allowedOrigin(origin);
     if (origin !== undefined && allowed === null) {
+      metrics.refused += 1;
       send(403, { error: "origin not allowed" });
       return;
     }
@@ -160,6 +182,38 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         },
         cors
       );
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/metrics") {
+      // Prometheus text format, no dependency. The values are process-local: this server does not
+      // aggregate across instances, and a monitoring system that needs that can sum them. No metric
+      // carries a path or a tool name — a label built from a URL is an unbounded map, and it would
+      // publish what was asked for to the monitoring system.
+      const lines = [
+        "# HELP snapshot_uptime_seconds Seconds since the process started.",
+        "# TYPE snapshot_uptime_seconds gauge",
+        "snapshot_uptime_seconds " + Math.round(process.uptime()),
+        "# HELP snapshot_requests_total HTTP requests received.",
+        "# TYPE snapshot_requests_total counter",
+        "snapshot_requests_total " + metrics.requests,
+        "# HELP snapshot_requests_refused_total Requests refused before dispatch.",
+        "# TYPE snapshot_requests_refused_total counter",
+        "snapshot_requests_refused_total " + metrics.refused,
+        "# HELP snapshot_requests_rate_limited_total Requests rejected by the rate limit.",
+        "# TYPE snapshot_requests_rate_limited_total counter",
+        "snapshot_requests_rate_limited_total " + metrics.rateLimited,
+        "# HELP snapshot_tools Number of tools this server serves.",
+        "# TYPE snapshot_tools gauge",
+        "snapshot_tools " + toolCount,
+      ];
+      for (const [method, count] of metrics.byMethod) {
+        lines.push('snapshot_requests_by_method_total{method="' + method + '"} ' + count);
+      }
+      send(200, lines.join("\n") + "\n", {
+        ...cors,
+        "content-type": "text/plain; version=0.0.4; charset=utf-8",
+      });
       return;
     }
 
@@ -260,6 +314,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const window = sessions.get(remote);
     if (window === undefined || window.resetAt <= now) sessions.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
     else if (window.count >= RATE_LIMIT) {
+      metrics.rateLimited += 1;
       send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
       return;
     } else window.count += 1;

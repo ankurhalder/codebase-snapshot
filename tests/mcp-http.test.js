@@ -203,3 +203,25 @@ test("healthz reports the build that answers, without a token", async (t) => {
   assert.ok(body.tools >= 20);
   assert.equal(typeof body.uptimeSeconds, "number");
 });
+
+test("metrics reports counters in Prometheus format", async (t) => {
+  const root = fixture(t);
+  const transport = await serve(t, root);
+  const url = new URL(transport.url);
+
+  // One refused origin and one normal request, so both counters have a value to prove.
+  await fetch(url.origin + "/healthz", { headers: { origin: "https://evil.example" } });
+  await fetch(url.origin + "/healthz");
+
+  const response = await fetch(url.origin + "/metrics");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /text\/plain/);
+  const text = await response.text();
+  assert.match(text, /^# TYPE snapshot_requests_total counter$/m);
+  assert.match(text, /^snapshot_requests_total [1-9]\d*$/m);
+  assert.match(text, /^snapshot_requests_refused_total [1-9]\d*$/m);
+  assert.match(text, /^snapshot_tools \d+$/m);
+  assert.match(text, /^snapshot_uptime_seconds \d+$/m);
+  assert.match(text, /snapshot_requests_by_method_total\{method="GET"\} \d+/);
+  assert.doesNotMatch(text, /healthz|5000|token/i, "no request path or credential is a metric label");
+});

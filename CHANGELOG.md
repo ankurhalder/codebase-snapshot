@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.3
+
+- **`GET /metrics` on the HTTP transport.** Prometheus text, no dependency: request totals, a count
+  per method, refusals (a disallowed CORS origin) and rate-limit rejections, plus the tool count and
+  uptime. Labels are fixed — no path, no tool name, no credential — because a label built from a URL
+  is an unbounded map and would publish what was asked for to the monitoring system.
+- `/healthz` and `/metrics` need no token (neither exposes repository data); everything else still
+  does.
+
+Verified: a refused origin and a normal request move their counters, and no request path appears in
+the output.
 ## 0.13.2
 
 - The goal log records the milestone: 0.13.0 tagged, released on GitHub and **published to npm**
