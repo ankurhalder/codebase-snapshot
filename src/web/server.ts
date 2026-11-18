@@ -68,6 +68,24 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   /** Clones made by this process; removed when it closes, because the page can still be reading them. */
   const temporaryClones = new Set<string>();
 
+  /**
+   * Directories this server may read from: the working directory it was started for, plus the
+   * clones it created itself.
+   *
+   * `/api/snapshot` and `/api/health` take a `path`, and `path.resolve` accepts an absolute one —
+   * so before this check the bearer token doubled as an arbitrary-file-read primitive for anything
+   * the process could read. The token is still the boundary for who may ask; this is the boundary
+   * for what may be asked about.
+   */
+  const allowedRoots = [path.resolve(options.cwd)];
+  const insideAllowedRoots = (candidate: string): boolean => {
+    const resolved = path.resolve(candidate);
+    return allowedRoots.some((root) => {
+      const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+      return resolved === root || resolved.startsWith(prefix);
+    });
+  };
+
   const authorized = (request: http.IncomingMessage): boolean => {
     if (token === null) return true;
     const header = request.headers.authorization ?? "";
@@ -223,6 +241,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
                 log,
               });
               temporaryClones.add(clone.directory);
+              allowedRoots.push(clone.directory);
               target = clone.directory;
               provenance = clone.provenance;
             } catch (error) {
@@ -282,6 +301,10 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "GET" && request.url?.startsWith("/api/health?") === true) {
       const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
+      if (!insideAllowedRoots(target)) {
+        send(403, { error: "outside the served directory: " + target });
+        return;
+      }
       if (!fs.existsSync(path.join(target, "manifest.json"))) {
         send(404, { error: "no manifest.json under " + target });
         return;
@@ -293,6 +316,10 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "GET" && (request.url?.startsWith("/api/snapshot?") === true || request.url === "/api/snapshot")) {
       const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
+      if (!insideAllowedRoots(target)) {
+        send(403, { error: "outside the served directory: " + target });
+        return;
+      }
       const manifestFile = path.join(target, "manifest.json");
       let manifest: { fingerprint?: string; generatedAt?: string; counts?: { totalFiles?: number; skippedCount?: number }; totals?: { estimatedTokens?: number }; files?: Array<{ relativePath: string; part: string }> };
       try {
@@ -321,6 +348,10 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "GET" && request.url?.startsWith("/api/snapshot.zip") === true) {
       const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
+      if (!insideAllowedRoots(target)) {
+        send(403, { error: "outside the served directory: " + target });
+        return;
+      }
       if (!fs.existsSync(path.join(target, "manifest.json")) && !fs.existsSync(path.join(target, ".codebase-snapshot"))) {
         send(404, { error: "not a snapshot directory: " + target });
         return;

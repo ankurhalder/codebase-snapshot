@@ -32,6 +32,13 @@ Serving http://127.0.0.1:4788/
 5. **Download.** The zip is the snapshot directory, stored entries, no compression — the same bytes
    the agent would read.
 
+## What the API may read
+
+`/api/snapshot`, `/api/snapshot.zip` and `/api/health` take a `path`. The server answers `403` for
+a path outside the directory it was started for, or outside a clone it created itself. The token
+decides who may ask; this decides what may be asked about — otherwise a leaked token would be an
+arbitrary-file-read primitive over the whole disk.
+
 ## The token
 
 The page is HTML and is served without a token; everything that reads or writes a repository needs

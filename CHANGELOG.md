@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.99
+
+**The last sub-bump before the milestone: the browser API cannot be pointed anywhere.**
+
+- `/api/snapshot`, `/api/snapshot.zip` and `/api/health` took a `path` and resolved it with
+  `path.resolve`, which accepts an absolute one. With a bearer token, that made the page an
+  arbitrary-file-read endpoint for anything the process could read — the token was the only boundary,
+  and a leaked token (or a tunnel) widened it to the whole disk.
+- The server now records the directory it was started for and the clones it created, and answers
+  `403` for anything else. The token still decides who may ask; this decides what may be asked
+  about. The docs say which is which.
+
+Verified: all three endpoints refuse the parent directory with `403` and still serve the generated
+snapshot inside it; the nine serve tests pass.
 ## 0.12.98
 
 - The goal log records the 0.12.96-0.12.97 round and the last verify before the milestone: 1316

@@ -207,3 +207,30 @@ test("the page reports the health of what it generated", async (t) => {
   assert.equal(report.score, summary.health.score);
   assert.ok(Array.isArray(report.checks));
 });
+
+test("the API refuses a path outside the served directory", async (t) => {
+  const root = fixture(t);
+  const server = await serve(t, root);
+  const repo = path.join(root, "repo");
+  assert.equal(
+    (await fetch(server.url + "api/generate", {
+      method: "POST",
+      headers: { authorization: "Bearer " + server.token, "content-type": "application/json" },
+      body: JSON.stringify({ source: repo }),
+    })).status,
+    200
+  );
+
+  const outside = path.resolve(root, "..");
+  for (const endpoint of ["api/snapshot?path=", "api/health?path=", "api/snapshot.zip?path="]) {
+    const response = await fetch(server.url + endpoint + encodeURIComponent(outside), {
+      headers: { authorization: "Bearer " + server.token },
+    });
+    assert.equal(response.status, 403, endpoint + " refuses a directory it was not started for");
+  }
+
+  const inside = await fetch(server.url + "api/snapshot?path=" + encodeURIComponent(path.join(repo, "snapshot")), {
+    headers: { authorization: "Bearer " + server.token },
+  });
+  assert.equal(inside.status, 200, "the directory it was started for is still served");
+});
