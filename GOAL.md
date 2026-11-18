@@ -406,3 +406,22 @@ Full `verify` at 0.13.4: 1319 tests, 1311 pass, 0 fail, 8 host skips; tarball 52
 
 Next: the road to 0.14.0 (health service deepening), then 0.15.x parity, 0.16.x beyond parity,
 0.17.0 endgame - and a milestone publish at each x.y.0.
+
+### 0.13.6-0.13.8 - the manifest has to prove its own numbers
+
+- 0.13.6 the audit checks every file body against `includedBytes`/`includedLines`. The per-file
+  counts were never compared with the parts, so a truncated part with an updated hash agreed with
+  every check while under-delivering. The parser moved to `partitioner/part-format.ts` so the auditor
+  and the server share it instead of the auditor importing the server.
+- 0.13.7 the audit recomputes `counts.totalFiles`, `counts.partsCount`, `counts.skippedCount`,
+  `totals.totalContentBytes` and the per-layer counts from the manifest arrays. A manifest edited to
+  claim five more files than it held passed every check before this.
+- Probes behind both: five generation modes on this repository (full, strip-comments,
+  remove-empty-lines, skeleton, forced previews) all agree; one deleted line in a part fails; one
+  edited count fails with the field and both numbers.
+
+Full `verify` at 0.13.7: 1321 tests, 1313 pass, 0 fail, 8 host skips; tarball 52 files.
+
+Next: the rest of the 0.14.0 theme is the health service, then the 0.14.0 milestone publish. The
+questions left: does the token estimate match the tokenizer it claims, and does the audit cover the
+monolith packs.

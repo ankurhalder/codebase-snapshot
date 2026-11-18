@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.13.8
+
+- The goal log records the 0.13.6-0.13.7 round: per-file body accounting and the count recomputation,
+  with the probes that found both gaps.
 ## 0.13.7
 
 **The audit checks the counts against the data they summarise.**
