@@ -30,6 +30,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.54
+
+**`snapshot_answer` said "1 skipped for budget" and named nothing.**
+
+- With a tight budget the planner leaves a strong match out and packs a cheap one; the text said
+  "1 skipped for budget" while the structured `omitted` array stayed empty. A client reading the
+  reply could not tell which file it had missed or why.
+- The planner's own skips now flow into the answer: `omitted` carries `{ path, reason }`, and the
+  text lists them under "Not included". The same 500-token question now says
+  `src/auth/login.ts - does not fit the remaining budget`.
+- Probed the rest of both tools' edges and left them as they are: `snapshot_query` caps at `maxFiles`,
+  reports `0 file(s) matched` when nothing matches, and rejects an invalid `pathPattern` with the
+  reason; `snapshot_answer` measures `usedTokens` on the text it returns, marks clipped blocks, and
+  keeps the planner notes when nothing was assembled.
+
+Verified: the new test asserts the omitted path in both the text and the structured reply;
+`mcp-tools` 42/42.
 ## 0.17.53
 
 **SSE probed end to end for the first time outside its unit tests.**

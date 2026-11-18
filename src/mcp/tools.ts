@@ -1684,7 +1684,14 @@ const answerTool: ToolSpec = {
       totalLines: number;
       clippedAtBytes?: number;
     }> = [];
-    const omitted: Array<{ path: string; reason: string }> = [];
+    // The planner's own skips belong in the answer. With a tight budget it planned one cheap file
+    // and left the strong match out; the text said "1 skipped for budget" while `omitted` was
+    // empty, so a client reading the structured reply could not tell what it had missed. The
+    // planner records the path and the reason, and both survive into this reply.
+    const omitted: Array<{ path: string; reason: string }> = plan.skipped.map((entry) => ({
+      path: entry.path,
+      reason: entry.reason,
+    }));
     let used = 0;
     const parts = new Map<string, string>();
     for (const planned of plan.files) {

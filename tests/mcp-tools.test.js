@@ -865,3 +865,25 @@ test("snapshot_stats reports a part size in bytes and tokens", async (t) => {
   assert.equal(stats.structured.partSizes[0].tokens, manifest.parts[0].estimatedTokens);
   assert.ok(Array.isArray(stats.structured.heaviest), "heaviest is declared in the schema and returned");
 });
+
+test("snapshot_answer names the files the budget left out", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "answer-omitted-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src", "auth"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "a", version: "1.0.0" }) + "\n");
+  fs.writeFileSync(path.join(root, "src", "db.ts"), "export function db() { return 3; }\n");
+  fs.writeFileSync(path.join(root, "src", "auth", "session.ts"), "export function session() { return 2; }\n");
+  fs.writeFileSync(
+    path.join(root, "src", "auth", "login.ts"),
+    Array.from({ length: 240 }, (_, index) => "// login line " + index).join("\n") + "\nexport function login() { return 1; }\n"
+  );
+
+  const context = contextFor(root);
+  await call("snapshot_generate", {}, context);
+  const result = await call("snapshot_answer", { question: "auth login", maxTokens: 500 }, context);
+  assert.equal(result.isError, undefined, result.text);
+  const omitted = result.structured.omitted.map((entry) => entry.path);
+  assert.ok(omitted.includes("src/auth/login.ts"), "the strong match is listed: " + JSON.stringify(result.structured.omitted));
+  assert.match(result.text, /Not included:/);
+  assert.match(result.text, /src\/auth\/login\.ts - does not fit the remaining budget/);
+});
