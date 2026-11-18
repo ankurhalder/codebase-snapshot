@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.89
+
+- The goal log records the 0.12.87-0.12.88 round: the CLI page completed and guarded, and the
+  unusual-file probes pinned as tests.
 ## 0.12.88
 
 - **Unusual files are a pinned test, not a one-off probe.** An empty file, a CRLF file, a file that

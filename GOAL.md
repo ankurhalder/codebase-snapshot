@@ -310,3 +310,18 @@ Full `verify` at 0.12.85: 1306 tests, 1298 pass, 0 fail, 8 host skips; tarball 5
 Fourteen sub-bumps to 0.12.99, then 0.13.0. What is left is the endgame the plan names: a last
 pass over every page against the CLI, the milestone publish itself, and whatever the verify finds
 between here and there.
+
+### 0.12.87-0.12.89 - the pages prove themselves
+
+- 0.12.87 the CLI reference was missing ten options (the six transport flags, `--all-members`,
+  `--strict`, `--mode`, `--no-update-check`) while its description says "every command and option".
+  Added, and a test now compares the page with `describe --format json` in both directions.
+- 0.12.88 the edge-case probes became a test: empty, CRLF, comments-only, non-ASCII, bracketed and
+  deeply nested files all generate, validate and audit cleanly, and the tools read the odd path. A
+  path beyond 260 characters was created and scanned correctly on this host too.
+
+Full `verify` at 0.12.88: 1310 tests, 1302 pass, 0 fail, 8 host skips; tarball 52 files; site 29
+pages, audit-site clean.
+
+Ten sub-bumps to 0.12.99, then 0.13.0. What remains is the milestone publish itself and the last
+pass the plan asks for: every page opened beside the command it documents.
