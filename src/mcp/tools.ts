@@ -1802,6 +1802,11 @@ const healthTool: ToolSpec = {
         minimum: 1024,
         description: "Cap on the text the secret and host-path scans read (default 8 MB).",
       },
+      deep: {
+        type: "boolean",
+        description:
+          "Replay every full body against the source on disk. Slower, and catches a generator that wrote the wrong bytes.",
+      },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
     },
@@ -1824,6 +1829,7 @@ const healthTool: ToolSpec = {
       snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
       repoDir: workspace.root,
       ...(typeof args.maxScanBytes === "number" ? { maxScanBytes: args.maxScanBytes } : {}),
+      ...(args.deep === true ? { deep: true } : {}),
     });
     const lines = [
       "Health: " + report.score + "/100 (" + report.counts.pass + " passed, " +

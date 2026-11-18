@@ -30,6 +30,34 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.1
+
+**The audit now checks the snapshot's claims, not only its hashes.**
+
+Every check in `health` compared the snapshot with its own manifest: a part could hash correctly and
+still hold a body the manifest did not describe, a summary could name a symbol the parts did not
+contain, and `README.md` could quote a different run while its digest still passed.
+
+- Six document-level checks, each with its own id and fixture test:
+  `summary.truth` (every import, export, function, class, interface, type, enum, variable,
+  component, hook, route path, JSON key and markdown heading a summary names must appear in the
+  part that carries the file), `report.truth` (the figures in `README.md` and `PROMPT.md` equal the
+  manifest), `indexes.consistent` (every route, component, handler, import edge, central file and
+  directive names an included path in the recorded part), `markdown.structure` (section order,
+  headings, inclusion modes, counts and part headers match `manifest.parts[]`), `packs.bodies`
+  (every full body in a JSON, XML or markdown pack is the body the part carries) and `tokens.fit`
+  (how many parts fit a 32k, 128k or 200k window, and the largest single file).
+- `health --deep` closes the one gap a manifest cannot: it re-reads each full file, applies the
+  emitted-body normalisation, and compares it with the part. Redaction is the only allowed
+  difference; a private-key block's separate marker is recognised. Files that moved on disk are
+  left to `validate`, and the check is opt-in because it costs a full read.
+- `snapshot_health` accepts `deep: true`, and the contract, `--help` and the CLI page list
+  `--deep` as a health-only option.
+- The first run of the deep check on this repository's own snapshot found five bodies it could not
+  replay: two because the private-key marker is a different string, three because a block-level PEM
+  redaction replaces several lines at once. Both are now in the replay's allowed vocabulary, and a
+  test pins that a PEM block is a redaction rather than a fidelity failure.
+
 ## 0.20.0
 
 **`snapshot update` did not bypass the cache, which is the one thing it promises.**

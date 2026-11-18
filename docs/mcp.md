@@ -107,7 +107,7 @@ between them should not have to guess.
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |
 | `snapshot_status` | Is there a snapshot, when was it built, what does it cover? | no |
-| `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? `maxScanBytes` bounds the text scan. | no |
+| `snapshot_health` | Does the written snapshot match its manifest, carry any secret or host path, and cost what it claims? `maxScanBytes` bounds the text scan; `deep: true` replays every full body from the source. | no |
 | `snapshot_query` | Filter the index by layer, kind, path pattern or symbol | no |
 | `snapshot_answer` | Question to cited, line-numbered windows within a budget | no |
 | `snapshot_budget` | Planner output at several budgets: what raising the budget would add | no |

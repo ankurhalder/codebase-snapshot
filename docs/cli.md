@@ -98,7 +98,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.0 (project dependency ^0.20.0)
+   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.1 (project dependency ^0.20.1)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -171,9 +171,13 @@ codebase-snapshot health [options]
 ```
 
 Audits the snapshot itself rather than the repository: every part hash, every artifact, every
-recorded claim, an unmasked-secret scan of every written text file, a byte comparison against the
-values of files that were excluded as sensitive, host paths, the token estimate and freshness.
+summary claim against the body, every figure in the reports, every index entry, every pack body,
+an unmasked-secret scan of every written text file, a byte comparison against the values of files
+that were excluded as sensitive, host paths, the token estimate, context-window fit and freshness.
 It writes nothing and never prints a secret it finds.
+
+`--deep` adds the one check that needs the repository: every full body is replayed from the bytes
+on disk, with redaction as the only allowed difference. It costs one full read of the tree.
 
 Exit `0` when no check fails, `1` when a critical check fails, and `2` with `--strict` on a
 critical check (a warning also exits `1` under `--strict`). `--format json` emits the full report.
@@ -219,7 +223,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.0
+   Added devDependency: codebase-snapshot ^0.20.1
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -271,7 +275,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.0
+   Added devDependency: codebase-snapshot ^0.20.1
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -512,6 +516,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--no-auth` | flag | off | mcp, serve | `mcp --http`: accept requests without `Authorization`. Refused on a non-loopback bind. |
 | `--allow-origin <list>` | list | unset | mcp | `mcp --http`: comma-separated extra CORS origins. Loopback origins are always allowed. |
 | `--all-members` | flag | off | health | Audit every snapshot a `--workspace` run wrote, not only the one at `outDir`. The combined score is the weakest member. |
+| `--deep` | flag | off | health | Replay every full body from the source bytes on disk and compare it with the part. The only allowed difference is a redaction marker. Off by default because it re-reads the repository. |
 | `--strict` | flag | off | health | `health` only: exit 2 when a critical check fails, and 1 when a warning is the only thing left. Without it a critical check exits 1 and warnings exit 0. |
 | `--mode <command>` | string | unset | generate, validate, report, explain, init, setup, diff, describe, skill | Select the command when no command word is given. A command word and `--mode` must name the same command; a contradiction is a usage error (exit 2). |
 | `--no-update-check` | flag | off | all commands | Skip the check for a newer published version. Already skipped when stdout is not a terminal, in CI, in a JSON invocation, and in `mcp`, which makes no network requests. |

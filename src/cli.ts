@@ -190,6 +190,7 @@ export const CLI_OPTIONS = {
   only: { type: "string" },
   ignore: { type: "string" },
   "all-members": { type: "boolean" },
+  deep: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -298,6 +299,11 @@ Options:
   --no-install                  Skip installing the dependency before generating
   --install-hook                As for init
   --preset / --include / --exclude / --force   As for init
+
+  health only:
+  --strict                      Treat warnings as failures (exit 2 on a critical failure)
+  --all-members                 Audit every snapshot a --workspace run wrote
+  --deep                        Replay every full body against the source on disk
 
   skill only:
   --install                     Write the skill into the repository instead of printing
@@ -436,6 +442,8 @@ interface ParsedInvocation {
   ignore?: string[];
   /** `--all-members` (health): audit every snapshot a `--workspace` run wrote. */
   allMembers?: boolean;
+  /** `health`: replay every full body against the source on disk. */
+  deep?: boolean;
 }
 
 export function parsePositiveInteger(
@@ -905,6 +913,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     only: values.only === undefined ? undefined : String(values.only).split(",").map((item) => item.trim()).filter(Boolean),
     ignore: values.ignore === undefined ? undefined : String(values.ignore).split(",").map((item) => item.trim()).filter(Boolean),
     allMembers: values["all-members"] === true ? true : undefined,
+    deep: values.deep === true ? true : undefined,
     budgetTokens:
       values["budget-tokens"] === undefined
         ? undefined
@@ -2125,7 +2134,11 @@ async function runCommand(argv: string[]): Promise<number> {
       return 0;
     }
     const snapshotDir = path.resolve(resolved.cwd, resolved.outDir);
-    const report = auditSnapshot({ snapshotDir, repoDir: resolved.cwd });
+    const report = auditSnapshot({
+      snapshotDir,
+      repoDir: resolved.cwd,
+      ...(invocation.deep === true ? { deep: true } : {}),
+    });
     emit(invocation.format, report, () => renderHealthText(report));
     if (report.counts.fail > 0) return invocation.strict === true ? 2 : 1;
     if (invocation.strict === true && report.counts.warn > 0) return 1;

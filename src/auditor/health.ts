@@ -3,11 +3,19 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
-import { compileSecretRules, scanAndRedactSecrets } from "../security/redact.js";
+import {
+  PEM_REDACTION_MARKER,
+  REDACTION_MARKER,
+  compileSecretRules,
+  scanAndRedactSecrets,
+} from "../security/redact.js";
 import { estimateTokens } from "../tokenize.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
 import { SIGNATURE_FILE, verifySnapshotSignature } from "../signing.js";
-import { findSection, parsePartSections } from "../partitioner/part-format.js";
+import { findSection, parsePartSections, type PartSection } from "../partitioner/part-format.js";
+import { anchorForPath, displayPath, emittedBody } from "../partitioner/chunker.js";
+import { decodeText } from "../scanner/binary.js";
+import { escapeControls } from "../terminal.js";
 import type { Manifest, SecretRule } from "../types.js";
 
 /**
@@ -49,6 +57,14 @@ export interface HealthOptions {
   secretRules?: readonly SecretRule[];
   /** Cap on how much artifact text the secret scan reads. */
   maxScanBytes?: number;
+  /**
+   * Replay every full body against the bytes on disk.
+   *
+   * Off by default because it re-reads the whole repository; on by `--deep`. The cheap checks
+   * compare the snapshot with its own manifest, which cannot see a generator that read the source
+   * incorrectly in the first place.
+   */
+  deep?: boolean;
 }
 
 /** Files the generator writes, keyed by their manifest artifact name. */
@@ -217,6 +233,184 @@ function staleAgainstRepository(manifest: Manifest, repoDir: string): string | n
     "HEAD is " + head.slice(0, 8) + " but the snapshot was generated at " +
     recorded.slice(0, 8) + "; regenerate before trusting it."
   );
+}
+
+/**
+ * The quality checks added after the first audit.
+ *
+ * The manifest can be internally consistent and still describe the wrong text: a summary can
+ * name a symbol the body does not contain, a report can quote another run, a section can sit in
+ * the wrong place, a single-file pack can hold different bytes than the parts, or an index can
+ * name a file that is not there. Each helper below answers one of those questions.
+ */
+
+interface SummaryClaim {
+  field: string;
+  value: string;
+}
+
+/** Every testable claim a summary makes about the file's contents. */
+function summaryClaims(
+  summary: NonNullable<Manifest["files"][number]["summary"]>
+): SummaryClaim[] {
+  if ("imports" in summary) {
+    const fields: Array<[string, readonly string[]]> = [
+      ["imports", summary.imports],
+      ["reExports", summary.reExports],
+      ["exports", summary.exports],
+      ["functions", summary.functions],
+      ["classes", summary.classes],
+      ["interfaces", summary.interfaces],
+      ["types", summary.types],
+      ["enums", summary.enums],
+      ["variables", summary.variables],
+      ["reactComponents", summary.reactComponents],
+      ["hooks", summary.hooks],
+      ["routeHandlers", summary.routeHandlers],
+    ];
+    const claims: SummaryClaim[] = [];
+    for (const [field, values] of fields) {
+      for (const value of values) {
+        if (typeof value !== "string" || value === "") continue;
+        // A route handler is recorded as "GET /path": the method is not a literal in the source
+        // (`app.get(...)`), so the path is the part that can be checked.
+        if (field === "routeHandlers" && value.includes(" ")) {
+          const route = value.slice(value.indexOf(" ") + 1).trim();
+          if (route !== "") claims.push({ field, value: route });
+          continue;
+        }
+        claims.push({ field, value });
+      }
+    }
+    return claims;
+  }
+  if ("keys" in summary) {
+    return [...summary.keys, ...summary.sampleKeys].map((key) => ({
+      field: "keys",
+      value: '"' + key + '"',
+    }));
+  }
+  return summary.headings.map((heading) => ({ field: "headings", value: heading }));
+}
+
+/** A number a report states in the form `**Label:** \`1,234\``. */
+function reportNumber(text: string, label: string): number | null {
+  const match = new RegExp("\\*\\*" + escapeRegExp(label) + ":\\*\\* `([0-9][0-9,]*)`").exec(text);
+  return match === null ? null : Number(match[1].replace(/,/g, ""));
+}
+
+/** A size a report states in MiB, compared to two decimal places. */
+function reportMib(text: string, label: string): number | null {
+  const match = new RegExp(
+    "\\*\\*" + escapeRegExp(label) + ":\\*\\* `([0-9]+(?:\\.[0-9]+)?) MiB`"
+  ).exec(text);
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * True when a part line is its source line with secret spans replaced by the marker.
+ *
+ * The marker's length is not the length of what it replaced, so the comparison is the surviving
+ * text in order rather than a byte count. A line that differs in any other way does not match.
+ */
+function maskCompatible(sourceLine: string, bodyLine: string): boolean {
+  // A private-key block has its own marker, so both are a mask. Normalising the special one to
+  // the general one keeps the walk below a single split.
+  const normalised = bodyLine.split(PEM_REDACTION_MARKER).join(REDACTION_MARKER);
+  let cursor = 0;
+  for (const piece of normalised.split(REDACTION_MARKER)) {
+    if (piece === "") continue;
+    const at = sourceLine.indexOf(piece, cursor);
+    if (at === -1) return false;
+    cursor = at + piece.length;
+  }
+  return true;
+}
+
+/** The 1-based first line that is neither equal nor a redaction of the source, or null. */
+function firstBodyMismatch(expected: string, actual: string): number | null {
+  const sourceLines = expected.split("\n");
+  const bodyLines = actual.split("\n");
+  const shared = Math.min(sourceLines.length, bodyLines.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (sourceLines[index] === bodyLines[index]) continue;
+    if (!bodyLines[index].includes(REDACTION_MARKER) && !bodyLines[index].includes(PEM_REDACTION_MARKER)) {
+      return index + 1;
+    }
+    if (!maskCompatible(sourceLines[index], bodyLines[index])) return index + 1;
+  }
+  return sourceLines.length === bodyLines.length ? null : shared + 1;
+}
+
+function decodeXmlAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/** The per-file bodies in `full-codebase.json`, or null when the document is not that shape. */
+function jsonPackBodies(text: string): Map<string, string> | null {
+  try {
+    const parsed = JSON.parse(text) as { files?: unknown };
+    if (!Array.isArray(parsed?.files)) return null;
+    const bodies = new Map<string, string>();
+    for (const entry of parsed.files as Array<{ relativePath?: unknown; content?: unknown }>) {
+      if (typeof entry?.relativePath !== "string" || typeof entry.content !== "string") continue;
+      bodies.set(entry.relativePath, entry.content);
+    }
+    return bodies;
+  } catch {
+    return null;
+  }
+}
+
+/** The per-file bodies in `full-codebase.xml`, joining CDATA sections split by the writer. */
+function xmlPackBodies(text: string): Map<string, string> | null {
+  const bodies = new Map<string, string>();
+  const filePattern = /  <file path="([^"]*)"[^>]*>\n([\s\S]*?)\n  <\/file>/g;
+  for (const match of text.matchAll(filePattern)) {
+    const content = [...match[2].matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)]
+      .map((part) => part[1])
+      .join("");
+    bodies.set(decodeXmlAttribute(match[1]), content);
+  }
+  return bodies.size === 0 ? null : bodies;
+}
+
+/** The per-file bodies in `full-codebase.md`, read with the writer's adaptive fence. */
+function markdownPackBodies(text: string): Map<string, string> | null {
+  const bodies = new Map<string, string>();
+  const lines = text.split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    if (!lines[index].startsWith("## File: ")) {
+      index += 1;
+      continue;
+    }
+    const filePath = lines[index].slice("## File: ".length).trim();
+    let cursor = index + 1;
+    while (cursor < lines.length && !/^`{3,}/.test(lines[cursor])) {
+      if (lines[cursor].startsWith("## File: ")) break;
+      cursor += 1;
+    }
+    const fence = /^(`{3,})/.exec(lines[cursor] ?? "");
+    if (fence === null) {
+      index = cursor + 1;
+      continue;
+    }
+    const body: string[] = [];
+    let bodyLine = cursor + 1;
+    while (bodyLine < lines.length && lines[bodyLine] !== fence[1]) {
+      body.push(lines[bodyLine]);
+      bodyLine += 1;
+    }
+    bodies.set(filePath, body.join("\n"));
+    index = bodyLine + 1;
+  }
+  return bodies.size === 0 ? null : bodies;
 }
 
 export function auditSnapshot(options: HealthOptions): HealthReport {
@@ -393,6 +587,256 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
           bookkeeping.length + " mismatch(es): " + sample(bookkeeping))
   );
 
+  // One parse per part, reused by the body accounting, the section structure, the packs and the
+  // deep replay: every check below asks about the same sections.
+  const fileByPath = new Map(manifest.files.map((file) => [file.relativePath, file]));
+  const partTexts = new Map<string, string>();
+  const partSections = new Map<string, PartSection[]>();
+  const bodyByPath = new Map<string, string>();
+  const anchorToPath = new Map(
+    manifest.files.map((file) => [anchorForPath(file.relativePath), file.relativePath])
+  );
+  for (const part of manifest.parts) {
+    const partText = readText(path.join(snapshotDir, "parts", part.filename));
+    if (partText === null) continue;
+    const sections = parsePartSections(partText);
+    partTexts.set(part.filename, partText);
+    partSections.set(part.filename, sections);
+    for (const section of sections) {
+      if (section.anchor === null) continue;
+      const relativePath = anchorToPath.get(section.anchor);
+      if (relativePath !== undefined) bodyByPath.set(relativePath, section.body);
+    }
+  }
+
+  // A summary is a claim about the body. It comes from a separate parse, so a parser change, a
+  // stale manifest or a masked symbol can leave it naming something the parts do not contain.
+  // Redacted names are skipped; a name is never printed, because a symbol can itself be secret.
+  const summaryProblems: string[] = [];
+  let claimsChecked = 0;
+  let summarisedFiles = 0;
+  for (const file of manifest.files) {
+    if (file.summary === undefined) continue;
+    if (file.inclusionMode === "preview" || file.emptyLinesRemoved === true) continue;
+    const body = bodyByPath.get(file.relativePath);
+    if (body === undefined) continue;
+    summarisedFiles += 1;
+    for (const claim of summaryClaims(file.summary)) {
+      if (claim.value.includes(REDACTION_MARKER)) continue;
+      claimsChecked += 1;
+      if (!body.includes(claim.value)) {
+        summaryProblems.push(file.relativePath + " (" + claim.field + ")");
+      }
+    }
+  }
+  checks.push(
+    summarisedFiles === 0
+      ? check("summary.truth", "Every summary claim appears in the body", "critical", "skip",
+          "No summarised file could be compared with a body.")
+      : summaryProblems.length === 0
+        ? check("summary.truth", "Every summary claim appears in the body", "critical", "pass",
+            claimsChecked + " claim(s) across " + summarisedFiles + " file(s) are present in the parts.")
+        : check("summary.truth", "Every summary claim appears in the body", "critical", "fail",
+            summaryProblems.length + " claim(s) name something the body does not contain: " + sample(summaryProblems))
+  );
+
+  // The human-facing reports quote the manifest. A report copied from a previous run, or generated
+  // before the manifest was updated, is a document that describes a different snapshot.
+  const reportProblems: string[] = [];
+  let reportClaims = 0;
+  const compareNumber = (label: string, actual: number | null, expected: number): void => {
+    if (actual === null) return;
+    reportClaims += 1;
+    if (actual !== expected) {
+      reportProblems.push(label + " says " + actual + ", the manifest says " + expected);
+    }
+  };
+  const compareMib = (label: string, actual: number | null, bytes: number): void => {
+    if (actual === null) return;
+    reportClaims += 1;
+    const expected = Number((bytes / (1024 * 1024)).toFixed(2));
+    if (Math.abs(actual - expected) > 0.011) {
+      reportProblems.push(label + " says " + actual + " MiB, the manifest says " + expected);
+    }
+  };
+  if (manifest.artifacts?.readme != null) {
+    const text = readText(path.join(snapshotDir, "README.md"));
+    if (text === null) {
+      reportProblems.push("README.md is recorded but unreadable");
+    } else {
+      compareNumber("README total files", reportNumber(text, "Total Tracked Files"), manifest.counts.totalFiles);
+      compareNumber("README source lines", reportNumber(text, "Source Lines"), manifest.counts.totalLines);
+      compareNumber(
+        "README emitted lines",
+        reportNumber(text, "Emitted Lines"),
+        manifest.totals.emittedLines ?? manifest.counts.totalLines
+      );
+      const partsWritten = manifest.config.artifacts?.parts !== false;
+      compareNumber("README part count", reportNumber(text, "Part Count"), partsWritten ? manifest.counts.partsCount : 0);
+      compareMib("README total size", reportMib(text, "Total Size"), manifest.counts.totalSizeBytes);
+      compareMib("README emitted content", reportMib(text, "Emitted Content"), manifest.totals.totalContentBytes);
+      const rows = [...text.matchAll(/^\| \[([^\]]+)\]\(parts\/([^)]+)\) \| (\d+) \| ([0-9.]+) KB \|/gm)];
+      if (rows.length > 0) {
+        reportClaims += rows.length;
+        if (rows.length !== manifest.parts.length) {
+          reportProblems.push("README tables " + rows.length + " part(s), the manifest holds " + manifest.parts.length);
+        }
+        for (const row of rows) {
+          const part = manifest.parts.find((candidate) => candidate.filename === row[2]);
+          if (part === undefined) {
+            reportProblems.push("README names " + row[2] + ", which the manifest does not hold");
+            continue;
+          }
+          if (Number(row[3]) !== part.fileCount) {
+            reportProblems.push("README " + row[2] + " says " + row[3] + " file(s), the manifest says " + part.fileCount);
+          }
+          const stated = Number(row[4]);
+          const expected = Number((part.byteSize / 1024).toFixed(1));
+          if (Math.abs(stated - expected) > 0.11) {
+            reportProblems.push("README " + row[2] + " says " + stated + " KB, the manifest says " + expected);
+          }
+        }
+      }
+    }
+  }
+  if (manifest.artifacts?.prompt != null) {
+    const text = readText(path.join(snapshotDir, "PROMPT.md"));
+    if (text === null) {
+      reportProblems.push("PROMPT.md is recorded but unreadable");
+    } else {
+      const fingerprint = /^- Fingerprint: \x60([0-9a-f]{12,64})\x60/m.exec(text);
+      if (fingerprint !== null) {
+        reportClaims += 1;
+        if (fingerprint[1] !== manifest.fingerprint) reportProblems.push("PROMPT names a different fingerprint");
+      }
+      const generated = /^- Generated: \x60([^\x60]+)\x60 from branch \x60([^\x60]+)\x60 at commit \x60([0-9a-f]+)\x60/m.exec(text);
+      if (generated !== null) {
+        reportClaims += 3;
+        if (generated[1] !== manifest.generatedAt) reportProblems.push("PROMPT names a different generation time");
+        if (generated[2] !== manifest.git.branch) reportProblems.push("PROMPT names a different branch");
+        if (!manifest.git.commit.startsWith(generated[3])) reportProblems.push("PROMPT names a different commit");
+      }
+      const validation = /^- Validation: the generation-time check was \x60([^\x60]+)\x60/m.exec(text);
+      if (validation !== null) {
+        reportClaims += 1;
+        if (validation[1] !== manifest.validation.status) reportProblems.push("PROMPT quotes a different validation status");
+      }
+      const partsLine = /^- Parts: ([\d,]+) at a ([\d,]+) KB ceiling/m.exec(text);
+      if (partsLine !== null) {
+        reportClaims += 2;
+        if (Number(partsLine[1].replace(/,/g, "")) !== manifest.parts.length) {
+          reportProblems.push("PROMPT says " + partsLine[1] + " part(s), the manifest holds " + manifest.parts.length);
+        }
+        const ceiling = Math.round(manifest.budgets.maxPartBytes / 1024);
+        if (Number(partsLine[2].replace(/,/g, "")) !== ceiling) {
+          reportProblems.push("PROMPT says a " + partsLine[2] + " KB ceiling, the manifest says " + ceiling);
+        }
+      }
+      for (const row of text.matchAll(/^  - \x60([^\x60]+)\x60 - ([\d,]+) file\(s\)$/gm)) {
+        reportClaims += 1;
+        const part = manifest.parts.find((candidate) => candidate.filename === row[1]);
+        if (part === undefined) {
+          reportProblems.push("PROMPT names " + row[1] + ", which the manifest does not hold");
+        } else if (Number(row[2].replace(/,/g, "")) !== part.fileCount) {
+          reportProblems.push("PROMPT " + row[1] + " says " + row[2] + " file(s), the manifest says " + part.fileCount);
+        }
+      }
+      const coverage = /^- ([\d,]+) paths were found; ([\d,]+) (?:is|are) in the parts and ([\d,]+) (?:was|were) skipped/m.exec(text);
+      if (coverage !== null) {
+        reportClaims += 3;
+        if (Number(coverage[1].replace(/,/g, "")) !== manifest.totals.candidateFiles) {
+          reportProblems.push("PROMPT says " + coverage[1] + " paths were found, the manifest says " + manifest.totals.candidateFiles);
+        }
+        if (Number(coverage[2].replace(/,/g, "")) !== manifest.totals.includedFiles) {
+          reportProblems.push("PROMPT says " + coverage[2] + " are in the parts, the manifest says " + manifest.totals.includedFiles);
+        }
+        if (Number(coverage[3].replace(/,/g, "")) !== manifest.counts.skippedCount) {
+          reportProblems.push("PROMPT says " + coverage[3] + " were skipped, the manifest says " + manifest.counts.skippedCount);
+        }
+      }
+      const partial = /^- Partial files: (none|[\d,]+)\./m.exec(text);
+      if (partial !== null) {
+        reportClaims += 1;
+        const stated = partial[1] === "none" ? 0 : Number(partial[1].replace(/,/g, ""));
+        if (stated !== manifest.incomplete.length) {
+          reportProblems.push("PROMPT says " + partial[1] + " partial file(s), the manifest holds " + manifest.incomplete.length);
+        }
+      }
+      if (text.includes("- Redacted: no line matched a secret rule.")) {
+        reportClaims += 1;
+        if (manifest.totals.redactedLines !== 0) {
+          reportProblems.push("PROMPT says nothing was redacted, the manifest says " + manifest.totals.redactedLines);
+        }
+      } else {
+        const redacted = /^- Redacted: ([\d,]+) line\(s\) had values masked/m.exec(text);
+        if (redacted !== null) {
+          reportClaims += 1;
+          if (Number(redacted[1].replace(/,/g, "")) !== manifest.totals.redactedLines) {
+            reportProblems.push("PROMPT says " + redacted[1] + " redacted line(s), the manifest says " + manifest.totals.redactedLines);
+          }
+        }
+      }
+      const layersLine = /^- Layers, by file count: (.+)$/m.exec(text);
+      if (layersLine !== null) {
+        for (const layer of layersLine[1].matchAll(/\x60([^\x60]+)\x60 ([\d,]+)/g)) {
+          reportClaims += 1;
+          const expected = manifest.layers[layer[1]] ?? 0;
+          if (Number(layer[2].replace(/,/g, "")) !== expected) {
+            reportProblems.push("PROMPT layer " + layer[1] + " says " + layer[2] + ", the manifest says " + expected);
+          }
+        }
+      }
+    }
+  }
+  checks.push(
+    reportProblems.length > 0
+      ? check("report.truth", "The reports quote this run, not another", "critical", "fail",
+          reportProblems.length + " disagreement(s): " + sample(reportProblems))
+      : reportClaims === 0
+        ? check("report.truth", "The reports quote this run, not another", "critical", "skip",
+            "No report in the current shape could be compared with the manifest.")
+        : check("report.truth", "The reports quote this run, not another", "critical", "pass",
+            reportClaims + " figure(s) in README.md and PROMPT.md agree with the manifest.")
+  );
+
+  // An index that names a path the snapshot does not carry is a promise the reader cannot keep.
+  const indexProblems: string[] = [];
+  const indexedPaths = new Set<string>();
+  const checkIndexed = (kind: string, relativePath: string, part?: string): void => {
+    const file = fileByPath.get(relativePath);
+    if (file === undefined) {
+      indexProblems.push(kind + " names " + relativePath + ", which is not in files[]");
+      return;
+    }
+    if (part !== undefined && file.part !== part) {
+      indexProblems.push(kind + " puts " + relativePath + " in " + part + ", the manifest says " + file.part);
+    }
+  };
+  for (const route of manifest.indexes.routes) checkIndexed("routes", route.path, route.part);
+  for (const component of manifest.indexes.components) checkIndexed("components", component.path, component.part);
+  for (const handler of manifest.indexes.handlers) checkIndexed("handlers", handler.path, handler.part);
+  for (const directive of manifest.indexes.directives) checkIndexed("directives", directive.path);
+  for (const entry of manifest.indexes.imports.byFile) {
+    checkIndexed("imports.byFile", entry.path);
+    if (indexedPaths.has(entry.path)) indexProblems.push("imports.byFile lists " + entry.path + " twice");
+    indexedPaths.add(entry.path);
+  }
+  for (const entry of manifest.indexes.imports.centralFiles) {
+    checkIndexed("centralFiles", entry.path);
+    if (entry.importedByCount < 1) {
+      indexProblems.push("centralFiles says " + entry.path + " has " + entry.importedByCount + " importer(s)");
+    }
+  }
+  checks.push(
+    indexProblems.length === 0
+      ? check("indexes.consistent", "Every index entry names a file in the snapshot", "critical", "pass",
+          manifest.indexes.imports.byFile.length + " import edge(s) and " +
+            (manifest.indexes.routes.length + manifest.indexes.components.length + manifest.indexes.handlers.length) +
+            " route/component/handler entry(s) resolve.")
+      : check("indexes.consistent", "Every index entry names a file in the snapshot", "critical", "fail",
+          indexProblems.length + " index problem(s): " + sample(indexProblems))
+  );
+
   // Every single-file pack is checked for membership: a digest proves the file is what the manifest
   // recorded, not that the recorded pack holds every file. JSON, XML and markdown write the path in
   // a different shape, so each reader is small and format-specific rather than one clever regex.
@@ -465,14 +909,13 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
 
   // The manifest says how many bytes and lines each file contributed. The parts are the only
   // place that claim can be checked, and a part whose section is shorter than the manifest says
-  // is a snapshot that under-delivers while its hashes still agree. One parse per part, then
-  // every file in it is looked up by anchor.
+  // is a snapshot that under-delivers while its hashes still agree. One parse per part, reused by
+  // the section, pack and replay checks below, then every file in it is looked up by anchor.
   const bodyProblems: string[] = [];
   let bodiesChecked = 0;
   for (const part of manifest.parts) {
-    const partText = readText(path.join(snapshotDir, "parts", part.filename));
-    if (partText === null) continue;
-    const sections = parsePartSections(partText);
+    const sections = partSections.get(part.filename);
+    if (sections === undefined) continue;
     for (const file of manifest.files) {
       if (file.part !== part.filename) continue;
       const section = findSection(sections, file.relativePath);
@@ -480,6 +923,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
         bodyProblems.push(file.relativePath + " has no section in " + part.filename);
         continue;
       }
+      bodyByPath.set(file.relativePath, section.body);
       bodiesChecked += 1;
       const bytes = Buffer.byteLength(section.body, "utf8");
       // The body keeps the file's final newline, so a split counts one more than the manifest's
@@ -502,6 +946,196 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
       : check("pipeline.bodies", "Every file body matches the manifest accounting", "critical", "fail",
           bodyProblems.length + " file(s) disagree: " + sample(bodyProblems))
   );
+
+  // A section that sits under the wrong heading, or a part whose declared count is not the number
+  // of sections it holds, still hashes correctly: the hash proves the bytes are the recorded bytes,
+  // not that they are in the place the manifest describes.
+  const structureProblems: string[] = [];
+  let sectionsChecked = 0;
+  for (const part of manifest.parts) {
+    const text = partTexts.get(part.filename);
+    const sections = partSections.get(part.filename);
+    if (text === undefined || sections === undefined) continue;
+    const header = /^# Codebase Snapshot Part (\d+) of (\d+)$/m.exec(text);
+    if (header !== null) {
+      if (Number(header[1]) !== part.index) {
+        structureProblems.push(part.filename + " says part " + header[1] + ", the manifest says " + part.index);
+      }
+      if (Number(header[2]) !== manifest.parts.length) {
+        structureProblems.push(part.filename + " says " + header[2] + " parts, the manifest holds " + manifest.parts.length);
+      }
+    }
+    const filesLine = /^- Files: (\d+)$/m.exec(text);
+    if (filesLine !== null && Number(filesLine[1]) !== part.fileCount) {
+      structureProblems.push(part.filename + " says " + filesLine[1] + " file(s), the manifest says " + part.fileCount);
+    }
+    const fingerprintLine = /^- Content Fingerprint: (\S+)$/m.exec(text);
+    if (fingerprintLine !== null && fingerprintLine[1] !== manifest.fingerprint) {
+      structureProblems.push(part.filename + " names a different content fingerprint");
+    }
+    const tokenLine = /^- Estimated Tokens: ~([0-9,]+)$/m.exec(text);
+    if (tokenLine !== null && Number(tokenLine[1].replace(/,/g, "")) !== part.estimatedTokens) {
+      structureProblems.push(part.filename + " says " + tokenLine[1] + " tokens, the manifest says " + part.estimatedTokens);
+    }
+    if (sections.length !== part.fileCount) {
+      structureProblems.push(part.filename + " holds " + sections.length + " section(s), the manifest says " + part.fileCount);
+    }
+    const expectedAnchors = new Set(part.includedFiles.map((entry) => anchorForPath(entry.relativePath)));
+    for (const section of sections) {
+      if (section.anchor === null || !expectedAnchors.has(section.anchor)) {
+        structureProblems.push(part.filename + " holds a section for " + section.path + ", which the manifest does not list");
+      }
+    }
+    const expectedOrder = part.includedFiles.map((entry) => anchorForPath(entry.relativePath)).join("\n");
+    const actualOrder = sections
+      .map((section) => section.anchor)
+      .filter((anchor): anchor is string => anchor !== null)
+      .join("\n");
+    if (actualOrder !== expectedOrder) {
+      structureProblems.push(part.filename + " orders its sections differently than the manifest");
+    }
+    for (const entry of part.includedFiles) {
+      const file = fileByPath.get(entry.relativePath);
+      if (file === undefined) continue;
+      const section = findSection(sections, entry.relativePath);
+      if (section === null) {
+        structureProblems.push(entry.relativePath + " has no section in " + part.filename);
+        continue;
+      }
+      sectionsChecked += 1;
+      if (section.path !== displayPath(entry.relativePath)) {
+        structureProblems.push(entry.relativePath + " is headed " + section.path);
+      }
+      if (section.inclusion !== null && section.inclusion !== file.inclusionMode) {
+        structureProblems.push(entry.relativePath + " declares " + section.inclusion + ", the manifest says " + file.inclusionMode);
+      }
+      if (section.includedLines !== null && section.includedLines !== file.includedLines) {
+        structureProblems.push(entry.relativePath + " declares " + section.includedLines + " line(s), the manifest says " + file.includedLines);
+      }
+    }
+  }
+  checks.push(
+    structureProblems.length === 0
+      ? check("markdown.structure", "Every section sits where the manifest says", "critical", "pass",
+          sectionsChecked + " section(s) in " + manifest.parts.length + " part(s) match their heading, metadata and order.")
+      : check("markdown.structure", "Every section sits where the manifest says", "critical", "fail",
+          structureProblems.length + " structural problem(s): " + sample(structureProblems))
+  );
+
+  // The pack is a second copy of the same payload. Membership is checked above; this checks the
+  // bytes. A pack that lists every file but carries a different body is still a pack that lies,
+  // and the artifact digest cannot see it because the digest was taken over the wrong bytes.
+  const packCandidates: Array<{
+    key: "fullJson" | "fullXml" | "fullMarkdown";
+    file: string;
+    label: string;
+    read: (text: string) => Map<string, string> | null;
+  }> = [
+    { key: "fullJson", file: "full-codebase.json", label: "JSON", read: jsonPackBodies },
+    { key: "fullXml", file: "full-codebase.xml", label: "XML", read: xmlPackBodies },
+    { key: "fullMarkdown", file: "full-codebase.md", label: "markdown", read: markdownPackBodies },
+  ];
+  const packsWanted = packCandidates.filter((pack) => manifest.artifacts?.[pack.key] != null);
+  if (packsWanted.length > 0) {
+    const renderedPaths = new Map(
+      manifest.files.map((file) => [escapeControls(file.relativePath), file.relativePath])
+    );
+    const packProblems: string[] = [];
+    let packBodies = 0;
+    let packSkipped = 0;
+    for (const pack of packsWanted) {
+      const text = readText(path.join(snapshotDir, pack.file));
+      if (text === null) continue;
+      const bodies = pack.read(text);
+      if (bodies === null) {
+        packProblems.push(pack.file + " could not be read as a file pack");
+        continue;
+      }
+      for (const [entryPath, body] of bodies) {
+        const relativePath = pack.key === "fullMarkdown" ? (renderedPaths.get(entryPath) ?? entryPath) : entryPath;
+        const file = fileByPath.get(relativePath);
+        if (file === undefined) continue;
+        // A preview's or skeleton's pack carries the redacted whole file on purpose; the part does
+        // not. Only the modes whose pack body and part body are the same string are compared.
+        if (file.inclusionMode === "preview" || file.inclusionMode === "signatures") {
+          packSkipped += 1;
+          continue;
+        }
+        const partBody = bodyByPath.get(relativePath);
+        if (partBody === undefined) continue;
+        packBodies += 1;
+        const normalised = pack.key === "fullMarkdown" ? body : emittedBody(body);
+        if (normalised !== partBody) {
+          packProblems.push(pack.file + ": " + relativePath + " holds a different body");
+        }
+      }
+    }
+    checks.push(
+      packProblems.length === 0
+        ? check("packs.bodies", "Every pack body is the body the parts carry", "critical", "pass",
+            packBodies + " full body/bodies match across " + packsWanted.length + " pack(s)" +
+              (packSkipped > 0 ? "; " + packSkipped + " preview/signature body(s) are whole-file by design." : "."))
+        : check("packs.bodies", "Every pack body is the body the parts carry", "critical", "fail",
+            packProblems.length + " body/bodies differ: " + sample(packProblems))
+    );
+  }
+
+  // The deep check closes the one gap the checks above cannot: the manifest and the parts can agree
+  // with each other while both describe a file the generator read incorrectly. It replays each full
+  // body from the bytes on disk, allowing only the documented redaction marker.
+  if (options.deep !== true) {
+    checks.push(
+      check("fidelity.bodies", "Every full body replays from the source bytes", "critical", "skip",
+        "Run health --deep to replay each full body against the file on disk.")
+    );
+  } else {
+    const replayProblems: string[] = [];
+    let replayed = 0;
+    let unreplayable = 0;
+    for (const file of manifest.files) {
+      if (file.inclusionMode !== "full" || file.emptyLinesRemoved === true) {
+        unreplayable += 1;
+        continue;
+      }
+      const body = bodyByPath.get(file.relativePath);
+      if (body === undefined) {
+        unreplayable += 1;
+        continue;
+      }
+      const bytes = readBytes(path.join(repoDir, file.relativePath));
+      // A file that changed on disk is validate's question, not fidelity's: the manifest no longer
+      // describes the bytes being replayed, so a mismatch here would blame the generator for a
+      // later edit.
+      if (bytes === null || sha256(bytes) !== file.hashSha256) {
+        unreplayable += 1;
+        continue;
+      }
+      const decoded = decodeText(bytes);
+      if (decoded.binary) {
+        replayProblems.push(file.relativePath + " is binary on disk");
+        continue;
+      }
+      const expected = emittedBody(decoded.text);
+      if (expected === body) {
+        replayed += 1;
+        continue;
+      }
+      const line = firstBodyMismatch(expected, body);
+      if (line === null) {
+        replayed += 1;
+        continue;
+      }
+      replayProblems.push(file.relativePath + " line " + line + " is not the source line");
+    }
+    checks.push(
+      replayProblems.length === 0
+        ? check("fidelity.bodies", "Every full body replays from the source bytes", "critical", "pass",
+            replayed + " full body/bodies replayed byte-for-byte (redaction allowed); " +
+              unreplayable + " not replayable by design or because the file moved.")
+        : check("fidelity.bodies", "Every full body replays from the source bytes", "critical", "fail",
+            replayProblems.length + " body/bodies disagree with the source: " + sample(replayProblems))
+    );
+  }
 
   // A workspace index describes its members. When this snapshot is one of them, the two records
   // have to agree, or the deliverable says two different things about the same directory.
@@ -661,9 +1295,13 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   // Estimate from the emitted text, not from a byte count: estimateTokens takes a string, and
   // handing it the digits of the size produced "recorded 383, recomputed 1" as a warning.
   let recomputed = 0;
+  const partTokens = new Map<string, number>();
   for (const part of manifest.parts) {
-    const text = readText(path.join(snapshotDir, "parts", part.filename));
-    if (text !== null) recomputed += estimateTokens(text);
+    const text = partTexts.get(part.filename);
+    if (text === undefined) continue;
+    const tokens = estimateTokens(text);
+    partTokens.set(part.filename, tokens);
+    recomputed += tokens;
   }
   const recorded = manifest.totals.estimatedTokens ?? null;
   checks.push(
@@ -676,6 +1314,28 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
         : check("tokens.count", "The token estimate is recorded and plausible", "warning", "warn",
             "Recorded " + recorded + ", recomputed " + recomputed +
               ": the manifest no longer describes these parts.")
+  );
+
+  // A part that is within the byte budget can still be too large to paste into a context window.
+  // The estimate is the same one the manifest publishes; this check only asks which windows the
+  // largest part and the largest single file fit.
+  const partSizes = [...partTokens.values()];
+  const largestPart = partSizes.length === 0 ? 0 : Math.max(...partSizes);
+  const largestFile = manifest.files.reduce((largest, file) => {
+    const body = bodyByPath.get(file.relativePath);
+    return body === undefined ? largest : Math.max(largest, estimateTokens(body));
+  }, 0);
+  const fits = (window: number): number => partSizes.filter((tokens) => tokens <= window).length;
+  checks.push(
+    check(
+      "tokens.fit",
+      "The parts fit a context window",
+      "warning",
+      largestPart > 200000 || largestFile > 200000 ? "warn" : "pass",
+      manifest.parts.length + " part(s); largest about " + largestPart + " tokens, " +
+        fits(32000) + " fit 32k, " + fits(128000) + " fit 128k, " + fits(200000) +
+        " fit 200k; largest single file about " + largestFile + " tokens."
+    )
   );
 
   const overBudget = manifest.parts.filter(
