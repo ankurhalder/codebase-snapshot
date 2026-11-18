@@ -405,10 +405,14 @@ const budgetTool: ToolSpec = {
       });
     }
     const lines = [question === "" ? "No question: planning for the repository as a whole." : "Question: " + question];
+    if (read.manifest.files.length === 0) {
+      lines.push("The snapshot holds no files, so every budget selects nothing. Check manifest.skipped for why.");
+    }
     for (const row of rows) {
       lines.push(
         row.budget.toLocaleString("en-US") + " tokens: " + row.files + " file(s), " +
           row.usedTokens.toLocaleString("en-US") + " used" +
+          (row.files === 0 && read.manifest.files.length > 0 ? " - no file fits this budget" : "") +
           (row.gained.length === 0 ? "" : ", " + row.gained.length + " gained (" + row.gained.slice(0, 4).join(", ") + (row.gained.length > 4 ? ", …" : "") + ")")
       );
     }
@@ -1617,6 +1621,14 @@ const answerTool: ToolSpec = {
       maxTokens,
       ...(args.includeTests === true ? { includeTests: true } : {}),
     });
+    if (read.manifest.files.length === 0) {
+      return {
+        text:
+          "The snapshot holds no files, so nothing can be assembled for this question. " +
+          "manifest.skipped records why paths were not emitted (excluded, binary, unchanged).",
+        structured: { question, budgetTokens: maxTokens, usedTokens: 0, files: [], omitted: [] },
+      };
+    }
     const blocks: Array<{ path: string; why: string; tokens: number; text: string; truncated: boolean; totalLines: number }> = [];
     const omitted: Array<{ path: string; reason: string }> = [];
     let used = 0;
@@ -1979,6 +1991,16 @@ const generateTool: ToolSpec = {
         minimum: 500,
         description: "Fit the snapshot into this token budget, highest value first.",
       },
+      only: {
+        type: "array",
+        items: { type: "string" },
+        description: "Globs to include: replaces the config allow-list for this run.",
+      },
+      ignore: {
+        type: "array",
+        items: { type: "string" },
+        description: "Globs to exclude, added to the config deny-list for this run.",
+      },
       ...SCOPE_PROPERTIES,
     },
     additionalProperties: false,
@@ -2012,6 +2034,8 @@ const generateTool: ToolSpec = {
       ...(args.stripComments === true ? { stripComments: true as const } : {}),
       ...(args.removeEmptyLines === true ? { removeEmptyLines: true as const } : {}),
       ...(typeof args.pack === "string" ? { pack: args.pack as "single" | "xml" | "json" } : {}),
+      ...(Array.isArray(args.only) ? { only: args.only.filter((value) => typeof value === "string") } : {}),
+      ...(Array.isArray(args.ignore) ? { ignore: args.ignore.filter((value) => typeof value === "string") } : {}),
     };
     // A slice and a budget narrow the selection rather than changing settings, so they travel as
     // generate options; the CLI refuses the pair, and so does this tool.

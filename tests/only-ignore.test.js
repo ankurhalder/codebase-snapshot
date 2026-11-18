@@ -60,3 +60,20 @@ test("explain knows a file the run ignored", (t) => {
   assert.equal(explained.code, 0, explained.out);
   assert.match(explained.out, /excluded/i);
 });
+
+test("an allow-list that matches nothing warns instead of producing a silent empty snapshot", (t) => {
+  const root = repo(t);
+  const generated = run(["generate", "--only", "nothing/**"], root);
+  assert.equal(generated.code, 0, generated.out);
+  assert.match(generated.out, /No file matched the include allow-list/);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.equal(manifest.counts.totalFiles, 0);
+  assert.equal(manifest.warnings.length, 1);
+  assert.match(manifest.warnings[0], /include allow-list/);
+
+  // A matching allow-list says nothing, and a run with no allow-list says nothing either.
+  const matched = run(["generate", "--only", "src/**", "--out-dir", "snap2"], root);
+  assert.equal(matched.code, 0, matched.out);
+  const second = JSON.parse(fs.readFileSync(path.join(root, "snap2", "manifest.json"), "utf8"));
+  assert.equal(second.warnings.filter((line) => /allow-list/.test(line)).length, 0);
+});

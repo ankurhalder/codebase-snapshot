@@ -623,3 +623,21 @@ test("snapshot_answer returns cited windows within the budget", async (t) => {
   assert.ok(first.why.length > 0, "every included file says why");
   assert.ok(result.structured.usedTokens <= 3000);
 });
+
+test("an empty snapshot is reported as empty, not as a question that matched nothing", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+  // An allow-list that matches nothing produces a legitimate, empty snapshot.
+  await call("snapshot_generate", { only: ["nothing/**"] }, context);
+
+  const plan = await call("snapshot_plan_for", { question: "how does auth work" }, context);
+  assert.match(plan.text, /The snapshot holds no files/);
+  assert.doesNotMatch(plan.text, /budget is too small/i);
+
+  const answer = await call("snapshot_answer", { question: "how does auth work" }, context);
+  assert.match(answer.text, /holds no files/);
+  assert.equal(answer.structured.files.length, 0);
+
+  const budget = await call("snapshot_budget", { budgets: [1000] }, context);
+  assert.match(budget.text, /holds no files/);
+});

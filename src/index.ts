@@ -3002,6 +3002,17 @@ export function generateSnapshot(
     }
   }
 
+  // An allow-list that matches nothing produces a legitimate-looking empty snapshot: exit 0, no
+  // parts, "integrity passed". That is the silent fallback this project forbids — the run has to
+  // say that its own filter is the reason the snapshot is empty. Placed before the manifest is
+  // built so `warningCount` counts it like any other warning.
+  if (config.include.length > 0 && files.length === 0) {
+    warnings.push(
+      "No file matched the include allow-list (" + config.include.length + " pattern(s): " +
+        config.include.join(", ") + "), so the snapshot is empty."
+    );
+  }
+
   // Files the scope removed are recorded the same way whether they were filtered before the scan
   // or after it. `unchanged` is deliberately a different statement from `excluded`: the file is
   // includable and simply did not move.

@@ -30,6 +30,23 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.2
+
+**An empty snapshot says it is empty.**
+
+- `--only "nomatch/**"` produced a legitimate-looking empty snapshot: exit 0, no parts, "Integrity:
+  passed", no warning. The manifest now carries one: "No file matched the include allow-list (N
+  pattern(s): …), so the snapshot is empty."
+- The planner said two false things about an empty snapshot at once ("no file matched … the plan
+  falls back" and "the budget is too small for any file"). It now says the one true thing and stops:
+  the snapshot holds no files, and `manifest.skipped` explains why.
+- `snapshot_answer` and `snapshot_budget` repeat that sentence instead of returning zeros with no
+  explanation.
+- **`snapshot_generate` takes `only` and `ignore`**, the last CLI narrowing flags without an MCP
+  equivalent; the tool description and `docs/tools.md` say so.
+
+Verified: an allow-list matching nothing warns in stderr and in `manifest.warnings`; a matching one
+does not; the empty-snapshot messages are pinned by a test that generates a real empty snapshot.
 ## 0.17.1
 
 - The goal log records the final milestone: 0.17.0 published, and the registry carrying exactly the

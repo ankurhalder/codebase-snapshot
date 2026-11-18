@@ -174,6 +174,9 @@ export interface WorkspaceCliOptions {
   stripComments?: true;
   removeEmptyLines?: true;
   pack?: "single" | "xml" | "json";
+  /** Per-run narrowing, as the CLI's `--only` and `--ignore`; the config's lists are the default. */
+  only?: string[];
+  ignore?: string[];
 }
 
 /**

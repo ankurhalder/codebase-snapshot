@@ -201,9 +201,14 @@ export function planForQuestion(
     scored.push({ file, score, why: reasons.slice(0, 3).join(", ") || "centrality " + hub });
   }
 
-  // A question that matches nothing still deserves an answer: the entry points and hubs are the
-  // honest fallback, and the notes say that is what happened.
+  // An empty snapshot is a different fact from a question that matched nothing, and the notes
+  // used to say both at once ("no file matched … the plan falls back" and "the budget is too
+  // small for any file"), which is false twice. Say the one true thing and stop.
   const notes: string[] = [];
+  if (manifest.files.length === 0) {
+    notes.push("The snapshot holds no files; there is nothing to plan. Check manifest.skipped for why paths were not emitted.");
+    return { question, budgetTokens: budget, usedTokens: 0, files: [], skipped: [], notes };
+  }
   if (scored.length === 0) {
     notes.push("No file matched the question's terms; the plan falls back to the most-imported files.");
     const hubs = manifest.indexes.imports.centralFiles.slice(0, 12);
@@ -289,7 +294,7 @@ export function planForQuestion(
     }
   }
 
-  if (chosen.size === 0) notes.push("The budget is too small for any file in this snapshot.");
+  if (chosen.size === 0) notes.push("Nothing fit the budget: every candidate file costs more than the remaining tokens.");
   notes.push(
     formatNumber(chosen.size) + " file(s) chosen of " +
       formatNumber(manifest.files.length) + " in the snapshot; " +
