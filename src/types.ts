@@ -919,6 +919,10 @@ export interface CliOptions {
   stripComments?: boolean;
   /** `--remove-empty-lines`: drop blank lines from emitted bodies. */
   removeEmptyLines?: boolean;
+  /** `--only <globs>`: override the config include allow-list for this run. */
+  only?: string[];
+  /** `--ignore <globs>`: add to the config exclude list for this run. */
+  ignore?: string[];
   maxPartBytes?: number;
   maxPartTokens?: ByteSize | null;
   largeFileBytes?: number;

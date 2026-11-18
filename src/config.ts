@@ -1282,7 +1282,7 @@ function optionalBytes(
 }
 
 /** Normalises the `include` allow-list, rejecting anything that is not a glob. */
-function resolveInclude(include: SnapshotConfig["include"]): string[] {
+function resolveInclude(include: SnapshotConfig["include"] | string[]): string[] {
   if (include === undefined) return [];
   if (!Array.isArray(include) || include.some((pattern) => typeof pattern !== "string")) {
     throw new Error("`include` must be an array of glob strings.");
@@ -1703,7 +1703,14 @@ export function resolveConfig(
         (cliOptions as { includeLogs?: unknown } | undefined)?.includeLogs ??
         userConfig?.logCount
     ),
-    include: resolveInclude(userConfig?.include),
+    // `--only` replaces the allow-list for this run; `--ignore` adds to the deny-list. The two
+    // directions are different on purpose: a narrower allow-list is a statement about the whole
+    // run, while "also ignore this" is naturally cumulative with what the config already excludes.
+    include: resolveInclude(
+      ((cliOptions as { only?: string[] } | undefined)?.only ?? userConfig?.include) as
+        | SnapshotConfig["include"]
+        | string[]
+    ),
     preset: preset.presetName,
     presetExclude,
     artifacts,
@@ -1714,9 +1721,12 @@ export function resolveConfig(
     kinds,
     // `exclude` is the flag spelling of the same setting; writing it in a config used to
     // be ignored without a word.
-    excludePatterns: resolveExcludePatterns(
-      userConfig?.excludePatterns ?? (userConfig as { exclude?: unknown } | null)?.exclude
-    ),
+    excludePatterns: [
+      ...resolveExcludePatterns(
+        userConfig?.excludePatterns ?? (userConfig as { exclude?: unknown } | null)?.exclude
+      ),
+      ...resolveExcludePatterns((cliOptions as { ignore?: unknown } | undefined)?.ignore),
+    ],
     secretRules,
     // Extra property rather than a `ResolvedSnapshotConfig` field: the resolved
     // shape is owned elsewhere, and every scan reads it through the registry in

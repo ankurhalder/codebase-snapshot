@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.14.6
+
+**Per-run narrowing: `--only` and `--ignore`.**
+
+- Both tools this is measured against let one run narrow the files without editing a config. This
+  tool did not: `--include`/`--exclude` only wrote settings into a config during `init`/`setup`.
+- `--only <globs>` **replaces** the include allow-list for the run; `--ignore <globs>` **adds to** the
+  exclude list. The directions differ on purpose — a narrower allow-list is a statement about the
+  whole run, while "also ignore this" is naturally cumulative with what the config already denies.
+- Both enter the config digest, so `validate` and `explain` accept them and need them to compare like
+  with like; an ignored path is recorded in `skipped[]`, not dropped.
+
+Verified: an ignored file disappears from `files[]` and appears in `skipped[]`; `validate` with the
+same flag passes and without it reports drift; `explain --ignore` answers "excluded".
 ## 0.14.5
 
 **Ten public repositories, three tools, one run.**

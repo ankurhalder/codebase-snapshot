@@ -43,6 +43,8 @@ const VALIDATE_OPTIONS = [
   "sarif",
   "strip-comments",
   "remove-empty-lines",
+  "only",
+  "ignore",
   "pack",
   // The opt-in reports change the artifact selection the manifest records, so validate must accept
   // them to compare like with like: without the flags it reports the selection as drift.
@@ -83,6 +85,8 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
   generate: [
     "strip-comments",
     "remove-empty-lines",
+    "only",
+    "ignore",
     "workspace",
     "budget-tokens",
     "sign",
@@ -163,6 +167,10 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     // Removed rather than implemented, because a flag that parses and does nothing is the defect
     // this table exists to prevent.
     "large-file-bytes",
+    // `--only` and `--ignore` change which files are scanned, so they change what `explain` can say
+    // about a path; without them the answer for an ignored file is "included: true".
+    "only",
+    "ignore",
     "include-sensitive-files",
     "no-config",
     "discovery",

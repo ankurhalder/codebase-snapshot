@@ -645,7 +645,19 @@ export function buildAgentContract(): AgentContract {
           "mcp --http: comma-separated extra CORS origins. Loopback origins are always allowed.",
       },
       {
-        flag: "--remove-empty-lines",
+        flag: "--only",
+  type: "string",
+  summary: "Comma-separated globs to include: overrides the config include list for this run.",
+  appliesTo: optionAppliesTo("only"),
+},
+{
+  flag: "--ignore",
+  type: "string",
+  summary: "Comma-separated globs to exclude, added to the config exclude list for this run.",
+  appliesTo: optionAppliesTo("ignore"),
+},
+{
+  flag: "--remove-empty-lines",
   type: "boolean",
   summary: "Drop blank and whitespace-only lines from emitted bodies; line numbers no longer match the source.",
   appliesTo: optionAppliesTo("remove-empty-lines"),

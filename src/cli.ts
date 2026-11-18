@@ -181,6 +181,8 @@ export const CLI_OPTIONS = {
   workspace: { type: "string" },
   "strip-comments": { type: "boolean" },
   "remove-empty-lines": { type: "boolean" },
+  only: { type: "string" },
+  ignore: { type: "string" },
   "all-members": { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -421,6 +423,10 @@ interface ParsedInvocation {
   stripComments?: boolean;
   /** `--remove-empty-lines`: drop blank lines from emitted bodies (line numbers move). */
   removeEmptyLines?: boolean;
+  /** `--only <globs>`: override the include allow-list for this run. */
+  only?: string[];
+  /** `--ignore <globs>`: add to the exclude list for this run. */
+  ignore?: string[];
   /** `--all-members` (health): audit every snapshot a `--workspace` run wrote. */
   allMembers?: boolean;
 }
@@ -889,6 +895,8 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     workspace: values.workspace === undefined ? undefined : String(values.workspace),
     stripComments: values["strip-comments"] === true ? true : undefined,
     removeEmptyLines: values["remove-empty-lines"] === true ? true : undefined,
+    only: values.only === undefined ? undefined : String(values.only).split(",").map((item) => item.trim()).filter(Boolean),
+    ignore: values.ignore === undefined ? undefined : String(values.ignore).split(",").map((item) => item.trim()).filter(Boolean),
     allMembers: values["all-members"] === true ? true : undefined,
     budgetTokens:
       values["budget-tokens"] === undefined
@@ -1970,6 +1978,8 @@ async function runCommand(argv: string[]): Promise<number> {
         ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
         ...(invocation.stripComments === true ? { stripComments: true } : {}),
         ...(invocation.removeEmptyLines === true ? { removeEmptyLines: true } : {}),
+        ...(invocation.only === undefined ? {} : { only: invocation.only }),
+        ...(invocation.ignore === undefined ? {} : { ignore: invocation.ignore }),
         ...(invocation.pack === undefined ? {} : { pack: invocation.pack }),
         brief: invocation.brief,
         promptTask: invocation.promptTask,
