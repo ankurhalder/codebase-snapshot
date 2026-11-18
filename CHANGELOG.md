@@ -30,6 +30,18 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.3
+
+**The deep sweep found one real bottleneck: the skipped-secret check re-read the snapshot per token.**
+
+`secrets.skipped` compares values from excluded sensitive files against the artifacts. Each token
+triggered a full directory walk plus a fresh read of every artifact file, so a snapshot with the
+maximum 400+ tokens caused close to 2 GiB of reads for a single check. The artifact texts are now
+read once and shared across all tokens; the comparison is byte-identical, only the I/O changed.
+Found by the final pre-publish sweep, which also re-verified redaction idempotence, pack parity
+(JSON/XML/markdown all normalise to LF), exit codes (0/1/2), the 0.20 patch-line guard and a
+100/100 scratch snapshot with packs enabled.
+
 ## 0.20.2
 
 **The release gate now proves the snapshot against the repository, and the JSON pack stops carrying

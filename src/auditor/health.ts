@@ -181,14 +181,22 @@ function secretTokens(text: string): string[] {
   return [...tokens];
 }
 
-function artifactTextContains(snapshotDir: string, token: string): boolean {
+/**
+ * Every text artifact read once, so the skipped-secret comparison below does not re-walk and
+ * re-read the whole directory per token: with 400 tokens against a 4 MiB snapshot that was close
+ * to 2 GiB of reads for one check.
+ */
+function readArtifactTexts(snapshotDir: string): string[] {
+  const texts: string[] = [];
   for (const relative of walk(snapshotDir)) {
     if (!TEXT_ARTIFACT.test(relative)) continue;
     const text = readText(path.join(snapshotDir, relative));
-    if (text !== null && text.includes(token)) return true;
+    if (text !== null) texts.push(text);
   }
-  return false;
+  return texts;
 }
+
+
 
 function findHostPaths(snapshotDir: string, repoDir: string): string[] {
   const patterns = [
@@ -1263,13 +1271,18 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   );
   const leakedFrom: string[] = [];
   let compared = 0;
+  // Read once even when nothing sensitive was excluded: the cost is one walk, and it keeps the
+  // per-token check below from re-reading the directory hundreds of times.
+  const artifactTexts = readArtifactTexts(snapshotDir);
+  const artifactContains = (token: string): boolean =>
+    artifactTexts.some((text) => text.includes(token));
   for (const record of skippedSensitive.slice(0, 40)) {
     if (record.path.includes("[REDACTED") || compared > 400) continue;
     const text = readText(path.join(repoDir, record.path));
     if (text === null) continue;
     for (const token of secretTokens(text)) {
       compared += 1;
-      if (artifactTextContains(snapshotDir, token)) leakedFrom.push(record.path);
+      if (artifactContains(token)) leakedFrom.push(record.path);
     }
   }
   checks.push(

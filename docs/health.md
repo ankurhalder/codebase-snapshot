@@ -45,7 +45,7 @@ npx codebase-snapshot health --deep         # also replay every full body from t
 
 ```text
 🩺 Snapshot health: 100/100
-   20 passed, 0 warning(s), 0 failed, 2 skipped
+   21 passed, 0 warning(s), 0 failed, 1 skipped
 ```
 
 A **failed** check (critical) means the snapshot is not safe to hand to a model as it stands; the
@@ -156,7 +156,7 @@ codebase-snapshot health --all-members --cwd /repo
 trusting a snapshot it was handed. Pass `deep: true` for the source replay:
 
 ```json
-{ "score": 100, "counts": { "pass": 20, "warn": 0, "fail": 0, "skip": 2 }, "checks": [ … ] }
+{ "score": 100, "counts": { "pass": 21, "warn": 0, "fail": 0, "skip": 1 }, "checks": [ … ] }
 ```
 
 The cheap subset — manifest, parts, artifacts, skips — also runs inside `validate`, so a normal
