@@ -101,7 +101,10 @@ const { parentPort, workerData } = require("node:worker_threads");
     // so the run is the documented MCP run rather than the CLI run with one setting removed.
     const base = loaded.config ? { ...loaded.config, hooks: {} } : null;
     const config = mod.resolveConfig(base, workerData.cliOptions, workerData.cwd);
-    const manifest = mod.generateSnapshot(config, { dryRun: workerData.dryRun === true });
+    const manifest = mod.generateSnapshot(config, {
+      dryRun: workerData.dryRun === true,
+      ...(workerData.narrow ?? {}),
+    });
     const skipCounts = new Map();
     for (const record of manifest.skipped) {
       skipCounts.set(record.reason, (skipCounts.get(record.reason) || 0) + 1);
@@ -150,7 +153,12 @@ const { parentPort, workerData } = require("node:worker_threads");
 export function generateInWorker(
   cwd: string,
   cliOptions: WorkspaceCliOptions,
-  options: { dryRun?: boolean; signal?: AbortSignal } = {}
+  options: {
+    dryRun?: boolean;
+    signal?: AbortSignal;
+    /** `--slice` / `--budget-tokens`: narrowing is a generate option, not a config setting. */
+    narrow?: { slice?: { question: string; maxTokens?: number }; budgetTokens?: number };
+  } = {}
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
     let settled = false;
@@ -176,6 +184,7 @@ export function generateInWorker(
           cwd,
           cliOptions,
           dryRun: options.dryRun === true,
+          narrow: options.narrow ?? {},
         },
       });
     } catch (error) {

@@ -173,6 +173,7 @@ export interface WorkspaceCliOptions {
   tokenTree?: true;
   stripComments?: true;
   removeEmptyLines?: true;
+  pack?: "single" | "xml" | "json";
 }
 
 /**

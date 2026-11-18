@@ -135,7 +135,12 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
 - **`snapshot_generate`** — expensive, **writes**. Builds the snapshot in a worker. Accepts
   `includeDiffs`, `includeLogs`, `tokenTree`, `stripComments`, and reports progress and cancellation.
   ```json
-  { "name": "snapshot_generate", "arguments": { "tokenTree": true, "removeEmptyLines": true } }
+  { "name": "snapshot_generate", "arguments": { "tokenTree": true, "pack": "xml" } }
+  ```
+  It can also narrow: `slice` with `sliceTokens`, or `budgetTokens` (not both — the tool refuses
+  the pair, as the CLI does).
+  ```json
+  { "name": "snapshot_generate", "arguments": { "slice": "how is auth done", "sliceTokens": 20000 } }
   ```
 - **`snapshot_validate`** — medium, read-only. Drift check: files changed or deleted since the
   snapshot, part hashes, bookkeeping. A selection snapshot is not second-guessed, and says so.

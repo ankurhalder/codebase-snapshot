@@ -543,3 +543,27 @@ test("a tool that returns nothing says what it could not return", async (t) => {
   assert.match(diff.text, /Not in the snapshot: src\/not-here\.ts/);
   assert.doesNotMatch(diff.text, /No file in the snapshot imports/, "it does not claim a fact it did not check");
 });
+
+test("generate can pack and can narrow, and refuses the slice/budget pair", async (t) => {
+  const root = makeFixture(t);
+  const context = contextFor(root);
+
+  const packed = await call("snapshot_generate", { pack: "xml" }, context);
+  assert.equal(packed.isError, undefined, packed.text);
+  assert.ok(fs.existsSync(path.join(root, "snapshot", "full-codebase.xml")), "the xml pack was written");
+
+  const sliced = await call("snapshot_generate", { slice: "user", sliceTokens: 3000 }, context);
+  assert.equal(sliced.isError, undefined, sliced.text);
+  const slicedManifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.ok(slicedManifest.slice, "the slice block is recorded");
+  assert.equal(slicedManifest.slice.budgetTokens, 3000);
+
+  const budgeted = await call("snapshot_generate", { budgetTokens: 800 }, context);
+  assert.equal(budgeted.isError, undefined, budgeted.text);
+  const budgetManifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
+  assert.ok(budgetManifest.budget, "the budget block is recorded");
+
+  const both = await call("snapshot_generate", { slice: "user", budgetTokens: 800 }, context);
+  assert.equal(both.isError, true);
+  assert.match(both.text, /pass one/);
+});

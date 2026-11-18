@@ -1729,6 +1729,25 @@ const generateTool: ToolSpec = {
         type: "boolean",
         description: "Drop blank lines from emitted bodies (line numbers move; recorded per file).",
       },
+      pack: {
+        type: "string",
+        enum: ["single", "xml", "json"],
+        description: "Also write one full-repository file in this format.",
+      },
+      slice: {
+        type: "string",
+        description: "Narrow the snapshot to what the planner picks for this question.",
+      },
+      sliceTokens: {
+        type: "integer",
+        minimum: 500,
+        description: "Token budget for `slice` (default 30000, as the CLI).",
+      },
+      budgetTokens: {
+        type: "integer",
+        minimum: 500,
+        description: "Fit the snapshot into this token budget, highest value first.",
+      },
       ...SCOPE_PROPERTIES,
     },
     additionalProperties: false,
@@ -1761,11 +1780,23 @@ const generateTool: ToolSpec = {
       ...(args.tokenTree === true ? { tokenTree: true as const } : {}),
       ...(args.stripComments === true ? { stripComments: true as const } : {}),
       ...(args.removeEmptyLines === true ? { removeEmptyLines: true as const } : {}),
+      ...(typeof args.pack === "string" ? { pack: args.pack as "single" | "xml" | "json" } : {}),
+    };
+    // A slice and a budget narrow the selection rather than changing settings, so they travel as
+    // generate options; the CLI refuses the pair, and so does this tool.
+    if (typeof args.slice === "string" && typeof args.budgetTokens === "number") {
+      return failure("slice and budgetTokens both narrow the selection; pass one.");
+    }
+    const narrow = {
+      ...(typeof args.slice === "string"
+        ? { slice: { question: args.slice, ...(typeof args.sliceTokens === "number" ? { maxTokens: args.sliceTokens } : {}) } }
+        : {}),
+      ...(typeof args.budgetTokens === "number" ? { budgetTokens: args.budgetTokens } : {}),
     };
     const result = await generateInWorker(
       workspace.root,
       { ...workspace.cliOptions, ...reportOptions },
-      { signal: controller.signal }
+      { signal: controller.signal, narrow }
     );
     if (!result.ok) return failure(result.message);
     context.notify?.({ message: "writing the snapshot", progress: 2, total: 2 });

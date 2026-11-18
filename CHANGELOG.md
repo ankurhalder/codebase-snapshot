@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.12.96
+
+- **`snapshot_generate` can pack and can narrow.** `pack` (single/xml/json) is a config setting the
+  tool could not reach, and `slice`/`sliceTokens`/`budgetTokens` are generate options it never had —
+  so an MCP client could ask for the whole repository but not for the twenty thousand tokens of it
+  that answer its question. Both travel as the CLI sends them: `pack` through the configuration, the
+  narrowing through the worker's generate options. Passing `slice` and `budgetTokens` together is
+  refused with the same reason the CLI gives.
+
+Verified: `pack: "xml"` writes `full-codebase.xml`; a slice records its question and budget; a budget
+records its block; the pair is an error.
 ## 0.12.95
 
 - The goal log records the 0.12.93-0.12.94 round, including the probes that found nothing: an empty
