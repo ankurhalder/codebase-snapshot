@@ -748,3 +748,21 @@ Full `verify` at 0.17.35: 1355 tests, 1347 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the workspace tools against a real multi-repo index, then a final read of every docs page for
 stale numbers.
+
+### 0.17.37-0.17.39 - install pins to a version that exists, and counts that can fail
+
+- The docs told readers to run `npx -y codebase-snapshot@0.17.36`, which the registry does not carry
+  (publication is `x.y.0` only): every copy-pasted install would 404. `PUBLISHED` now records the
+  last milestone (0.17.0), `sync-docs` pins the examples to it, and a test fails if a pin disagrees
+  or names a patch. The devDependency sample stays on the current version, because that is what
+  `init` prints.
+- The tool-count hygiene test matched only the words zero through ten, so with 26 tools it could
+  never fail; it also could not see a count split across a line. Rewritten to parse digits and
+  hyphenated number words with any whitespace, it immediately found `AGENTS.md` saying 25 and
+  `docs/agent.md` saying eleven. A new prompt-count check found README and `docs/agent.md` saying two
+  prompts where the server serves seven.
+
+Full `verify` at 0.17.38: 1357 tests, 1349 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: a final sweep for docs that state sizes/counts (`25 presets`, `30 pages`), then the last
+large-surface probe: `serve` under concurrent requests.

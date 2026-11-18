@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.39
+
+- The goal log records the 0.17.37-0.17.38 round: docs that pinned an unpublished version, and a
+  count test that could not fail catching two wrong counts once it could.
 ## 0.17.38
 
 **Two documents described a server that no longer exists, and the test could not notice.**
