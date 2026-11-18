@@ -30,6 +30,10 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.17.26
+
+- The goal log records the 0.17.25 round: the two resolvers that disagreed about the same import
+  graph, and the alias dependents that vanished without a word.
 ## 0.17.25
 
 **`snapshot_diff_context` silently missed every alias import.**

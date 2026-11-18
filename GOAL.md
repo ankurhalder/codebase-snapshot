@@ -664,3 +664,19 @@ Full `verify` at 0.17.23: 1348 tests, 1340 pass, 0 fail, 8 host skips; tarball 5
 
 Next: the MCP `snapshot_diff_context` and `snapshot_context` against a real base, then the wizard
 (`init --yes`, non-interactive refusals) as the last untested surface.
+
+### 0.17.25-0.17.26 - two resolvers, one import graph
+
+- `snapshot_diff_context` had its own importer loop: only relative specifiers, a fixed extension
+  list. On a repository importing through a tsconfig path alias (`@/user`), asking about `user.ts`
+  returned **no dependents** — while `generate --delta` on the same tree included the importer.
+  Silent under-reporting in the one tool whose description says the dependents are what reviewers
+  miss.
+- The tool now builds the generator's `ImportResolver` (`buildImportResolver` + `tsconfigPathsFor`),
+  so aliases, index files, `js`→`ts` and non-JS languages resolve identically in the client and the
+  CLI. The probe reports `["src/app.ts"]`; an alias-only fixture pins it.
+
+Full `verify` at 0.17.25: 1349 tests, 1341 pass, 0 fail, 8 host skips; tarball 53 files.
+
+Next: the wizard (`init --yes`, non-interactive refusals) as the last largely untested surface, then
+the `mcp` tool list against `snapshot_locate`/`snapshot_search` semantics.
