@@ -22,14 +22,16 @@ const config = {
 
   // ── Size ───────────────────────────────────────────────────────────────
   // Hard ceiling per part. "300k", 307200 and "1.5mb" are all accepted.
-  maxPartBytes: "300k",
+  // Gemini's uploader caps a file at 300 KB. 292k keeps every emitted part under 300,000 bytes
+  // (the largest was 295,324 B), not merely under 300 KiB, which 300k allowed to reach 305,153 B.
+  maxPartBytes: "292k",
   // Files above this size get a head/tail preview instead of the full body.
   largeFileBytes: "200k",
   previewHeadLines: 80,
   previewTailLines: 40,
   // Different ceilings per layer. Unlisted layers use `default`.
   budgets: {
-    default: "300k",
+    default: "292k",
     byLayer: {},
   },
   // Gemini accepts at most ten uploaded files. Cap the parts at eight so the eight part files
