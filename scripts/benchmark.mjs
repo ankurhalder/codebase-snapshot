@@ -12,9 +12,12 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const BIN = path.join(import.meta.dirname, "..", "dist", "bin.js");
-const repo = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, ".."));
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+const BIN = path.join(HERE, "..", "dist", "bin.js");
+const repo = path.resolve(process.argv[2] ?? path.join(HERE, ".."));
 const question = process.argv[3] ?? "how does the snapshot generator partition files";
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bench-"));
 

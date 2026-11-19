@@ -16,11 +16,14 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const BIN = path.join(import.meta.dirname, "..", "dist", "bin.js");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+const BIN = path.join(HERE, "..", "dist", "bin.js");
 const args = process.argv.slice(2);
 const flags = new Set(args.filter((arg) => arg.startsWith("--")));
-const repo = path.resolve(args.find((arg) => !arg.startsWith("--")) ?? path.join(import.meta.dirname, ".."));
+const repo = path.resolve(args.find((arg) => !arg.startsWith("--")) ?? path.join(HERE, ".."));
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "compare-"));
 const question = "how does the snapshot generator partition files";
 
