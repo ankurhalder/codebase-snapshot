@@ -22,6 +22,7 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
+import { releaseAbandonedRun } from "../index.js";
 import type { Manifest } from "../types.js";
 import type { WorkspaceCliOptions } from "./workspace.js";
 
@@ -104,6 +105,7 @@ const { parentPort, workerData } = require("node:worker_threads");
     const manifest = mod.generateSnapshot(config, {
       dryRun: workerData.dryRun === true,
       ...(workerData.narrow ?? {}),
+      ...(workerData.runId === undefined ? {} : { runId: workerData.runId }),
     });
     const skipCounts = new Map();
     for (const record of manifest.skipped) {
@@ -158,6 +160,10 @@ export function generateInWorker(
     signal?: AbortSignal;
     /** `--slice` / `--budget-tokens`: narrowing is a generate option, not a config setting. */
     narrow?: { slice?: { question: string; maxTokens?: number }; budgetTokens?: number };
+    /** Identity the parent can name when the worker is terminated mid-run. */
+    runId?: string;
+    /** Directories whose locks/staging this run may own; used only for abandoned-worker cleanup. */
+    lockRoots?: readonly string[];
   } = {}
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
@@ -170,8 +176,17 @@ export function generateInWorker(
       // ending the thread here — and leaving it alive is the cost: a config module that opened a
       // socket, started an interval or kept a file handle would hold the thread (and this process's
       // event loop, through the listener below) for as long as the MCP server runs.
-      if (worker !== null) void worker.terminate();
-      resolve(result);
+      const terminated = worker === null ? Promise.resolve(undefined) : worker.terminate();
+      void terminated
+        .catch(() => undefined)
+        .then(() => {
+          // A worker that was terminated could not run its own finally. The parent knows the run
+          // token, so it removes only that run's lock and staging, and the next call can start.
+          if (!result.ok && options.runId !== undefined && options.lockRoots !== undefined) {
+            releaseAbandonedRun(options.lockRoots, options.runId);
+          }
+          resolve(result);
+        });
     };
 
     const isCjs = typeof __dirname !== "undefined";
@@ -185,6 +200,7 @@ export function generateInWorker(
           cliOptions,
           dryRun: options.dryRun === true,
           narrow: options.narrow ?? {},
+          ...(options.runId === undefined ? {} : { runId: options.runId }),
         },
       });
     } catch (error) {

@@ -8,6 +8,7 @@ import { parseOwnerBrief } from "./generator/brief.js";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
 import {
   isDiscoveryMode,
+  isSensitivePath,
   matchesExclude,
   type DiscoveryMode,
 } from "./scanner/files.js";
@@ -395,21 +396,25 @@ const CONFIG_KEY_NAMES = [
   "kinds",
   "largeFileBytes",
   "layers",
+  "logCount",
   "layersMode",
   "maxMonolithBytes",
   "maxPartBytes",
   "maxParts",
   "maxPartTokens",
   "outDir",
+  "pack",
   "preset",
   "previewHeadLines",
   "promptTask",
   "staged",
   "previewTailLines",
+  "removeEmptyLines",
   "secretRules",
   "secrets",
   "sarif",
   "skeleton",
+  "stripComments",
   "tmpDir",
   "withDependents",
 ] as const;
@@ -424,6 +429,16 @@ export const CONFIG_KEYS: ReadonlySet<string> = new Set(CONFIG_KEY_NAMES);
  * becoming a setting a user can write but a TypeScript config cannot spell.
  */
 void (true as [Exclude<(typeof CONFIG_KEY_NAMES)[number], keyof SnapshotConfig>] extends [never]
+  ? true
+  : never);
+
+/**
+ * The same proof in the other direction: every `SnapshotConfig` key must be accepted by the
+ * loader. Four keys (`stripComments`, `removeEmptyLines`, `logCount`, `pack`) were added to the
+ * interface and to `resolveConfig` but not to this list, so a config file naming one failed with
+ * "unknown setting" while its CLI flag worked and the generated config advertised it.
+ */
+void (true as [Exclude<keyof SnapshotConfig, (typeof CONFIG_KEY_NAMES)[number]>] extends [never]
   ? true
   : never);
 
@@ -989,7 +1004,47 @@ function readConfiguredBrief(cwd: string, value: unknown): OwnerBrief | undefine
       "brief must be a path to a markdown file (received " + describeValue(value) + ")."
     );
   }
-  const filePath = path.resolve(cwd, value);
+  // A brief is repository content, so it is confined to the repository. Without this a
+  // `snapshot.config.json` in an untrusted repository could name `/etc/passwd` or
+  // `~/.ssh/id_rsa`, and the contents would be embedded in PROMPT.md (and every artifact that
+  // reproduces it). Resolve the real path first: a symlink inside the repository must not be a
+  // second spelling of an absolute path outside it.
+  const rootReal = (() => {
+    try {
+      return fs.realpathSync(cwd);
+    } catch {
+      return path.resolve(cwd);
+    }
+  })();
+  const requested = path.resolve(cwd, value);
+  let filePath: string;
+  try {
+    filePath = fs.realpathSync(requested);
+  } catch {
+    throw new Error(
+      'brief "' + value + '" could not be read as a file; a snapshot must not ship without the ' +
+        "half of the brief the owner wrote."
+    );
+  }
+  const relative = path.relative(rootReal, filePath);
+  if (
+    relative.length === 0 ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(
+      'brief "' + value + '" resolves outside the repository. A brief must be a file inside ' +
+        "the repository being described; an absolute or parent path is refused."
+    );
+  }
+  const posixRelative = relative.split(path.sep).join("/");
+  if (isSensitivePath(posixRelative) || isSensitivePath(value)) {
+    throw new Error(
+      'brief "' + value + '" is a credential-bearing file. A snapshot must not reproduce ' +
+        "secrets, so it cannot be used as the owner brief."
+    );
+  }
   let text: string;
   try {
     if (!fs.statSync(filePath).isFile()) throw new Error("not a file");

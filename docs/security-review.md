@@ -53,20 +53,33 @@ executable config in it is refused, because a fetched repository is not a truste
   baked into the HTML, so serving `/` cannot leak it.
 - A request with a cross-origin `Origin` is refused before any auth check.
 - `api/snapshot.zip` only zips a directory that contains a manifest or an ownership marker.
+- Every path is resolved with `realpath` before the allowed-root check, so a symlink inside the
+  served directory cannot read or zip a target outside it. `POST /api/generate` applies the same
+  check to its local source and to the `outDir` it is about to write; a remote clone's
+  `outDir`/`tmpDir` are forced to the clone.
+- The page renders manifest fields with text nodes, never `innerHTML`, so a crafted manifest is
+  data rather than script.
 
 ### Remote ingestion
 
 - **https only**, no credentials in the URL, and the host must resolve to public addresses. Loopback,
-  RFC1918, link-local (including `169.254.169.254`), CGNAT and their v6 equivalents are refused
-  unless `--allow-private` is given.
+  RFC1918, link-local (including `169.254.169.254`), CGNAT, multicast, IPv4-mapped IPv6, NAT64/6to4
+  forms and their v6 equivalents are refused unless `--allow-private` is given.
 - **Checked twice**: the literal host before DNS, and every resolved address after.
-- **Shallow clone** into a temp directory removed on exit; `GITHUB_TOKEN` reaches git through the
+- **No redirects**: git is passed `http.followRedirects=false` and a protocol allow-list, so a
+  public host cannot answer `302` into the local network after the host check.
+- **The ambient token is host-scoped**: `GITHUB_TOKEN`/`GH_TOKEN` is attached only for
+  `github.com` or hosts named in `CODEBASE_SNAPSHOT_GITHUB_HOSTS`; it is never sent to an
+  arbitrary `--remote` host.
+- **Shallow clone** into a temp directory removed on exit; the token reaches git through the
   environment (`http.extraheader` via `GIT_CONFIG_*`), never argv, and never enters the manifest.
 - A clone larger than 1 GB is refused before scanning.
 
 ### Signing
 
 - Ed25519 over the exact manifest bytes; the record carries the public key and the manifest sha256.
+- Signing happens inside staging, before the ownership marker. The signature is therefore part of
+  the atomic swap and the marker's inventory; a later `generate --sign` can replace its own output.
 - `health` fails when the manifest changed after signing; an unsigned snapshot is a skip, because
   absence is not tampering.
 - The private key never reaches an artifact. `SNAPSHOT_SIGNING_KEY` is read from the environment.

@@ -10,8 +10,8 @@ import {
   resolveConfig,
 } from "../config.js";
 import { collectFiles, findSecretInPath, getGitInfo } from "../scanner/files.js";
-import { resolveChangedScope } from "../scanner/changed.js";
-import { buildImportResolver, importsChangedFile } from "../scanner/dependents.js";
+import { readStagedBlob, resolveChangedScope } from "../scanner/changed.js";
+import { buildImportResolver, importsChangedFile, tsconfigPathsFor } from "../scanner/dependents.js";
 import type { ImportResolver } from "../scanner/dependents.js";
 import { importsOfFile } from "../ast/imports.js";
 import { verifySnapshotSignature } from "../signing.js";
@@ -689,17 +689,18 @@ export function validateSnapshot(
    * the repository is worse than saying the check could not be completed.
    */
   let unchangedScope: Set<string> | null = null;
+  let stagedScope: Set<string> | null = null;
   const recordedChangedSince = manifest.config?.changedSince;
   const recordedStaged = manifest.config?.staged === true;
   const recordedWithDependents = manifest.config?.withDependents === true;
   if (recordedChangedSince !== undefined || recordedStaged) {
     try {
-      unchangedScope = new Set(
-        resolveChangedScope(config.cwd, {
-          ...(recordedChangedSince === undefined ? {} : { changedSince: recordedChangedSince }),
-          ...(recordedStaged ? { staged: true } : {}),
-        }).paths
-      );
+      const scope = resolveChangedScope(config.cwd, {
+        ...(recordedChangedSince === undefined ? {} : { changedSince: recordedChangedSince }),
+        ...(recordedStaged ? { staged: true } : {}),
+      });
+      unchangedScope = new Set(scope.paths);
+      if (recordedStaged) stagedScope = new Set(scope.stagedPaths);
     } catch {
       warnings.push(
         "The snapshot was generated with a changed-files scope, but that scope could not be " +
@@ -726,7 +727,11 @@ export function validateSnapshot(
     // Built on first use: `collection` is created just below, and the common case has no
     // dependents at all, so the resolver must not be built for every scoped validation.
     dependentResolver ??= buildImportResolver(
-      collection.files.map((file) => ({ relativePath: file }))
+      collection.files.map((file) => ({ relativePath: file })),
+      {
+        tsconfig: tsconfigPathsFor(config.cwd),
+        ...(unchangedScope === null ? {} : { extraPaths: unchangedScope }),
+      }
     );
     return importsChangedFile(
       diskFile,
@@ -805,7 +810,14 @@ export function validateSnapshot(
 
     let diskHash: string;
     try {
-      diskHash = sha256Hex(fs.readFileSync(path.join(config.cwd, diskFile)));
+      // --staged generated from the index blob, but validate hashed the working tree. A file
+      // with a staged edit and a later unstaged edit therefore failed validate immediately,
+      // even though the snapshot was exactly what the next commit would contain.
+      const stagedBlob =
+        recordedStaged && stagedScope?.has(diskFile) === true
+          ? readStagedBlob(config.cwd, diskFile)
+          : null;
+      diskHash = sha256Hex(stagedBlob ?? fs.readFileSync(path.join(config.cwd, diskFile)));
     } catch (err) {
       // A file that exists but cannot be read is not a deleted file. Filing it under "no longer
       // exists on disk" sent the reader looking for a file that is right there, and it is a

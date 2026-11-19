@@ -30,6 +30,69 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.4
+
+**The 0.20 hardening audit found fifteen material defects, almost all of them a guard that existed
+on one route and not on its twin. This release closes every one and adds a regression for each
+critical path.**
+
+Security and confinement:
+
+- A configured `brief` is now confined to the repository and refused when it is a sensitive file.
+  Previously `snapshot.config.json` in an untrusted repository could name `/etc/passwd` or
+  `~/.ssh/id_rsa`, and the contents were embedded in `PROMPT.md`. The brief is also redacted with
+  the full content scanner, so a PEM body is masked as a block instead of only its header.
+- The ambient `GITHUB_TOKEN`/`GH_TOKEN` is attached only for `github.com` (or hosts named in
+  `CODEBASE_SNAPSHOT_GITHUB_HOSTS`). A `--remote` URL for any other host no longer receives it.
+- `--remote` refuses IPv4-mapped IPv6, the full link-local range, multicast and other non-public
+  IPv4 ranges, and passes `http.followRedirects=false` plus a protocol allow-list to git, so a
+  public host cannot redirect the clone into the local network.
+- The default git discovery path applies the same sensitive-target rule as the walker: a tracked
+  symlink such as `public-context.txt -> .env` is skipped as `sensitive-file`.
+- `reports/diff.md` filters sensitive and excluded paths per file section, and both it and
+  `reports/log.md` are passed through the secret scanner before they are written. Byte truncation
+  is UTF-8 safe.
+- `snapshot_workspace` goes through `prepare()`, so its `root` and `outDir` are confined like
+  every other tool.
+- `serve` resolves symlinks before its allowed-root check, applies the check to
+  `POST /api/generate`, forces a remote clone's `outDir`/`tmpDir` to the clone, and refuses to
+  serve a manifest that fails the shape guard.
+- The browser file list is built with text nodes, not `innerHTML`; a crafted `manifest.json`
+  can no longer run script in the serve origin.
+
+State and lifecycle:
+
+- `generate --sign` signs inside staging, before the ownership marker is written. A signed
+  snapshot is now replaceable by the next run instead of being refused as foreign; an existing
+  signed directory is accepted when its signature verifies.
+- A terminated MCP generate worker removes its own lock and staging directory by run id, so the
+  next `snapshot_generate` no longer waits 120 seconds for a heartbeat that the terminated worker
+  cannot send.
+- MCP over HTTP gives each session its own era and cancellation state, caps batches at 100
+  messages, and answers an oversized chunked body exactly once instead of throwing
+  `ERR_HTTP_HEADERS_SENT`.
+- `health --all-members --deep` now passes `deep` to every member.
+
+Contract and validation:
+
+- `stripComments`, `removeEmptyLines`, `logCount` and `pack` are accepted in every config file;
+  the generated config lists them, and a compile-time check now proves both directions of the key
+  set.
+- `validate` and `explain` pass `tsconfig` path aliases to the import resolver, so
+  `--with-dependents` does not produce immediate false drift.
+- `validate --staged` hashes the git index blob, matching what `generate --staged` wrote.
+- `generate --watch` uses the same option builder as a one-shot run; `--only`, transforms, packs,
+  reports, slice/budget and `--sign` survive a reload. `--watch --delta` is refused rather than
+  silently ignored.
+- `validate` compares config-file settings against the current file and uses the manifest record
+  only for settings that a run flag supplied.
+- Monolith packs record `comments-stripped` and `emptyLinesRemoved` when those transforms shaped
+  the body; a `#ref` in a remote URL is actually cloned and recorded.
+
+Compatibility notes: a brief outside the repository is now a hard error; `--sign` requires
+`manifest.json`; `--watch --delta` is refused; GitHub Enterprise users must set
+`CODEBASE_SNAPSHOT_GITHUB_HOSTS` if they rely on the ambient token.
+
 ## 0.20.3
 
 **The deep sweep found one real bottleneck: the skipped-secret check re-read the snapshot per token.**

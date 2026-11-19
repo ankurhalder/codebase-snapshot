@@ -505,7 +505,7 @@ function compiledRuleFor(rule: SecretRule): CompiledRule {
  */
 export function scanAndRedactSecrets(
   content: string,
-  rules: SecretRule[],
+  rules: readonly SecretRule[],
   filePath?: string
 ): {
   redacted: string;

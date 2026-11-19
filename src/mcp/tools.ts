@@ -20,7 +20,7 @@ import { auditSnapshot } from "../auditor/health.js";
 import { planForQuestion } from "./retrieval.js";
 import { explainPath, renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
-import { buildImportResolver, resolveSpecifier, tsconfigPathsFor } from "../index.js";
+import { buildImportResolver, resolveSafeOutputDirs, resolveSpecifier, tsconfigPathsFor } from "../index.js";
 
 /** One search reads at most this many bytes of part text. */
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
@@ -30,7 +30,7 @@ import { GENERATOR_VERSION } from "../version.js";
 import { generateInWorker } from "./generate-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import { estimateTokens } from "../tokenize.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { JsonObject, JsonSchema } from "./protocol.js";
 import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolCost, ToolOutcome } from "./types.js";
@@ -482,7 +482,9 @@ const testsTool: ToolSpec = {
     const isTest = (filePath: string): boolean =>
       /(^|\/)(tests?|__tests__|spec)\//.test(filePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(filePath);
     const byPath = new Map(read.manifest.files.map((file) => [file.relativePath, file]));
-    const resolver = buildImportResolver(read.manifest.files, {});
+    const resolver = buildImportResolver(read.manifest.files, {
+      tsconfig: tsconfigPathsFor(prepared.workspace.root),
+    });
     const testFiles = read.manifest.files.filter((file) => isTest(file.relativePath));
     const importsOf = (filePath: string): string[] => {
       const entry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === filePath);
@@ -541,9 +543,16 @@ const workspaceTool: ToolSpec = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
-    const root = path.resolve(context.cwd, typeof args.root === "string" ? args.root : ".");
-    const outDir = typeof args.outDir === "string" ? args.outDir : "snapshot";
-    const index = path.resolve(root, outDir, "WORKSPACE.json");
+    // This tool resolved its own root, so it could read WORKSPACE.json from any directory the
+    // process could open. prepare() applies resolveRoot and the same outDir confinement as every
+    // other tool.
+    const prepared = await prepare(args, context, outDirOverride(args));
+    if (!prepared.ok) return prepared.outcome;
+    const index = path.resolve(
+      prepared.workspace.root,
+      prepared.workspace.config.outDir,
+      "WORKSPACE.json"
+    );
     let text: string;
     try {
       text = fs.readFileSync(index, "utf8");
@@ -612,7 +621,9 @@ const neighborsTool: ToolSpec = {
     if (file === undefined) return { text: wanted + " is not in the snapshot; snapshot_explain says why.", isError: true };
 
     const byPath = new Map(read.manifest.files.map((candidate) => [candidate.relativePath, candidate]));
-    const resolver = buildImportResolver(read.manifest.files, {});
+    const resolver = buildImportResolver(read.manifest.files, {
+      tsconfig: tsconfigPathsFor(prepared.workspace.root),
+    });
     const entry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === file.relativePath);
     const imports: Array<{ path: string; part: string | null; resolved: boolean }> = [];
     for (const specifier of entry?.imports ?? []) {
@@ -775,7 +786,9 @@ const cyclesTool: ToolSpec = {
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
     const cap = Math.max(1, typeof args.maxComponents === "number" ? args.maxComponents : 20);
     const byPath = new Map(read.manifest.files.map((file) => [file.relativePath, file]));
-    const resolver = buildImportResolver(read.manifest.files, {});
+    const resolver = buildImportResolver(read.manifest.files, {
+      tsconfig: tsconfigPathsFor(prepared.workspace.root),
+    });
     const edges = new Map<string, string[]>();
     for (const path of byPath.keys()) edges.set(path, []);
     for (const entry of read.manifest.indexes.imports.byFile) {
@@ -2144,10 +2157,17 @@ const generateTool: ToolSpec = {
         : {}),
       ...(typeof args.budgetTokens === "number" ? { budgetTokens: args.budgetTokens } : {}),
     };
+    let lockRoots: [string, string];
+    try {
+      const safe = resolveSafeOutputDirs(workspace.config);
+      lockRoots = [safe.outDir, safe.tmpDir];
+    } catch (error) {
+      return failure(error instanceof Error ? error.message : String(error));
+    }
     const result = await generateInWorker(
       workspace.root,
       { ...workspace.cliOptions, ...reportOptions },
-      { signal: controller.signal, narrow }
+      { signal: controller.signal, narrow, runId: randomUUID(), lockRoots }
     );
     if (!result.ok) return failure(result.message);
     context.notify?.({ message: "writing the snapshot", progress: 2, total: 2 });
@@ -2198,16 +2218,71 @@ const generateTool: ToolSpec = {
  * current config, so real configuration drift is still reported. */
 function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace["config"] {
   const recorded = manifest.config;
+  const cli = workspace.cliOptions;
+  const source = workspace.sourceConfig;
+  const configured = (key: string): boolean =>
+    source !== null && Object.prototype.hasOwnProperty.call(source, key);
+  const sourceArtifacts =
+    source !== null && source.artifacts !== null && typeof source.artifacts === "object"
+      ? (source.artifacts as Record<string, unknown>)
+      : null;
+  // A setting the config file names must be compared against the current file, so editing it is
+  // drift. A setting only a run flag supplied has to come from the manifest, or a snapshot
+  // generated with --skeleton could never validate. The source config is what distinguishes them;
+  // taking the whole recorded configuration made every config edit invisible.
+  const artifacts = { ...workspace.config.artifacts };
+  if (recorded?.artifacts !== undefined) {
+    for (const [key, value] of Object.entries(recorded.artifacts)) {
+      if (sourceArtifacts === null || !Object.prototype.hasOwnProperty.call(sourceArtifacts, key)) {
+        (artifacts as Record<string, unknown>)[key] = value;
+      }
+    }
+  }
+  // Include artifacts whenever the manifest records them: a run flag such as --token-tree is
+  // invisible in the current config and can only be reconstructed from the manifest.
+  let artifactOverride = recorded?.artifacts !== undefined;
+  if (cli.includeDiffs === true) {
+    artifacts.diff = true;
+    artifactOverride = true;
+  }
+  if (cli.includeLogs !== undefined) {
+    artifacts.log = true;
+    artifactOverride = true;
+  }
+  if (cli.tokenTree === true) {
+    artifacts.tokenTree = true;
+    artifactOverride = true;
+  }
+  const choose = <T>(key: string, recordedValue: T | undefined, current: T, cliValue?: T): T =>
+    cliValue !== undefined
+      ? cliValue
+      : configured(key)
+        ? current
+        : (recordedValue ?? current);
   return {
     ...workspace.config,
-    ...(recorded?.artifacts === undefined ? {} : { artifacts: recorded.artifacts }),
-    ...(recorded?.stripComments === undefined ? {} : { stripComments: recorded.stripComments }),
-    ...(recorded?.removeEmptyLines === undefined ? {} : { removeEmptyLines: recorded.removeEmptyLines }),
-    ...(recorded?.pack === undefined ? {} : { pack: recorded.pack }),
-    ...(recorded?.logCount === undefined ? {} : { logCount: recorded.logCount }),
-    ...(recorded?.skeleton === undefined ? {} : { skeleton: recorded.skeleton }),
-    ...(recorded?.sarif === undefined ? {} : { sarif: recorded.sarif }),
-    ...(recorded?.maxParts === undefined ? {} : { maxParts: recorded.maxParts }),
+    ...(artifactOverride ? { artifacts } : {}),
+    ...(cli.stripComments === true || configured("stripComments") || recorded?.stripComments !== undefined
+      ? { stripComments: choose("stripComments", recorded?.stripComments, workspace.config.stripComments, cli.stripComments === true ? true : undefined) }
+      : {}),
+    ...(cli.removeEmptyLines === true || configured("removeEmptyLines") || recorded?.removeEmptyLines !== undefined
+      ? { removeEmptyLines: choose("removeEmptyLines", recorded?.removeEmptyLines, workspace.config.removeEmptyLines, cli.removeEmptyLines === true ? true : undefined) }
+      : {}),
+    ...(cli.pack !== undefined || configured("pack") || recorded?.pack !== undefined
+      ? { pack: choose("pack", recorded?.pack ?? undefined, workspace.config.pack, cli.pack) }
+      : {}),
+    ...(cli.includeLogs !== undefined || configured("logCount") || recorded?.logCount !== undefined
+      ? { logCount: choose("logCount", recorded?.logCount, workspace.config.logCount, cli.includeLogs) }
+      : {}),
+    ...(cli.skeleton === true || configured("skeleton") || recorded?.skeleton !== undefined
+      ? { skeleton: choose("skeleton", recorded?.skeleton, workspace.config.skeleton, cli.skeleton === true ? true : undefined) }
+      : {}),
+    ...(cli.sarif === true || configured("sarif") || recorded?.sarif !== undefined
+      ? { sarif: choose("sarif", recorded?.sarif, workspace.config.sarif, cli.sarif === true ? true : undefined) }
+      : {}),
+    ...(configured("maxParts") || recorded?.maxParts !== undefined
+      ? { maxParts: choose("maxParts", recorded?.maxParts, workspace.config.maxParts) }
+      : {}),
   };
 }
 
@@ -2508,7 +2583,9 @@ const dependentsTool: ToolSpec = {
       : "both";
     const limit = typeof args.limit === "number" && args.limit > 0 ? Math.floor(args.limit) : 50;
 
-    const resolver = buildImportResolver(manifest.files);
+    const resolver = buildImportResolver(manifest.files, {
+      tsconfig: tsconfigPathsFor(prepared.workspace.root),
+    });
     const imports: Array<{ path: string; specifier: string; part: string }> = [];
     const unresolved: string[] = [];
 

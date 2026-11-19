@@ -47,7 +47,7 @@ import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
 import { startHttpTransport } from "./mcp/http.js";
 import { startWebServer } from "./web/server.js";
-import { loadSigningKey, signManifest, writeSignature } from "./signing.js";
+import { loadSigningKey, SIGNATURE_FILE } from "./signing.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "./remote/source.js";
 import {
   cacheFilePath,
@@ -1828,6 +1828,53 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 /** The command itself. Every early return here is a finished invocation. */
+/**
+ * The generate-scoped options a CLI invocation carries.
+ *
+ * runCommand built this object by hand and runWatchLoop built a second, shorter copy. Every flag
+ * added after the watch loop was written worked once and disappeared on the first file edit:
+ * --only, --strip-comments, --token-tree, --include-diffs, --include-logs, --pack and --sign.
+ * One builder makes the two paths agree by construction.
+ */
+export function generateCliOptions(
+  invocation: ParsedInvocation
+): Partial<CliOptions> & { discovery?: DiscoveryMode } {
+  return {
+    mode: invocation.command as Mode,
+    format: invocation.format,
+    dryRun: invocation.dryRun,
+    cwd: invocation.cwd,
+    outDir: invocation.outDir,
+    includeMonolith: invocation.includeMonolith,
+    includeSensitiveFiles: invocation.includeSensitiveFiles,
+    maxPartBytes: invocation.maxPartBytes,
+    maxPartTokens: invocation.maxPartTokens,
+    largeFileBytes: invocation.largeFileBytes,
+    maxMonolithBytes: invocation.maxMonolithBytes,
+    attachmentSlots: invocation.attachmentSlots,
+    maxParts: invocation.maxParts,
+    ...(invocation.includeDiffs === true ? { includeDiffs: true } : {}),
+    ...(invocation.includeLogs === undefined ? {} : { includeLogs: invocation.includeLogs }),
+    ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
+    ...(invocation.stripComments === true ? { stripComments: true } : {}),
+    ...(invocation.removeEmptyLines === true ? { removeEmptyLines: true } : {}),
+    ...(invocation.only === undefined ? {} : { only: invocation.only }),
+    ...(invocation.ignore === undefined ? {} : { ignore: invocation.ignore }),
+    ...(invocation.pack === undefined ? {} : { pack: invocation.pack }),
+    ...(invocation.sign === true ? { sign: true } : {}),
+    brief: invocation.brief,
+    promptTask: invocation.promptTask,
+    skipArtifacts: invocation.skipArtifacts,
+    onlyArtifacts: invocation.onlyArtifacts,
+    discovery: invocation.discovery,
+    changedSince: invocation.changedSince,
+    staged: invocation.staged,
+    withDependents: invocation.withDependents,
+    skeleton: invocation.skeleton,
+    sarif: invocation.sarif,
+  };
+}
+
 async function runCommand(argv: string[]): Promise<number> {
   let invocation: ParsedInvocation;
   try {
@@ -2022,42 +2069,7 @@ async function runCommand(argv: string[]): Promise<number> {
   try {
     resolved = resolveConfig(
       loaded.config,
-      {
-        mode: invocation.command as Mode,
-        format: invocation.format,
-        dryRun: invocation.dryRun,
-        cwd: invocation.cwd,
-        outDir: invocation.outDir,
-        includeMonolith: invocation.includeMonolith,
-        includeSensitiveFiles: invocation.includeSensitiveFiles,
-        maxPartBytes: invocation.maxPartBytes,
-        maxPartTokens: invocation.maxPartTokens,
-        largeFileBytes: invocation.largeFileBytes,
-        maxMonolithBytes: invocation.maxMonolithBytes,
-        attachmentSlots: invocation.attachmentSlots,
-        maxParts: invocation.maxParts,
-        ...(invocation.includeDiffs === true ? { includeDiffs: true } : {}),
-        ...(invocation.includeLogs === undefined ? {} : { includeLogs: invocation.includeLogs }),
-        ...(invocation.tokenTree === true ? { tokenTree: true } : {}),
-        ...(invocation.stripComments === true ? { stripComments: true } : {}),
-        ...(invocation.removeEmptyLines === true ? { removeEmptyLines: true } : {}),
-        ...(invocation.only === undefined ? {} : { only: invocation.only }),
-        ...(invocation.ignore === undefined ? {} : { ignore: invocation.ignore }),
-        ...(invocation.pack === undefined ? {} : { pack: invocation.pack }),
-        brief: invocation.brief,
-        promptTask: invocation.promptTask,
-        skipArtifacts: invocation.skipArtifacts,
-        // `--only-artifacts` is forwarded as itself, not only as the derived suppression list:
-        // suppression cannot switch an artifact *on*, so a config that had turned one of the
-        // requested artifacts off left the run with nothing to write.
-        onlyArtifacts: invocation.onlyArtifacts,
-        discovery: invocation.discovery,
-        changedSince: invocation.changedSince,
-        staged: invocation.staged,
-        withDependents: invocation.withDependents,
-        skeleton: invocation.skeleton,
-        sarif: invocation.sarif,
-      } as Partial<CliOptions> & { discovery?: DiscoveryMode },
+      generateCliOptions(invocation),
       invocation.cwd
     );
   } catch (err) {
@@ -2105,7 +2117,11 @@ async function runCommand(argv: string[]): Promise<number> {
           rows.push({ name, score: 0, counts: { pass: 0, warn: 0, fail: 1 }, failed: [], error: "no snapshot at " + snapshotDir });
           continue;
         }
-        const report = auditSnapshot({ snapshotDir, repoDir });
+        const report = auditSnapshot({
+          snapshotDir,
+          repoDir,
+          ...(invocation.deep === true ? { deep: true } : {}),
+        });
         rows.push({
           name,
           score: report.score,
@@ -2288,6 +2304,14 @@ async function runCommand(argv: string[]): Promise<number> {
   if (invocation.watch) {
     const problem = watchSupportProblem();
     if (problem !== null) return fail(invocation.format, problem);
+    // A delta base is a fixed comparison point, and the watch loop would otherwise regenerate
+    // against it while silently ignoring the flag. Refuse the combination instead of pretending.
+    if (invocation.delta !== undefined) {
+      return fail(
+        invocation.format,
+        "--watch cannot track a fixed --delta base; run a one-shot generate --delta, or watch without it."
+      );
+    }
   }
 
   if (invocation.workspace !== undefined) {
@@ -2452,15 +2476,23 @@ async function runCommand(argv: string[]): Promise<number> {
                 : { maxTokens: invocation.sliceTokens }),
             },
           }),
+      ...(invocation.sign === true && !invocation.dryRun
+        ? { sign: { key: loadSigningKey() } }
+        : {}),
     });
     if (invocation.sign === true && !invocation.dryRun) {
-      const manifestPath = path.resolve(resolved.cwd, resolved.outDir, "manifest.json");
+      const signaturePath = path.resolve(resolved.cwd, resolved.outDir, SIGNATURE_FILE);
       try {
-        const record = signManifest(manifestPath, { key: loadSigningKey() });
-        writeSignature(path.dirname(manifestPath), record);
-        info("   Signature: ed25519, " + record.keyOrigin + " key, " + record.fingerprint.slice(0, 12));
+        const record = JSON.parse(fs.readFileSync(signaturePath, "utf8")) as {
+          keyOrigin?: string;
+          fingerprint?: string;
+        };
+        info(
+          "   Signature: ed25519, " + (record.keyOrigin ?? "unknown") + " key, " +
+            (record.fingerprint ?? manifest.fingerprint).slice(0, 12)
+        );
       } catch (error) {
-        return fail(invocation.format, "Signing failed: " + (error as Error).message);
+        return fail(invocation.format, "The snapshot was written but its signature could not be read: " + (error as Error).message);
       }
     }
     const elapsed = ((performance.now() - started) / 1000).toFixed(2);
@@ -2879,34 +2911,28 @@ async function runWatchLoop(
       for (const warning of loaded.warnings) warn(`⚠ Config: ${warning}`);
       const next = resolveConfig(
         loaded.config,
-        {
-          mode: invocation.command as Mode,
-          format: invocation.format,
-          dryRun: invocation.dryRun,
-          cwd: invocation.cwd,
-          outDir: invocation.outDir,
-          includeMonolith: invocation.includeMonolith,
-          includeSensitiveFiles: invocation.includeSensitiveFiles,
-          maxPartBytes: invocation.maxPartBytes,
-          maxPartTokens: invocation.maxPartTokens,
-          largeFileBytes: invocation.largeFileBytes,
-          maxMonolithBytes: invocation.maxMonolithBytes,
-          attachmentSlots: invocation.attachmentSlots,
-          maxParts: invocation.maxParts,
-          brief: invocation.brief,
-          promptTask: invocation.promptTask,
-          skipArtifacts: invocation.skipArtifacts,
-          onlyArtifacts: invocation.onlyArtifacts,
-          discovery: invocation.discovery,
-          changedSince: invocation.changedSince,
-          staged: invocation.staged,
-          withDependents: invocation.withDependents,
-          skeleton: invocation.skeleton,
-          sarif: invocation.sarif,
-        } as Partial<CliOptions> & { discovery?: DiscoveryMode; maxPartTokens?: number },
+        generateCliOptions(invocation),
         invocation.cwd
       );
-      const manifest = generateSnapshot(next, { dryRun: invocation.dryRun });
+      const manifest = generateSnapshot(next, {
+        dryRun: invocation.dryRun,
+        ...(invocation.budgetTokens === undefined
+          ? {}
+          : { budgetTokens: invocation.budgetTokens }),
+        ...(invocation.slice === undefined
+          ? {}
+          : {
+              slice: {
+                question: invocation.slice,
+                ...(invocation.sliceTokens === undefined
+                  ? {}
+                  : { maxTokens: invocation.sliceTokens }),
+              },
+            }),
+        ...(invocation.sign === true && !invocation.dryRun
+          ? { sign: { key: loadSigningKey() } }
+          : {}),
+      });
       // The output directories may have moved in the config that was just reloaded.
       paths = watchPathsFor(next);
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);

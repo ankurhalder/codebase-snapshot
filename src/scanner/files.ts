@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { PRESETS } from "../presets/index.js";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { REDACTION_MARKER, advanceStringIndex } from "../security/redact.js";
+import { verifySnapshotSignature } from "../signing.js";
 import type { DiscoveryMode, SecretRule, SkipRecord } from "../types.js";
 import { GENERATOR_NAME } from "../version.js";
 
@@ -1056,10 +1057,7 @@ function listIgnoredPaths(cwd: string): string[] {
  */
 function hasSnapshotMarker(target: string): boolean {
   try {
-    return (
-      fs.statSync(target).isDirectory() &&
-      fs.existsSync(path.join(target, ".codebase-snapshot"))
-    );
+    return fs.statSync(target).isDirectory() && isToolOwnedDirectory(target);
   } catch {
     return false;
   }
@@ -1122,6 +1120,9 @@ function isToolOwnedDirectory(dir: string): boolean {
     (entry) =>
       entry === ".codebase-snapshot" ||
       IGNORABLE_DIRECTORY_ENTRIES.has(entry) ||
+      // A snapshot signed before signing moved into staging has a valid signature.json the old
+      // marker could not record. It is our artifact when the signature verifies.
+      (entry === "signature.json" && verifySnapshotSignature(dir).ok) ||
       accounted.has(entry)
   );
 }
@@ -1304,7 +1305,19 @@ function dropLinkedDirectories(
       continue;
     }
 
-    // An in-root link to a regular file is a file, exactly as the walker decides.
+    // An in-root link to a regular file is a file, exactly as the walker decides — but
+    // sensitivity belongs to the target, not the alias. The walker already applied this rule;
+    // the git path only checked containment, so `public-context.txt -> .env` was admitted with
+    // the .env contents on the default discovery path.
+    const targetRelative = path.relative(rootReal, targetReal).split(path.sep).join("/");
+    if (isSensitivePath(targetRelative)) {
+      report(linkedPath, {
+        path: linkedPath,
+        reason: "sensitive-file",
+        detail: "link target is a credential-bearing file; not followed",
+      });
+      continue;
+    }
     kept.push(candidate);
   }
 

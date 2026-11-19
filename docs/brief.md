@@ -70,6 +70,11 @@ Three things are errors rather than overrides, because each would make the docum
 - **an edited brief after generating.** Its digest is recorded, so `validate` reports
   `brief: docs/brief.md changed since this snapshot was generated`.
 
+A brief must also stay inside the repository and must not be a credential-bearing file; a path
+that escapes the repository is refused, because an untrusted `snapshot.config.json` must not turn
+the brief into a host-file read. Its prose is redacted with the full content scanner, so a PEM
+private key pasted into the text is masked as a block.
+
 Two smaller ones: a heading defined twice is ambiguous and refused, and a file over 64 KiB is
 refused with its size — past that it is a second codebase rather than instruction.
 

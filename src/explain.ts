@@ -7,7 +7,7 @@ import { isCommentStrippable, stripComments } from "./generator/comments.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
 import { resolveChangedScope } from "./scanner/changed.js";
-import { buildImportResolver, importsChangedFile } from "./scanner/dependents.js";
+import { buildImportResolver, importsChangedFile, tsconfigPathsFor } from "./scanner/dependents.js";
 import {
   BINARY_SCAN_BYTES,
   decodeText,
@@ -247,7 +247,9 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
           relative,
           importsOfFile(relative, absolute),
           scope.paths,
-          buildImportResolver(collection.files.map((file) => ({ relativePath: file })))
+          buildImportResolver(collection.files.map((file) => ({ relativePath: file })), {
+            tsconfig: tsconfigPathsFor(config.cwd),
+          })
         );
       }
       scopeDetail = scope.detail;

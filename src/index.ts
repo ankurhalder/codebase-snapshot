@@ -62,10 +62,12 @@ import {
   findSecretInPath,
   getGitInfo,
   maskSkipPaths,
+  matchesExclude,
   recentCommits,
 } from "./scanner/files.js";
 import { detectLanguage } from "./scanner/language.js";
 import { scanAndRedactSecrets } from "./security/redact.js";
+import { signManifest, SIGNATURE_FILE, verifySnapshotSignature } from "./signing.js";
 import { validateSnapshot } from "./validator/validate.js";
 import { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION, isOurGeneratorName } from "./version.js";
 import type {
@@ -92,7 +94,7 @@ import type {
 } from "./types.js";
 
 export { GENERATOR_NAME, GENERATOR_VERSION, SCHEMA_VERSION } from "./version.js";
-export { assertPublicHost, cloneRepository, isPrivateHost, makeCloneDirectory, parseRemoteSource } from "./remote/source.js";
+export { assertPublicHost, cloneRepository, isPrivateHost, makeCloneDirectory, parseRemoteSource, tokenAllowedForHost } from "./remote/source.js";
 export type { CloneOptions, CloneResult, ParsedSource, RemoteSource } from "./remote/source.js";
 export { startWebServer } from "./web/server.js";
 export type { ServeHandle, ServeOptions } from "./web/server.js";
@@ -446,6 +448,22 @@ export interface GenerateOptions {
   slice?: { question: string; maxTokens?: number };
   /** `--budget-tokens`: fit the snapshot into this token budget, highest value first. */
   budgetTokens?: number;
+  /**
+   * Identity for this run's locks and staging directory.
+   *
+   * The MCP worker shares this process's pid, so a terminated worker leaves a lock that looks
+   * live to every later run until the heartbeat expires. The parent passes a token it can name
+   * when it has to clean up an abandoned run.
+   */
+  runId?: string;
+  /**
+   * Sign the manifest as part of the same publish.
+   *
+   * Signing used to run in the CLI after generateSnapshot had written the ownership marker, so
+   * the marker did not record signature.json and the next run refused its own output as foreign.
+   * Doing it in staging makes the signature part of the atomic swap and part of the inventory.
+   */
+  sign?: { key?: import("node:crypto").KeyObject | null };
 }
 
 const TS_EXTENSIONS = [
@@ -802,13 +820,21 @@ function maskPathText(value: string, secretRules?: readonly SecretRule[]): strin
   return findSecretInPath(value, secretRules)?.masked ?? value;
 }
 
-/** Masking for the owner brief, field by field: it is prose, and prose can carry a token. */
+/**
+ * Masking for the owner brief, field by field: it is prose, and prose can carry a token.
+ *
+ * This used `findSecretInPath`, which runs the line-oriented path rules and nothing else. A PEM
+ * private key in a valid in-repository brief therefore kept its `BEGIN` header masked and every
+ * base64 body line in clear text, in PROMPT.md and in every artifact that reproduced it. Prose
+ * goes through the full content scanner: PEM blocks, line rules and custom rules.
+ */
 function maskOwnerBrief(
   brief: OwnerBrief | undefined,
   secretRules?: readonly SecretRule[]
 ): OwnerBrief | undefined {
   if (brief === undefined) return undefined;
-  const mask = (value: string): string => maskPathText(value, secretRules);
+  const mask = (value: string): string =>
+    scanAndRedactSecrets(value, secretRules ?? [], "owner-brief").redacted;
   return {
     ...brief,
     path: mask(brief.path),
@@ -882,6 +908,8 @@ interface OwnershipMarker {
   state: MarkerState;
   /** Random per-snapshot value; a hand-written marker has no reason to carry one. */
   id: string;
+  /** The run-lock identity, when the writer supplied one; used to clean up a killed worker. */
+  runId?: string;
   /** Process that wrote the marker; used to spot stale staging runs. */
   pid?: number;
   /** sha256 of the shipped `manifest.json`, when one was written. */
@@ -1008,7 +1036,8 @@ function markerPayload(
   state: MarkerState,
   id: string,
   createdAt: string,
-  written?: WrittenLedger
+  written?: WrittenLedger,
+  runId?: string
 ): OwnershipMarker {
   const { entries, files } = markerInventory(dir, written);
   const marker: OwnershipMarker = {
@@ -1018,6 +1047,7 @@ function markerPayload(
     createdAt,
     state,
     id,
+    ...(runId === undefined ? {} : { runId }),
     pid: process.pid,
     entries,
     files,
@@ -1147,6 +1177,7 @@ function readOwnershipMarker(dir: string): MarkerEvidence {
       createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "unknown",
       state: candidate.state,
       id: candidate.id,
+      runId: typeof candidate.runId === "string" ? candidate.runId : undefined,
       pid: typeof candidate.pid === "number" ? candidate.pid : undefined,
       manifestSha256:
         typeof candidate.manifestSha256 === "string" ? candidate.manifestSha256 : undefined,
@@ -1384,15 +1415,29 @@ function assessSnapshotDirectory(dir: string): DirectoryVerdict {
   }
 
   const entries = listEntries(dir);
-  const foreignEntries = entries.filter(
+  let foreignEntries = entries.filter(
     (entry) => !recorded.has(entry) && !isIgnorableEntry(entry)
   );
+  // A snapshot signed by this tool before signing moved into staging: the marker predates
+  // signature.json, so the file looks foreign. It is evidence, not a foreign file, but only when
+  // the signature actually verifies against the manifest beside it.
+  const legacySignatureOnly =
+    foreignEntries.length === 1 &&
+    foreignEntries[0] === SIGNATURE_FILE &&
+    verifySnapshotSignature(dir).ok;
+  if (legacySignatureOnly) foreignEntries = [];
   if (foreignEntries.length > 0) {
     // Named separately so the refusal can list exactly what stops it.
     return { owned: false, problem: null, foreignEntries, marker };
   }
   const inventoryProblem =
-    marker.files === undefined ? null : verifyMarkerInventory(dir, entries, marker.files);
+    marker.files === undefined
+      ? null
+      : verifyMarkerInventory(
+          dir,
+          legacySignatureOnly ? entries.filter((entry) => entry !== SIGNATURE_FILE) : entries,
+          marker.files
+        );
   return {
     owned: inventoryProblem === null,
     problem: inventoryProblem,
@@ -1688,13 +1733,13 @@ function startLockHeartbeat(lockPath: string): () => void {
  * be scanned — and carries a heartbeat so a crashed run's lock does not block
  * forever.
  */
-function acquireRunLock(stagingRoot: string): () => void {
+function acquireRunLock(stagingRoot: string, runId: string): () => void {
   const lockPath = lockPathFor(stagingRoot);
   const payload = `${JSON.stringify({
     pid: process.pid,
     stagingRoot,
     host: os.hostname(),
-    runId: crypto.randomUUID(),
+    runId,
     heartbeatMs: LOCK_HEARTBEAT_MS,
     startedAt: new Date().toISOString(),
   })}\n`;
@@ -1788,6 +1833,46 @@ function canonicalLockTarget(targetPath: string): string {
  */
 export function lockPathFor(stagingRoot: string): string {
   return path.join(os.tmpdir(), `codebase-snapshot-${lockKeyFor(stagingRoot)}.lock`);
+}
+
+/**
+ * Removes the lock and staging directory of a run that was killed from outside.
+ *
+ * A worker thread shares this process's pid. Terminating it therefore leaves a lock whose pid is
+ * still alive, and `lockOwnerIsGone` correctly refuses to reclaim it until the heartbeat window
+ * expires — 120 seconds in which every generate fails. The parent owns the run token, so it can
+ * remove only the evidence that names that token.
+ *
+ * Exported for the MCP worker supervisor; a normal run releases its own locks in `finally`.
+ */
+export function releaseAbandonedRun(stagingRoots: readonly string[], runId: string): void {
+  if (runId.length === 0) return;
+  for (const root of new Set(stagingRoots)) {
+    const lockPath = lockPathFor(root);
+    try {
+      const payload = JSON.parse(fs.readFileSync(lockPath, "utf8")) as { runId?: unknown };
+      if (payload.runId === runId) fs.rmSync(lockPath, { force: true });
+    } catch {
+      // No lock, unreadable lock, or a lock another run now owns: leave it alone.
+    }
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      if (!name.startsWith(RUN_DIR_PREFIX)) continue;
+      const directory = path.join(root, name);
+      const { marker } = readOwnershipMarker(directory);
+      if (marker?.runId !== runId) continue;
+      try {
+        fs.rmSync(directory, { recursive: true, force: true });
+      } catch {
+        // A locked file must not turn cancellation into a crash; the run is abandoned either way.
+      }
+    }
+  }
 }
 
 /** Milliseconds since the lock was last refreshed, or `Infinity` when it cannot be read. */
@@ -2383,6 +2468,9 @@ export function generateSnapshot(
     ? normalizeResolvedConfig(configInput)
     : resolveConfig((configInput as SnapshotConfig | null | undefined) ?? null);
   const dryRun = options?.dryRun ?? false;
+  // A caller that will have to clean up after a terminated worker supplies this; a normal run
+  // gets a fresh identity that is also recorded in the staging marker.
+  const runId = options?.runId ?? crypto.randomUUID();
 
   const gitInfo = getGitInfo(config.cwd, config.branch);
 
@@ -3442,10 +3530,21 @@ export function generateSnapshot(
     ? generateAuditReport(manifest, secretFindings, config.secretRules)
     : null;
   if (auditText !== null) manifest.artifacts.audit = artifactRecord(auditText);
-  const diffReport = artifacts.diff ? generateDiffReport(config.cwd) : null;
+  // Reports are artifacts like any other. Before this they bypassed both routes the parts use:
+  // sensitive paths were not filtered and scanAndRedactSecrets was never called, so a staged
+  // .env or a token in a commit subject was written in clear text beside a fully redacted
+  // PROMPT.md.
+  const reportExcludes = [...config.excludePatterns, ...config.presetExclude];
+  const diffReport = artifacts.diff
+    ? generateDiffReport(config.cwd, {
+        secretRules: config.secretRules,
+        excluded: (relativePath) =>
+          reportExcludes.some((pattern) => matchesExclude(relativePath, pattern)),
+      })
+    : null;
   if (diffReport !== null) manifest.artifacts.diff = artifactRecord(diffReport.text);
   const logReport = artifacts.log
-    ? generateLogReport(config.cwd, { count: config.logCount })
+    ? generateLogReport(config.cwd, { count: config.logCount, secretRules: config.secretRules })
     : null;
   // A requested report that could not be produced has to say so. `--include-diffs` outside a git
   // repository accepted the flag, wrote nothing, recorded nothing and exited 0: the one silent
@@ -3513,10 +3612,16 @@ export function generateSnapshot(
     // inclusion fields describe what this artifact actually contains.
     const fullFiles: FileEntry[] = files.map((file) => {
       const content = fullContents.get(file.relativePath) ?? "";
+      // The monolith carries the whole body (not a preview or a skeleton), but it may carry the
+      // *transformed* body: stripComments leaves comments out, and removeEmptyLines renumbers.
+      // Calling that "full" made the pack claim code it had deleted. A preview/skeleton is full
+      // here because fullContents holds the pre-preview body, so only the comment mode survives.
       const entry: FileEntry = {
         ...file,
         content,
-        inclusionMode: "full",
+        inclusionMode:
+          file.inclusionMode === "comments-stripped" ? "comments-stripped" : "full",
+        ...(file.emptyLinesRemoved === true ? { emptyLinesRemoved: true as const } : {}),
         isPreviewTruncated: false,
         includedBytes: Buffer.byteLength(content, "utf8"),
         includedLines: countLines(content),
@@ -3622,7 +3727,7 @@ export function generateSnapshot(
   const lockKeys = Array.from(new Set([tmpDir, outDir])).sort();
   const releases: Array<() => void> = [];
   try {
-    for (const key of lockKeys) releases.push(acquireRunLock(key));
+    for (const key of lockKeys) releases.push(acquireRunLock(key, runId));
   } catch (error) {
     // A run refused by the second lock must not keep the first: the leftover names
     // this live pid, so the next run refuses it too instead of reclaiming it as stale.
@@ -3673,6 +3778,7 @@ export function generateSnapshot(
       createdAt,
       state: "staging",
       id: snapshotId,
+      runId,
       pid: process.pid,
     });
 
@@ -3765,6 +3871,22 @@ export function generateSnapshot(
       writeArtifact(stagingDir, "manifest.json", JSON.stringify(manifest, null, 2));
     }
 
+    // Signing is part of the publish, not a postscript. The old CLI wrote signature.json after
+    // this function had written the ownership marker, so the marker could not account for it and
+    // the next generate refused the directory as foreign.
+    if (options?.sign !== undefined) {
+      if (!artifacts.manifest) {
+        throw new Error(
+          "Refusing to sign: manifest.json is disabled for this run. Signing covers the manifest, " +
+            "so enable the manifest artifact or drop --sign."
+        );
+      }
+      const record = signManifest(path.join(stagingDir, "manifest.json"), {
+        key: options.sign.key ?? null,
+      });
+      writeArtifact(stagingDir, SIGNATURE_FILE, JSON.stringify(record, null, 2) + "\n");
+    }
+
     if (monolithJson !== null) {
       writeArtifact(stagingDir, "full-codebase.json", monolithJson);
     }
@@ -3780,7 +3902,7 @@ export function generateSnapshot(
     // the next run can prove it wrote.
     writeOwnershipMarker(
       stagingDir,
-      markerPayload(stagingDir, "complete", snapshotId, createdAt, writtenArtifacts)
+      markerPayload(stagingDir, "complete", snapshotId, createdAt, writtenArtifacts, runId)
     );
 
     swapIntoPlace(stagingDir, outDir, () => assertReplaceable(outDir, "outDir", config.secretRules));
@@ -3804,10 +3926,18 @@ export function generateSnapshot(
       if (artifacts.manifest && manifest.warnings.length !== warningsBeforeHook) {
         writeManifestAtomically(path.join(outDir, "manifest.json"), manifest);
         recordArtifact(outDir, "manifest.json");
+        // The signature covers the manifest bytes. Re-shipping a warning changes them, so a
+        // signature written before the hook would no longer verify.
+        if (options?.sign !== undefined) {
+          const record = signManifest(path.join(outDir, "manifest.json"), {
+            key: options.sign.key ?? null,
+          });
+          writeArtifact(outDir, SIGNATURE_FILE, JSON.stringify(record, null, 2) + "\n");
+        }
       }
       writeOwnershipMarker(
         outDir,
-        markerPayload(outDir, "complete", snapshotId, createdAt, writtenArtifacts)
+        markerPayload(outDir, "complete", snapshotId, createdAt, writtenArtifacts, runId)
       );
     };
     // With no hook, nothing after the swap can add a file or a warning, and the staging

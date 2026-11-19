@@ -378,8 +378,13 @@ Three things are refused because they would make the document lie:
   error, not an override;
 - a `brief` path that cannot be read is an error — a snapshot must not silently ship without the
   half you wrote;
+- a `brief` that resolves outside the repository, or that names a credential-bearing file, is
+  refused. An untrusted `snapshot.config.json` must not turn the brief into a host-file read;
 - and the file is digested into the config digest, so editing the brief after generating makes
   `validate` report drift. A stale brief is the same failure as a stale snapshot.
+
+The brief is redacted with the full content scanner, not only the path rules: a token or a PEM
+private key pasted into prose is masked before it reaches `PROMPT.md`.
 
 `promptTask` changes only the opening section: `audit` (the default) asks for what is wrong or
 will break, `review` for what a change breaks, `explain` for how a subsystem works. The standard

@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { truncateToBytes } from "../partitioner/preview.js";
+import { scanAndRedactSecrets } from "../security/redact.js";
+import type { SecretRule } from "../types.js";
 
 // Recent commits, as an artifact: the history the snapshot was built from, bounded and one line
 // per commit, with the command that produced it.
@@ -8,7 +11,10 @@ export interface LogReport {
   count: number;
 }
 
-export function generateLogReport(cwd: string, options: { count?: number; maxBytes?: number } = {}): LogReport | null {
+export function generateLogReport(
+  cwd: string,
+  options: { count?: number; maxBytes?: number; secretRules?: readonly SecretRule[] } = {}
+): LogReport | null {
   const count = Math.max(1, Math.min(500, options.count ?? 20));
   const maxBytes = options.maxBytes ?? 64 * 1024;
   const result = spawnSync(
@@ -20,13 +26,18 @@ export function generateLogReport(cwd: string, options: { count?: number; maxByt
   const body = (result.stdout ?? "").trim();
   if (body === "") return null;
   const lines = body.split("\n");
+  // Commit subjects are author-controlled text and routinely carry tokens in incident commits.
+  // PROMPT.md masked them while this report wrote them raw, so the same run produced one safe
+  // artifact and one leak. Redact before truncating: truncation must never cut a marker in half.
+  const redacted = scanAndRedactSecrets(body, options.secretRules ?? [], "reports/log.md").redacted;
+  const joined = truncateToBytes(redacted, maxBytes).content;
   const text = [
     "# Recent commits",
     "",
     "The last " + count + " commits, newest first, one line each.",
     "",
     "```text",
-    lines.join("\n").slice(0, maxBytes),
+    joined,
     "```",
     "",
   ].join("\n");

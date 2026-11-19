@@ -89,15 +89,66 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     );
   }
 
-  const server: McpServer = createServer({ cwd: options.cwd, log });
+  const createMcp = (): McpServer => createServer({ cwd: options.cwd, log });
   const toolCount = buildTools().length;
+  /**
+   * One server per client, not one per process.
+   *
+   * The era and the cancellation map are session state. A shared instance let client A's
+   * `server/discover` permanently reject client B's legacy `initialize`, and let a cancellation
+   * from one client stop request id 1 in another. Streamable HTTP clients name their session with
+   * `mcp-session-id`; clients that do not get one server per TCP socket.
+   */
+  const mcpSessions = new Map<string, McpServer>();
+  const socketServers = new WeakMap<object, McpServer>();
+  // Fallback for clients that do not forward the session header. The spec-compliant path is the
+  // header; a client that ignores it still needs initialize and tools/list to share state, so
+  // this pool is keyed by remote address and user agent. Two clients on one host with the same
+  // user agent remain a limitation, and naming the session header is the fix.
+  const anonymousServers = new Map<string, McpServer>();
+  const serverFor = (request: http.IncomingMessage): McpServer => {
+    const header = request.headers["mcp-session-id"];
+    const supplied = typeof header === "string" ? header.trim() : "";
+    if (supplied !== "") {
+      let existing = mcpSessions.get(supplied);
+      if (existing === undefined) {
+        existing = createMcp();
+        if (mcpSessions.size >= 64) {
+          const oldest = mcpSessions.keys().next().value;
+          if (oldest !== undefined) mcpSessions.delete(oldest);
+        }
+        mcpSessions.set(supplied, existing);
+      }
+      return existing;
+    }
+    const onSocket = socketServers.get(request.socket);
+    if (onSocket !== undefined) return onSocket;
+    const userAgent =
+      typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : "";
+    const fallbackKey = (request.socket.remoteAddress ?? "unknown") + "\0" + userAgent;
+    let fallback = anonymousServers.get(fallbackKey);
+    if (fallback === undefined) {
+      fallback = createMcp();
+      if (anonymousServers.size >= 64) {
+        const oldest = anonymousServers.keys().next().value;
+        if (oldest !== undefined) anonymousServers.delete(oldest);
+      }
+      anonymousServers.set(fallbackKey, fallback);
+    }
+    socketServers.set(request.socket, fallback);
+    return fallback;
+  };
+  const newSessionId = (): string => crypto.randomBytes(12).toString("hex");
   /**
    * Legacy SSE sessions: `GET /sse` hands out an endpoint URL, `POST /messages` answers on the
    * open stream. It exists for clients that predate Streamable HTTP and cannot send headers —
    * which is also why the token may arrive as a query parameter here. That is a leak into logs,
    * so it is confined to this path and the docs say so.
    */
-  const sseSessions = new Map<string, { write: (payload: string) => void; end: () => void }>();
+  const sseSessions = new Map<
+    string,
+    { write: (payload: string) => void; end: () => void; server: McpServer }
+  >();
   const tokenAccepted = (request: http.IncomingMessage, url: URL): boolean => {
     if (token === null) return true;
     const header = request.headers.authorization ?? "";
@@ -128,6 +179,20 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     metrics.byMethod.set(method, (metrics.byMethod.get(method) ?? 0) + 1);
   };
 
+  /** True when this remote address has spent its window; the caller sends the 429. */
+  const rateLimited = (request: http.IncomingMessage): boolean => {
+    const remote = request.socket.remoteAddress ?? "unknown";
+    const now = Date.now();
+    const window = sessions.get(remote);
+    if (window === undefined || window.resetAt <= now) {
+      sessions.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
+      return false;
+    }
+    if (window.count >= RATE_LIMIT) return true;
+    window.count += 1;
+    return false;
+  };
+
   const allowedOrigin = (origin: string | undefined): string | null => {
     if (origin === undefined) return null;
     if (isLoopbackOrigin(origin)) return origin;
@@ -136,7 +201,13 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
 
   const httpServer = http.createServer((request, response) => {
     noteRequest(request);
+    // One response per request. Oversized bodies arrive in several chunks; without this flag the
+    // data handler answered 413 once per chunk and the second writeHead threw
+    // ERR_HTTP_HEADERS_SENT, taking the server down.
+    let responseSent = false;
     const send = (status: number, body: unknown, extra: Record<string, string> = {}): void => {
+      if (responseSent) return;
+      responseSent = true;
       const text = typeof body === "string" ? body : JSON.stringify(body);
       // One place counts refusals, so a future early return cannot forget to. A 4xx is a
       // refusal (the client's request was not dispatched); 429 has its own counter because the
@@ -227,6 +298,11 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
         return;
       }
+      if (rateLimited(request)) {
+        metrics.rateLimited += 1;
+        send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
+        return;
+      }
       const id = crypto.randomBytes(12).toString("hex");
       response.writeHead(200, {
         ...cors,
@@ -238,7 +314,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       const write = (payload: string): void => {
         response.write(payload);
       };
-      sseSessions.set(id, { write, end: () => response.end() });
+      sseSessions.set(id, { write, end: () => response.end(), server: createMcp() });
       const heartbeat = setInterval(() => write(": ping\n\n"), 15_000);
       const cleanup = (): void => {
         clearInterval(heartbeat);
@@ -255,6 +331,11 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
         return;
       }
+      if (rateLimited(request)) {
+        metrics.rateLimited += 1;
+        send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
+        return;
+      }
       const id = url.searchParams.get("sessionId") ?? "";
       const stream = sseSessions.get(id);
       if (stream === undefined) {
@@ -263,9 +344,12 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       }
       const chunks: Buffer[] = [];
       let received = 0;
+      let tooLarge = false;
       request.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
         received += chunk.length;
         if (received > maxBody) {
+          tooLarge = true;
           request.destroy();
           send(413, { error: "request body too large", limit: maxBody });
           return;
@@ -273,6 +357,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         chunks.push(chunk);
       });
       request.on("end", () => {
+        if (tooLarge) return;
         void (async () => {
           let message: unknown;
           try {
@@ -281,7 +366,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
             send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: String(error) } });
             return;
           }
-          const answer = await server.handle(message);
+          const answer = await stream.server.handle(message);
           if (answer !== null) stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
           send(202, "", cors);
         })();
@@ -312,21 +397,23 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       }
     }
 
-    const remote = request.socket.remoteAddress ?? "unknown";
-    const now = Date.now();
-    const window = sessions.get(remote);
-    if (window === undefined || window.resetAt <= now) sessions.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    else if (window.count >= RATE_LIMIT) {
+    if (rateLimited(request)) {
       metrics.rateLimited += 1;
       send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
       return;
-    } else window.count += 1;
+    }
 
+    const activeServer = serverFor(request);
+    const sessionHeader = request.headers["mcp-session-id"];
+    let sessionId = typeof sessionHeader === "string" ? sessionHeader.trim() : "";
     let received = 0;
+    let tooLarge = false;
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
       received += chunk.length;
       if (received > maxBody) {
+        tooLarge = true;
         request.destroy();
         send(413, { error: "request body too large", limit: maxBody }, cors);
         return;
@@ -334,6 +421,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       chunks.push(chunk);
     });
     request.on("end", () => {
+      if (tooLarge) return;
       void (async () => {
         let message: unknown;
         try {
@@ -342,17 +430,32 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
           send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error: " + (error as Error).message } }, cors);
           return;
         }
-        const answers: JsonRpcResponse[] = [];
         const batch = Array.isArray(message) ? message : [message];
+        if (batch.length > 100) {
+          send(400, { error: "JSON-RPC batch is limited to 100 messages" }, cors);
+          return;
+        }
+        // Assign a session on the first initialize and return it in the header. A client that
+        // ignores the header still gets the per-socket server above, so state cannot leak.
+        if (
+          sessionId === "" &&
+          !Array.isArray(message) &&
+          (message as { method?: unknown }).method === "initialize"
+        ) {
+          sessionId = newSessionId();
+          mcpSessions.set(sessionId, activeServer);
+        }
+        const sessionHeaders = sessionId === "" ? cors : { ...cors, "mcp-session-id": sessionId };
+        const answers: JsonRpcResponse[] = [];
         for (const item of batch) {
-          const answer = await server.handle(item);
+          const answer = await activeServer.handle(item);
           if (answer !== null) answers.push(answer);
         }
         if (answers.length === 0) {
-          send(202, "", cors);
+          send(202, "", sessionHeaders);
           return;
         }
-        send(200, Array.isArray(message) ? answers : answers[0], cors);
+        send(200, Array.isArray(message) ? answers : answers[0], sessionHeaders);
       })().catch((error: unknown) => {
         log("mcp/http: " + (error as Error).message);
         send(500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);

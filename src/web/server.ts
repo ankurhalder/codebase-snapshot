@@ -7,6 +7,7 @@ import { loadConfigFileDetailed } from "../config.js";
 import { createServer } from "../mcp/run.js";
 import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
+import { describeManifestShapeProblem } from "../validator/validate.js";
 import type { Manifest } from "../types.js";
 import { writeZip } from "./zip.js";
 import { SERVE_PAGE } from "./ui.js";
@@ -66,7 +67,20 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   if (token === null && !["127.0.0.1", "localhost", "::1"].includes(host)) {
     throw new Error("Refusing to serve " + host + " without a token.");
   }
-  const mcp = createServer({ cwd: options.cwd, log });
+  const createMcp = () => createServer({ cwd: options.cwd, log });
+  // MCP session state (era, pending cancellations) belongs to one client. One server shared by
+  // every socket let client A's server/discover force client B's legacy initialize to fail, and
+  // let request id 1 in one client cancel request id 1 in another. A per-socket server is the
+  // smallest state boundary the HTTP transport can honestly provide.
+  const mcpPerSocket = new WeakMap<object, ReturnType<typeof createMcp>>();
+  const mcpFor = (socket: object): ReturnType<typeof createMcp> => {
+    let server = mcpPerSocket.get(socket);
+    if (server === undefined) {
+      server = createMcp();
+      mcpPerSocket.set(socket, server);
+    }
+    return server;
+  };
   /** Clones made by this process; removed when it closes, because the page can still be reading them. */
   const temporaryClones = new Set<string>();
 
@@ -80,12 +94,55 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
    * for what may be asked about.
    */
   const allowedRoots = [path.resolve(options.cwd)];
+  /**
+   * Canonical path, or null when it does not exist.
+   *
+   * The lexical check this replaces was bypassed by a symlink inside the served directory: the
+   * name resolved inside, the target did not, and /api/snapshot.zip shipped the target. A path
+   * that cannot be resolved is not inside anything.
+   */
+  const canonical = (candidate: string): string | null => {
+    try {
+      return fs.realpathSync(candidate);
+    } catch {
+      return null;
+    }
+  };
+  const inside = (resolved: string): boolean =>
+    allowedRoots.some((root) => {
+      const canonicalRoot = canonical(root);
+      if (canonicalRoot === null) return false;
+      const relative = path.relative(canonicalRoot, resolved);
+      return (
+        relative === "" ||
+        (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+      );
+    });
   const insideAllowedRoots = (candidate: string): boolean => {
+    const resolved = canonical(candidate);
+    return resolved === null ? false : inside(resolved);
+  };
+  /** Lexical containment: used to answer 403 before 404 without following a link. */
+  const lexicallyInside = (candidate: string): boolean => {
     const resolved = path.resolve(candidate);
     return allowedRoots.some((root) => {
-      const prefix = root.endsWith(path.sep) ? root : root + path.sep;
-      return resolved === root || resolved.startsWith(prefix);
+      const prefix = path.resolve(root) + path.sep;
+      return resolved === path.resolve(root) || resolved.startsWith(prefix);
     });
+  };
+  /** The same check for a directory this request is about to create. */
+  const insideAllowedRootsForWrite = (candidate: string): boolean => {
+    let existing = path.resolve(candidate);
+    const tail: string[] = [];
+    while (!fs.existsSync(existing)) {
+      tail.unshift(path.basename(existing));
+      const parent = path.dirname(existing);
+      if (parent === existing) break;
+      existing = parent;
+    }
+    const resolved = canonical(existing);
+    if (resolved === null) return false;
+    return inside(tail.length === 0 ? resolved : path.join(resolved, ...tail));
   };
 
   const authorized = (request: http.IncomingMessage): boolean => {
@@ -112,7 +169,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
       cors["access-control-allow-headers"] = "authorization, content-type";
       cors["access-control-allow-methods"] = "GET, POST, OPTIONS";
     }
+    // One response per request. A body split across TCP chunks used to call send(413) once per
+    // chunk after the limit, and the second writeHead threw ERR_HTTP_HEADERS_SENT and killed the
+    // server. The flag makes the first answer final.
+    let responseSent = false;
     const send = (status: number, body: unknown, extra: Record<string, string> = {}): void => {
+      if (responseSent) return;
+      responseSent = true;
       const text = typeof body === "string" ? body : JSON.stringify(body);
       response.writeHead(status, {
         ...cors,
@@ -146,10 +209,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "POST" && (request.url === "/mcp" || (request.url ?? "").startsWith("/mcp?"))) {
       let received = 0;
+      let tooLarge = false;
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
         received += chunk.length;
         if (received > 2 * 1024 * 1024) {
+          tooLarge = true;
           request.destroy();
           send(413, { error: "request body too large" });
           return;
@@ -157,6 +223,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         chunks.push(chunk);
       });
       request.on("end", () => {
+        if (tooLarge) return;
         void (async () => {
           let message: unknown;
           try {
@@ -166,9 +233,14 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             return;
           }
           const batch = Array.isArray(message) ? message : [message];
+          if (batch.length > 100) {
+            send(400, { error: "JSON-RPC batch is limited to 100 messages" });
+            return;
+          }
+          const server = mcpFor(request.socket);
           const answers = [];
           for (const item of batch) {
-            const answer = await mcp.handle(item);
+            const answer = await server.handle(item);
             if (answer !== null) answers.push(answer);
           }
           if (answers.length === 0) send(202, "");
@@ -180,10 +252,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "POST" && request.url === "/api/generate") {
       let received = 0;
+      let tooLarge = false;
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
         received += chunk.length;
         if (received > MAX_BODY) {
+          tooLarge = true;
           request.destroy();
           send(413, { error: "request body too large" });
           return;
@@ -191,6 +266,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         chunks.push(chunk);
       });
       request.on("end", () => {
+        if (tooLarge) return;
         void (async () => {
           let source = "";
           let mode: "full" | "slice" | "budget" = "full";
@@ -252,6 +328,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             }
           } else {
             target = path.resolve(options.cwd, source);
+            // The bearer token is not a filesystem capability. /api/generate accepted an
+            // absolute path anywhere on the host and scanned it; the GET endpoints had the
+            // check, this one did not.
+            if (!insideAllowedRoots(target)) {
+              send(403, { error: "outside the served directory: " + target });
+              return;
+            }
           }
           let stat: fs.Stats;
           try {
@@ -273,15 +356,35 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             send(400, { error: loaded.errors.join("; ") });
             return;
           }
+          // A remote repository's config is data from the repository, not a decision about this
+          // host. Its outDir/tmpDir were passed straight through, so a public repo could write
+          // outside the clone; hooks are stripped for the same reason. A local path keeps its
+          // config, but the resulting output directory must still be inside the served roots.
+          const runConfig = isRemote
+            ? {
+                ...(loaded.config ?? {}),
+                outDir: "snapshot",
+                tmpDir: "snapshot.tmp",
+                hooks: {},
+              }
+            : (loaded.config ?? {});
+          const configuredOutDir =
+            typeof runConfig.outDir === "string" && runConfig.outDir.trim() !== ""
+              ? runConfig.outDir
+              : "snapshot";
+          const snapshotDir = path.resolve(target, configuredOutDir);
+          if (!insideAllowedRootsForWrite(snapshotDir)) {
+            send(403, { error: "the configured outDir resolves outside the served directory" });
+            return;
+          }
           const started = Date.now();
           try {
-            const manifest = generateSnapshot({ ...(loaded.config ?? {}), cwd: target }, {
+            const manifest = generateSnapshot({ ...runConfig, cwd: target }, {
               ...(provenance === undefined ? {} : { source: provenance }),
               ...(mode === "slice" ? { slice: { question } } : {}),
               ...(mode === "budget" && budgetTokens !== undefined ? { budgetTokens } : {}),
             });
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
-            const snapshotDir = path.join(target, "snapshot");
             // The audit runs on what was just written, so the page shows whether the artifact is
             // safe to hand over rather than only how big it is.
             const health = auditSnapshot({ snapshotDir, repoDir: target });
@@ -312,12 +415,16 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "GET" && request.url?.startsWith("/api/health?") === true) {
       const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
-      if (!insideAllowedRoots(target)) {
+      if (!lexicallyInside(target)) {
         send(403, { error: "outside the served directory: " + target });
         return;
       }
       if (!fs.existsSync(path.join(target, "manifest.json"))) {
         send(404, { error: "no manifest.json under " + target });
+        return;
+      }
+      if (!insideAllowedRoots(target)) {
+        send(403, { error: "outside the served directory: " + target });
         return;
       }
       const report = auditSnapshot({ snapshotDir: target, repoDir: path.dirname(target) });
@@ -327,6 +434,14 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "GET" && (request.url?.startsWith("/api/snapshot?") === true || request.url === "/api/snapshot")) {
       const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
+      if (!lexicallyInside(target)) {
+        send(403, { error: "outside the served directory: " + target });
+        return;
+      }
+      if (!fs.existsSync(path.join(target, "manifest.json"))) {
+        send(404, { error: "no manifest.json under " + target });
+        return;
+      }
       if (!insideAllowedRoots(target)) {
         send(403, { error: "outside the served directory: " + target });
         return;
@@ -337,6 +452,11 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
       } catch {
         send(404, { error: "no manifest.json under " + target });
+        return;
+      }
+      const shapeProblem = describeManifestShapeProblem(manifest);
+      if (shapeProblem !== null) {
+        send(400, { error: "manifest.json is not a snapshot manifest: " + shapeProblem });
         return;
       }
       let prompt = "";
@@ -359,12 +479,16 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (request.method === "GET" && request.url?.startsWith("/api/snapshot.zip") === true) {
       const target = path.resolve(options.cwd, url.searchParams.get("path") ?? options.cwd);
-      if (!insideAllowedRoots(target)) {
+      if (!lexicallyInside(target)) {
         send(403, { error: "outside the served directory: " + target });
         return;
       }
       if (!fs.existsSync(path.join(target, "manifest.json")) && !fs.existsSync(path.join(target, ".codebase-snapshot"))) {
         send(404, { error: "not a snapshot directory: " + target });
+        return;
+      }
+      if (!insideAllowedRoots(target)) {
+        send(403, { error: "outside the served directory: " + target });
         return;
       }
       try {

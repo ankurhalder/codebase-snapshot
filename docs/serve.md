@@ -24,7 +24,9 @@ Serving http://127.0.0.1:4788/
    provenance record the CLI writes. The page calls the same `generateSnapshot` the CLI calls,
    with the repository's `snapshot.config.json` (or the `snapshot` key of `package.json`) applied, so
    the browser and the terminal produce the same snapshot. An executable config is refused rather
-   than run: this process does not execute repository code on a page's request.
+   than run: this process does not execute repository code on a page's request. A remote clone's
+   `outDir` and `tmpDir` are forced to the clone, and its hooks are stripped, so repository data
+   cannot choose a path on the host.
 3. **Preview.** The brief (`PROMPT.md`) and the file list come back from the written snapshot, not
    from the working tree. If the snapshot is wrong, the page shows the wrongness.
 4. **See the health score.** The page audits what it just wrote and shows the score, with the
@@ -35,9 +37,11 @@ Serving http://127.0.0.1:4788/
 ## What the API may read
 
 `/api/snapshot`, `/api/snapshot.zip` and `/api/health` take a `path`. The server answers `403` for
-a path outside the directory it was started for, or outside a clone it created itself. The token
-decides who may ask; this decides what may be asked about — otherwise a leaked token would be an
-arbitrary-file-read primitive over the whole disk.
+a path outside the directory it was started for, or outside a clone it created itself. The check
+uses the resolved real path, so a symlink inside the directory cannot point at an outside target.
+`POST /api/generate` applies the same check to its local source, and the token decides who may ask;
+this decides what may be asked about — otherwise a leaked token would be an arbitrary-file-read
+primitive over the whole disk.
 
 ## The repository's configuration
 

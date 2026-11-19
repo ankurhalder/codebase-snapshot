@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadConfigFileDetailed, parseByteSize, resolveConfig } from "../config.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
-import type { Manifest, ResolvedSnapshotConfig } from "../types.js";
+import type { Manifest, ResolvedSnapshotConfig, SnapshotConfig } from "../types.js";
 import type { ToolContext } from "./types.js";
 
 export interface Workspace {
@@ -37,6 +37,8 @@ export interface Workspace {
   cliOptions: WorkspaceCliOptions;
   /** Absolute path of the config file that was loaded, when there was one. */
   configFile: string | null;
+  /** The config file as loaded, before CLI overrides; used to tell drift from a run flag. */
+  sourceConfig: SnapshotConfig | null;
 }
 
 export type RootOutcome = { ok: true; root: string } | { ok: false; message: string };
@@ -265,7 +267,16 @@ export async function openWorkspace(
 
   try {
     const config = resolveConfig(loaded.config, cliOptions, root);
-    return { ok: true, workspace: { root, config, configFile: loaded.file, cliOptions } };
+    return {
+      ok: true,
+      workspace: {
+        root,
+        config,
+        configFile: loaded.file,
+        sourceConfig: loaded.config ?? null,
+        cliOptions,
+      },
+    };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }

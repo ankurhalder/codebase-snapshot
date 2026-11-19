@@ -139,9 +139,17 @@ export function renderConfig(answers: WizardAnswers): string {
   // Replace function and method bodies with \`{ /* ... */ }\` in TypeScript files.
   // Signatures and comments stay, so the structure of the file survives.
   skeleton: ${answers.skeleton},
+  // Remove comment text from JavaScript and TypeScript bodies.
+  stripComments: false,
+  // Drop blank lines from emitted bodies; line numbers in the part move.
+  removeEmptyLines: false,
   // Also write reports/audit.sarif (SARIF 2.1.0) for a CI security gate. The
   // matched value is never included — only the path, the line and the rule.
   sarif: ${answers.sarif},
+  // Commit lines in reports/log.md when the log artifact is enabled.
+  logCount: 20,
+  // Write one single-file pack: "single", "xml" or "json". null = no pack.
+  pack: null,
   // Snapshot only the files that differ from a git ref (for example "main"),
   // plus untracked ones. null means "snapshot everything"; any other value must
   // be a git ref string, and anything else is a configuration error.

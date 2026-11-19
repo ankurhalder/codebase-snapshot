@@ -137,8 +137,13 @@ export const SERVE_PAGE = `<!doctype html>
     $("counts").textContent = info.included + " included / " + info.skipped + " skipped";
     $("files").innerHTML = "";
     for (const file of info.files.slice(0, 400)) {
+      // A manifest is untrusted input. Interpolating file.part (or a path) into innerHTML let a
+      // crafted manifest run script in the serve origin and read the token from localStorage.
       const li = document.createElement("li");
-      li.innerHTML = "<b>" + file.path.replace(/[<>&]/g, "") + "</b> " + file.part;
+      const name = document.createElement("b");
+      name.textContent = file.path;
+      li.appendChild(name);
+      li.appendChild(document.createTextNode(" " + file.part));
       $("files").appendChild(li);
     }
   }

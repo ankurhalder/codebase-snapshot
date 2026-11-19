@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.20.3 mcp
+npx -y codebase-snapshot@0.20.4 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.20.3", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.20.4", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.20.3 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.20.4 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.20.3 mcp --http --port 4789
+npx -y codebase-snapshot@0.20.4 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -76,6 +76,13 @@ reachable from the network must not be readable by any page that guesses the por
 
 CORS is granted to loopback origins (`localhost`, `127.0.0.1`, `[::1]`, any port) and to the
 origins you list. Any other `Origin` gets `403`.
+
+The first `initialize` response carries an `mcp-session-id` header. Send it on every later
+request: era and cancellation state belong to that session, so one client's
+`server/discover` cannot reject another client's legacy handshake. A client that ignores the
+header falls back to a per-address server; two such clients on one host with the same user agent
+share state, which is why forwarding the header matters. JSON-RPC batches are capped at 100
+messages, and the body cap applies before parsing.
 
 ### Legacy SSE, for clients that cannot send a header
 
