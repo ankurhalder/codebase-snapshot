@@ -9,10 +9,11 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { buildTools } from "../dist/mcp.js";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAGE = fs.readFileSync(path.join(ROOT, "docs", "tools.md"), "utf8");
 const tools = new Map(buildTools().map((tool) => [tool.name, tool]));
 

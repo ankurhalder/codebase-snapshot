@@ -40,7 +40,14 @@ function run(args, registryUrl, cwd = ROOT) {
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), "update-cmd-"));
     const child = spawn(process.execPath, [BIN, "update", ...args], {
       cwd,
-      env: { ...process.env, CODEBASE_SNAPSHOT_REGISTRY_URL: registryUrl, LOCALAPPDATA: cacheRoot },
+      env: {
+        ...process.env,
+        CODEBASE_SNAPSHOT_REGISTRY_URL: registryUrl,
+        // Windows uses LOCALAPPDATA; Linux and macOS use XDG_CACHE_HOME (or ~/.cache). Without
+        // this, one case's cached version answered the next case on CI.
+        LOCALAPPDATA: cacheRoot,
+        XDG_CACHE_HOME: cacheRoot,
+      },
     });
     let stdout = "";
     let stderr = "";

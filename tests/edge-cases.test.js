@@ -10,12 +10,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { makeTempDir } from "./helpers/temp.js";
 import { buildTools } from "../dist/mcp.js";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = path.join(ROOT, "dist", "bin.js");
 
 const run = (args, cwd) => {

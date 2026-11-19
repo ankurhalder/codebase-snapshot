@@ -6,9 +6,10 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("the comparison harness runs without a competitor and reports three modes", (t) => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "compare-"));
