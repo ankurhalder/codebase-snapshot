@@ -149,9 +149,15 @@ function isPrivateIPv6(groups: readonly number[]): boolean {
   // ::ffff:0:0/96, ::/96 (IPv4-compatible), and 64:ff9b::/96 (NAT64).
   if (allZeroThrough(5) && sixth === 0xffff) return mapped(6);
   if (allZeroThrough(6) && (seventh !== 0 || eighth !== 0)) return mapped(6);
+  // RFC 2765 IPv4-translated: ::ffff:0:a.b.c.d. Its IPv4 address is in the last two groups,
+  // after a zero sixth group, so the mapped check above does not see it.
+  if (allZeroThrough(4) && fifth === 0xffff && sixth === 0) return mapped(6);
   if (first === 0x0064 && second === 0xff9b && third === 0 && fourth === 0 && fifth === 0 && sixth === 0) {
     return mapped(6);
   }
+  // RFC 8215 local-use NAT64: 64:ff9b:1::/48. The public NAT64 prefix is the /96 checked above;
+  // the local-use prefix is a separate /48 and was missed by the exact-prefix comparison.
+  if (first === 0x0064 && second === 0xff9b && third === 0x0001) return mapped(6);
   // 2002::/16 embeds the public IPv4 address in groups 1 and 2 (6to4).
   if (first === 0x2002) return mapped(1);
   return false;
@@ -325,6 +331,7 @@ export async function cloneRepository(source: RemoteSource, options: CloneOption
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
 
+  try {
   // A redirect is a second URL the public-host check never saw: a public HTTPS host could answer
   // 302 Location: http://169.254.169.254/ and git would follow it. The ref may also come from the
   // URL fragment, which the old code recorded in provenance but never passed to git.
@@ -381,6 +388,18 @@ export async function cloneRepository(source: RemoteSource, options: CloneOption
       fetchedAt: new Date().toISOString(),
     },
   };
+  } catch (error) {
+    // A failed shallow clone can still be hundreds of megabytes, and both callers treat a throw as
+    // the end of the run. The directory was created by this function and was empty before it, so
+    // deleting it on every failure is safe and is the only cleanup a caller would otherwise have
+    // to remember.
+    try {
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch {
+      // The clone failure is the one that explains the run; a cleanup error must not mask it.
+    }
+    throw error;
+  }
 }
 
 /** Total bytes of regular files, used only to refuse an absurd clone. */

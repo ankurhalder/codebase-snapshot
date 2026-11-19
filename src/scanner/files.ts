@@ -1470,7 +1470,7 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
     }
   }
 
-  const files = candidates
+  let files = candidates
     .filter((file) => {
       // Our own output is bookkeeping, never a user-facing skip (C25).
       if (isToolOwned(file)) return false;
@@ -1531,12 +1531,83 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
     })
     .sort();
 
+  // A symlink is only a second name for content the snapshot already contains. The scanner
+  // checks containment and the target's sensitivity, but not *every* later filter: a link to a
+  // path that was excluded, gitignored, or dropped by the built-in deny-list could still be
+  // emitted under its harmless alias and carry the skipped file's bytes. That was the
+  // `notes.txt -> .git/config` leak. Resolve each link against the final included set: if the
+  // target is not in the snapshot under some name, the alias is not either.
+  files = dropSymlinksToUnincludedTargets(cwd, files, skipped);
+
   // Every recorded path is masked, whatever the reason: `sensitive-path` used to
   // be the only route that consulted the rules, so `certs/AKIA….key` reached
   // `manifest.skipped[].path` and the audit table raw as a `sensitive-file` skip.
   // Records are masked here as well as at the artifact sinks: this is the value every
   // consumer sees, and a path that leaks a token is worse than a skipped file.
   return { files, skipped: maskSkipPaths(skipped, pathRules) };
+}
+
+/**
+ * Drops a symlink whose target did not survive the snapshot's own filters.
+ *
+ * Containment and sensitivity are checked where a link is met; both answers are about the target
+ * in isolation. A target can also be excluded by `--only`, a deny glob, the built-in ignore list
+ * or an ignored directory, and none of those rules ran against the target's path. The alias then
+ * carried bytes that would never have been included under the target's own name — on a tracked
+ * symlink to `.git/config` that is the CI token in the repository config.
+ *
+ * This runs after all filtering, so "is the target included?" is asked of the final file set, not
+ * a prediction. Canonical paths are compared so `.env` and `notes.txt -> .env` agree when
+ * `includeSensitiveFiles` deliberately included the target.
+ */
+function dropSymlinksToUnincludedTargets(
+  cwd: string,
+  files: readonly string[],
+  skipped: SkipRecord[]
+): string[] {
+  const aliases = new Set<string>();
+  for (const file of files) {
+    try {
+      if (fs.lstatSync(path.join(cwd, file)).isSymbolicLink()) aliases.add(file);
+    } catch {
+      // The listing already has the file; a stat race is reported by the read path, not here.
+    }
+  }
+  if (aliases.size === 0) return [...files];
+
+  const includedTargets = new Set<string>();
+  for (const file of files) {
+    try {
+      includedTargets.add(fs.realpathSync(path.join(cwd, file)));
+    } catch {
+      // A path that cannot be resolved cannot be a target another link may borrow.
+    }
+  }
+
+  const kept: string[] = [];
+  for (const file of files) {
+    if (!aliases.has(file)) {
+      kept.push(file);
+      continue;
+    }
+    let target: string;
+    try {
+      target = fs.realpathSync(path.join(cwd, file));
+    } catch {
+      skipped.push({ path: file, reason: "read-error", detail: "symlink target could not be resolved" });
+      continue;
+    }
+    if (includedTargets.has(target)) {
+      kept.push(file);
+      continue;
+    }
+    skipped.push({
+      path: file,
+      reason: "symlink",
+      detail: "link target was excluded from the snapshot; not followed",
+    });
+  }
+  return kept;
 }
 
 /**

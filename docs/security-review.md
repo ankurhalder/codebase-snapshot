@@ -30,6 +30,18 @@ untrusted input can arrive.
 - **Paths are masked too.** A path that itself matches a secret rule is recorded masked.
 - **The health audit re-scans every written text file** for unmasked secrets and compares values
   from excluded sensitive files byte for byte against the artifacts (`snapshot health`).
+- **A symlink is only a second name for included content.** The target must survive the same
+  include/exclude/ignore filters as the link alias; `.git/config` cannot be reached through a
+  tracked `notes.txt`.
+- **Every snapshot file read is confined.** PROMPT.md, reports, the manifest and WORKSPACE.json
+  are opened through one reader that refuses a symlink and requires the canonical target inside
+  the snapshot directory. The MCP resources, `snapshot_history`, `snapshot_workspace` and
+  `serve` use it; the part reader keeps its older equivalent.
+- **The diff report fails closed.** Git is forced to emit unquoted ASCII prefixes, a section that
+  cannot be attributed to a path is omitted rather than trusted, redaction runs before truncation
+  with the diffed file's extension, and `--only` applies to the diff too.
+- **Owner prose is content.** A token in a brief heading, a project-overview line or a commit
+  subject goes through the full scanner, not only the path rules.
 
 ### Executable configuration
 
@@ -44,7 +56,12 @@ executable config in it is refused, because a fetched repository is not a truste
   `--no-auth` is refused on a non-loopback bind.
 - **Constant-time** token comparison; the token is generated with `crypto.randomBytes`.
 - **CORS only for loopback origins** and explicit `--allow-origin` values; everything else is 403.
-- **Bounded work**: 2 MiB bodies, 60 requests per 10 s per address, one JSON document per response.
+- **Bounded work**: 2 MiB bodies, 60 requests per 10 s per address, one JSON document per response,
+  and at most four MCP tool calls in flight across all HTTP sessions. The session and rate maps are
+  capped and evicted, so a client cannot grow either without bound.
+- **Untrusted regexes are bounded.** `snapshot_search`, `snapshot_routes` and `snapshot_query`
+  reject nested quantifiers, more than one unbounded repetition and oversized repetition bounds
+  before compiling; JavaScript has no regex timeout, so the alternative is a main-thread stall.
 - **Errors are JSON-RPC error objects**, never stack traces.
 
 ### The browser page
@@ -73,6 +90,7 @@ executable config in it is refused, because a fetched repository is not a truste
   arbitrary `--remote` host.
 - **Shallow clone** into a temp directory removed on exit; the token reaches git through the
   environment (`http.extraheader` via `GIT_CONFIG_*`), never argv, and never enters the manifest.
+  A clone that fails or exceeds 1 GB is removed before the error is rethrown.
 - A clone larger than 1 GB is refused before scanning.
 
 ### Signing
@@ -108,6 +126,12 @@ addition was reviewed with the same question — what new input arrives, and wha
   exclusions apply exactly as they do to `snapshot_read`; it adds no file-system surface.
 - **`--only`/`--ignore`** (0.14.6) widen nothing: `--ignore` adds excludes, and `--only` can only
   narrow the allow-list the config already permits. Sensitive files stay excluded by default.
+- **The 0.20.5 second audit** closed the bypasses left by 0.20.4: symlink targets now have to be
+  included under their own name, uppercase authorization headers are masked, C-quoted diff paths
+  and gitignore/exclude targets are handled, resource/manifest/report reads are confined,
+  catastrophic MCP regexes are refused before compilation, HTTP tool concurrency is bounded,
+  failed clones are removed, workspace dry runs write nothing, staged validation reads the index,
+  and hook installation refuses a symlink or hard link.
 
 The residual risks below are unchanged, including the two that are deliberate rather than solved.
 
@@ -123,6 +147,7 @@ The residual risks below are unchanged, including the two that are deliberate ra
 | Remote: private addresses refused, credentials in URL refused, `file:` gated | `tests/remote-source.test.js` |
 | Serve: page without token, API with token, zip restricted | `tests/web-serve.test.js` |
 | Signature: tamper detected | `tests/signing.test.js` |
+| Second 0.20 audit: symlink targets, auth case, diff quoting, brief headings, ReDoS, HTTP cap, workspace dry run, staged validation, hook links | `tests/audit-0-20-5-ultimate.test.js` |
 
 ## Residual risks, stated
 

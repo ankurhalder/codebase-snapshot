@@ -59,8 +59,10 @@ import type { ProjectOverview } from "./generator/overview.js";
 import { readProjectOverview } from "./generator/overview.js";
 import {
   collectFiles,
+  defaultIgnoreReason,
   findSecretInPath,
   getGitInfo,
+  isSensitivePath,
   maskSkipPaths,
   matchesExclude,
   recentCommits,
@@ -833,8 +835,7 @@ function maskOwnerBrief(
   secretRules?: readonly SecretRule[]
 ): OwnerBrief | undefined {
   if (brief === undefined) return undefined;
-  const mask = (value: string): string =>
-    scanAndRedactSecrets(value, secretRules ?? [], "owner-brief").redacted;
+  const mask = (value: string): string => maskProse(value, secretRules, "owner-brief");
   return {
     ...brief,
     path: mask(brief.path),
@@ -844,8 +845,20 @@ function maskOwnerBrief(
     ...(brief.bar === undefined ? {} : { bar: mask(brief.bar) }),
     ...(brief.calibration === undefined ? {} : { calibration: mask(brief.calibration) }),
     ...(brief.preamble === undefined ? {} : { preamble: mask(brief.preamble) }),
-    notes: brief.notes.map((note) => ({ heading: note.heading, body: mask(note.body) })),
+    // The heading is prose too. Masking only the body left `## Incident ghp_…` in PROMPT.md:
+    // ownerNotesSection reproduced the heading as a Markdown title, where no line rule that
+    // expects `key: value` can see it.
+    notes: brief.notes.map((note) => ({ heading: mask(note.heading), body: mask(note.body) })),
   };
+}
+
+/** Masks prose that is not a path: a brief field, a commit subject or a project overview. */
+function maskProse(
+  value: string,
+  secretRules: readonly SecretRule[] | undefined,
+  scope: string
+): string {
+  return scanAndRedactSecrets(value, secretRules ?? [], scope).redacted;
 }
 
 /** Masking for the project overview: the description, summary and release headings. */
@@ -853,7 +866,9 @@ function maskOverview(
   overview: ProjectOverview,
   secretRules?: readonly SecretRule[]
 ): ProjectOverview {
-  const mask = (value: string): string => maskPathText(value, secretRules);
+  // A package description or release heading is prose; the path rules miss a PEM body and a
+  // token split across a quoted value. Content masking is the same scanner every body gets.
+  const mask = (value: string): string => maskProse(value, secretRules, "overview");
   return {
     ...(overview.description === undefined ? {} : { description: mask(overview.description) }),
     ...(overview.summary === undefined ? {} : { summary: mask(overview.summary) }),
@@ -1673,6 +1688,8 @@ const LOCK_HEARTBEAT_MS = 5_000;
  * by an unrelated process wedged it forever.
  */
 const LOCK_STALE_HEARTBEAT_MS = 120_000;
+/** A zero-byte or malformed lock is a torn acquisition, not evidence of a live run. */
+const LOCK_EMPTY_GRACE_MS = 5_000;
 
 /**
  * Worker source that refreshs the lock's mtime.
@@ -1906,11 +1923,14 @@ function lockOwnerIsGone(lockPath: string): boolean {
   } catch {
     // A zero-byte or truncated lock file is the record of a process that died between
     // `openSync(…, "wx")` and `writeSync` — the file exists, so it was never cleaned up,
-    // and it carries no pid, so only age could prove it dead. It now recovers in minutes, not
-    // an hour, because the heartbeat window is the heartbeat interval's business.
-    return lockFileIsAncient(lockPath);
+    // and it carries no pid. A live owner writes the payload in the same synchronous burst, so
+    // five seconds is already generous; the old heartbeat window made the tear wedge the next run
+    // for two minutes.
+    return lockFileIsAncient(lockPath, LOCK_EMPTY_GRACE_MS);
   }
-  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return lockFileIsAncient(lockPath);
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) {
+    return lockFileIsAncient(lockPath, LOCK_EMPTY_GRACE_MS);
+  }
   try {
     process.kill(pid, 0);
     // The pid exists. It may be the owner or an unrelated process that reused the number; the
@@ -1967,8 +1987,8 @@ function reclaimStaleLock(lockPath: string): boolean {
  * of a live run, and a pid alone cannot rule out reuse. A lock older than the heartbeat window
  * has no run behind it, because a live run refreshes it every few seconds.
  */
-function lockFileIsAncient(lockPath: string): boolean {
-  return lockHeartbeatAgeMs(lockPath) > LOCK_STALE_HEARTBEAT_MS;
+function lockFileIsAncient(lockPath: string, thresholdMs = LOCK_STALE_HEARTBEAT_MS): boolean {
+  return lockHeartbeatAgeMs(lockPath) > thresholdMs;
 }
 
 /**
@@ -2003,7 +2023,12 @@ function writeManifestAtomically(manifestPath: string, manifest: Manifest): void
  * (e.g. two `--tmp-dir` values), so the swap is retried briefly when it loses
  * that race instead of failing with a raw ENOENT/ENOTEMPTY from `rename`.
  */
-function swapIntoPlace(stagingDir: string, outDir: string, beforeSwap?: () => void): void {
+function swapIntoPlace(
+  stagingDir: string,
+  outDir: string,
+  beforeSwap?: () => void,
+  onStagingPreserved?: () => void
+): void {
   ensureParentDirectory(outDir, "outDir");
   const deadline = Date.now() + 3_000;
   let delay = 25;
@@ -2014,7 +2039,7 @@ function swapIntoPlace(stagingDir: string, outDir: string, beforeSwap?: () => vo
   // delay backs off so a genuinely busy directory is not hammered.
   for (;;) {
     try {
-      swapOnce(stagingDir, outDir, beforeSwap);
+      swapOnce(stagingDir, outDir, beforeSwap, onStagingPreserved);
       return;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -2064,7 +2089,12 @@ function recoverInterruptedPublish(outDir: string): void {
   }
 }
 
-function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): void {
+function swapOnce(
+  stagingDir: string,
+  outDir: string,
+  beforeSwap?: () => void,
+  onStagingPreserved?: () => void
+): void {
   const backupDir = `${outDir}.backup-${process.pid}-${Date.now()}`;
   const hadPrevious = fs.existsSync(outDir);
 
@@ -2089,6 +2119,9 @@ function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): 
       // does not need to move the directory. The new snapshot is complete in staging before
       // the swap starts. Anything that is not a lock error is still rethrown.
       if (!isLockError(err)) throw err;
+      // From this point the previous snapshot is being removed. If anything below fails, staging
+      // is the only complete copy left, so tell the caller to keep it before the destructive step.
+      onStagingPreserved?.();
       fs.rmSync(outDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       process.stderr.write(
         `⚠ ${outDir} could not be moved aside (${(err as Error).message}), so it was replaced ` +
@@ -2129,7 +2162,10 @@ function swapOnce(stagingDir: string, outDir: string, beforeSwap?: () => void): 
       fs.renameSync(backupDir, outDir);
     } else if (hadPrevious && !movedAside) {
       // The previous snapshot is gone and the new one never landed. Staging still holds a
-      // complete snapshot, so name it rather than leaving the run with nothing to point at.
+      // complete snapshot, so name it rather than leaving the run with nothing to point at —
+      // and tell the caller not to delete it in its catch block, which turned this message into
+      // a lie and lost both copies.
+      onStagingPreserved?.();
       process.stderr.write(
         `⚠ The previous snapshot at ${outDir} was removed and the new one could not be moved ` +
           `into place. It is complete at ${stagingDir}.\n`
@@ -3539,6 +3575,10 @@ export function generateSnapshot(
     ? generateDiffReport(config.cwd, {
         secretRules: config.secretRules,
         excluded: (relativePath) =>
+          isSensitivePath(relativePath) ||
+          defaultIgnoreReason(relativePath) !== null ||
+          (config.include.length > 0 &&
+            !config.include.some((pattern) => matchesExclude(relativePath, pattern))) ||
           reportExcludes.some((pattern) => matchesExclude(relativePath, pattern)),
       })
     : null;
@@ -3580,8 +3620,8 @@ export function generateSnapshot(
           task: config.promptTask,
           brief: maskOwnerBrief(config.brief, config.secretRules),
           history: recentCommits(config.cwd).map((commit) => ({
-            subject: maskPathText(commit.subject, config.secretRules),
-            body: maskPathText(commit.body, config.secretRules),
+            subject: maskProse(commit.subject, config.secretRules, "git-log"),
+            body: maskProse(commit.body, config.secretRules, "git-log"),
           })),
           overview: maskOverview(readProjectOverview(config.cwd), config.secretRules),
         })
@@ -3746,6 +3786,8 @@ export function generateSnapshot(
   recoverInterruptedPublish(outDir);
   assertReplaceable(outDir, "outDir", config.secretRules);
   let stagingDir: string | null = null;
+  /** True when swapOnce already named staging as the surviving snapshot. */
+  let stagingPreserved = false;
   /**
    * When an async hook is running, the lock is released when *it* settles rather than here.
    *
@@ -3905,7 +3947,14 @@ export function generateSnapshot(
       markerPayload(stagingDir, "complete", snapshotId, createdAt, writtenArtifacts, runId)
     );
 
-    swapIntoPlace(stagingDir, outDir, () => assertReplaceable(outDir, "outDir", config.secretRules));
+    swapIntoPlace(
+      stagingDir,
+      outDir,
+      () => assertReplaceable(outDir, "outDir", config.secretRules),
+      () => {
+        stagingPreserved = true;
+      }
+    );
     // The rename consumed the staging directory; there is nothing left to clean.
     stagingDir = null;
 
@@ -4004,10 +4053,12 @@ export function generateSnapshot(
 
     return manifest;
   } catch (err) {
-    if (stagingDir !== null) {
+    if (stagingDir !== null && !stagingPreserved) {
       // Nothing this run staged may survive a failure. The staging directory is
       // this run's own (`run-<pid>-<id>`), so clearing it cannot touch another
-      // run's files.
+      // run's files. The exception is the in-place swap fallback: it already
+      // removed the previous snapshot and its error message names staging as the
+      // complete replacement, so deleting it would leave the user with neither.
       try {
         fs.rmSync(stagingDir, { recursive: true, force: true });
       } catch {

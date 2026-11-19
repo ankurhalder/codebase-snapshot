@@ -14,6 +14,7 @@ import { describeManifestShapeProblem } from "../validator/validate.js";
 import { SIGNATURE_FILE, verifySnapshotSignature } from "../signing.js";
 import { findSection, parsePartSections, type PartSection } from "../partitioner/part-format.js";
 import { anchorForPath, displayPath, emittedBody } from "../partitioner/chunker.js";
+import { countBodyLines } from "../partitioner/preview.js";
 import { decodeText } from "../scanner/binary.js";
 import { escapeControls } from "../terminal.js";
 import type { Manifest, SecretRule } from "../types.js";
@@ -934,12 +935,9 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
       bodyByPath.set(file.relativePath, section.body);
       bodiesChecked += 1;
       const bytes = Buffer.byteLength(section.body, "utf8");
-      // The body keeps the file's final newline, so a split counts one more than the manifest's
-      // line count (countLines does not count the empty element after a trailing newline).
-      const bodyLines =
-        section.body === ""
-          ? 0
-          : section.body.split("\n").length - (section.body.endsWith("\n") ? 1 : 0);
+      // The body keeps a trailing newline only when the source ended with a blank line: the
+      // closing newline is dropped by `emittedBody`, so a remaining one *is* that blank line.
+      const bodyLines = countBodyLines(section.body);
       if (bytes !== file.includedBytes) {
         bodyProblems.push(file.relativePath + ": manifest says " + file.includedBytes + " B, part holds " + bytes + " B");
       } else if (bodyLines !== file.includedLines) {

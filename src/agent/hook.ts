@@ -132,6 +132,29 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /**
+ * Canonical form of a path that may not exist yet.
+ *
+ * `path.resolve` is lexical: `.husky -> /tmp/outside` passes it and the write follows the link.
+ * Resolve the deepest existing ancestor, then append the missing tail.
+ */
+function canonicalForWrite(target: string): string | null {
+  let existing = path.resolve(target);
+  const tail: string[] = [];
+  while (!fs.existsSync(existing)) {
+    tail.unshift(path.basename(existing));
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const real = fs.realpathSync(existing);
+    return tail.length === 0 ? real : path.join(real, ...tail);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * True when `gitDir` is the metadata git itself registered for this worktree.
  *
  * A linked worktree's git directory lives in the main repository and carries a `gitdir` file
@@ -177,9 +200,17 @@ function configuredHooksDirectory(cwd: string): { dir: string } | { refusal: str
   if (hooks === null) return null;
   const resolved = path.resolve(cwd, hooks);
   const common = gitOutput(cwd, ["rev-parse", "--git-common-dir"]);
-  const commonDir = common === null ? null : path.resolve(cwd, common);
-  if (isInside(path.resolve(cwd), resolved)) return { dir: resolved };
-  if (commonDir !== null && isInside(commonDir, resolved)) return { dir: resolved };
+  const commonDir = common === null ? null : canonicalForWrite(path.resolve(cwd, common));
+  const cwdReal = canonicalForWrite(cwd);
+  const hooksReal = canonicalForWrite(resolved);
+  if (hooksReal === null || cwdReal === null) {
+    return {
+      refusal:
+        `The hooks directory git reports (${resolved}) could not be resolved, so no hook was written.`,
+    };
+  }
+  if (isInside(cwdReal, hooksReal)) return { dir: hooksReal };
+  if (commonDir !== null && isInside(commonDir, hooksReal)) return { dir: hooksReal };
   return {
     refusal:
       `The hooks directory git reports (${resolved}) is outside this repository, so no hook was ` +
@@ -211,6 +242,42 @@ export function installPreCommitHook(cwd: string, outDir = "snapshot"): HookInst
 
   const hooksDir = configured === null ? path.join(gitDir as string, "hooks") : configured.dir;
   const hookPath = path.join(hooksDir, "pre-commit");
+
+  // A hook is an executable file. A symlink here is a write primitive into whatever it names,
+  // and a hard link is the same primitive without the symlink detection; neither is something
+  // this generator writes, so both are refused rather than followed.
+  try {
+    const existingStats = fs.lstatSync(hookPath);
+    if (existingStats.isSymbolicLink()) {
+      return {
+        path: hookPath,
+        written: false,
+        notes: [`Refusing to write ${hookPath}: it is a symbolic link.`],
+      };
+    }
+    if (existingStats.isFile() && existingStats.nlink > 1) {
+      return {
+        path: hookPath,
+        written: false,
+        notes: [`Refusing to write ${hookPath}: it has ${existingStats.nlink} hard links.`],
+      };
+    }
+    if (!existingStats.isFile()) {
+      return {
+        path: hookPath,
+        written: false,
+        notes: [`Refusing to write ${hookPath}: it is not a regular file.`],
+      };
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return {
+        path: hookPath,
+        written: false,
+        notes: [`Refusing to write ${hookPath}: ${(error as Error).message}`],
+      };
+    }
+  }
 
   try {
     fs.mkdirSync(hooksDir, { recursive: true });

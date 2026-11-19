@@ -18,7 +18,14 @@ export interface DiffReport {
 }
 
 function runGit(cwd: string, args: string[]): { ok: boolean; out: string } {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  // `diff.noprefix=true` changes every header to `diff --git foo bar`; `core.quotepath` defaults
+  // to true and C-quotes a non-ASCII path as `"a/caf\303\251/.env"`. The old parser understood
+  // neither, returned no paths, and therefore emitted the .env body as "not sensitive".
+  const result = spawnSync(
+    "git",
+    ["-c", "core.quotepath=false", "-c", "diff.noprefix=false", ...args],
+    { cwd, encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }
+  );
   if (result.status !== 0) return { ok: false, out: (result.stderr ?? "").trim() };
   return { ok: true, out: result.stdout ?? "" };
 }
@@ -27,18 +34,114 @@ export function isGitRepository(cwd: string): boolean {
   return runGit(cwd, ["rev-parse", "--is-inside-work-tree"]).out.trim() === "true";
 }
 
+/** Decodes git's C-style quoted path, including octal UTF-8 bytes. */
+function unquoteGitPath(value: string): string {
+  if (!value.startsWith('"') || !value.endsWith('"')) return value;
+  const body = value.slice(1, -1);
+  let out = "";
+  let bytes: number[] = [];
+  const flushBytes = (): void => {
+    if (bytes.length === 0) return;
+    out += Buffer.from(bytes).toString("utf8");
+    bytes = [];
+  };
+  const escapes: Record<string, string> = {
+    a: "\x07",
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+    "\\": "\\",
+    '"': '"',
+  };
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index] as string;
+    if (char !== "\\") {
+      flushBytes();
+      out += char;
+      continue;
+    }
+    const next = body[index + 1];
+    if (next === undefined) {
+      flushBytes();
+      out += "\\";
+      break;
+    }
+    index += 1;
+    if (/[0-7]/.test(next)) {
+      let octal = next;
+      while (octal.length < 3 && /[0-7]/.test(body[index + 1] ?? "")) {
+        index += 1;
+        octal += body[index];
+      }
+      bytes.push(Number.parseInt(octal, 8) & 0xff);
+      continue;
+    }
+    flushBytes();
+    out += escapes[next] ?? next;
+  }
+  flushBytes();
+  return out;
+}
+
+/** Reads one whitespace-delimited git path token, quoted or bare. */
+function takeGitPath(value: string): { token: string; rest: string } | null {
+  if (value.length === 0) return null;
+  if (value.startsWith('"')) {
+    let index = 1;
+    while (index < value.length) {
+      if (value[index] === "\\") {
+        index += 2;
+        continue;
+      }
+      if (value[index] === '"') {
+        return { token: value.slice(0, index + 1), rest: value.slice(index + 1).replace(/^ /, "") };
+      }
+      index += 1;
+    }
+    return null;
+  }
+  const space = value.indexOf(" ");
+  if (space === -1) return { token: value, rest: "" };
+  return { token: value.slice(0, space), rest: value.slice(space + 1) };
+}
+
+function pathFromGitToken(token: string, prefix: "a/" | "b/"): string | null {
+  const unquoted = unquoteGitPath(token);
+  if (unquoted === "/dev/null") return null;
+  if (!unquoted.startsWith(prefix)) return null;
+  return unquoted.slice(prefix.length);
+}
+
 /** The paths a single git diff section names, with git's a/ and b/ prefixes removed. */
 function diffSectionPaths(body: string): string[] {
   const paths = new Set<string>();
   for (const line of body.split("\n")) {
-    const plus = /^\+\+\+ b\/(.*)$/.exec(line);
-    if (plus !== null) paths.add(plus[1]);
-    const minus = /^--- a\/(.*)$/.exec(line);
-    if (minus !== null) paths.add(minus[1]);
-    const header = /^diff --git a\/(.*?) b\/(.*)$/.exec(line);
-    if (header !== null) {
-      paths.add(header[1]);
-      paths.add(header[2]);
+    if (line.startsWith("diff --git ")) {
+      const first = takeGitPath(line.slice("diff --git ".length));
+      if (first === null) continue;
+      const second = takeGitPath(first.rest);
+      if (second === null) continue;
+      const left = pathFromGitToken(first.token, "a/");
+      const right = pathFromGitToken(second.token, "b/");
+      if (left !== null) paths.add(left);
+      if (right !== null) paths.add(right);
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      const token = takeGitPath(line.slice(4));
+      if (token === null) continue;
+      const path = pathFromGitToken(token.token, "b/");
+      if (path !== null) paths.add(path);
+      continue;
+    }
+    if (line.startsWith("--- ")) {
+      const token = takeGitPath(line.slice(4));
+      if (token === null) continue;
+      const path = pathFromGitToken(token.token, "a/");
+      if (path !== null) paths.add(path);
     }
   }
   return [...paths];
@@ -58,6 +161,7 @@ export function generateDiffReport(
   const sections: string[] = [];
   let truncated = false;
   let omittedSensitive = 0;
+  let omittedUnparseable = 0;
 
   const commands: Array<[string, string[]]> = [
     ["Unstaged", ["diff", "--no-color"]],
@@ -71,6 +175,12 @@ export function generateDiffReport(
     const rawSections = result.out.split(/(?=^diff --git )/m).filter((section) => section.length > 0);
     for (const rawSection of rawSections) {
       const paths = diffSectionPaths(rawSection);
+      // Fail closed. A section whose header this parser cannot attribute to a path is not
+      // evidence that the path was safe; it is evidence that the filter did not run.
+      if (paths.length === 0) {
+        omittedUnparseable += 1;
+        continue;
+      }
       const blocked =
         paths.some((path) => isSensitivePath(path) || options.excluded?.(path) === true);
       if (blocked) {
@@ -83,7 +193,16 @@ export function generateDiffReport(
         truncated = true;
         break;
       }
-      const chunk = truncateToBytes(rawSection, remaining);
+      // Redact before truncating, using the diffed file's own extension: YAML, INI, shell and
+      // Dockerfile rules are selected by file type. Truncating first split a credential at the
+      // boundary and left its prefix unredacted.
+      const sourcePath = paths[0] ?? "reports/diff.md";
+      const redactedSection = scanAndRedactSecrets(
+        rawSection,
+        options.secretRules ?? [],
+        sourcePath
+      ).redacted;
+      const chunk = truncateToBytes(redactedSection, remaining);
       if (chunk.isTruncated) truncated = true;
       sections.push(
         "## " + title + " changes\n\nRun: git " + args.join(" ") + "\n\n" +
@@ -105,6 +224,12 @@ export function generateDiffReport(
     ...(omittedSensitive > 0
       ? [
           "> " + omittedSensitive + " file section(s) omitted: their path is credential-bearing or excluded from the snapshot.",
+          "",
+        ]
+      : []),
+    ...(omittedUnparseable > 0
+      ? [
+          "> " + omittedUnparseable + " file section(s) omitted: their diff header could not be attributed to a path, so the sensitive-path filter could not run.",
           "",
         ]
       : []),

@@ -750,6 +750,10 @@ export function validateSnapshot(
     // discovery mode" meant `validate` could enumerate files one way while the snapshot
     // had been generated another way, and then blame the difference on drift.
     discovery: config.discovery,
+    // `generate --staged` adds index-only paths to the candidate list. Without the same
+    // extra paths, a staged file that is absent from the working tree was invisible to
+    // this scan and then reported as deleted, although the snapshot matched the index.
+    ...(stagedScope === null ? {} : { extraPaths: [...stagedScope] }),
     // The same exclusion `generate` applies: without it, `validate` recounted the tool's
     // own output directory as a set of files missing from the snapshot, so a correct
     // snapshot was reported as drifting.
@@ -835,6 +839,14 @@ export function validateSnapshot(
   }
 
   for (const snapshotFile of manifestFileMap.keys()) {
+    // A staged file may be absent from the working tree while its index blob is exactly what the
+    // snapshot recorded. Statting the working tree reported it as deleted; ask the index instead.
+    if (recordedStaged && stagedScope?.has(snapshotFile)) {
+      if (readStagedBlob(config.cwd, snapshotFile) === null) {
+        drift.missingOnDisk.push(snapshotFile);
+      }
+      continue;
+    }
     // The manifest is an input, and `path.join` accepts `../..`, so this loop used to answer
     // "does this path exist?" for any file on the machine: a traversal entry was silently accepted
     // when the target existed and reported as `deleted: ../../secret` when it did not. A recorded

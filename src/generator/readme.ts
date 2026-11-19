@@ -99,34 +99,38 @@ export function generateReadme(manifest: Manifest, artifacts?: ResolvedArtifacts
   const readOrder: string[] = [];
   if (wrote("prompt")) {
     readOrder.push(
-      "1. Hand `PROMPT.md` to the model that receives this snapshot: it names the parts, the partial files and the fingerprint of this run."
+      "Hand `PROMPT.md` to the model that receives this snapshot: it names the parts, the partial files and the fingerprint of this run."
     );
   }
   if (wrote("navigation") || wrote("projectTree")) {
     const first = [wrote("navigation") ? "`reports/navigation.md`" : null, wrote("projectTree") ? "`reports/project-tree.md`" : null]
       .filter(Boolean)
       .join(" or ");
-    readOrder.push(`1. Read ${first} first to locate target features or files.`);
+    readOrder.push(`Read ${first} first to locate target features or files.`);
   }
   if (wrote("parts")) {
     readOrder.push(
-      `${readOrder.length + 1}. Open only the specific \`parts/part-XXX.md\` file holding the target modules.`
+      "Open only the specific `parts/part-XXX.md` file holding the target modules."
     );
   }
   if (wrote("manifest")) {
-    readOrder.push(
-      `${readOrder.length + 1}. Inspect \`manifest.json\` for precise dependency and AST symbol maps.`
-    );
+    readOrder.push("Inspect `manifest.json` for precise dependency and AST symbol maps.");
   }
   // Without a manifest there is nothing to check and nothing that can check it: pointing the
   // reader at a field in a file the run did not write is the same lie as a part count.
   readOrder.push(
     wrote("manifest")
-      ? `${readOrder.length + 1}. Check \`manifest.validation.status\` before trusting the snapshot; \`snapshot validate\` re-checks it against disk.`
-      : `${readOrder.length + 1}. No manifest was written, so this snapshot cannot be re-checked; regenerate with the manifest artifact enabled before trusting it.`
+      ? "Check `manifest.validation.status` before trusting the snapshot; `snapshot validate` re-checks it against disk."
+      : "No manifest was written, so this snapshot cannot be re-checked; regenerate with the manifest artifact enabled before trusting it."
   );
 
-  lines.push("", "## AI Agent Ingestion Guide", "", ...readOrder, "");
+  lines.push(
+    "",
+    "## AI Agent Ingestion Guide",
+    "",
+    ...readOrder.map((step, index) => `${index + 1}. ${step}`),
+    ""
+  );
 
   return lines.join("\n");
 }

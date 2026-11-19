@@ -834,6 +834,10 @@ export interface SnapshotConfig {
   layers?: LayerRule[];
   kinds?: KindRule[];
   excludePatterns?: string[];
+  /** Alias of `excludePatterns`, accepted because `--exclude` is the flag spelling. */
+  exclude?: string[];
+  /** Library spelling of `secrets.customPatterns`; the loader compiles either form. */
+  secretRules?: SecretRuleInput[];
   secrets?: {
     customPatterns?: SecretRuleInput[];
     disableDefaultPatterns?: boolean;

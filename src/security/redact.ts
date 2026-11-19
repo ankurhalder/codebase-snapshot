@@ -917,6 +917,11 @@ function redactStructuredValues(
     if (firstValue === undefined) continue;
     const valueIndent = (/^[ \t]*/.exec(firstValue)?.[0] ?? "").length;
     if (valueIndent <= baseIndent) continue;
+    // `secret:` followed by a mapping is a section with several keys, not one secret whose value
+    // happens to be indented. Masking the whole block destroyed `.gitguardian.yaml`: its
+    // `ignored_paths:` key and every path under it became markers because the parent key was
+    // named `secret`. Nested credential keys are still masked by the per-line rules.
+    if (STRUCTURED_KEY.test(firstValue) || /^[ \t]*-[ \t]/.test(firstValue)) continue;
     let masked = false;
     while (cursor < segments.length) {
       const body = segments[cursor] ?? "";

@@ -51,6 +51,11 @@ const DEFAULT_PORT = 4789;
 const DEFAULT_MAX_BODY = 2 * 1024 * 1024;
 const RATE_LIMIT = 60;
 const RATE_WINDOW_MS = 10_000;
+/** Expensive tool calls allowed in flight across every HTTP session. */
+const MAX_IN_FLIGHT = 4;
+/** Bound on per-session servers and per-remote rate windows. */
+const MAX_SESSION_ENTRIES = 64;
+const MAX_RATE_WINDOWS = 1024;
 
 /** The token a server generates when the caller did not pick one. */
 export function generateToken(): string {
@@ -101,6 +106,14 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
    */
   const mcpSessions = new Map<string, McpServer>();
   const socketServers = new WeakMap<object, McpServer>();
+  /** Insert a server by session id, evicting the oldest when the table is full. */
+  const rememberSession = (id: string, server: McpServer): void => {
+    if (!mcpSessions.has(id) && mcpSessions.size >= MAX_SESSION_ENTRIES) {
+      const oldest = mcpSessions.keys().next().value;
+      if (oldest !== undefined) mcpSessions.delete(oldest);
+    }
+    mcpSessions.set(id, server);
+  };
   // Fallback for clients that do not forward the session header. The spec-compliant path is the
   // header; a client that ignores it still needs initialize and tools/list to share state, so
   // this pool is keyed by remote address and user agent. Two clients on one host with the same
@@ -113,11 +126,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       let existing = mcpSessions.get(supplied);
       if (existing === undefined) {
         existing = createMcp();
-        if (mcpSessions.size >= 64) {
-          const oldest = mcpSessions.keys().next().value;
-          if (oldest !== undefined) mcpSessions.delete(oldest);
-        }
-        mcpSessions.set(supplied, existing);
+        rememberSession(supplied, existing);
       }
       return existing;
     }
@@ -158,6 +167,47 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     return fromQuery !== null && timingSafeEqual(fromQuery, token);
   };
   const sessions = new Map<string, { count: number; resetAt: number }>();
+  /**
+   * Admission control for expensive calls.
+   *
+   * `runStdioServer` has `MAX_IN_FLIGHT`; HTTP had none, so 50 concurrent `snapshot_generate`
+   * requests spawned 50 workers and could exhaust the process. The limit is shared by the
+   * Streamable HTTP and legacy SSE paths because both dispatch to the same tool table.
+   */
+  let inFlight = 0;
+  const acquireToolSlot = (): boolean => {
+    if (inFlight >= MAX_IN_FLIGHT) return false;
+    inFlight += 1;
+    return true;
+  };
+  const releaseToolSlot = (): void => {
+    if (inFlight > 0) inFlight -= 1;
+  };
+  const busyResponse = (id: unknown): JsonRpcResponse => ({
+    jsonrpc: "2.0",
+    id: typeof id === "string" || typeof id === "number" || id === null ? id : null,
+    error: {
+      code: -32001,
+      message: "server busy: too many tool calls are already in flight",
+    },
+  });
+  const isToolCall = (message: unknown): boolean =>
+    message !== null &&
+    typeof message === "object" &&
+    (message as { method?: unknown }).method === "tools/call";
+
+  /** Bound the rate table as addresses rotate; expired entries are dropped first. */
+  const rememberRateWindow = (remote: string, now: number): void => {
+    if (!sessions.has(remote) && sessions.size >= MAX_RATE_WINDOWS) {
+      for (const [key, value] of sessions) if (value.resetAt <= now) sessions.delete(key);
+      while (sessions.size >= MAX_RATE_WINDOWS) {
+        const oldest = sessions.keys().next().value;
+        if (oldest === undefined) break;
+        sessions.delete(oldest);
+      }
+    }
+    sessions.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
+  };
 
   /**
    * Request counters for `/metrics`.
@@ -185,7 +235,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const now = Date.now();
     const window = sessions.get(remote);
     if (window === undefined || window.resetAt <= now) {
-      sessions.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
+      rememberRateWindow(remote, now);
       return false;
     }
     if (window.count >= RATE_LIMIT) return true;
@@ -366,8 +416,19 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
             send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: String(error) } });
             return;
           }
-          const answer = await stream.server.handle(message);
-          if (answer !== null) stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
+          const gated = isToolCall(message);
+          if (gated && !acquireToolSlot()) {
+            const answer = busyResponse((message as { id?: unknown }).id);
+            stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
+            send(202, "", cors);
+            return;
+          }
+          try {
+            const answer = await stream.server.handle(message);
+            if (answer !== null) stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
+          } finally {
+            if (gated) releaseToolSlot();
+          }
           send(202, "", cors);
         })();
       });
@@ -443,13 +504,22 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
           (message as { method?: unknown }).method === "initialize"
         ) {
           sessionId = newSessionId();
-          mcpSessions.set(sessionId, activeServer);
+          rememberSession(sessionId, activeServer);
         }
         const sessionHeaders = sessionId === "" ? cors : { ...cors, "mcp-session-id": sessionId };
         const answers: JsonRpcResponse[] = [];
         for (const item of batch) {
-          const answer = await activeServer.handle(item);
-          if (answer !== null) answers.push(answer);
+          const gated = isToolCall(item);
+          if (gated && !acquireToolSlot()) {
+            answers.push(busyResponse((item as { id?: unknown }).id));
+            continue;
+          }
+          try {
+            const answer = await activeServer.handle(item);
+            if (answer !== null) answers.push(answer);
+          } finally {
+            if (gated) releaseToolSlot();
+          }
         }
         if (answers.length === 0) {
           send(202, "", sessionHeaders);

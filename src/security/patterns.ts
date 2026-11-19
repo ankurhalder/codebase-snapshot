@@ -530,7 +530,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // protecting (`Bearer authentication`) is a lowercase word.
     rule: "authorization-header",
     pattern:
-      /(?<=[Aa]uthorization["']?\s*[:=]\s*["']?[A-Za-z][A-Za-z0-9._~+/-]{0,31}\s{1,8})(?:[A-Za-z0-9_.+/-]{0,31}[0-9][A-Za-z0-9_.+/-]{0,1024}|[A-Za-z0-9_.+/-]{32,1024}|[A-Za-z0-9_.+/-]{8,1024}={1,2}|(?=[A-Za-z0-9_.+/-]{0,1023}[A-Z])(?=[A-Za-z0-9_.+/-]{0,1023}[a-z])[A-Za-z0-9_.+/-]{12,1024})(?![A-Za-z0-9_.+/=-])/,
+      /(?<=[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]["']?\s*[:=]\s*["']?[A-Za-z][A-Za-z0-9._~+/-]{0,31}\s{1,8})(?:[A-Za-z0-9_.+/-]{0,31}[0-9][A-Za-z0-9_.+/-]{0,1024}|[A-Za-z0-9_.+/-]{32,1024}|[A-Za-z0-9_.+/-]{8,1024}={1,2}|(?=[A-Za-z0-9_.+/-]{0,1023}[A-Z])(?=[A-Za-z0-9_.+/-]{0,1023}[a-z])[A-Za-z0-9_.+/-]{12,1024})(?![A-Za-z0-9_.+/=-])/,
   },
   {
     // Broader names than before (`apiKey`, `clientSecret`, `privateKey` were

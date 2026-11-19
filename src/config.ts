@@ -428,9 +428,11 @@ export const CONFIG_KEYS: ReadonlySet<string> = new Set(CONFIG_KEY_NAMES);
  * and `true` is not assignable to `never` — so the missing name stops the build instead of
  * becoming a setting a user can write but a TypeScript config cannot spell.
  */
-void (true as [Exclude<(typeof CONFIG_KEY_NAMES)[number], keyof SnapshotConfig>] extends [never]
+void (true satisfies ([Exclude<(typeof CONFIG_KEY_NAMES)[number], keyof SnapshotConfig>] extends [
+  never,
+]
   ? true
-  : never);
+  : never));
 
 /**
  * The same proof in the other direction: every `SnapshotConfig` key must be accepted by the
@@ -438,9 +440,11 @@ void (true as [Exclude<(typeof CONFIG_KEY_NAMES)[number], keyof SnapshotConfig>]
  * interface and to `resolveConfig` but not to this list, so a config file naming one failed with
  * "unknown setting" while its CLI flag worked and the generated config advertised it.
  */
-void (true as [Exclude<keyof SnapshotConfig, (typeof CONFIG_KEY_NAMES)[number]>] extends [never]
+void (true satisfies ([Exclude<keyof SnapshotConfig, (typeof CONFIG_KEY_NAMES)[number]>] extends [
+  never,
+]
   ? true
-  : never);
+  : never));
 
 /**
  * Rejects a setting the tool does not have, naming it.

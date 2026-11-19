@@ -8,6 +8,7 @@ import { createServer } from "../mcp/run.js";
 import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
+import { readConfinedText } from "../security/confine.js";
 import type { Manifest } from "../types.js";
 import { writeZip } from "./zip.js";
 import { SERVE_PAGE } from "./ui.js";
@@ -49,6 +50,8 @@ export interface ServeHandle {
 const DEFAULT_PORT = 4788;
 const MAX_BODY = 64 * 1024;
 const MAX_PREVIEW = 64 * 1024;
+/** Same admission bound as the MCP HTTP transport: a browser tab must not spawn a worker per click. */
+const MAX_MCP_IN_FLIGHT = 4;
 
 function isLoopback(origin: string): boolean {
   try {
@@ -83,6 +86,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   };
   /** Clones made by this process; removed when it closes, because the page can still be reading them. */
   const temporaryClones = new Set<string>();
+  let mcpInFlight = 0;
 
   /**
    * Directories this server may read from: the working directory it was started for, plus the
@@ -240,8 +244,28 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           const server = mcpFor(request.socket);
           const answers = [];
           for (const item of batch) {
-            const answer = await server.handle(item);
-            if (answer !== null) answers.push(answer);
+            const gated =
+              item !== null &&
+              typeof item === "object" &&
+              (item as { method?: unknown }).method === "tools/call";
+            if (gated && mcpInFlight >= MAX_MCP_IN_FLIGHT) {
+              answers.push({
+                jsonrpc: "2.0",
+                id: (item as { id?: unknown }).id ?? null,
+                error: {
+                  code: -32001,
+                  message: "server busy: too many tool calls are already in flight",
+                },
+              });
+              continue;
+            }
+            if (gated) mcpInFlight += 1;
+            try {
+              const answer = await server.handle(item);
+              if (answer !== null) answers.push(answer);
+            } finally {
+              if (gated) mcpInFlight -= 1;
+            }
           }
           if (answers.length === 0) send(202, "");
           else send(200, Array.isArray(message) ? answers : answers[0]);
@@ -377,6 +401,17 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             send(403, { error: "the configured outDir resolves outside the served directory" });
             return;
           }
+          // The staging root is written to as well. Checking only outDir left a host path that
+          // a local config could name; a remote clone already forces both values.
+          const configuredTmpDir =
+            typeof runConfig.tmpDir === "string" && runConfig.tmpDir.trim() !== ""
+              ? runConfig.tmpDir
+              : "snapshot.tmp";
+          const stagingDir = path.resolve(target, configuredTmpDir);
+          if (!insideAllowedRootsForWrite(stagingDir)) {
+            send(403, { error: "the configured tmpDir resolves outside the served directory" });
+            return;
+          }
           const started = Date.now();
           try {
             const manifest = generateSnapshot({ ...runConfig, cwd: target }, {
@@ -446,10 +481,18 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      const manifestFile = path.join(target, "manifest.json");
+      const manifestRead = readConfinedText(target, "manifest.json");
+      if (!manifestRead.ok) {
+        if (manifestRead.reason === "outside") {
+          send(403, { error: "manifest.json resolves outside the snapshot directory" });
+        } else {
+          send(404, { error: "no readable manifest.json under " + target });
+        }
+        return;
+      }
       let manifest: { fingerprint?: string; generatedAt?: string; counts?: { totalFiles?: number; skippedCount?: number }; totals?: { estimatedTokens?: number }; files?: Array<{ relativePath: string; part: string }> };
       try {
-        manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+        manifest = JSON.parse(manifestRead.text);
       } catch {
         send(404, { error: "no manifest.json under " + target });
         return;
@@ -459,12 +502,10 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(400, { error: "manifest.json is not a snapshot manifest: " + shapeProblem });
         return;
       }
-      let prompt = "";
-      try {
-        prompt = fs.readFileSync(path.join(target, "PROMPT.md"), "utf8").slice(0, MAX_PREVIEW);
-      } catch {
-        prompt = "(this snapshot has no PROMPT.md)";
-      }
+      const promptRead = readConfinedText(target, "PROMPT.md");
+      const prompt = promptRead.ok
+        ? promptRead.text.slice(0, MAX_PREVIEW)
+        : "(this snapshot has no readable PROMPT.md)";
       send(200, {
         fingerprint: manifest.fingerprint ?? "",
         generatedAt: manifest.generatedAt ?? "",

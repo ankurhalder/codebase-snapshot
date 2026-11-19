@@ -54,6 +54,19 @@ export function countLines(content: string): number {
 }
 
 /**
+ * Lines in an emitted body, counting a trailing blank line.
+ *
+ * `countLines` describes a *source* file: a final newline terminates the last line and does not
+ * open an empty one. `emittedBody` has already removed the closing newline supplied by the part
+ * fence, so a remaining final newline is content — the blank line the source ended with. Counting
+ * it with the source convention reported "34 lines of 35, 0 incomplete" for `.gitignore`, and the
+ * health audit's split-based count then disagreed with the manifest.
+ */
+export function countBodyLines(content: string): number {
+  return content.length === 0 ? 0 : content.split("\n").length;
+}
+
+/**
  * Truncates to a UTF-8 byte budget without splitting a multi-byte character.
  */
 export function truncateToBytes(

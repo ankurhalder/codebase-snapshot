@@ -18,6 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadConfigFileDetailed, parseByteSize, resolveConfig } from "../config.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
+import { readConfinedText } from "../security/confine.js";
 import type { Manifest, ResolvedSnapshotConfig, SnapshotConfig } from "../types.js";
 import type { ToolContext } from "./types.js";
 
@@ -149,6 +150,8 @@ export interface WorkspaceOverrides {
   changedSince?: unknown;
   staged?: unknown;
   withDependents?: unknown;
+  only?: unknown;
+  ignore?: unknown;
 }
 
 /** The options `resolveConfig` was called with, as the CLI would have passed them. */
@@ -264,6 +267,14 @@ export async function openWorkspace(
   if (overrides.sarif === true) cliOptions.sarif = true;
   if (overrides.staged === true) cliOptions.staged = true;
   if (overrides.withDependents === true) cliOptions.withDependents = true;
+  for (const key of ["only", "ignore"] as const) {
+    const value = overrides[key];
+    if (value === undefined) continue;
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+      return { ok: false, message: `"${key}" must be an array of glob strings.` };
+    }
+    cliOptions[key] = value;
+  }
 
   try {
     const config = resolveConfig(loaded.config, cliOptions, root);
@@ -356,18 +367,28 @@ export function readManifest(workspace: Workspace): ManifestOutcome {
   const file = manifestPathFor(workspace);
   const shown = path.relative(workspace.root, file).split(path.sep).join("/") || file;
 
-  let stats: fs.Stats;
-  try {
-    stats = fs.statSync(file);
-  } catch {
+  // The manifest is a file in a snapshot this process may not have written. A symlink named
+  // `manifest.json` pointing at a host file would be parsed and, through `snapshot://manifest`,
+  // returned as text; every other snapshot read goes through the same confinement.
+  const confined = readConfinedText(path.dirname(file), path.basename(file));
+  if (!confined.ok) {
+    if (confined.reason === "missing") {
+      return {
+        ok: false,
+        missing: true,
+        message:
+          `There is no snapshot manifest at ${shown}. ` +
+          "Call snapshot_plan to preview what would be included, or snapshot_generate to write it.",
+      };
+    }
     return {
       ok: false,
-      missing: true,
-      message:
-        `There is no snapshot manifest at ${shown}. ` +
-        "Call snapshot_plan to preview what would be included, or snapshot_generate to write it.",
+      missing: false,
+      message: `${shown} could not be read as a snapshot manifest: ${confined.message}.`,
     };
   }
+  const stats = confined.stats;
+  const raw = confined.text;
 
   const cached = manifestCache.get(file);
   // `ctimeMs` catches a same-size replacement (a copy over the old file) that `mtimeMs` can miss
@@ -379,17 +400,6 @@ export function readManifest(workspace: Workspace): ManifestOutcome {
     cached.size === stats.size
   ) {
     return { ok: true, manifest: cached.manifest, file };
-  }
-
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, "utf8");
-  } catch (error) {
-    return {
-      ok: false,
-      missing: false,
-      message: `${shown} exists but could not be read: ${error instanceof Error ? error.message : String(error)}`,
-    };
   }
 
   let parsed: unknown;

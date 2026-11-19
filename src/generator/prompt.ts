@@ -643,7 +643,7 @@ function ownerNotesSection(
   if (brief === undefined || brief.notes.length === 0) return [];
   const out: string[] = ["## Owner notes", ""];
   for (const note of brief.notes) {
-    out.push("### " + note.heading, "", ...ownerBlock(note.body, brief.path, code, text), "");
+    out.push("### " + text(note.heading), "", ...ownerBlock(note.body, brief.path, code, text), "");
   }
   return out;
 }

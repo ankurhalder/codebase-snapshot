@@ -30,6 +30,51 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.5
+
+**The second 0.20 audit found twelve regressions and bypasses left by the first hardening pass.
+This release closes all of them and records the regression that pins each route.**
+
+Security and confinement:
+
+- A tracked symlink is now emitted only when its target survived the snapshot's own filters. The
+  previous check compared the target to the sensitive-file list but not to include, exclude, the
+  built-in deny-list or .gitignore, so notes.txt -> .git/config shipped the CI token in the
+  repository config. The authorization-header rule is case-insensitive again without making its
+  mixed-case credential tests case-insensitive.
+- snapshot://prompt, snapshot://reports/*, snapshot://manifest, snapshot_history,
+  snapshot_workspace, GET /api/snapshot and the web manifest read now go through one confined
+  reader that refuses a symlink and requires the canonical target inside the snapshot directory.
+- reports/diff.md now runs git with core.quotepath=false and diff.noprefix=false, fails closed when
+  a section header cannot be attributed to a path, redacts before truncation using the diffed
+  file's own extension, and honours --only and the built-in ignore list.
+- Owner-brief headings, project-overview prose and commit subjects/bodies use the full content
+  scanner, not the path-only rule set. A PEM body or a token in "## Incident ghp_..." no longer
+  reaches PROMPT.md.
+- MCP regex tools refuse nested quantifiers and multiple unbounded repetitions instead of running a
+  main-thread ReDoS; HTTP MCP caps in-flight tool calls at four, evicts the oldest session at 64,
+  and prunes rate windows.
+- serve confines a local config's tmpDir as well as its outDir; a failed or oversized remote clone
+  removes its temporary directory.
+- init --install-hook refuses a symlinked hooks directory or hook file, and a hard-linked hook.
+
+State and contract:
+
+- If the Windows/OneDrive in-place swap removes the old snapshot and then cannot move the new one
+  in, staging is left on disk and named, instead of being deleted by the failure handler.
+- generate --workspace --dry-run writes nothing, and a workspace output root equal to the working
+  directory or an ancestor is refused.
+- validate --staged accepts a staged file that was deleted from the working tree by reading the
+  index and passing the staged paths to discovery.
+- snapshot_validate, snapshot_explain and snapshot_plan accept only/ignore; --port 0 works again and
+  ports are bounded at 65535.
+- The config-key parity proof is a real satisfies assertion rather than an inert as never. It
+  immediately found two accepted aliases, exclude and secretRules, that the TypeScript config type
+  could not spell; both are now in SnapshotConfig.
+- Emitted-body lines count a trailing blank line, so a full file no longer reports "34 of 35 lines"
+  with incompleteCount: 0. The README ingestion guide numbers its steps once, and a YAML secret:
+  section that is a mapping is no longer masked wholesale.
+
 ## 0.20.4
 
 **The 0.20 hardening audit found fifteen material defects, almost all of them a guard that existed

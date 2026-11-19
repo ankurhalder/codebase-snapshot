@@ -486,6 +486,15 @@ export function parseByteOption(
   return value;
 }
 
+/** Parses a TCP port, where 0 is the documented "pick an ephemeral port" value. */
+export function parsePort(raw: string | undefined): number | undefined {
+  const value = parsePositiveInteger(raw, "port", 0);
+  if (value !== undefined && value > 65535) {
+    throw new UsageError(`--port must be at most 65535, received "${raw}".`);
+  }
+  return value;
+}
+
 /**
  * Parses a whole-number option such as `--attachment-slots 20`.
  *
@@ -892,7 +901,7 @@ export function parseCliArgs(argv: string[]): ParsedInvocation {
     sarif: values.sarif === true ? true : undefined,
     strict: values.strict === true ? true : undefined,
     http: values.http === true ? true : undefined,
-    port: parsePositiveInteger(values.port as string | undefined, "port", 1),
+    port: parsePort(values.port as string | undefined),
     host: values.host === undefined ? undefined : String(values.host),
     token: values.token === undefined ? undefined : String(values.token),
     noAuth: values["no-auth"] === true ? true : undefined,
@@ -2333,6 +2342,17 @@ async function runCommand(argv: string[]): Promise<number> {
       );
     }
     const outRoot = path.resolve(invocation.cwd, invocation.outDir ?? "snapshot");
+    const workspaceCwd = path.resolve(invocation.cwd);
+    const outRootRelative = path.relative(outRoot, workspaceCwd);
+    if (
+      outRootRelative === "" ||
+      (!outRootRelative.startsWith("..") && !path.isAbsolute(outRootRelative))
+    ) {
+      return fail(
+        invocation.format,
+        `--workspace refuses --out-dir ${outRoot}: it is the working directory or one of its ancestors.`
+      );
+    }
     const records: Array<{
       name: string;
       path: string;
@@ -2362,7 +2382,10 @@ async function runCommand(argv: string[]): Promise<number> {
       try {
         // Each member is generated on the defaults: a member may contain a config that runs code,
         // and a workspace is a set of repositories the caller named, not one they configured.
-        const manifest = generateSnapshot({ cwd: directory, outDir: path.join(outRoot, name) });
+        const manifest = generateSnapshot(
+          { cwd: directory, outDir: path.join(outRoot, name) },
+          { dryRun: invocation.dryRun }
+        );
         records.push({
           name,
           path: directory,
@@ -2378,7 +2401,7 @@ async function runCommand(argv: string[]): Promise<number> {
         failed += 1;
       }
     }
-    fs.mkdirSync(outRoot, { recursive: true });
+    if (!invocation.dryRun) fs.mkdirSync(outRoot, { recursive: true });
     /**
      * Cross-member edges: a relative import in one member that resolves inside another.
      *
@@ -2415,9 +2438,21 @@ async function runCommand(argv: string[]): Promise<number> {
       members: records.map(({ imports: _imports, ...rest }) => rest),
       links,
     };
-    fs.writeFileSync(path.join(outRoot, "WORKSPACE.json"), JSON.stringify(document, null, 2) + "\n", "utf8");
+    if (!invocation.dryRun) {
+      fs.writeFileSync(
+        path.join(outRoot, "WORKSPACE.json"),
+        JSON.stringify(document, null, 2) + "\n",
+        "utf8"
+      );
+    }
     emit(invocation.format, document, () => {
-      info("\n🗂 Workspace: " + records.length + " of " + members.length + " member(s) written under " + outRoot);
+      info(
+        "\n🗂 Workspace: " +
+          records.length +
+          " of " +
+          members.length +
+          (invocation.dryRun ? " member(s) planned; nothing was written." : " member(s) written under " + outRoot)
+      );
       for (const record of records) {
         info("   - " + record.name + " (" + record.fingerprint.slice(0, 12) + ")");
       }

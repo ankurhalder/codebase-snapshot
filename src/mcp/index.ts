@@ -17,7 +17,8 @@ export type { GenerateSummary, WorkerResults } from "./generate-worker.js";
 // the artifact, so anyone embedding the server needs to be able to locate a section the
 // same way the tool does.
 export { findSection, parsePartSections, windowText } from "./part.js";
-export type { PartSection, Window } from "./part.js";export { buildPrompts } from "./prompts.js";
+export type { PartSection, Window } from "./part.js";
+export { buildPrompts } from "./prompts.js";
 export { buildResourceProvider } from "./resources.js";
 export { REPORT_RESOURCE_URIS, RESOURCE_TEMPLATE_URIS, STATIC_RESOURCE_URIS } from "./uris.js";
 

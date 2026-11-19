@@ -1,5 +1,5 @@
 import * as crypto from "node:crypto";
-import { countLines, truncateToBytes } from "./preview.js";
+import { countBodyLines, countLines, truncateToBytes } from "./preview.js";
 import { escapeControls, UNTRUSTED_CONTENT_NOTICE } from "../terminal.js";
 import { estimateTokens, formatTokens } from "../tokenize.js";
 import type { FileEntry, PartFileEntry, PartMetadata, TruncationReason } from "../types.js";
@@ -657,7 +657,7 @@ function applyTruncatedContent(
         : []
       : [[keptLines + 1, file.originalLines]];
   file.includedBytes = Buffer.byteLength(content, "utf8");
-  file.includedLines = countLines(content);
+  file.includedLines = countBodyLines(content);
 }
 
 /** Rebuilds a part's recorded digest/size after its markdown was altered. */
@@ -879,7 +879,10 @@ function renderFileSection(file: FileEntry): string {
   // Settled before the metadata line is built, because it is rendered from
   // these values and both are read afterwards by `PartFileEntry` and by the manifest entry.
   file.includedBytes = Buffer.byteLength(body, "utf8");
-  file.includedLines = countLines(body);
+  // `emittedBody` has already removed the closing newline the fence supplies. A remaining final
+  // newline is therefore a real blank line, not a terminator, and must be counted as one. The
+  // source convention (`countLines`) is right for the file on disk and wrong for this string.
+  file.includedLines = countBodyLines(body);
   const fence = fenceForContent(content);
   const anchor = anchorForPath(file.relativePath);
 

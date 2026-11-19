@@ -78,6 +78,9 @@ directory configured if the member should be served on its own.
 - **No combination.** `--workspace` is refused with `--remote`, `--delta`, `--slice`,
   `--budget-tokens` and `--sign`: each of those narrows or signs *one* snapshot, and a workspace is
   several.
+- **Dry run means nothing is written.** `--dry-run` returns the member plans and the index shape but
+  creates no member snapshot and no `WORKSPACE.json`. The workspace output root may be inside the
+  working directory; it may not be the working directory or one of its ancestors.
 - **Names come from the directories.** `--workspace a/api,b/api` would collide; use paths whose last
   segment is unique.
 - **Cross-member imports are recorded, not judged.** A relative import in one member that resolves

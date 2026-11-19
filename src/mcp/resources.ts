@@ -21,6 +21,7 @@ import { renderSkill } from "../agent/skill.js";
 import { parsePartSections } from "./part.js";
 import type { ResourceProvider, ToolContext } from "./types.js";
 import { openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
+import { readConfinedText } from "../security/confine.js";
 import type { Workspace } from "./workspace.js";
 
 /**
@@ -269,42 +270,54 @@ export function buildResourceProvider(): ResourceProvider {
 
       const workspace = await workspaceFor(context);
       if ("error" in workspace) return null;
+      const snapshotDir = path.resolve(workspace.root, workspace.config.outDir);
 
       if (uri === PROMPT_URI) {
-        const text = readFileIfPresent(
-          path.resolve(workspace.root, workspace.config.outDir, "PROMPT.md")
-        );
-        if (text === null) {
+        const read = readConfinedText(snapshotDir, "PROMPT.md");
+        if (!read.ok) {
           throw new ResourceNotFoundError(
             uri,
-            "This snapshot contains no PROMPT.md: the prompt artifact was disabled " +
-              "(artifacts.prompt = false or --skip-artifacts prompt), or nothing has been " +
-              "generated yet. Run snapshot_generate first."
+            "This snapshot contains no readable PROMPT.md: the prompt artifact was disabled " +
+              "(artifacts.prompt = false or --skip-artifacts prompt), nothing has been " +
+              "generated yet, or the file is not a regular file inside the snapshot. " +
+              "Run snapshot_generate first."
           );
         }
-        return { uri, mimeType: "text/markdown", text: ensureSingleRead(uri, text, PROMPT_ADVICE) };
+        return {
+          uri,
+          mimeType: "text/markdown",
+          text: ensureSingleRead(uri, read.text, PROMPT_ADVICE),
+        };
       }
 
       const report = REPORT_URIS.get(uri);
       if (report) {
-        const text = readFileIfPresent(
-          path.resolve(workspace.root, workspace.config.outDir, "reports", report.file)
-        );
-        if (text === null) {
+        const read = readConfinedText(snapshotDir, path.posix.join("reports", report.file));
+        if (!read.ok) {
           throw new ResourceNotFoundError(
             uri,
-            "This snapshot contains no " + report.file + ": that report was disabled, or " +
-              "nothing has been generated yet. Run snapshot_generate first."
+            "This snapshot contains no readable " + report.file + ": that report was disabled, " +
+              "nothing has been generated yet, or the file is not a regular file inside the " +
+              "snapshot. Run snapshot_generate first."
           );
         }
-        return { uri, mimeType: "text/markdown", text: ensureSingleRead(uri, text, REPORT_ADVICE) };
+        return {
+          uri,
+          mimeType: "text/markdown",
+          text: ensureSingleRead(uri, read.text, REPORT_ADVICE),
+        };
       }
 
       if (uri === "snapshot://manifest") {
         const read = readManifest(workspace);
         if (!read.ok) return null;
-        const text = readFileIfPresent(read.file) ?? JSON.stringify(read.manifest, null, 2);
-        return { uri, mimeType: "application/json", text: ensureSingleRead(uri, text, MANIFEST_ADVICE) };
+        const confined = readConfinedText(path.dirname(read.file), path.basename(read.file));
+        if (!confined.ok) return null;
+        return {
+          uri,
+          mimeType: "application/json",
+          text: ensureSingleRead(uri, confined.text, MANIFEST_ADVICE),
+        };
       }
 
       const partMatch = PART_URI.exec(uri);

@@ -35,6 +35,8 @@ import type { JsonObject, JsonSchema } from "./protocol.js";
 import type { FileEntry, Manifest, ValidationDrift, ValidationResult } from "../types.js";
 import type { McpTool, ToolAnnotations, ToolContext, ToolCost, ToolOutcome } from "./types.js";
 import { forgetManifest, manifestPathFor, openWorkspace, partPathFor, readManifest, resolveRoot } from "./workspace.js";
+import { readConfinedText } from "../security/confine.js";
+import { unsafeRegExpReason } from "../security/regex.js";
 import type { Workspace, WorkspaceOverrides } from "./workspace.js";
 
 /**
@@ -105,6 +107,16 @@ const outDirOverride = (args: JsonObject): WorkspaceOverrides => ({ outDir: args
  * comparison disagreed with a configuration the server could not describe.
  */
 const SCOPE_PROPERTIES: Record<string, JsonSchema> = {
+  only: {
+    type: "array",
+    items: { type: "string" },
+    description: "Globs to include: replaces the config allow-list for this run.",
+  },
+  ignore: {
+    type: "array",
+    items: { type: "string" },
+    description: "Globs to exclude, added to the config deny-list for this run.",
+  },
   maxPartTokens: {
     type: "string",
     description:
@@ -145,6 +157,8 @@ function workspaceOverrides(args: JsonObject): WorkspaceOverrides {
     changedSince: args.changedSince,
     staged: args.staged,
     withDependents: args.withDependents,
+    only: args.only,
+    ignore: args.ignore,
   };
 }
 
@@ -337,19 +351,19 @@ const historyTool: ToolSpec = {
   async handler(args, context) {
     const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
-    const reportPath = path.resolve(prepared.workspace.root, prepared.workspace.config.outDir, "reports", "log.md");
-    let text: string;
-    try {
-      text = fs.readFileSync(reportPath, "utf8");
-    } catch {
+    const snapshotDir = path.resolve(prepared.workspace.root, prepared.workspace.config.outDir);
+    const reportRead = readConfinedText(snapshotDir, path.posix.join("reports", "log.md"));
+    if (!reportRead.ok) {
       return {
         text:
-          "This snapshot has no reports/log.md. Generate it with " +
+          "This snapshot has no readable reports/log.md. Generate it with " +
           "`snapshot_generate { includeLogs: 20 }`, or `generate --include-logs 20` on the command line; " +
-          "the report is opt-in because the commit subjects are repository content.",
+          "the report is opt-in because the commit subjects are repository content, and it must be " +
+          "a regular file inside the snapshot.",
         isError: true,
       };
     }
+    const text = reportRead.text;
     // The manifest records a digest for reports/log.md when it wrote one. A tool that reports
     // commit subjects from a file edited after generation is repeating unverifiable repository
     // content as history, so the digest is checked here the way `validate` checks artifacts.
@@ -548,22 +562,19 @@ const workspaceTool: ToolSpec = {
     // other tool.
     const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
-    const index = path.resolve(
-      prepared.workspace.root,
-      prepared.workspace.config.outDir,
-      "WORKSPACE.json"
-    );
-    let text: string;
-    try {
-      text = fs.readFileSync(index, "utf8");
-    } catch {
+    const snapshotDir = path.resolve(prepared.workspace.root, prepared.workspace.config.outDir);
+    const index = path.join(snapshotDir, "WORKSPACE.json");
+    const read = readConfinedText(snapshotDir, "WORKSPACE.json");
+    if (!read.ok) {
       return {
         text:
-          "No workspace index at " + index + ". Generate one with " +
+          "No workspace index at " + index + " (the file is absent, or it is not a regular file " +
+          "inside the snapshot). Generate one with " +
           "`generate --workspace member-a,member-b`; a single snapshot has no members to list.",
         isError: true,
       };
     }
+    const text = read.text;
     const document = JSON.parse(text) as {
       members?: Array<{ name?: string; files?: number; tokens?: number; fingerprint?: string }>;
       links?: Array<{ from?: string; to?: string; specifiers?: number }>;
@@ -728,6 +739,10 @@ const routesTool: ToolSpec = {
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
     let filter: RegExp | null = null;
     if (typeof args.pattern === "string") {
+      const unsafe = unsafeRegExpReason(args.pattern);
+      if (unsafe !== null) {
+        return { text: "pattern is refused: " + unsafe + ".", isError: true };
+      }
       try {
         filter = new RegExp(args.pattern, "i");
       } catch (error) {
@@ -887,6 +902,12 @@ const searchTool: ToolSpec = {
     const cap = Math.max(1, Math.min(500, typeof args.maxMatches === "number" ? args.maxMatches : 50));
     const contextLines = Math.max(0, Math.min(10, typeof args.contextLines === "number" ? args.contextLines : 0));
     let pattern: RegExp;
+    if (args.regex === true) {
+      const unsafe = unsafeRegExpReason(query);
+      if (unsafe !== null) {
+        return { text: "regex is refused: " + unsafe + ".", isError: true };
+      }
+    }
     try {
       pattern = args.regex === true ? new RegExp(query, "i") : new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     } catch (error) {
@@ -1324,28 +1345,42 @@ const symbolTool: ToolSpec = {
     // are the only source — reading the working tree would hand back the file the snapshot
     // excluded. Case-sensitive on purpose: a case-insensitive scan of a common word is noise.
     const callSites: Array<{ path: string; line: number; text: string; definition: boolean }> = [];
+    let referencesTruncated = false;
     if (args.references !== false) {
       const limit = Math.max(1, typeof args.maxReferences === "number" ? args.maxReferences : 20);
       const definitionKeys = new Set(matches.map((match) => match.path + ":" + match.line));
       const word = new RegExp("\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
-      const parts = new Map<string, string>();
+      // One parsed part per part, not one per file in it. `scanned` is charged once when a part is
+      // read, so a 15-file part that happens to come first no longer consumes the whole 4 MB
+      // budget before the next part is opened.
+      const sectionsByPart = new Map<string, ReturnType<typeof parsePartSections>>();
       let scanned = 0;
       for (const file of read.manifest.files) {
         if (callSites.length >= limit) break;
         const partPath = partPathFor(workspace, file.part);
         if (partPath === null) continue;
-        let partText = parts.get(partPath);
-        if (partText === undefined) {
+        let sections = sectionsByPart.get(partPath);
+        if (sections === undefined) {
+          if (scanned >= MAX_SEARCH_BYTES) {
+            referencesTruncated = true;
+            break;
+          }
+          let partText: string;
           try {
             partText = fs.readFileSync(partPath, "utf8");
           } catch {
             continue;
           }
-          parts.set(partPath, partText);
+          const bytes = Buffer.byteLength(partText, "utf8");
+          if (scanned + bytes > MAX_SEARCH_BYTES) {
+            referencesTruncated = true;
+            break;
+          }
+          scanned += bytes;
+          sections = parsePartSections(partText);
+          sectionsByPart.set(partPath, sections);
         }
-        if (scanned > MAX_SEARCH_BYTES) break;
-        scanned += Buffer.byteLength(partText, "utf8");
-        const section = findSection(parsePartSections(partText), file.relativePath);
+        const section = findSection(sections, file.relativePath);
         if (section === null) continue;
         const bodyLines = section.body.split("\n");
         for (let index = 0; index < bodyLines.length && callSites.length < limit; index += 1) {
@@ -1368,8 +1403,15 @@ const symbolTool: ToolSpec = {
         : "\n\n" + (callSites.length === 0
             ? "No call site was found in the snapshot."
             : "Call sites (" + callSites.length + "):\n" +
-              callSites.map((site) => "  " + site.path + ":" + site.line + "  " + site.text).join("\n")));
-    return { text, structured: { found: matches.length, matches, references: callSites } };
+              callSites.map((site) => "  " + site.path + ":" + site.line + "  " + site.text).join("\n"))) +
+      (referencesTruncated
+        ? "\n\nSearch stopped at the 4 MB part budget; call sites in later parts were not read. " +
+          "Narrow the name or inspect the remaining parts directly."
+        : "");
+    return {
+      text,
+      structured: { found: matches.length, matches, references: callSites, truncated: referencesTruncated },
+    };
   },
 };
 
@@ -1545,6 +1587,10 @@ const queryTool: ToolSpec = {
       typeof args.maxFiles === "number" ? Math.min(200, Math.max(1, args.maxFiles)) : 40;
     let pattern: RegExp | null = null;
     if (typeof args.pathPattern === "string") {
+      const unsafe = unsafeRegExpReason(args.pathPattern);
+      if (unsafe !== null) {
+        return { text: "pathPattern is refused: " + unsafe + ".", isError: true };
+      }
       try {
         pattern = new RegExp(args.pathPattern, "i");
       } catch (error) {
@@ -2099,16 +2145,6 @@ const generateTool: ToolSpec = {
         type: "integer",
         minimum: 500,
         description: "Fit the snapshot into this token budget, highest value first.",
-      },
-      only: {
-        type: "array",
-        items: { type: "string" },
-        description: "Globs to include: replaces the config allow-list for this run.",
-      },
-      ignore: {
-        type: "array",
-        items: { type: "string" },
-        description: "Globs to exclude, added to the config deny-list for this run.",
       },
       ...SCOPE_PROPERTIES,
     },
