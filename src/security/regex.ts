@@ -47,11 +47,23 @@ export function unsafeRegExpReason(source: string): string | null {
     if (char === ")") {
       const group = groups.pop();
       if (group === undefined) continue;
-      const next = source[index + 1];
-      if (next === "*" || next === "+" || (next === "{" && isUnboundedBrace(source, index + 1))) {
+      if (isQuantifiedAt(source, index + 1)) {
         if (group.quantified || group.alternation) {
           return "a quantified group contains another quantifier or an alternation";
         }
+        group.quantified = true;
+      } else if (isOptionalQuantifierAt(source, index + 1)) {
+        // `(a?)+` is still a nested quantifier even though the inner one is optional. Mark the
+        // group so a repeating outer quantifier sees it; an optional outer quantifier alone is
+        // safe and must not be rejected.
+        group.quantified = true;
+      }
+      // A child's flags belong to every enclosing group. Without this, `((.|.))+` looked like
+      // an unquantified outer group holding a harmless inner one, and the outer `+` passed.
+      const parent = groups[groups.length - 1];
+      if (parent !== undefined) {
+        parent.quantified = parent.quantified || group.quantified;
+        parent.alternation = parent.alternation || group.alternation;
       }
       continue;
     }
@@ -102,10 +114,32 @@ export function unsafeRegExpReason(source: string): string | null {
   return null;
 }
 
-/** True when the brace at `start` is an open-ended `{n,}` quantifier. */
-function isUnboundedBrace(source: string, start: number): boolean {
+/** True when `source[start]` starts a `?` or a `{0,1}`-style optional quantifier. */
+function isOptionalQuantifierAt(source: string, start: number): boolean {
+  if (source[start] === "?") return true;
+  if (source[start] !== "{") return false;
   const close = source.indexOf("}", start + 1);
   if (close === -1) return false;
   const body = source.slice(start + 1, close);
-  return /^\d+,$/.test(body);
+  const match = /^(\d+)(?:,(\d*))?$/.exec(body);
+  if (match === null) return false;
+  const minimum = Number(match[1]);
+  if (match[2] === undefined) return minimum <= 1;
+  const maximum = match[2] === "" ? Infinity : Number(match[2]);
+  return maximum <= 1;
+}
+
+/** True when `source[start]` starts a quantifier that can repeat more than once. */
+function isQuantifiedAt(source: string, start: number): boolean {
+  const char = source[start];
+  if (char === "*" || char === "+") return true;
+  if (char !== "{") return false;
+  const close = source.indexOf("}", start + 1);
+  if (close === -1) return false;
+  const body = source.slice(start + 1, close);
+  const match = /^(\d+)(?:,(\d*))?$/.exec(body);
+  if (match === null) return false;
+  if (match[2] === undefined) return Number(match[1]) > 1;
+  if (match[2] === "") return true;
+  return Number(match[2]) > 1;
 }

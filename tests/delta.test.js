@@ -44,6 +44,7 @@ test("a delta contains the changed file and its importer, and accounts for the r
 
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "delta", "manifest.json"), "utf8"));
   assert.ok(manifest.delta, "the manifest records the delta");
+  assert.equal(manifest.delta.base.path, "snapshot/manifest.json", "the base path is relative to the run's cwd");
   assert.deepEqual(manifest.delta.changed, ["src/user.ts"]);
   assert.deepEqual(manifest.delta.added, []);
   assert.deepEqual(manifest.delta.removed, []);

@@ -5,14 +5,20 @@ import * as path from "node:path";
  * Reads a snapshot file without following the path out of its snapshot directory.
  *
  * The part reader has always refused a symlink named like a part because a read-only MCP resource
- * is auto-approved by clients. The same rule has to cover the other files a snapshot exposes —
- * PROMPT.md, reports/*, manifest.json, WORKSPACE.json — or the guard protects one door and leaves
- * the rest open. A configured outDir may intentionally live outside the repository (the MCP
- * contract documents that), so confinement is to the snapshot directory, not to the repository.
+ * is auto-approved by clients. The same rule has to cover every other file a snapshot exposes:
+ * PROMPT.md, reports, manifest.json, WORKSPACE.json, parts and declared artifacts. A configured
+ * outDir may intentionally live outside the repository (the MCP contract documents that), so
+ * confinement is to the snapshot directory, not to the repository.
  */
 export type ConfinedReadFailureReason = "missing" | "outside" | "not-file" | "unreadable";
 
-export type ConfinedReadResult =
+export interface ConfinedFailure {
+  ok: false;
+  reason: ConfinedReadFailureReason;
+  message: string;
+}
+
+export type ConfinedTextResult =
   | {
       ok: true;
       text: string;
@@ -20,26 +26,29 @@ export type ConfinedReadResult =
       path: string;
       stats: fs.Stats;
     }
+  | ConfinedFailure;
+
+export type ConfinedBytesResult =
   | {
-      ok: false;
-      reason: ConfinedReadFailureReason;
-      message: string;
-    };
+      ok: true;
+      bytes: Buffer;
+      path: string;
+      stats: fs.Stats;
+    }
+  | ConfinedFailure;
 
 function isInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-/**
- * Reads one regular file under `baseDir`.
- *
- * The final component must be a regular file, not a symlink. A parent symlink is allowed only
- * when the canonical target still resolves under the canonical base. This is deliberately
- * stricter than realpath-then-contains: a snapshot this tool wrote never contains a file symlink,
- * and accepting one would make the check depend on where the link happened to point.
- */
-export function readConfinedText(baseDir: string, relativePath: string): ConfinedReadResult {
+/** Resolves a regular file under `baseDir`, refusing a symlink in the final component. */
+function resolveConfined(
+  baseDir: string,
+  relativePath: string
+):
+  | { ok: true; path: string; stats: fs.Stats }
+  | ConfinedFailure {
   if (relativePath.length === 0 || relativePath.includes("\0")) {
     return { ok: false, reason: "not-file", message: "the file name is empty or contains a NUL byte" };
   }
@@ -88,10 +97,28 @@ export function readConfinedText(baseDir: string, relativePath: string): Confine
   if (!isInside(baseReal, real)) {
     return { ok: false, reason: "outside", message: "the file resolves outside the snapshot directory" };
   }
+  return { ok: true, path: real, stats };
+}
 
+/** Reads a confined file as bytes; used where the caller must hash the exact source bytes. */
+export function readConfinedBytes(baseDir: string, relativePath: string): ConfinedBytesResult {
+  const resolved = resolveConfined(baseDir, relativePath);
+  if (!resolved.ok) return resolved;
   try {
-    const text = fs.readFileSync(real, "utf8");
-    return { ok: true, text, path: real, stats: fs.statSync(real) };
+    const bytes = fs.readFileSync(resolved.path);
+    return { ok: true, bytes, path: resolved.path, stats: fs.statSync(resolved.path) };
+  } catch {
+    return { ok: false, reason: "unreadable", message: "the file could not be read" };
+  }
+}
+
+/** Reads a confined file as UTF-8 text. */
+export function readConfinedText(baseDir: string, relativePath: string): ConfinedTextResult {
+  const resolved = resolveConfined(baseDir, relativePath);
+  if (!resolved.ok) return resolved;
+  try {
+    const text = fs.readFileSync(resolved.path, "utf8");
+    return { ok: true, text, path: resolved.path, stats: fs.statSync(resolved.path) };
   } catch {
     return { ok: false, reason: "unreadable", message: "the file could not be read" };
   }

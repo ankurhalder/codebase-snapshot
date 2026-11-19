@@ -45,6 +45,7 @@ import type { SkillTarget } from "./agent/install-skill.js";
 import { SKILL_TARGETS, installSkill, isSkillTarget } from "./agent/install-skill.js";
 import { SKILL_NAME, renderSkill } from "./agent/skill.js";
 import { runStdioServer } from "./mcp/index.js";
+import { buildTools } from "./mcp/tools.js";
 import { startHttpTransport } from "./mcp/http.js";
 import { startWebServer } from "./web/server.js";
 import { loadSigningKey, SIGNATURE_FILE } from "./signing.js";
@@ -1902,6 +1903,18 @@ async function runCommand(argv: string[]): Promise<number> {
     throw err;
   }
 
+  // A container should pass the bearer token in the environment, not argv where `ps` can read
+  // it. --no-auth still wins; an explicit --token still wins over the environment.
+  const environmentToken = process.env.SNAPSHOT_TOKEN?.trim();
+  const tokenOption =
+    invocation.noAuth === true
+      ? { token: null }
+      : invocation.token !== undefined
+        ? { token: invocation.token }
+        : environmentToken !== undefined && environmentToken !== ""
+          ? { token: environmentToken }
+          : {};
+
   if (invocation.command === "init") {
     return await runInitCommand(invocation);
   }
@@ -1931,8 +1944,7 @@ async function runCommand(argv: string[]): Promise<number> {
       cwd: path.resolve(invocation.cwd),
       ...(invocation.host === undefined ? {} : { host: invocation.host }),
       ...(invocation.port === undefined ? {} : { port: invocation.port }),
-      ...(invocation.noAuth === true ? { token: null } : {}),
-      ...(invocation.token === undefined ? {} : { token: invocation.token }),
+      ...tokenOption,
       ...(invocation.allowPrivate === true ? { allowPrivate: true } : {}),
       log: (line) => warn(line),
     });
@@ -1958,13 +1970,12 @@ async function runCommand(argv: string[]): Promise<number> {
         cwd: path.resolve(invocation.cwd),
         ...(invocation.host === undefined ? {} : { host: invocation.host }),
         ...(invocation.port === undefined ? {} : { port: invocation.port }),
-        ...(invocation.noAuth === true ? { token: null } : {}),
-        ...(invocation.token === undefined ? {} : { token: invocation.token }),
+        ...tokenOption,
         ...(invocation.allowOrigins === undefined ? {} : { allowedOrigins: invocation.allowOrigins }),
         log: (line) => warn(line),
       });
       info("MCP over HTTP: " + transport.url);
-      info("  tools: " + 12 + " (see describe --format json)");
+      info("  tools: " + buildTools().length + " (see describe --format json)");
       if (transport.token !== null) {
         info("  Authorization: Bearer " + transport.token);
         info("  (generated for this run; pass --token to choose one)");
@@ -2118,10 +2129,35 @@ async function runCommand(argv: string[]): Promise<number> {
         return fail(invocation.format, `Could not read ${indexPath}: ${(error as Error).message}`);
       }
       const rows: Array<{ name: string; score: number; counts: { pass: number; warn: number; fail: number }; failed: string[]; error?: string }> = [];
+      const insidePath = (parent: string, child: string): boolean => {
+        const relative = path.relative(parent, child);
+        return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+      };
       for (const member of index.members ?? []) {
         const name = member.name ?? "?";
-        const snapshotDir = path.join(outRoot, name);
-        const repoDir = path.resolve(resolved.cwd, member.path ?? name);
+        // The workspace index is repository-controlled input. Joining `name` or `path` without a
+        // containment check let a crafted WORKSPACE.json point health at any directory on disk.
+        const snapshotDir = path.resolve(outRoot, name);
+        const repoPath = member.path ?? name;
+        const repoDir = path.resolve(resolved.cwd, repoPath);
+        if (
+          name.length === 0 ||
+          path.isAbsolute(name) ||
+          name.split("/").includes("..") ||
+          !insidePath(outRoot, snapshotDir) ||
+          path.isAbsolute(repoPath) ||
+          repoPath.split(/[\\/]/).includes("..") ||
+          !insidePath(resolved.cwd, repoDir)
+        ) {
+          rows.push({
+            name,
+            score: 0,
+            counts: { pass: 0, warn: 0, fail: 1 },
+            failed: [],
+            error: "the workspace index names a path outside the workspace",
+          });
+          continue;
+        }
         if (!fs.existsSync(path.join(snapshotDir, "manifest.json"))) {
           rows.push({ name, score: 0, counts: { pass: 0, warn: 0, fail: 1 }, failed: [], error: "no snapshot at " + snapshotDir });
           continue;
@@ -2353,6 +2389,23 @@ async function runCommand(argv: string[]): Promise<number> {
         `--workspace refuses --out-dir ${outRoot}: it is the working directory or one of its ancestors.`
       );
     }
+    // Two members with the same basename would write one snapshot over the other and leave one
+    // member missing from the index. Refuse before the first member is generated, not after a
+    // partial workspace has already been written.
+    const plannedNames = new Map<string, string>();
+    for (const member of members) {
+      const directory = path.resolve(invocation.cwd, member);
+      const name = path.basename(directory);
+      const previous = plannedNames.get(name);
+      if (previous !== undefined) {
+        return fail(
+          invocation.format,
+          `--workspace members "${previous}" and "${member}" share the basename "${name}"; ` +
+            "each member needs a distinct directory name."
+        );
+      }
+      plannedNames.set(name, member);
+    }
     const records: Array<{
       name: string;
       path: string;
@@ -2431,19 +2484,44 @@ async function runCommand(argv: string[]): Promise<number> {
         links.push({ from: record.name, to, specifiers: bucket.count, examples: bucket.examples });
       }
     }
-    links.sort((left, right) => (left.from + ">" + left.to).localeCompare(right.from + ">" + right.to));
+    links.sort((left, right) => {
+      const a = left.from + ">" + left.to;
+      const b = right.from + ">" + right.to;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
     const document = {
       generatedAt: new Date().toISOString(),
       generator: GENERATOR_VERSION,
-      members: records.map(({ imports: _imports, ...rest }) => rest),
+      // The index is published; an absolute host path in it names the author's home directory.
+      // Store the member path relative to the workspace cwd, as manifest paths already are.
+      members: records.map(({ imports: _imports, ...rest }) => ({
+        ...rest,
+        path: path.relative(workspaceCwd, rest.path).split(path.sep).join("/") || ".",
+      })),
       links,
     };
     if (!invocation.dryRun) {
-      fs.writeFileSync(
-        path.join(outRoot, "WORKSPACE.json"),
-        JSON.stringify(document, null, 2) + "\n",
-        "utf8"
-      );
+      const workspacePath = path.join(outRoot, "WORKSPACE.json");
+      try {
+        const stats = fs.lstatSync(workspacePath);
+        if (stats.isSymbolicLink() || !stats.isFile()) {
+          return fail(invocation.format, `${workspacePath} is not a regular file; refusing to replace it.`);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const tempPath = `${workspacePath}.${process.pid}.${Date.now()}.tmp`;
+      try {
+        fs.writeFileSync(tempPath, JSON.stringify(document, null, 2) + "\n", "utf8");
+        fs.renameSync(tempPath, workspacePath);
+      } catch (error) {
+        try {
+          fs.rmSync(tempPath, { force: true });
+        } catch {
+          // Report the write failure, not the cleanup failure.
+        }
+        throw error;
+      }
     }
     emit(invocation.format, document, () => {
       info(
@@ -2493,8 +2571,13 @@ async function runCommand(argv: string[]): Promise<number> {
       if (shape !== null) {
         return fail(invocation.format, manifestPath + " is not a snapshot manifest: " + shape);
       }
-      deltaBase = { manifest: base, path: manifestPath };
-      info("   Delta base: " + manifestPath + " (" + base.files.length + " files, fingerprint " + base.fingerprint.slice(0, 12) + ")");
+      const relativeBase = path.relative(invocation.cwd, manifestPath).split(path.sep).join("/");
+      const recordedBase =
+        relativeBase === "" || relativeBase.startsWith("..") || path.isAbsolute(relativeBase)
+          ? path.basename(manifestPath)
+          : relativeBase;
+      deltaBase = { manifest: base, path: recordedBase };
+      info("   Delta base: " + recordedBase + " (" + base.files.length + " files, fingerprint " + base.fingerprint.slice(0, 12) + ")");
     }
     const manifest = generateSnapshot(resolved, {
       dryRun: invocation.dryRun,

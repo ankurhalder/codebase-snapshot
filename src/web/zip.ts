@@ -36,10 +36,15 @@ export function crc32(data: Buffer): number {
 
 /** DOS time and date, fixed at the epoch-adjacent value when the source says nothing better. */
 function dosDateTime(date: Date): { time: number; date: number } {
-  const year = Math.max(1980, date.getFullYear());
+  // DOS timestamps have no zone. Using local getters made the same archive bytes differ between
+  // machines; UTC is the only deterministic reading.
+  const year = Math.max(1980, date.getUTCFullYear());
   return {
-    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
-    date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+    time:
+      (date.getUTCHours() << 11) |
+      (date.getUTCMinutes() << 5) |
+      Math.floor(date.getUTCSeconds() / 2),
+    date: ((year - 1980) << 9) | ((date.getUTCMonth() + 1) << 5) | date.getUTCDate(),
   };
 }
 
@@ -57,28 +62,44 @@ export interface ZipOptions {
   entries?: readonly ZipEntry[];
   /** Skip these names, relative to the directory. */
   skip?: (relative: string) => boolean;
+  /** Refuse an archive whose uncompressed content exceeds this many bytes. */
+  maxTotalBytes?: number;
 }
 
 /** Every regular file under `root`, relative and forward-slashed. */
 export function walkFiles(root: string, prefix = ""): string[] {
   const files: string[] = [];
-  for (const entry of fs.readdirSync(path.join(root, prefix), { withFileTypes: true })) {
-    const relative = prefix === "" ? entry.name : prefix + "/" + entry.name;
-    if (entry.isDirectory()) files.push(...walkFiles(root, relative));
-    else if (entry.isFile()) files.push(relative);
+  const stack = [prefix];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    for (const entry of fs.readdirSync(path.join(root, current), { withFileTypes: true })) {
+      const relative = current === "" ? entry.name : current + "/" + entry.name;
+      if (entry.isDirectory()) stack.push(relative);
+      else if (entry.isFile()) files.push(relative);
+    }
   }
   return files;
 }
 
 export function writeZip(options: ZipOptions): Buffer {
   const entries: ZipEntry[] = [...(options.entries ?? [])];
+  const maxTotalBytes = options.maxTotalBytes ?? 256 * 1024 * 1024;
+  let totalBytes = entries.reduce((total, entry) => total + entry.content.length, 0);
+  if (totalBytes > maxTotalBytes) {
+    throw new Error("zip: uncompressed content exceeds " + maxTotalBytes + " bytes");
+  }
   if (options.directory !== undefined) {
     const root = options.directory;
     for (const relative of walkFiles(root)) {
       if (options.skip !== undefined && options.skip(relative)) continue;
       const full = path.join(root, relative);
       const stat = fs.statSync(full);
-      entries.push({ name: relative, content: fs.readFileSync(full), mtime: stat.mtime });
+      if (totalBytes + stat.size > maxTotalBytes) {
+        throw new Error("zip: uncompressed content exceeds " + maxTotalBytes + " bytes");
+      }
+      const content = fs.readFileSync(full);
+      totalBytes += content.length;
+      entries.push({ name: relative, content, mtime: stat.mtime });
     }
   }
   if (entries.length > 65535) {

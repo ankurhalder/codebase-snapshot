@@ -55,6 +55,7 @@ const RATE_WINDOW_MS = 10_000;
 const MAX_IN_FLIGHT = 4;
 /** Bound on per-session servers and per-remote rate windows. */
 const MAX_SESSION_ENTRIES = 64;
+const MAX_SSE_SESSIONS = 64;
 const MAX_RATE_WINDOWS = 1024;
 
 /** The token a server generates when the caller did not pick one. */
@@ -108,10 +109,10 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   const socketServers = new WeakMap<object, McpServer>();
   /** Insert a server by session id, evicting the oldest when the table is full. */
   const rememberSession = (id: string, server: McpServer): void => {
-    if (!mcpSessions.has(id) && mcpSessions.size >= MAX_SESSION_ENTRIES) {
-      const oldest = mcpSessions.keys().next().value;
-      if (oldest !== undefined) mcpSessions.delete(oldest);
-    }
+    // Do not evict an existing session to make room for a caller-chosen id. A client that sends
+    // 64 random ids could otherwise push real clients out; a new id beyond the cap gets a server
+    // for this request but no stored state.
+    if (!mcpSessions.has(id) && mcpSessions.size >= MAX_SESSION_ENTRIES) return;
     mcpSessions.set(id, server);
   };
   // Fallback for clients that do not forward the session header. The spec-compliant path is the
@@ -310,6 +311,19 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
 
     if (request.method === "GET" && request.url === "/metrics") {
+      // Metrics are not repository content, but on a network bind they still reveal request
+      // volume and uptime. Keep the loopback convenience and require the same bearer token when
+      // the server is reachable from another machine.
+      if (
+        token !== null &&
+        host !== "127.0.0.1" &&
+        host !== "localhost" &&
+        host !== "::1" &&
+        !tokenAccepted(request, new URL(request.url, "http://localhost"))
+      ) {
+        send(401, { error: "unauthorized" }, { "www-authenticate": 'Bearer realm="codebase-snapshot"' });
+        return;
+      }
       // Prometheus text format, no dependency. The values are process-local: this server does not
       // aggregate across instances, and a monitoring system that needs that can sum them. No metric
       // carries a path or a tool name — a label built from a URL is an unbounded map, and it would
@@ -353,6 +367,10 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
         return;
       }
+      if (sseSessions.size >= MAX_SSE_SESSIONS) {
+        send(503, { error: "too many open SSE sessions" }, { ...cors, "retry-after": "10" });
+        return;
+      }
       const id = crypto.randomBytes(12).toString("hex");
       response.writeHead(200, {
         ...cors,
@@ -362,9 +380,23 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         "x-accel-buffering": "no",
       });
       const write = (payload: string): void => {
-        response.write(payload);
+        try {
+          response.write(payload);
+        } catch {
+          // A client that disconnected mid-call is not a server failure.
+        }
       };
-      sseSessions.set(id, { write, end: () => response.end(), server: createMcp() });
+      sseSessions.set(id, {
+        write,
+        end: () => {
+          try {
+            response.end();
+          } catch {
+            // Already closed.
+          }
+        },
+        server: createMcp(),
+      });
       const heartbeat = setInterval(() => write(": ping\n\n"), 15_000);
       const cleanup = (): void => {
         clearInterval(heartbeat);
@@ -430,7 +462,14 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
             if (gated) releaseToolSlot();
           }
           send(202, "", cors);
-        })();
+        })().catch((error: unknown) => {
+          log("mcp/http: " + (error as Error).message);
+          try {
+            send(500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);
+          } catch {
+            // The stream is already gone.
+          }
+        });
       });
       return;
     }

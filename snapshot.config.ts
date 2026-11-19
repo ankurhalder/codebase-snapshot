@@ -34,10 +34,10 @@ const config = {
     default: "292k",
     byLayer: {},
   },
-  // Gemini accepts at most ten uploaded files. Cap the parts at eight so the eight part files
-  // plus README.md and manifest.json fit, while PROMPT.md is pasted as text (it costs no slot).
-  // The cap grows the part budget instead of dropping files, so the payload stays complete.
-  maxParts: 8,
+  // Gemini accepts at most ten uploaded files. Nine part files plus reports/navigation.md is
+  // exactly ten; README.md and PROMPT.md are pasted, not uploaded. Nine parts also keeps every
+  // emitted file under Gemini's 300 KB per-file cap without growing the part budget past 292k.
+  maxParts: 9,
 
   // ── What goes in ───────────────────────────────────────────────────────
   // Allow-list. Empty means "everything that is not ignored".

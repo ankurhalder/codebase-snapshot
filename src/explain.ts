@@ -6,7 +6,7 @@ import { isSkeletonizable, skeletonizeTypeScript } from "./ast/skeleton.js";
 import { isCommentStrippable, stripComments } from "./generator/comments.js";
 import { countLines, truncatePreview } from "./partitioner/preview.js";
 import { collectFiles, findSecretInPath } from "./scanner/files.js";
-import { resolveChangedScope } from "./scanner/changed.js";
+import { readStagedBlob, resolveChangedScope } from "./scanner/changed.js";
 import { buildImportResolver, importsChangedFile, tsconfigPathsFor } from "./scanner/dependents.js";
 import {
   BINARY_SCAN_BYTES,
@@ -23,6 +23,19 @@ import type {
   SkipRecord,
   TextEncoding,
 } from "./types.js";
+
+/** True for a regular file whose canonical path stays inside the repository. */
+function safeRegularFile(cwd: string, absolute: string): boolean {
+  try {
+    if (!fs.lstatSync(absolute).isFile()) return false;
+    const root = fs.realpathSync(cwd);
+    const real = fs.realpathSync(absolute);
+    const relative = path.relative(root, real);
+    return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+}
 
 export interface ExplainResult {
   /** Path relative to the configured cwd, POSIX separators. */
@@ -170,9 +183,13 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
   }
 
   const absolute = path.join(config.cwd, relative);
+  const stagedBlob = config.staged === true ? readStagedBlob(config.cwd, relative) : null;
   const result: ExplainResult = {
     path: maskedPath,
-    exists: fs.existsSync(absolute),
+    // `existsSync` follows a symlink, so an in-repo link to /etc/passwd answered "exists" for a
+    // file the scanner refuses. `lstat` plus a canonical containment check keeps the answer about
+    // a regular file the repository actually contains; a staged blob is the index's answer.
+    exists: stagedBlob !== null || safeRegularFile(config.cwd, absolute),
     included: false,
   };
 
@@ -284,11 +301,13 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     return result;
   }
 
-  let sizeOnDisk: number | null = null;
-  try {
-    sizeOnDisk = fs.statSync(absolute).size;
-  } catch {
-    sizeOnDisk = null;
+  let sizeOnDisk: number | null = stagedBlob?.length ?? null;
+  if (sizeOnDisk === null) {
+    try {
+      sizeOnDisk = fs.statSync(absolute).size;
+    } catch {
+      sizeOnDisk = null;
+    }
   }
   // Only a file too large to load is sniffed *before* it is read. Below the cap the decode
   // below is the complete check — it looks at every byte, not a head — and it reports why the
@@ -301,10 +320,10 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     return result;
   }
 
-  if (fs.existsSync(absolute) && fs.statSync(absolute).isFile()) {
+  if (stagedBlob !== null || safeRegularFile(config.cwd, absolute)) {
     let buffer: Buffer;
     try {
-      buffer = fs.readFileSync(absolute);
+      buffer = stagedBlob ?? fs.readFileSync(absolute);
     } catch (err) {
       // `explain` exists to say why a file is not in the snapshot; one unreadable file must
       // produce that answer, not a stack trace that aborts a batch.
@@ -385,6 +404,24 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     const record = manifest?.skipped?.find((skip) => skip.path === relative);
     if (record !== undefined && (record.reason === "not-selected" || record.reason === "unchanged")) {
       result.included = false;
+      // The documented JSON contract says a skipped path has no included-only fields. They were
+      // filled above before the manifest explained why the path was absent, so remove them now.
+      for (const key of [
+        "layer",
+        "layerMatch",
+        "kind",
+        "kindMatch",
+        "language",
+        "inclusionMode",
+        "lines",
+        "bytes",
+        "encoding",
+        "secretCount",
+        "secrets",
+      ] as const) {
+        delete result[key];
+      }
+      result.part = null;
       result.reason = record.reason;
       result.detail =
         record.detail ??

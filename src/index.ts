@@ -193,22 +193,30 @@ const FILE_DERIVATIONS = new Map<string, Derivation & { hash: string; settings: 
 const FILE_DERIVATION_LIMIT_BYTES = 64 * 1024 * 1024;
 let fileDerivationBytes = 0;
 
-function takeDerivation(path: string, hash: string, settings: string): Derivation | undefined {
-  const cached = FILE_DERIVATIONS.get(path);
+function takeDerivation(
+  path: string,
+  relativePath: string,
+  hash: string,
+  settings: string
+): Derivation | undefined {
+  const key = path + "\0" + relativePath;
+  const cached = FILE_DERIVATIONS.get(key);
   if (cached === undefined || cached.hash !== hash || cached.settings !== settings) return undefined;
   // Recency on a hit: Map iteration is insertion order, so a frequently used entry must move to
   // the end or a cold file inserted earlier outlives it and the cache behaves as FIFO.
-  FILE_DERIVATIONS.delete(path);
-  FILE_DERIVATIONS.set(path, cached);
+  FILE_DERIVATIONS.delete(key);
+  FILE_DERIVATIONS.set(key, cached);
   return cached;
 }
 
 function rememberDerivation(
   path: string,
+  relativePath: string,
   hash: string,
   settings: string,
   derivation: Derivation
 ): void {
+  const key = path + "\0" + relativePath;
   // The two bodies are frequently the same string object (no skeleton, no preview), and counting
   // it twice would halve the effective cache.
   const bodyBytes =
@@ -222,12 +230,10 @@ function rememberDerivation(
   // A path inserted again (a file edited between runs in one process) replaces its entry. The
   // old code added the new bytes without subtracting the old ones, so the accounting drifted
   // upward and the eviction loop removed live entries to make room for a total that was too large.
-  const previous = FILE_DERIVATIONS.get(path);
+  const previous = FILE_DERIVATIONS.get(key);
   if (previous !== undefined) {
-    FILE_DERIVATIONS.delete(path);
+    FILE_DERIVATIONS.delete(key);
     fileDerivationBytes -= previous.bytes;
-  } else {
-    FILE_DERIVATIONS.delete(path);
   }
 
   while (fileDerivationBytes + bytes > FILE_DERIVATION_LIMIT_BYTES) {
@@ -238,7 +244,7 @@ function rememberDerivation(
     if (evicted !== undefined) fileDerivationBytes -= evicted.bytes;
   }
 
-  FILE_DERIVATIONS.set(path, { ...derivation, hash, settings, bytes });
+  FILE_DERIVATIONS.set(key, { ...derivation, hash, settings, bytes });
   fileDerivationBytes += bytes;
 }
 
@@ -696,6 +702,12 @@ function verifyInMemory(
   }
 
   for (const part of parts) {
+    if (part.metadata.hardClipped === true) {
+      errors.push(
+        `${part.filename} was hard-clipped by the part budget; its manifest entries cannot describe ` +
+          "the surviving sections. Increase the budget or split the file instead of shipping a lie."
+      );
+    }
     if (sha256Hex(part.markdown) !== part.metadata.sha256) {
       errors.push(`${part.filename} content does not match its recorded sha256.`);
     }
@@ -742,8 +754,13 @@ export function resolveSafeOutputDirs(config: {
   const tmpDir = path.resolve(cwd, config.tmpDir);
   const root = path.parse(cwd).root;
 
-  const contains = (parent: string, child: string): boolean =>
-    child === parent || child.startsWith(`${parent}${path.sep}`);
+  const fold = (value: string): string =>
+    process.platform === "win32" || process.platform === "darwin" ? value.toLowerCase() : value;
+  const contains = (parent: string, child: string): boolean => {
+    const foldedParent = fold(parent);
+    const foldedChild = fold(child);
+    return foldedChild === foldedParent || foldedChild.startsWith(`${foldedParent}${path.sep}`);
+  };
 
   const reject = (reason: string): never => {
     throw new Error(
@@ -2796,10 +2813,10 @@ export function generateSnapshot(
     // is what makes `--watch` regenerate in milliseconds instead of re-parsing the repository for
     // every keystroke.
     const derivation =
-      takeDerivation(absolutePath, hashSha256, derivationKey) ??
+      takeDerivation(absolutePath, relativePath, hashSha256, derivationKey) ??
       (() => {
         const fresh = deriveFile(relativePath, rawContent, sizeBytes, config);
-        rememberDerivation(absolutePath, hashSha256, derivationKey, fresh);
+        rememberDerivation(absolutePath, relativePath, hashSha256, derivationKey, fresh);
         return fresh;
       })();
 
@@ -3058,7 +3075,16 @@ export function generateSnapshot(
           Math.min(40, tokens / 250);
         return { file, tokens, value };
       })
-      .sort((left, right) => right.value - left.value || left.tokens - right.tokens || left.file.relativePath.localeCompare(right.file.relativePath));
+      .sort(
+        (left, right) =>
+          right.value - left.value ||
+          left.tokens - right.tokens ||
+          (left.file.relativePath < right.file.relativePath
+            ? -1
+            : left.file.relativePath > right.file.relativePath
+              ? 1
+              : 0)
+      );
 
     const keep = new Set<string>();
     let used = 0;
@@ -3659,9 +3685,11 @@ export function generateSnapshot(
       const entry: FileEntry = {
         ...file,
         content,
-        inclusionMode:
-          file.inclusionMode === "comments-stripped" ? "comments-stripped" : "full",
-        ...(file.emptyLinesRemoved === true ? { emptyLinesRemoved: true as const } : {}),
+        // `fullContents` is the pre-preview body but still carries comments and blank lines: the
+        // monolith is the whole source, not the comments-stripped variant. Calling it
+        // `comments-stripped` (or copying `emptyLinesRemoved`) described a transformation this
+        // artifact did not perform.
+        inclusionMode: "full",
         isPreviewTruncated: false,
         includedBytes: Buffer.byteLength(content, "utf8"),
         includedLines: countLines(content),
@@ -3848,12 +3876,23 @@ export function generateSnapshot(
      * O(artifacts); the walk still catches anything a hook added.
      */
     const writtenArtifacts: WrittenLedger = new Map();
+    const ledgerRoot = (targetDir: string): string =>
+      stagingDir !== null &&
+      (targetDir === stagingDir || targetDir.startsWith(stagingDir + path.sep))
+        ? stagingDir
+        : outDir;
+    const ledgerEntry = (targetDir: string, relativeEntry: string): string =>
+      path
+        .relative(ledgerRoot(targetDir), path.join(targetDir, ...relativeEntry.split("/")))
+        .split(path.sep)
+        .join("/");
     const writeArtifact = (targetDir: string, relativeEntry: string, data: string): void => {
       const full = path.join(targetDir, ...relativeEntry.split("/"));
       fs.writeFileSync(full, data, "utf8");
       const stats = fs.statSync(full);
-      writtenArtifacts.set(relativeEntry, {
-        digest: { path: relativeEntry, bytes: stats.size, sha256: sha256Hex(data) },
+      const entry = ledgerEntry(targetDir, relativeEntry);
+      writtenArtifacts.set(entry, {
+        digest: { path: entry, bytes: stats.size, sha256: sha256Hex(data) },
         mtimeMs: stats.mtimeMs,
       });
     };
@@ -3861,9 +3900,10 @@ export function generateSnapshot(
     const recordArtifact = (targetDir: string, relativeEntry: string): void => {
       const full = path.join(targetDir, ...relativeEntry.split("/"));
       const stats = fs.statSync(full);
-      writtenArtifacts.set(relativeEntry, {
+      const entry = ledgerEntry(targetDir, relativeEntry);
+      writtenArtifacts.set(entry, {
         digest: {
-          path: relativeEntry,
+          path: entry,
           bytes: stats.size,
           sha256: sha256Hex(fs.readFileSync(full)),
         },

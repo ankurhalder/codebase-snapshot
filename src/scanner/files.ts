@@ -1,4 +1,5 @@
 import * as childProcess from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PRESETS } from "../presets/index.js";
@@ -6,7 +7,7 @@ import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { REDACTION_MARKER, advanceStringIndex } from "../security/redact.js";
 import { verifySnapshotSignature } from "../signing.js";
 import type { DiscoveryMode, SecretRule, SkipRecord } from "../types.js";
-import { GENERATOR_NAME } from "../version.js";
+import { GENERATOR_NAME, SCHEMA_VERSION } from "../version.js";
 
 export interface GitInfo {
   branch: string;
@@ -267,7 +268,8 @@ const SENSITIVE_EXT = /\.(?:pem|key|p12|pfx|jks|keystore|ppk|asc|kdbx|tfstate|tf
  * *middle* of a name too: `id_rsa.example.pem` became `id_rsa.pem`, so the exemption below called
  * a real private key a template and emitted it.
  */
-const TEMPLATE_SUFFIX = /^(.*)\.(?:example|sample|template|dist)(\.[A-Za-z0-9_-]+)?$/i;
+const TEMPLATE_SUFFIX =
+  /^(.*)\.(?:example|sample|template|dist)(\.(?:json|ya?ml|toml|ini|txt|md|properties|conf|cfg))?$/i;
 
 /**
  * Editor, backup and download leftovers that hide a sensitive name behind a
@@ -1093,38 +1095,92 @@ function isToolOwnedDirectory(dir: string): boolean {
   if (
     marker.generator !== GENERATOR_NAME ||
     marker.state !== "complete" ||
+    marker.schemaVersion !== SCHEMA_VERSION ||
     typeof marker.id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(marker.id) ||
+    typeof marker.manifestSha256 !== "string" ||
     !Array.isArray(marker.files)
   ) {
     return false;
   }
-
-  const accounted = new Set<string>();
-  for (const item of marker.files) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-    const entry = (item as Record<string, unknown>).path;
-    if (typeof entry !== "string" || entry.length === 0) return false;
-    const parts = entry.split("/");
-    for (let depth = 1; depth <= parts.length; depth += 1) {
-      accounted.add(parts.slice(0, depth).join("/"));
-    }
-  }
-
-  let entries: string[];
+  let manifestBytes: Buffer;
   try {
-    entries = fs.readdirSync(dir);
+    manifestBytes = fs.readFileSync(path.join(dir, "manifest.json"));
   } catch {
     return false;
   }
-  return entries.every(
-    (entry) =>
-      entry === ".codebase-snapshot" ||
-      IGNORABLE_DIRECTORY_ENTRIES.has(entry) ||
-      // A snapshot signed before signing moved into staging has a valid signature.json the old
-      // marker could not record. It is our artifact when the signature verifies.
-      (entry === "signature.json" && verifySnapshotSignature(dir).ok) ||
-      accounted.has(entry)
-  );
+  if (createHash("sha256").update(manifestBytes).digest("hex") !== marker.manifestSha256) {
+    return false;
+  }
+
+  // A minimal marker used to hide an entire subtree: the scanner checked that a directory
+  // carried a marker, not that the marker's inventory described the bytes on disk. Verify every
+  // recorded digest before treating the directory as this tool's output.
+  const recordedFiles = new Set<string>();
+  for (const item of marker.files) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    const entry = record.path;
+    if (
+      typeof entry !== "string" ||
+      entry.length === 0 ||
+      entry.includes(String.fromCharCode(92)) ||
+      entry.includes("\u0000") ||
+      path.isAbsolute(entry) ||
+      entry.split("/").includes("..") ||
+      typeof record.bytes !== "number" ||
+      !Number.isSafeInteger(record.bytes) ||
+      record.bytes < 0 ||
+      typeof record.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(record.sha256)
+    ) {
+      return false;
+    }
+    const full = path.join(dir, ...entry.split("/"));
+    let stats: fs.Stats;
+    try {
+      stats = fs.lstatSync(full);
+    } catch {
+      return false;
+    }
+    if (!stats.isFile() || stats.size !== record.bytes) return false;
+    let digest: string;
+    try {
+      digest = createHash("sha256").update(fs.readFileSync(full)).digest("hex");
+    } catch {
+      return false;
+    }
+    if (digest !== record.sha256) return false;
+    recordedFiles.add(entry);
+  }
+
+  // Every file at every depth must be in the inventory. A top-level check accepted a marker
+  // that named `parts` and then let an unrecorded file inside `parts/` ride along, which is
+  // exactly the subtree-hiding primitive the marker is supposed to prevent.
+  const stack: string[] = [""];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(path.join(dir, current), { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const relative = current === "" ? entry.name : current + "/" + entry.name;
+      if (relative === ".codebase-snapshot" || IGNORABLE_DIRECTORY_ENTRIES.has(entry.name)) continue;
+      if (entry.isDirectory()) {
+        stack.push(relative);
+        continue;
+      }
+      if (!entry.isFile()) return false;
+      if (relative === "signature.json" && !recordedFiles.has(relative) && verifySnapshotSignature(dir).ok) {
+        continue;
+      }
+      if (!recordedFiles.has(relative)) return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -1577,6 +1633,10 @@ function dropSymlinksToUnincludedTargets(
 
   const includedTargets = new Set<string>();
   for (const file of files) {
+    // The aliases themselves are in `files`, and resolving them here would insert their targets
+    // unconditionally — the tautology that made this whole filter dead code. Only a path that is
+    // not a link can vouch for the target being included under its own name.
+    if (aliases.has(file)) continue;
     try {
       includedTargets.add(fs.realpathSync(path.join(cwd, file)));
     } catch {

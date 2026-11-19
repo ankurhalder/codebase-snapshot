@@ -16,6 +16,7 @@ import { findSection, parsePartSections, type PartSection } from "../partitioner
 import { anchorForPath, displayPath, emittedBody } from "../partitioner/chunker.js";
 import { countBodyLines } from "../partitioner/preview.js";
 import { decodeText } from "../scanner/binary.js";
+import { readConfinedBytes, readConfinedText } from "../security/confine.js";
 import { escapeControls } from "../terminal.js";
 import type { Manifest, SecretRule } from "../types.js";
 
@@ -85,18 +86,10 @@ const ARTIFACT_FILES: Record<string, string> = {
   sarif: "reports/audit.sarif",
 };
 
-const TEXT_ARTIFACT = /\.(md|json|txt|sarif)$/i;
+const TEXT_ARTIFACT = /\.(md|json|txt|sarif|xml)$/i;
 
 function sha256(buffer: Buffer | string): string {
   return createHash("sha256").update(buffer).digest("hex");
-}
-
-function readBytes(file: string): Buffer | null {
-  try {
-    return fs.readFileSync(file);
-  } catch {
-    return null;
-  }
 }
 
 function readText(file: string): string | null {
@@ -107,8 +100,20 @@ function readText(file: string): string | null {
   }
 }
 
+/** Reads a snapshot-relative text file through the same confinement every resource uses. */
+function snapshotText(snapshotDir: string, relative: string): string | null {
+  const read = readConfinedText(snapshotDir, relative);
+  return read.ok ? read.text : null;
+}
+
+function snapshotBytes(snapshotDir: string, relative: string): Buffer | null {
+  const read = readConfinedBytes(snapshotDir, relative);
+  return read.ok ? read.bytes : null;
+}
+
 function readJson(file: string): unknown {
-  const text = readText(file);
+  const confined = readConfinedText(path.dirname(file), path.basename(file));
+  const text = confined.ok ? confined.text : null;
   if (text === null) return null;
   try {
     return JSON.parse(text) as unknown;
@@ -187,19 +192,35 @@ function secretTokens(text: string): string[] {
  * re-read the whole directory per token: with 400 tokens against a 4 MiB snapshot that was close
  * to 2 GiB of reads for one check.
  */
-function readArtifactTexts(snapshotDir: string): string[] {
+function readArtifactTexts(snapshotDir: string, maxBytes = 32 * 1024 * 1024): string[] {
   const texts: string[] = [];
+  let bytes = 0;
   for (const relative of walk(snapshotDir)) {
     if (!TEXT_ARTIFACT.test(relative)) continue;
-    const text = readText(path.join(snapshotDir, relative));
-    if (text !== null) texts.push(text);
+    const full = path.join(snapshotDir, relative);
+    let size: number;
+    try {
+      size = fs.statSync(full).size;
+    } catch {
+      continue;
+    }
+    if (bytes + size > maxBytes) break;
+    const text = snapshotText(snapshotDir, relative);
+    if (text !== null) {
+      texts.push(text);
+      bytes += Buffer.byteLength(text, "utf8");
+    }
   }
   return texts;
 }
 
 
 
-function findHostPaths(snapshotDir: string, repoDir: string): string[] {
+function findHostPaths(
+  snapshotDir: string,
+  repoDir: string,
+  maxBytes = 32 * 1024 * 1024
+): string[] {
   const patterns = [
     /\/home\/[A-Za-z0-9._-]+/g,
     /\/Users\/[A-Za-z0-9._-]+/g,
@@ -210,10 +231,19 @@ function findHostPaths(snapshotDir: string, repoDir: string): string[] {
   ];
   const repoPattern = new RegExp(escapeRegExp(repoDir), "g");
   const hits = new Set<string>();
+  let scanned = 0;
   for (const relative of walk(snapshotDir)) {
     if (!TEXT_ARTIFACT.test(relative)) continue;
-    const text = readText(path.join(snapshotDir, relative));
+    let size: number;
+    try {
+      size = fs.statSync(path.join(snapshotDir, relative)).size;
+    } catch {
+      continue;
+    }
+    if (scanned + size > maxBytes) break;
+    const text = snapshotText(snapshotDir, relative);
     if (text === null) continue;
+    scanned += Buffer.byteLength(text, "utf8");
     for (const pattern of patterns) {
       for (const match of text.match(pattern) ?? []) hits.add(relative + ": " + match);
     }
@@ -459,7 +489,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   const missingParts: string[] = [];
   const mismatched: string[] = [];
   for (const part of manifest.parts) {
-    const bytes = readBytes(path.join(snapshotDir, "parts", part.filename));
+    const bytes = snapshotBytes(snapshotDir, "parts/" + part.filename);
     if (bytes === null) {
       missingParts.push(part.filename);
       continue;
@@ -510,7 +540,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     const relative = ARTIFACT_FILES[key];
     if (relative === undefined) continue;
     artifactCount += 1;
-    const bytes = readBytes(path.join(snapshotDir, relative));
+    const bytes = snapshotBytes(snapshotDir, relative);
     if (bytes === null) artifactProblems.push(relative + " is missing");
     else if (typeof value.sha256 === "string" && sha256(bytes) !== value.sha256) {
       artifactProblems.push(relative + " changed");
@@ -606,7 +636,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     manifest.files.map((file) => [anchorForPath(file.relativePath), file.relativePath])
   );
   for (const part of manifest.parts) {
-    const partText = readText(path.join(snapshotDir, "parts", part.filename));
+    const partText = snapshotText(snapshotDir, "parts/" + part.filename);
     if (partText === null) continue;
     const sections = parsePartSections(partText);
     partTexts.set(part.filename, partText);
@@ -669,7 +699,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     }
   };
   if (manifest.artifacts?.readme != null) {
-    const text = readText(path.join(snapshotDir, "README.md"));
+    const text = snapshotText(snapshotDir, "README.md");
     if (text === null) {
       reportProblems.push("README.md is recorded but unreadable");
     } else {
@@ -709,7 +739,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     }
   }
   if (manifest.artifacts?.prompt != null) {
-    const text = readText(path.join(snapshotDir, "PROMPT.md"));
+    const text = snapshotText(snapshotDir, "PROMPT.md");
     if (text === null) {
       reportProblems.push("PROMPT.md is recorded but unreadable");
     } else {
@@ -887,7 +917,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   ];
   for (const reader of packReaders) {
     if (manifest.artifacts?.[reader.key] == null) continue;
-    const packText = readText(path.join(snapshotDir, reader.file));
+    const packText = snapshotText(snapshotDir, reader.file);
     const problems: string[] = [];
     if (packText === null) {
       problems.push(reader.file + " is recorded but unreadable");
@@ -1050,7 +1080,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     let packBodies = 0;
     let packSkipped = 0;
     for (const pack of packsWanted) {
-      const text = readText(path.join(snapshotDir, pack.file));
+      const text = snapshotText(snapshotDir, pack.file);
       if (text === null) continue;
       const bodies = pack.read(text);
       if (bodies === null) {
@@ -1108,7 +1138,8 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
         unreplayable += 1;
         continue;
       }
-      const bytes = readBytes(path.join(repoDir, file.relativePath));
+      const repoBytes = readConfinedBytes(repoDir, file.relativePath);
+      const bytes = repoBytes.ok ? repoBytes.bytes : null;
       // A file that changed on disk is validate's question, not fidelity's: the manifest no longer
       // describes the bytes being replayed, so a mismatch here would blame the generator for a
       // later edit.
@@ -1201,7 +1232,14 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     // just signed. That is a false positive with a concrete cost: `--sign` failed `health`
     // intermittently.
     if (relative === SIGNATURE_FILE) continue;
-    const text = readText(path.join(snapshotDir, relative));
+    let size: number;
+    try {
+      size = fs.statSync(path.join(snapshotDir, relative)).size;
+    } catch {
+      continue;
+    }
+    if (scannedBytes + size > scanBudget) break;
+    const text = snapshotText(snapshotDir, relative);
     if (text === null) continue;
     scannedBytes += Buffer.byteLength(text, "utf8");
     // A part is scanned section by section with the path the section came from. The generator
@@ -1234,7 +1272,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   // manifest by the signature check, so scanning those bytes can only produce false positives.
   const signatureRecordPath = path.join(snapshotDir, SIGNATURE_FILE);
   if (fs.existsSync(signatureRecordPath)) {
-    const recordText = readText(signatureRecordPath);
+    const recordText = snapshotText(snapshotDir, SIGNATURE_FILE);
     if (recordText !== null) {
       scannedBytes += Buffer.byteLength(recordText, "utf8");
       let scanText = recordText;
@@ -1271,12 +1309,19 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   let compared = 0;
   // Read once even when nothing sensitive was excluded: the cost is one walk, and it keeps the
   // per-token check below from re-reading the directory hundreds of times.
-  const artifactTexts = readArtifactTexts(snapshotDir);
+  const artifactTexts = readArtifactTexts(snapshotDir, scanBudget);
   const artifactContains = (token: string): boolean =>
     artifactTexts.some((text) => text.includes(token));
   for (const record of skippedSensitive.slice(0, 40)) {
     if (record.path.includes("[REDACTED") || compared > 400) continue;
-    const text = readText(path.join(repoDir, record.path));
+    try {
+      // Do not allocate a multi-megabyte excluded file just to compare sixty tokens.
+      if (fs.statSync(path.join(repoDir, record.path)).size > scanBudget) continue;
+    } catch {
+      continue;
+    }
+    const repoRead = readConfinedText(repoDir, record.path);
+    const text = repoRead.ok ? repoRead.text : null;
     if (text === null) continue;
     for (const token of secretTokens(text)) {
       compared += 1;
@@ -1293,7 +1338,7 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
           "A value from " + sample([...new Set(leakedFrom)]) + " appears in the snapshot.")
   );
 
-  const pii = findHostPaths(snapshotDir, repoDir);
+  const pii = findHostPaths(snapshotDir, repoDir, scanBudget);
   checks.push(
     pii.length === 0
       ? check("pii.paths", "No host path or machine identity leaks into the text", "warning", "pass",

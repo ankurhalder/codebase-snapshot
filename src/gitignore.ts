@@ -109,8 +109,29 @@ export function appendGitignoreEntries(
   let decoded: DecodedGitignore = { text: "", bom: Buffer.alloc(0), encoding: "utf8" };
   try {
     if (fs.existsSync(ignorePath)) {
-      if (fs.statSync(ignorePath).isDirectory()) {
+      const stats = fs.lstatSync(ignorePath);
+      // init and setup write .gitignore directly; skill --install already refused links. A
+      // symlink here made the append follow it out of the repository, and a hard link modified a
+      // file the repository does not own.
+      if (stats.isDirectory()) {
         return { added: [], note: `${ignorePath} is a directory, so it was not updated. ${manual}` };
+      }
+      if (stats.isSymbolicLink() || !stats.isFile() || stats.nlink > 1) {
+        return {
+          added: [],
+          note:
+            `${ignorePath} is a symbolic link, a hard link, or not a regular file, so it was not updated. ` +
+            manual,
+        };
+      }
+      const rootReal = fs.realpathSync(cwd);
+      const fileReal = fs.realpathSync(ignorePath);
+      const relative = path.relative(rootReal, fileReal);
+      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        return {
+          added: [],
+          note: `${ignorePath} resolves outside the repository, so it was not updated. ${manual}`,
+        };
       }
       const read = decodeGitignore(fs.readFileSync(ignorePath));
       if (read === null) {
@@ -138,12 +159,22 @@ export function appendGitignoreEntries(
   // Match the file's own line endings, so a CRLF `.gitignore` does not end up with one LF line.
   const newline = existing.includes("\r\n") ? "\r\n" : "\n";
   const prefix = existing.length === 0 || existing.endsWith("\n") ? "" : newline;
+  const tempPath = `${ignorePath}.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(
-      ignorePath,
-      encodeGitignore(decoded, `${existing}${prefix}${added.join(newline)}${newline}`)
+      tempPath,
+      encodeGitignore(decoded, `${existing}${prefix}${added.join(newline)}${newline}`),
+      { flag: "wx" }
     );
+    // Rename, not write-through: a symlink swapped in after the check is replaced rather than
+    // followed, and a crash leaves either the old file or the complete new one.
+    fs.renameSync(tempPath, ignorePath);
   } catch (err) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // The original error is the one worth reporting.
+    }
     return { added: [], note: `${(err as Error).message}. ${manual}` };
   }
   return { added, note: null };

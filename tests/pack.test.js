@@ -30,17 +30,22 @@ const run = (args, cwd) => {
 };
 
 test("--pack xml writes valid XML with a file element per file", (t) => {
-  const root = makeRepo(t, { "src/odd.ts": "export const odd = 'a ]]> b';\n" });
+  const root = makeRepo(t, {
+    "src/odd.ts": "export const odd = 'a ]]> b';\n",
+    "src/control.ts": "export const control = 'a\u0001b';\n",
+  });
   const result = run(["generate", "--pack", "xml"], root);
   assert.equal(result.code, 0, result.out);
 
   const xml = fs.readFileSync(path.join(root, "snapshot", "full-codebase.xml"), "utf8");
   assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   assert.match(xml, /<codebase_snapshot /);
-  assert.equal((xml.match(/<file /g) ?? []).length, 3, "one element per included file");
+  assert.equal((xml.match(/<file /g) ?? []).length, 4, "one element per included file");
   assert.match(xml, /path="src\/odd\.ts"/);
   // The split CDATA is the only way a body containing ]]> can stay valid.
   assert.match(xml, /\]\]\]\]><!\[CDATA\[>/);
+  assert.doesNotMatch(xml, /\u0001/, "an XML 1.0 control byte must not make the document unparseable");
+  assert.match(xml, /\uFFFD/, "the control is replaced, not silently dropped");
 
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "snapshot", "manifest.json"), "utf8"));
   assert.ok(manifest.artifacts.fullXml, "the manifest records the digest");

@@ -27,8 +27,14 @@ export function generateMonolithJson(
 }
 
 /** Attributes and text are escaped; bodies ride in CDATA with the one illegal sequence split. */
+function xmlSafe(value: string): string {
+  // XML 1.0 cannot represent most C0 controls at all, even escaped. A text file with one makes the
+  // entire monolith unparseable; U+FFFD is the documented lossy substitute, not a silent truncation.
+  return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "\uFFFD");
+}
+
 function xmlAttribute(value: string): string {
-  return value
+  return xmlSafe(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -36,7 +42,7 @@ function xmlAttribute(value: string): string {
 }
 
 function cdata(value: string): string {
-  return "<![CDATA[" + value.replace(/\]\]>/g, "]]]]><![CDATA[>") + "]]>";
+  return "<![CDATA[" + xmlSafe(value).replace(/\]\]>/g, "]]]]><![CDATA[>") + "]]>";
 }
 
 /**

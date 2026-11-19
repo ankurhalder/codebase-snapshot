@@ -162,6 +162,21 @@ test("CF-05: snapshot_search refuses a catastrophic regex without running it", a
     contextFor(root)
   );
   assert.equal(optionalNested.isError, true);
+
+  // Bounded outer repetition and flags inherited through nested groups were the two bypasses.
+  for (const query of ["(.|.){1,40}ZZZZ", "((.|.))+ZZZZ", "(a{1,2}){1,30}ZZZZ", "((a?))+ZZZZ"]) {
+    const refused = await tools.get("snapshot_search").handler(
+      { query, regex: true },
+      contextFor(root)
+    );
+    assert.equal(refused.isError, true, "must refuse: " + query);
+    assert.match(refused.text, /refused|complex/i);
+  }
+  const safe = await tools.get("snapshot_search").handler(
+    { query: "(ab)+", regex: true },
+    contextFor(root)
+  );
+  assert.equal(safe.isError, undefined, "an ordinary repeated group still runs");
 });
 
 test("CF-05: HTTP MCP rejects a flood of concurrent tool calls", async (t) => {

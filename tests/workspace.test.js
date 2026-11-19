@@ -38,8 +38,24 @@ test("each member gets a snapshot and the workspace index lists them", (t) => {
   for (const member of workspace.members) {
     assert.match(member.fingerprint, /^[0-9a-f]{64}$/);
     assert.ok(member.files >= 2, member.name + " has files");
+    assert.equal(member.path, member.name, "the index stores a repository-relative path, not a host path");
     assert.ok(fs.existsSync(path.join(root, "snapshot", member.name, "manifest.json")));
   }
+  assert.doesNotMatch(fs.readFileSync(path.join(root, "snapshot", "WORKSPACE.json"), "utf8"), /C:\\|\/Users\//);
+});
+
+test("two members with the same basename are refused before either is written", (t) => {
+  const root = makeRepo(t);
+  for (const relative of ["one/api", "two/api"]) {
+    const dir = path.join(root, ...relative.split("/"));
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), '{"name":"api","version":"1.0.0"}\n');
+    fs.writeFileSync(path.join(dir, "src", "index.ts"), "export const api = 1;\n");
+  }
+  const result = run(["generate", "--workspace", "one/api,two/api"], root);
+  assert.notEqual(result.code, 0);
+  assert.match(result.out, /share the basename/);
+  assert.equal(fs.existsSync(path.join(root, "snapshot", "api")), false, "nothing was written");
 });
 
 test("a missing member is reported and makes the run exit 1, after the others are written", (t) => {

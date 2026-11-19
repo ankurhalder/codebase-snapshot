@@ -245,20 +245,22 @@ export function decodeText(buffer: Buffer): DecodedText {
   }
 
   const invalidBytes = countInvalidUtf8Bytes(buffer);
+  // Valid UTF-8 is not the same thing as text. A blob of 0x07 bytes decodes perfectly and used to
+  // be emitted as `language=text`, `inclusionMode=full`, with the raw control bytes inside the
+  // part — the one way a binary file could still reach an artifact, because it has no NUL. The
+  // same payload with an invalid lead byte used to fall through to the lossy-decode path, so this
+  // check has to run before the invalid-UTF-8 branch.
+  const controlBytes = countControlBytes(buffer);
+  if (controlBytes > CONTROL_BYTES_FLOOR && controlBytes * 100 > buffer.length) {
+    return {
+      text: "",
+      encoding: "utf-8",
+      invalidBytes,
+      binary: true,
+      binaryReason: `${controlBytes} control byte(s) in ${buffer.length} B; not text`,
+    };
+  }
   if (invalidBytes === 0) {
-    // Valid UTF-8 is not the same thing as text. A blob of 0x07 bytes decodes perfectly and used
-    // to be emitted as `language=text`, `inclusionMode=full`, with the raw control bytes inside
-    // the part — the one way a binary file could still reach an artifact, because it has no NUL.
-    const controlBytes = countControlBytes(buffer);
-    if (controlBytes > CONTROL_BYTES_FLOOR && controlBytes * 100 > buffer.length) {
-      return {
-        text: "",
-        encoding: "utf-8",
-        invalidBytes: 0,
-        binary: true,
-        binaryReason: `${controlBytes} control byte(s) in ${buffer.length} B; valid UTF-8 but not text`,
-      };
-    }
     return {
       text: new TextDecoder("utf-8").decode(buffer),
       encoding: "utf-8",

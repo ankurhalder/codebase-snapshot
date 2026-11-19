@@ -305,7 +305,9 @@ function systemSection(
     out.push(...ownerBlock(brief.system, brief.path, code, escape), "", "What the index records:", "");
   }
 
-  const layers = Object.entries(manifest.layers).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const layers = Object.entries(manifest.layers).sort(
+    (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+  );
   if (layers.length > 0) {
     const shown = layers
       .slice(0, MAX_LAYER_ROWS)
@@ -473,7 +475,7 @@ function coverageSection(
     reasons.set(record.reason, (reasons.get(record.reason) ?? 0) + 1);
   }
   const tally = [...reasons.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([reason, count]) => code(reason) + " " + formatNumber(count))
     .join(", ");
   const found = manifest.totals.candidateFiles;

@@ -132,6 +132,8 @@ test("SEC-05 every authorization scheme is masked, and prose is not", () => {
 test("SEC-06 Docker's space-separated ENV form is masked, and nothing else is", () => {
   assertMasked("ENV API_KEY abc123def456ghi789", "abc123def456ghi789", "Dockerfile");
   assertMasked("ENV API_KEY=abc123def456ghi789", "abc123def456ghi789", "Dockerfile");
+  assertMasked("env API_KEY=abc|def456ghi789", "abc|def456ghi789", "Dockerfile");
+  assertMasked("ARG API_KEY=abc123def456ghi789", "abc123def456ghi789", "Dockerfile");
   const path = "ENV PATH /usr/bin";
   assert.equal(scan(path, "Dockerfile").redacted, path);
   // In a shell script `env KEY value` is a command, not an assignment.
@@ -157,6 +159,9 @@ test("SEC-07 credential files that were missing from the deny list are skipped",
 test("SCOPE-07 a key whose name contains a template word is still a key", () => {
   assert.equal(isSensitivePath("id_rsa.example.pem"), true);
   assert.equal(isSensitivePath("certs/server.sample.key"), true);
+  // Only a known data extension may follow the template marker; an arbitrary suffix hid a
+  // credential-shaped name behind the exemption.
+  assert.equal(isSensitivePath(".env.example.local"), true);
   assert.equal(isSensitivePath("credentials.example.json"), false);
 });
 

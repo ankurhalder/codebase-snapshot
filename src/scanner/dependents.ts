@@ -111,6 +111,10 @@ export function tsconfigPathsFor(cwd: string): TsconfigPaths | null {
     return null;
   }
   const key = `${stats.mtimeMs}:${stats.size}`;
+  if (!TSCONFIG_CACHE.has(configPath) && TSCONFIG_CACHE.size >= 64) {
+    const oldest = TSCONFIG_CACHE.keys().next().value;
+    if (oldest !== undefined) TSCONFIG_CACHE.delete(oldest);
+  }
   const cached = TSCONFIG_CACHE.get(configPath);
   if (cached !== undefined && cached.key === key) return cached.value;
 

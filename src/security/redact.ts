@@ -940,7 +940,8 @@ function redactStructuredValues(
 }
 
 /** Docker's legacy space-separated `ENV KEY VALUE`, which the rules read as prose. */
-const DOCKERFILE_ENV = /^([ \t]*ENV[ \t]+)([A-Za-z_][A-Za-z0-9_]*)([ \t]+)(\S.*)$/;
+const DOCKERFILE_ENV =
+  /^([ \t]*)(ENV|ARG)([ \t]+)([A-Za-z_][A-Za-z0-9_]*)([ \t]*=[ \t]*|[ \t]+)(\S.*)$/i;
 
 /**
  * Masks `ENV API_KEY value` in a Dockerfile.
@@ -962,10 +963,11 @@ function redactDockerfileEnv(
     if (line === undefined) continue;
     const match = DOCKERFILE_ENV.exec(line);
     if (match === null) continue;
-    if (!CREDENTIAL_KEY_TAIL.test(match[2] ?? "")) continue;
-    const value = match[4] ?? "";
-    if (value.startsWith("=")) continue;
-    segments[index] = `${match[1]}${match[2]}${match[3]}${REDACTION_MARKER}`;
+    if (!CREDENTIAL_KEY_TAIL.test(match[4] ?? "")) continue;
+    const separator = match[5] ?? "";
+    // `ENV KEY=value` and `ARG KEY=value` are the modern spelling. The generic rules skipped a
+    // value containing `<` or `|`, which is a valid Docker value and a valid password.
+    segments[index] = `${match[1]}${match[2]}${match[3]}${match[4]}${separator}${REDACTION_MARKER}`;
     recordFinding(index / 2 + 1, ["dockerfile-env-secret"]);
   }
   return segments.join("");
@@ -1216,6 +1218,7 @@ function isSourceCodeFile(filePath: string | undefined): boolean {
 const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /^<[^>]*>?$/,
   /^\.{3,}$/,
+  /^(?:[A-Za-z0-9_-]{1,8}-)?\.{3,}$/,
   /^(?:x{4,}|X{4,}|\*{3,})$/,
   /^(?:replace|change)[-_ ]?me(?:[-_ ].*)?$/i,
   /^your[-_ ].*$/i,
@@ -1237,7 +1240,9 @@ function isPlaceholderValue(value: string): boolean {
   // this check the audit re-found the tool's own marker and failed the snapshot it had just
   // redacted — 7 artifacts, score 70/100, on a run that leaked nothing.
   if (trimmed.includes(REDACTION_MARKER) || trimmed.includes(PEM_REDACTION_MARKER)) return true;
-  return trimmed.includes("...") || /^<[^>]*$/.test(trimmed);
+  // A value containing three dots anywhere is not a placeholder: a real password can contain
+  // "...", and exempting it because of a substring inside the credential was a bypass.
+  return false;
 }
 
 /**
@@ -1374,6 +1379,7 @@ const ASSIGNMENT_BASENAME = /^(?:\.env(?:\.[^/]*)?|\.envrc|\.profile|\.bashrc|\.
 
 function isAssignmentFile(filePath: string | undefined): boolean {
   if (filePath === undefined) return false;
+  if (isDockerfile(filePath)) return true;
   const normalised = filePath.replace(/\\/g, "/");
   if (ASSIGNMENT_FILE.test(normalised)) return true;
   const base = normalised.slice(normalised.lastIndexOf("/") + 1);

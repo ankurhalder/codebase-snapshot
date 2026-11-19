@@ -5,4 +5,5 @@ if [ -z "${SNAPSHOT_TOKEN:-}" ]; then
   echo "SNAPSHOT_TOKEN is required: it is the bearer token clients must send." >&2
   exit 1
 fi
-exec node dist/bin.js serve --host 0.0.0.0 --port "${PORT:-4788}" --token "$SNAPSHOT_TOKEN"
+# The token stays in the environment: argv is visible in ps and /proc/<pid>/cmdline.
+exec node dist/bin.js serve --host 0.0.0.0 --port "${PORT:-4788}"

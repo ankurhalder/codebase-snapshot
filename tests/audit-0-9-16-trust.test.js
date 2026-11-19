@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as childProcess from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,18 +34,27 @@ function write(dir, relative, content) {
   fs.writeFileSync(full, content, "utf8");
 }
 
-const validMarker = (files) =>
-  `${JSON.stringify({
-    generator: "codebase-snapshot",
-    schemaVersion: "2",
-    id: "20260101-000000-0000",
-    state: "complete",
-    files: files.map((entry) => ({
+const validMarker = (dir, files) => {
+  const root = path.join(dir, "snapshot");
+  const digests = files.map((entry) => {
+    const bytes = fs.readFileSync(path.join(root, entry));
+    return {
       path: entry,
-      bytes: 4,
-      sha256: "a".repeat(64),
-    })),
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  });
+  return `${JSON.stringify({
+    generator: "codebase-snapshot",
+    schemaVersion: "3.0.0",
+    id: "20260101-0000-4000-8000-000000000000",
+    state: "complete",
+    manifestSha256: createHash("sha256")
+      .update(fs.readFileSync(path.join(root, "manifest.json")))
+      .digest("hex"),
+    files: digests,
   })}\n`;
+};
 
 test("FS-01 a marker that only has the right name is not ownership", (t) => {
   const dir = tempDir(t);
@@ -59,8 +69,17 @@ test("FS-01 a marker that only has the right name is not ownership", (t) => {
     `a forged marker must not hide a directory: ${JSON.stringify(forged.files)}`
   );
 
+  // A marker that accounts for the manifest but not for the extra file is still not ownership:
+  // a nested unrecorded file must not ride along under a directory name that is in the inventory.
+  write(dir, "snapshot/.codebase-snapshot", validMarker(dir, ["manifest.json"]));
+  const partial = collectFiles(dir, {});
+  assert.ok(
+    partial.files.includes("snapshot/notes.ts"),
+    `an incomplete marker must not hide the file it omits: ${JSON.stringify(partial.files)}`
+  );
+
   // The same directory with a marker that accounts for what it holds is this tool's output.
-  write(dir, "snapshot/.codebase-snapshot", validMarker(["manifest.json", "notes.ts"]));
+  write(dir, "snapshot/.codebase-snapshot", validMarker(dir, ["manifest.json", "notes.ts"]));
   const owned = collectFiles(dir, {});
   assert.equal(
     owned.files.some((file) => file.startsWith("snapshot/")),

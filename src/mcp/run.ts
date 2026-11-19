@@ -144,10 +144,28 @@ export async function runStdioServer(options: ServerOptions): Promise<number> {
     );
   };
 
+  /** A cancellation is a notification and must reach the server even when every slot is full. */
+  const isCancellation = (line: string): boolean => {
+    try {
+      const parsed: unknown = JSON.parse(line);
+      return (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        (parsed as { method?: unknown }).method === "notifications/cancelled"
+      );
+    } catch {
+      return false;
+    }
+  };
+
   const stopReading = createLineReader(process.stdin, {
     onOverflow: (bytes) => log(`mcp: discarded an oversized message (${bytes} bytes)`),
     onLine: (line) => {
       if (inFlight >= MAX_IN_FLIGHT) {
+        if (isCancellation(line)) {
+          void handleLine(line);
+          return;
+        }
         rejectOverloaded(line);
         return;
       }

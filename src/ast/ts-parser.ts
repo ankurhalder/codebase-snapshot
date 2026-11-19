@@ -159,9 +159,9 @@ export function summarizeTypeScriptSource(
   };
 
   const lowerPath = relativePath.toLowerCase();
-  const scriptKind = /.tsx$/.test(lowerPath)
+  const scriptKind = /\.tsx$/.test(lowerPath)
     ? ts.ScriptKind.TSX
-    : /.jsx$/.test(lowerPath)
+    : /\.jsx$/.test(lowerPath)
       ? ts.ScriptKind.JSX
       : /.(?:js|mjs|cjs)$/.test(lowerPath)
         ? ts.ScriptKind.JS

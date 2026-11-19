@@ -241,8 +241,33 @@ export function normalizeResolvedConfig(
     monolithWanted
   );
 
+  // A spread copy can bypass resolveConfig's bounds. Re-check the budgets that reach the
+  // partitioner: a too-small part budget cannot hold its truncation notice, a negative
+  // large-file threshold is meaningless, and a token budget below the floor is unusable.
+  if (!Number.isSafeInteger(config.maxPartBytes) || config.maxPartBytes < MIN_MAX_PART_BYTES) {
+    throw new Error(
+      `maxPartBytes must be at least ${MIN_MAX_PART_BYTES} bytes (received ${String(config.maxPartBytes)}).`
+    );
+  }
+  if (!Number.isSafeInteger(config.largeFileBytes) || config.largeFileBytes < 0) {
+    throw new Error(
+      `largeFileBytes must be a non-negative integer; received ${String(config.largeFileBytes)}.`
+    );
+  }
+  // Older resolved objects and spread copies may omit this field; derive the same default the
+  // config resolver uses instead of failing a run that never set it.
+  const maxPartTokens = config.maxPartTokens ?? Math.floor(config.maxPartBytes / 4);
+  if (
+    !Number.isSafeInteger(maxPartTokens) ||
+    maxPartTokens < MIN_MAX_PART_TOKENS
+  ) {
+    throw new Error(
+      `maxPartTokens must be at least ${MIN_MAX_PART_TOKENS} tokens; received ${String(maxPartTokens)}.`
+    );
+  }
   return markResolvedConfig({
     ...config,
+    maxPartTokens,
     discovery,
     // A spread copy built before the field existed carries no value; the default applies, and it
     // is re-validated because the number reaches a rendered artifact.
@@ -1051,16 +1076,27 @@ function readConfiguredBrief(cwd: string, value: unknown): OwnerBrief | undefine
   }
   let text: string;
   try {
-    if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) throw new Error("not a file");
+    // Refuse from the size on disk, before allocating a multi-gigabyte string. The old order read
+    // the whole file and only then checked the 64 KiB ceiling.
+    if (stats.size > MAX_BRIEF_BYTES) {
+      throw new Error(
+        'brief "' + value + '" is ' + stats.size + " bytes; the limit is " + MAX_BRIEF_BYTES +
+          ". Keep it to what a reader can act on, or move the detail into a document the snapshot carries."
+      );
+    }
     text = fs.readFileSync(filePath, "utf8");
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('brief "')) throw error;
     throw new Error(
       'brief "' + value + '" could not be read as a file; a snapshot must not ship without the ' +
         "half of the brief the owner wrote."
     );
   }
   // A brief is judgement, not another codebase: past this size it stops being instructions
-  // and becomes a payload that crowds the parts it is meant to explain.
+  // and becomes a payload that crowds the parts it is meant to explain. The byte count can differ
+  // from the on-disk size for multi-byte text, so keep the exact check after decoding.
   const bytes = Buffer.byteLength(text, "utf8");
   if (bytes > MAX_BRIEF_BYTES) {
     throw new Error(
@@ -1721,7 +1757,10 @@ export function resolveConfig(
     outDir,
     tmpDir,
     maxPartBytes: resolvedMaxPartBytes,
-    ...(maxPartTokens === undefined ? {} : { maxPartTokens }),
+    // Record the effective value even when the user did not set it. normalizeResolvedConfig
+    // derives it for the manifest; leaving validate's fresh resolution unset made a clean
+    // snapshot report a configuration mismatch.
+    maxPartTokens: maxPartTokens ?? Math.floor(resolvedMaxPartBytes / 4),
     largeFileBytes: largeFileBytesFor(resolvedMaxPartBytes, cliOptions, userConfig),
     previewHeadLines: strictPositiveInteger(userConfig?.previewHeadLines, 80, "`previewHeadLines`"),
     previewTailLines: strictPositiveInteger(userConfig?.previewTailLines, 40, "`previewTailLines`"),

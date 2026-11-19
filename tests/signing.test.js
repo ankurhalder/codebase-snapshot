@@ -142,4 +142,13 @@ test("health ignores a token-shaped run inside the signature key material", (t) 
   const leaked = run(["health"], root);
   assert.equal(leaked.code, 1, leaked.out);
   assert.match(leaked.out, /secret-shaped value: signature\.json/);
+
+  // The record's fingerprint is metadata outside the signed manifest. It must still agree with
+  // the signed bytes; a record naming a different snapshot is not a valid signature.
+  record.keyOrigin = "generated";
+  record.fingerprint = "f".repeat(64);
+  fs.writeFileSync(path.join(root, "snapshot", "signature.json"), JSON.stringify(record, null, 2) + "\n");
+  const mismatch = run(["health"], root);
+  assert.equal(mismatch.code, 1, mismatch.out);
+  assert.match(mismatch.out, /different fingerprint|does not match/);
 });

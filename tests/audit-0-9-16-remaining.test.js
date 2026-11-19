@@ -471,12 +471,19 @@ test("placeholders and documented examples stay readable", () => {
     ["QDRANT_API_KEY=...", ".env.example"],
     ["# REVALIDATE_SECRET=replace-me-with-a-fresh-secret", ".env.example"],
     ["# GITHUB_API_TOKEN=<fine-grained PAT, public_repo scope minimum>", "a.sh"],
-    ["// literal mongodb://...:password@host template", "a.js"],
   ];
   for (const [line, file] of lines) {
     const { redacted } = indexApi.scanAndRedactSecrets(line, indexApi.DEFAULT_SECRET_PATTERNS, file);
     assert.equal(redacted, line, "the placeholder must survive: " + line);
   }
+  // An ellipsis anywhere in the value used to exempt the whole value. That let a real credential
+  // containing "..." through; only a value that *is* an ellipsis placeholder may survive.
+  const template = indexApi.scanAndRedactSecrets(
+    "// literal mongodb://...:password@host template",
+    indexApi.DEFAULT_SECRET_PATTERNS,
+    "a.js"
+  );
+  assert.match(template.redacted, /\[REDACTED/, "a template URL is still a credential-shaped value");
 });
 
 test("a real credential in the same formats is still masked", () => {

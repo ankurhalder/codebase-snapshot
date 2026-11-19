@@ -14,6 +14,7 @@
  */
 import * as crypto from "node:crypto";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
+import { findSecretInPath } from "../scanner/files.js";
 import type { Manifest, SecretFinding, SecretRule } from "../types.js";
 
 /** SARIF's document version and schema. */
@@ -96,7 +97,12 @@ export function generateSarifReport(
     .map((finding) => {
       const primary = finding.rules[0] ?? "unknown";
       const line = Math.max(1, finding.line);
-      const findingPath = String(finding.path).replace(/\\/g, "/");
+      const rawPath = findSecretInPath(String(finding.path), rules)?.masked ?? String(finding.path);
+      const findingPath = rawPath
+        .replace(/\\/g, "/")
+        .split("/")
+        .map((segment) => encodeURIComponent(segment))
+        .join("/");
       return {
         ruleId: ruleIdFor(primary),
         ruleIndex: ruleIndex.get(primary) ?? 0,

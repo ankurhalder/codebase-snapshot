@@ -23,7 +23,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
 import { releaseAbandonedRun } from "../index.js";
-import type { Manifest } from "../types.js";
+import type { Manifest, SnapshotConfig } from "../types.js";
 import type { WorkspaceCliOptions } from "./workspace.js";
 
 /** What the caller needs from a finished run; the whole manifest can be megabytes. */
@@ -93,7 +93,10 @@ const { parentPort, workerData } = require("node:worker_threads");
 (async () => {
   try {
     const mod = await import(workerData.entryUrl);
-    const loaded = await mod.loadConfigFileDetailed(workerData.cwd);
+    const loaded =
+      workerData.config === null || workerData.config === undefined
+        ? await mod.loadConfigFileDetailed(workerData.cwd, { allowExecutableConfig: false })
+        : { config: workerData.config, errors: [] };
     if (loaded.errors.length > 0) {
       parentPort.postMessage({ ok: false, message: loaded.errors.join("; ") });
       return;
@@ -105,6 +108,7 @@ const { parentPort, workerData } = require("node:worker_threads");
     const manifest = mod.generateSnapshot(config, {
       dryRun: workerData.dryRun === true,
       ...(workerData.narrow ?? {}),
+      ...(workerData.source === undefined ? {} : { source: workerData.source }),
       ...(workerData.runId === undefined ? {} : { runId: workerData.runId }),
     });
     const skipCounts = new Map();
@@ -164,6 +168,10 @@ export function generateInWorker(
     runId?: string;
     /** Directories whose locks/staging this run may own; used only for abandoned-worker cleanup. */
     lockRoots?: readonly string[];
+    /** A configuration already loaded on this thread; skips a second, possibly untrusted, load. */
+    config?: SnapshotConfig;
+    /** Provenance for a clone this process made; it is a value, so it crosses the boundary. */
+    source?: Manifest["source"];
   } = {}
 ): Promise<WorkerResults> {
   return new Promise<WorkerResults>((resolve) => {
@@ -200,6 +208,8 @@ export function generateInWorker(
           cliOptions,
           dryRun: options.dryRun === true,
           narrow: options.narrow ?? {},
+          ...(options.config === undefined ? {} : { config: options.config }),
+          ...(options.source === undefined ? {} : { source: options.source }),
           ...(options.runId === undefined ? {} : { runId: options.runId }),
         },
       });

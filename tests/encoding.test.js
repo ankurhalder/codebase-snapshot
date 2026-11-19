@@ -106,6 +106,15 @@ test("S6: a payload of control bytes is not text, even though it is valid UTF-8"
   assert.equal(decoded.text, "");
 });
 
+test("S6: control bytes are refused even when the file also has an invalid byte", () => {
+  // The valid-UTF-8 branch had the control check; a payload with one bad lead byte fell through to
+  // the lossy-decode branch and was emitted with raw controls. The check now runs before the split.
+  const decoded = decodeText(Buffer.from([0x41, 0x07, 0x07, 0x07, 0x07, 0x07, 0xff]));
+  assert.equal(decoded.binary, true);
+  assert.match(decoded.binaryReason, /not text/);
+  assert.equal(decoded.text, "");
+});
+
 test("S6: ordinary whitespace and a stray escape stay text", () => {
   const text = "const a = 1;\t// tab\n\tif (a) {\r\n\t\treturn;\n\t}\n\u001b[0m\n";
   const decoded = decodeText(Buffer.from(text, "utf8"));

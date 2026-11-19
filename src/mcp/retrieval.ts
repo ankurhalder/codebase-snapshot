@@ -222,7 +222,10 @@ export function planForQuestion(
     }
   }
 
-  scored.sort((left, right) => right.score - left.score || left.file.relativePath.localeCompare(right.file.relativePath));
+  scored.sort((left, right) =>
+    right.score - left.score ||
+    (left.file.relativePath < right.file.relativePath ? -1 : left.file.relativePath > right.file.relativePath ? 1 : 0)
+  );
 
   const chosen = new Map<string, PlannedFile>();
   const skipped: Array<{ path: string; reason: string }> = [];

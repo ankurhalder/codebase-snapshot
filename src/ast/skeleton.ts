@@ -104,9 +104,15 @@ export function skeletonizeTypeScript(source: string, fileName = "file.ts"): Ske
         if (end > start) spans.push({ start, end });
       }
     }
-    ts.forEachChild(node, visit);
   };
-  visit(sourceFile);
+  const stack: ts.Node[] = [sourceFile];
+  while (stack.length > 0) {
+    const node = stack.pop() as ts.Node;
+    visit(node);
+    ts.forEachChild(node, (child) => {
+      stack.push(child);
+    });
+  }
 
   if (spans.length === 0) return { text: source, collapsed: 0 };
 

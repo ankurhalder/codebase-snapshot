@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { stripJsonComments } from "../ast/structured.js";
 
 /**
  * Everything preset detection is allowed to look at.
@@ -116,7 +117,10 @@ function readManifest(cwd: string, name: string): string | null {
 function dependenciesFromPackageJson(raw: string): Set<string> {
   const names = new Set<string>();
   try {
-    const parsed = JSON.parse(raw) as Record<string, Record<string, string> | undefined>;
+    const parsed = JSON.parse(stripJsonComments(raw.replace(/^\uFEFF/, ""))) as Record<
+      string,
+      Record<string, string> | undefined
+    >;
     for (const section of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
       const block = parsed[section];
       if (block && typeof block === "object") {

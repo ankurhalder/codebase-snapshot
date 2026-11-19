@@ -23,7 +23,15 @@ function runGit(cwd: string, args: string[]): { ok: boolean; out: string } {
   // neither, returned no paths, and therefore emitted the .env body as "not sensitive".
   const result = spawnSync(
     "git",
-    ["-c", "core.quotepath=false", "-c", "diff.noprefix=false", ...args],
+    [
+      "-c",
+      "core.quotepath=false",
+      "-c",
+      "diff.noprefix=false",
+      "-c",
+      "diff.mnemonicPrefix=false",
+      ...args,
+    ],
     { cwd, encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }
   );
   if (result.status !== 0) return { ok: false, out: (result.stderr ?? "").trim() };
@@ -86,63 +94,57 @@ function unquoteGitPath(value: string): string {
   return out;
 }
 
-/** Reads one whitespace-delimited git path token, quoted or bare. */
-function takeGitPath(value: string): { token: string; rest: string } | null {
-  if (value.length === 0) return null;
-  if (value.startsWith('"')) {
-    let index = 1;
-    while (index < value.length) {
-      if (value[index] === "\\") {
-        index += 2;
-        continue;
-      }
-      if (value[index] === '"') {
-        return { token: value.slice(0, index + 1), rest: value.slice(index + 1).replace(/^ /, "") };
-      }
-      index += 1;
-    }
-    return null;
-  }
-  const space = value.indexOf(" ");
-  if (space === -1) return { token: value, rest: "" };
-  return { token: value.slice(0, space), rest: value.slice(space + 1) };
-}
-
-function pathFromGitToken(token: string, prefix: "a/" | "b/"): string | null {
-  const unquoted = unquoteGitPath(token);
+/**
+ * Reads a whole `---` or `+++` path.
+ *
+ * Git does not quote an ASCII space. The previous token splitter read `my dir/.env` as `my` and
+ * `dir/.env`, so the sensitive-path filter saw a harmless prefix while the diff body carried the
+ * .env. The whole line after the marker is the path; git only appends a tab when a timestamp is
+ * present, which `git diff` does not emit.
+ */
+function wholeLinePath(value: string, prefix: "a/" | "b/"): string | null {
+  const withoutTimestamp = value.endsWith("\t") ? value.slice(0, -1) : value;
+  const unquoted = unquoteGitPath(withoutTimestamp);
   if (unquoted === "/dev/null") return null;
   if (!unquoted.startsWith(prefix)) return null;
   return unquoted.slice(prefix.length);
 }
 
+/** `diff --git` fallback for a mode-only or binary section with no ---/+++ lines. */
+function headerPaths(value: string): string[] {
+  const separator = value.lastIndexOf(" b/");
+  if (separator <= 0) return [];
+  const left = unquoteGitPath(value.slice(0, separator));
+  const right = unquoteGitPath(value.slice(separator + 1));
+  const paths: string[] = [];
+  if (left.startsWith("a/")) paths.push(left.slice(2));
+  if (right.startsWith("b/")) paths.push(right.slice(2));
+  return paths;
+}
+
 /** The paths a single git diff section names, with git's a/ and b/ prefixes removed. */
 function diffSectionPaths(body: string): string[] {
   const paths = new Set<string>();
+  let header: string | null = null;
   for (const line of body.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      const first = takeGitPath(line.slice("diff --git ".length));
-      if (first === null) continue;
-      const second = takeGitPath(first.rest);
-      if (second === null) continue;
-      const left = pathFromGitToken(first.token, "a/");
-      const right = pathFromGitToken(second.token, "b/");
-      if (left !== null) paths.add(left);
-      if (right !== null) paths.add(right);
+      header = line.slice("diff --git ".length);
       continue;
     }
     if (line.startsWith("+++ ")) {
-      const token = takeGitPath(line.slice(4));
-      if (token === null) continue;
-      const path = pathFromGitToken(token.token, "b/");
+      const path = wholeLinePath(line.slice(4), "b/");
       if (path !== null) paths.add(path);
       continue;
     }
     if (line.startsWith("--- ")) {
-      const token = takeGitPath(line.slice(4));
-      if (token === null) continue;
-      const path = pathFromGitToken(token.token, "a/");
+      const path = wholeLinePath(line.slice(4), "a/");
       if (path !== null) paths.add(path);
     }
+  }
+  // `---`/`+++` are authoritative. The diff --git header cannot be split unambiguously when both
+  // names contain spaces, so it is only a fallback for sections that have no per-file lines.
+  if (paths.size === 0 && header !== null) {
+    for (const path of headerPaths(header)) paths.add(path);
   }
   return [...paths];
 }

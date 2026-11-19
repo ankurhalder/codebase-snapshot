@@ -254,6 +254,8 @@ export interface PartMetadata {
   fileCount: number;
   layersCovered: string[];
   includedFiles: PartFileEntry[];
+  /** The partitioner had to hard-clip the rendered part; generation refuses this rather than lie. */
+  hardClipped?: true;
 }
 
 export interface SecretRule {

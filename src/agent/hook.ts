@@ -71,7 +71,7 @@ if [ ! -f "$SNAPSHOT_DIR/manifest.json" ]; then
   exit 1
 fi
 
-if ! npx --no-install ${GENERATOR_NAME} validate >/dev/null 2>&1; then
+if ! npx --no-install ${GENERATOR_NAME} validate --out-dir "$SNAPSHOT_DIR" >/dev/null 2>&1; then
   echo "${GENERATOR_NAME}: the snapshot is out of date." >&2
   echo "  Run \\"npx ${GENERATOR_NAME} generate\\", stage the change, and commit again." >&2
   echo "  (npx --no-install is used on purpose: this hook must not install anything)" >&2
@@ -113,13 +113,20 @@ function gitDirectory(cwd: string): string | null {
     if (!match) return null;
     const target = match[1] as string;
     const resolved = path.isAbsolute(target.trim()) ? target.trim() : path.join(cwd, target.trim());
-    if (!fs.statSync(resolved).isDirectory()) return null;
+    // The fallback path must use the same canonical containment as the git-reported path. A
+    // lexical `isInside` accepted `gitdir: link` where `link` was an in-repo symlink to an
+    // external directory, and the hook was then written and chmodded outside the repository.
+    const cwdReal = canonicalForWrite(cwd);
+    const resolvedReal = canonicalForWrite(resolved);
+    if (cwdReal === null || resolvedReal === null || !fs.statSync(resolvedReal).isDirectory()) {
+      return null;
+    }
     // A `.git` file is repository-controlled input: a cloned archive can point it at any
     // directory the user can write, and `init --install-hook` would then write an executable
     // script there. Accept only a target inside the repository, or the registered worktree
     // metadata that names this checkout back.
-    if (isInside(path.resolve(cwd), path.resolve(resolved))) return resolved;
-    return isRegisteredWorktree(path.resolve(resolved), cwd) ? resolved : null;
+    if (isInside(cwdReal, resolvedReal)) return resolvedReal;
+    return isRegisteredWorktree(path.resolve(resolved), cwd) ? resolvedReal : null;
   } catch {
     return null;
   }
@@ -240,7 +247,15 @@ export function installPreCommitHook(cwd: string, outDir = "snapshot"): HookInst
     };
   }
 
-  const hooksDir = configured === null ? path.join(gitDir as string, "hooks") : configured.dir;
+  const hooksDirRaw = configured === null ? path.join(gitDir as string, "hooks") : configured.dir;
+  const hooksDir = canonicalForWrite(hooksDirRaw);
+  if (hooksDir === null) {
+    return {
+      path: null,
+      written: false,
+      notes: [`Refusing to write the hooks directory: ${hooksDirRaw} could not be resolved.`],
+    };
+  }
   const hookPath = path.join(hooksDir, "pre-commit");
 
   // A hook is an executable file. A symlink here is a write primitive into whatever it names,

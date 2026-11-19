@@ -30,6 +30,57 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.6
+
+**The third 0.20 audit verified forty reported defects and fixed every one that reproduced, with a
+regression for each security boundary.**
+
+Ownership and confinement:
+
+- A marker is evidence only when it describes the bytes on disk: the recorded manifest digest and
+  every recorded file digest are checked, and every file at every depth must be in the inventory.
+  A marker that names a directory but omits a file inside it no longer hides that file.
+- `explain` no longer uses `existsSync` as a symlink oracle, reads staged bytes for `--staged`,
+  and drops included-only fields from a skipped answer.
+- Overview, health, validator, workspace-index, hook, gitignore and delta reads all use canonical
+  containment; `.gitignore` is replaced atomically and refuses links; `.git` file fallbacks are
+  canonicalised; `WORKSPACE.json` stores relative member paths and refuses duplicate basenames.
+- `serve` checks allowed roots before existence probes, generates in a worker, runs on a rate
+  limit, caps zip output, and refuses a remote checkout's config instead of executing its rules.
+  `health --all-members` confines the paths it reads from the index.
+
+Secrets and parsing:
+
+- Dockerfile `ENV` and `ARG` assignments are case-insensitive and keep values containing `|` or
+  `<`; an ellipsis no longer exempts any value that merely contains `...`.
+- `id_rsa.example.pem` and `.env.example.local` stay sensitive; only a known data extension may
+  follow a template marker.
+- SARIF paths are masked by the path rules and URI-encoded.
+- A regex with a bounded or optional inner quantifier, or with flags inherited from a nested
+  group, is refused instead of being allowed to backtrack catastrophically.
+- Signature records must name the fingerprint inside the manifest they verify.
+
+Protocol and correctness:
+
+- `SNAPSHOT_TOKEN` is read from the environment, so the Docker entrypoint no longer puts it in
+  argv; network-bind metrics require the bearer token; SSE sessions and session ids are bounded;
+  async request handlers have rejection handlers; cancellations are delivered at capacity.
+- The MCP worker refuses executable configs and accepts a config already loaded on the parent
+  thread; `snapshot_plan` is cancellable and `snapshot_search` enforces a cumulative byte budget.
+- `serve` and `mcp` report the real tool count; `update` is in the command order; `describe` and
+  `skill` accept `--no-update-check`; the hook validates the outDir it recorded.
+- Hard-clipped parts fail generation instead of shipping a manifest that cannot describe them;
+  section-truncation notices are no longer counted as content; the monolith labels bodies `full`
+  and does not copy `emptyLinesRemoved`; XML replaces XML 1.0-illegal controls; control-byte
+  blobs are binary even when one byte is invalid UTF-8; CR-only files and BOM package.json files
+  parse; cache keys include the repository-relative path; the ownership ledger records the same
+  path the marker looks up.
+- Token and selection tables are one line per row, sorted by code unit, and the token total no
+  longer claims to equal the manifest total. Zip timestamps are UTC.
+
+Verified with `npm run verify` (1,433 tests, 1,421 passed, 0 failed, 12 skipped) and
+`npm run verify:deep` (health 95/100; the one warning is the known documentation-path example).
+
 ## 0.20.5
 
 **The second 0.20 audit found twelve regressions and bypasses left by the first hardening pass.

@@ -642,7 +642,9 @@ function applyTruncatedContent(
 ): void {
   const keptLines = content
     .split("\n")
-    .filter((line) => !OMISSION_NOTICE_LINE.test(line)).length;
+    .filter(
+      (line) => !OMISSION_NOTICE_LINE.test(line) && line.trim() !== SECTION_TRUNCATION_NOTICE
+    ).length;
   file.content = content;
   file.isPreviewTruncated = true;
   file.inclusionMode = "preview";
@@ -682,6 +684,7 @@ function rehashPart(part: PartitionedPart, markdown: string): PartitionedPart {
       sha256: crypto.createHash("sha256").update(redistributed).digest("hex"),
       lines: countLines(redistributed),
       estimatedTokens,
+      hardClipped: true,
     },
   };
 }

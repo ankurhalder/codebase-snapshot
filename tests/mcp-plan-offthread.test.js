@@ -59,7 +59,7 @@ test("snapshot_plan does its generate on the worker thread", () => {
 
   assert.match(
     plan,
-    /await generateInWorker\(\s*workspace\.root,\s*workspace\.cliOptions,\s*\{ dryRun: true \}/,
+    /await generateInWorker\(\s*workspace\.root,\s*workspace\.cliOptions,\s*\{[^}]*dryRun: true/,
     "the plan handler must await the worker with a dry run"
   );
   assert.doesNotMatch(plan, /generateSnapshot\(/, "and must not generate on the RPC thread");

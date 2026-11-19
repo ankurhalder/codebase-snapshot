@@ -105,6 +105,18 @@ export function verifySnapshotSignature(snapshotDir: string): VerifyOutcome {
   if (sha256 !== record.manifestSha256) {
     return { ok: false, reason: "manifest.json changed after it was signed" };
   }
+  // The fingerprint is not covered by the Ed25519 signature over the manifest bytes, but it is
+  // inside those bytes. A record naming a different fingerprint is therefore a metadata mismatch,
+  // not a valid signature with an altered label.
+  let signedFingerprint: unknown;
+  try {
+    signedFingerprint = (JSON.parse(bytes.toString("utf8")) as { fingerprint?: unknown }).fingerprint;
+  } catch {
+    return { ok: false, reason: "the signed manifest is not JSON" };
+  }
+  if (typeof record.fingerprint !== "string" || record.fingerprint !== signedFingerprint) {
+    return { ok: false, reason: "signature.json names a different fingerprint than the manifest" };
+  }
   let verified = false;
   try {
     const key = crypto.createPublicKey({ key: Buffer.from(record.publicKey, "base64"), format: "der", type: "spki" });

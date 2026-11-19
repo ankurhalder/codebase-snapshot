@@ -41,7 +41,7 @@ test("the entrypoint refuses to start without a token", () => {
   assert.match(script, /-z "\$\{SNAPSHOT_TOKEN:-\}"/);
   assert.match(script, /exit 1/);
   assert.match(script, /serve --host 0\.0\.0\.0/);
-  assert.match(script, /--token "\$SNAPSHOT_TOKEN"/);
+  assert.doesNotMatch(script, /--token/, "the token must stay out of argv");
 });
 
 test("the dockerignore keeps the image small and free of repository state", () => {

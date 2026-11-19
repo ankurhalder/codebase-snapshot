@@ -1,6 +1,5 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { stripJsonComments } from "../ast/structured.js";
+import { readConfinedText } from "../security/confine.js";
 
 /**
  * What a repository says about itself, in its own words.
@@ -30,16 +29,13 @@ export function readProjectOverview(cwd: string): ProjectOverview {
   };
 }
 
-function readText(file: string): string | null {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    return null;
-  }
+function readText(cwd: string, relative: string): string | null {
+  const read = readConfinedText(cwd, relative);
+  return read.ok ? read.text : null;
 }
 
 function readDescription(cwd: string): { description?: string } {
-  const raw = readText(path.join(cwd, "package.json"));
+  const raw = readText(cwd, "package.json");
   if (raw === null) return {};
   try {
     const parsed = JSON.parse(stripJsonComments(raw)) as { description?: unknown };
@@ -52,7 +48,7 @@ function readDescription(cwd: string): { description?: string } {
 }
 
 function readSummary(cwd: string): { summary?: string } {
-  const raw = readText(path.join(cwd, "README.md"));
+  const raw = readText(cwd, "README.md");
   if (raw === null) return {};
   // Markup is removed before the paragraph is found, not after. A centred header puts the first
   // prose inside `<p>` with `<br>` and `<code>` in it: skipping HTML lines would lose the summary
@@ -99,7 +95,7 @@ function truncate(text: string, limit: number): string {
 }
 
 function readReleases(cwd: string): string[] {
-  const raw = readText(path.join(cwd, "CHANGELOG.md"));
+  const raw = readText(cwd, "CHANGELOG.md");
   if (raw === null) return [];
   // A changelog has other `##` headings ("A note on version numbers"); calling them releases
   // makes the brief claim a release history that does not exist.

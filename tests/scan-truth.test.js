@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -824,21 +825,26 @@ test("C25: the tool's own output never appears in skipped[]", (t) => {
   // A marker is evidence only when it records this tool's finished run and accounts for the
   // directory's contents; a `{}` file is not (see the FS-01 case in
   // `tests/audit-0-9-16-trust.test.js`). These fixtures are what a real run leaves behind.
+  write(dir, "snapshot/manifest.json", "{}\n");
+  const snapshotRoot = path.join(dir, "snapshot");
+  const markerFiles = ["manifest.json"].map((relative) => {
+    const bytes = fs.readFileSync(path.join(snapshotRoot, relative));
+    return { path: relative, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+  });
   write(
     dir,
     "snapshot/.codebase-snapshot",
     `${JSON.stringify({
       generator: "codebase-snapshot",
-      schemaVersion: "2",
-      id: "20260101-000000-0000",
+      schemaVersion: "3.0.0",
+      id: "20260101-0000-4000-8000-000000000000",
       state: "complete",
-      files: [
-        { path: "manifest.json", bytes: 3, sha256: "a".repeat(64) },
-        { path: "parts/part-001.md", bytes: 9, sha256: "b".repeat(64) },
-      ],
+      manifestSha256: createHash("sha256")
+        .update(fs.readFileSync(path.join(snapshotRoot, "manifest.json")))
+        .digest("hex"),
+      files: markerFiles,
     })}\n`
   );
-  write(dir, "snapshot/manifest.json", "{}\n");
   fs.mkdirSync(path.join(dir, "snapshot.backup-123-456"), { recursive: true });
   write(dir, "snapshot.backup-123-456/manifest.json", "{}\n");
 

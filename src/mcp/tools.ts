@@ -575,10 +575,15 @@ const workspaceTool: ToolSpec = {
       };
     }
     const text = read.text;
-    const document = JSON.parse(text) as {
+    let document: {
       members?: Array<{ name?: string; files?: number; tokens?: number; fingerprint?: string }>;
       links?: Array<{ from?: string; to?: string; specifiers?: number }>;
     };
+    try {
+      document = JSON.parse(text) as typeof document;
+    } catch (error) {
+      return { text: "WORKSPACE.json is not valid JSON: " + (error as Error).message, isError: true };
+    }
     const members = document.members ?? [];
     const links = document.links ?? [];
     const lines = [
@@ -928,11 +933,17 @@ const searchTool: ToolSpec = {
       } catch {
         continue;
       }
-      if (Buffer.byteLength(text, "utf8") > MAX_SEARCH_BYTES) {
+      const partBytes = Buffer.byteLength(text, "utf8");
+      if (partBytes > MAX_SEARCH_BYTES) {
         skippedOversize.push(part.filename);
+        truncated = true;
         continue;
       }
-      scanned += text.length;
+      if (scanned + partBytes > MAX_SEARCH_BYTES) {
+        truncated = true;
+        break;
+      }
+      scanned += partBytes;
       for (const section of parsePartSections(text)) {
         if (matches.length >= cap) { truncated = true; break; }
         const lines = section.body.split("\n");
@@ -2048,7 +2059,12 @@ const planTool: ToolSpec = {
     // parses every file in the repository, so a synchronous one stops this server answering
     // `ping` for seconds — the failure the worker was added to fix. It was applied to one of the
     // two generate call sites.
-    const result = await generateInWorker(workspace.root, workspace.cliOptions, { dryRun: true });
+    const controller = new AbortController();
+    context.onCancel?.(() => controller.abort());
+    const result = await generateInWorker(workspace.root, workspace.cliOptions, {
+      dryRun: true,
+      signal: controller.signal,
+    });
     if (!result.ok) return failure(result.message);
     const summary = result.summary;
     const topReasons = summary.skipReasons;
@@ -2318,6 +2334,21 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
       : {}),
     ...(configured("maxParts") || recorded?.maxParts !== undefined
       ? { maxParts: choose("maxParts", recorded?.maxParts, workspace.config.maxParts) }
+      : {}),
+    ...(cli.maxPartTokens !== undefined || configured("maxPartTokens") || recorded?.maxPartTokens !== undefined
+      ? { maxPartTokens: choose("maxPartTokens", recorded?.maxPartTokens, workspace.config.maxPartTokens, cli.maxPartTokens) }
+      : {}),
+    ...(cli.changedSince !== undefined || configured("changedSince") || recorded?.changedSince !== undefined
+      ? { changedSince: choose("changedSince", recorded?.changedSince, workspace.config.changedSince, cli.changedSince) }
+      : {}),
+    ...(cli.staged === true || configured("staged") || recorded?.staged !== undefined
+      ? { staged: choose("staged", recorded?.staged, workspace.config.staged, cli.staged === true ? true : undefined) }
+      : {}),
+    ...(cli.withDependents === true || configured("withDependents") || recorded?.withDependents !== undefined
+      ? { withDependents: choose("withDependents", recorded?.withDependents, workspace.config.withDependents, cli.withDependents === true ? true : undefined) }
+      : {}),
+    ...(configured("promptTask") || recorded?.promptTask !== undefined
+      ? { promptTask: choose("promptTask", recorded?.promptTask, workspace.config.promptTask) }
       : {}),
   };
 }

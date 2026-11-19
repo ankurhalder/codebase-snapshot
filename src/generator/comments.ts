@@ -46,12 +46,15 @@ export function stripComments(text: string, relativePath: string): StripResult {
     if (ranges_ === undefined) return;
     for (const range of ranges_) ranges.push([range.pos, range.end]);
   };
-  const visit = (node: ts.Node): void => {
+  const stack: ts.Node[] = [source];
+  while (stack.length > 0) {
+    const node = stack.pop() as ts.Node;
     collect(ts.getLeadingCommentRanges(text, node.getFullStart()));
     collect(ts.getTrailingCommentRanges(text, node.getEnd()));
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+    ts.forEachChild(node, (child) => {
+      stack.push(child);
+    });
+  }
   // Comments after the last token are trailing trivia of the end-of-file token.
   collect(ts.getLeadingCommentRanges(text, source.endOfFileToken.getFullStart()));
 

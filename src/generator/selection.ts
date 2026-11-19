@@ -1,4 +1,9 @@
 import type { Manifest } from "../types.js";
+import { escapeControls } from "../terminal.js";
+
+function cell(value: string): string {
+  return escapeControls(value).replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+}
 
 /**
  * The selection report: why this snapshot holds what it holds.
@@ -21,9 +26,12 @@ export function generateSelectionReport(
   lines.push("# Selection");
   lines.push("");
   lines.push("**Kind:** `" + selection.kind + "`  ");
-  for (const detailLine of selection.detail.split("\n")) {
-    lines.push("**" + detailLine.slice(0, detailLine.indexOf(":")) + ":**" + detailLine.slice(detailLine.indexOf(":") + 1) + "  ");
-  }
+  const detail = selection.detail.replace(/\r?\n/g, " ");
+  const colon = detail.indexOf(":");
+  lines.push(
+    "**" + (colon === -1 ? "Selection" : detail.slice(0, colon)) + ":**" +
+      (colon === -1 ? " " + detail : detail.slice(colon + 1)) + "  "
+  );
   lines.push("**Selected files:** " + selection.files.length + "  ");
   const spent = manifest.budget?.usedTokens ?? manifest.slice?.usedTokens ?? 0;
   lines.push("**Tokens spent:** " + spent.toLocaleString("en-US"));
@@ -33,7 +41,7 @@ export function generateSelectionReport(
   lines.push("| File | Tokens | Reason |");
   lines.push("| :-- | --: | :-- |");
   for (const file of selection.files) {
-    lines.push("| `" + file.path + "` | " + file.tokens.toLocaleString("en-US") + " | " + file.why + " |");
+    lines.push("| `" + cell(file.path) + "` | " + file.tokens.toLocaleString("en-US") + " | " + cell(file.why) + " |");
   }
   lines.push("");
   const dropped = selection.kind === "slice" ? manifest.slice?.dropped : manifest.budget?.dropped;
@@ -53,7 +61,7 @@ export function generateSelectionReport(
     lines.push("| File | Tokens |");
     lines.push("| :-- | --: |");
     for (const item of next) {
-      lines.push("| `" + item.path + "` | " + item.tokens.toLocaleString("en-US") + " |");
+      lines.push("| `" + cell(item.path) + "` | " + item.tokens.toLocaleString("en-US") + " |");
     }
     lines.push("");
   }

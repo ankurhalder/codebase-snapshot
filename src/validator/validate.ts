@@ -15,6 +15,7 @@ import { buildImportResolver, importsChangedFile, tsconfigPathsFor } from "../sc
 import type { ImportResolver } from "../scanner/dependents.js";
 import { importsOfFile } from "../ast/imports.js";
 import { verifySnapshotSignature } from "../signing.js";
+import { readConfinedBytes } from "../security/confine.js";
 import { SCHEMA_VERSION, isOurGeneratorName } from "../version.js";
 import { BINARY_SCAN_BYTES, decodeText, isBinaryExtension, isBinaryFile } from "../scanner/binary.js";
 import type {
@@ -438,6 +439,9 @@ export function describeManifestShapeProblem(value: unknown): string | null {
     if (typeof fields.relativePath !== "string") {
       return 'a "files" entry has no "relativePath"';
     }
+    if (!isConfinedRelative(fields.relativePath)) {
+      return 'a "files" entry "relativePath" resolves outside the repository and was not inspected';
+    }
     if (!currentSchema) continue;
     if (typeof fields.part !== "string" || fields.part.length === 0) {
       return 'a "files" entry records no "part"';
@@ -457,6 +461,18 @@ export function describeManifestShapeProblem(value: unknown): string | null {
   }
 
   if (!Array.isArray(candidate.skipped)) return 'missing "skipped" array';
+  for (const entry of candidate.skipped) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return 'a "skipped" entry is not an object';
+    }
+    const fields = entry as Record<string, unknown>;
+    if (typeof fields.path !== "string" || !isConfinedRelative(fields.path)) {
+      return 'a "skipped" entry "path" resolves outside the repository and was not inspected';
+    }
+    if (typeof fields.reason !== "string" || fields.reason.length === 0) {
+      return 'a "skipped" entry has no "reason"';
+    }
+  }
   if (!Array.isArray(candidate.parts)) return 'missing "parts" array';
   for (const entry of candidate.parts) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
@@ -563,10 +579,14 @@ export function validateSnapshot(
   // `fingerprint` had been deleted, and answered "valid and up to date".
   const shapeProblem = describeManifestShapeProblem(manifest);
   if (shapeProblem) {
+    const drift = emptyDrift();
+    // The shape refusal is also the reason a path was not inspected. Keeping it in both places
+    // lets a machine consumer read errors and a drift-oriented one see the same issue.
+    drift.partIssues.push({ part: "manifest.json", issue: shapeProblem });
     return {
       valid: false,
       manifestPresent: true,
-      drift: emptyDrift(),
+      drift,
       errors: [`${manifestPath} is not a snapshot manifest: ${shapeProblem}`],
       warnings: [],
     };
@@ -917,13 +937,15 @@ export function validateSnapshot(
       });
       continue;
     }
-    let buffer: Buffer;
-    try {
-      buffer = fs.readFileSync(partPath);
-    } catch {
-      drift.partIssues.push({ part: part.filename, issue: "missing from snapshot/parts" });
+    const partRead = readConfinedBytes(partsDir, part.filename);
+    if (!partRead.ok) {
+      drift.partIssues.push({
+        part: part.filename,
+        issue: `missing or not a regular file in snapshot/parts (${partRead.reason})`,
+      });
       continue;
     }
+    const buffer = partRead.bytes;
     if (buffer.length !== part.byteSize) {
       drift.partIssues.push({
         part: part.filename,
@@ -1400,15 +1422,15 @@ export function validateSnapshot(
   ];
   for (const [key, artifact] of declaredArtifacts) {
     if (!artifact) continue;
-    const artifactPath = path.join(snapshotDir, ...key.split("/"));
-    let buffer: Buffer;
-    try {
-      if (!fs.statSync(artifactPath).isFile()) throw new Error("not a regular file");
-      buffer = fs.readFileSync(artifactPath);
-    } catch {
-      drift.partIssues.push({ part: key, issue: "declared artifact is missing" });
+    const artifactRead = readConfinedBytes(snapshotDir, key);
+    if (!artifactRead.ok) {
+      drift.partIssues.push({
+        part: key,
+        issue: `declared artifact is missing or not a regular file (${artifactRead.reason})`,
+      });
       continue;
     }
+    const buffer = artifactRead.bytes;
     if (sha256Hex(buffer) !== artifact.sha256 || buffer.length !== artifact.byteSize) {
       drift.partIssues.push({ part: key, issue: "artifact does not match its recorded digest" });
       continue;
@@ -1439,13 +1461,14 @@ export function validateSnapshot(
   const sarifArtifact = manifest.artifacts?.sarif;
   if (sarifArtifact) {
     const sarifKey = "reports/audit.sarif";
-    try {
-      const buffer = fs.readFileSync(path.join(snapshotDir, "reports", "audit.sarif"));
-      if (sha256Hex(buffer) !== sarifArtifact.sha256 || buffer.length !== sarifArtifact.byteSize) {
-        drift.partIssues.push({ part: sarifKey, issue: "artifact does not match its recorded digest" });
-      }
-    } catch {
-      drift.partIssues.push({ part: sarifKey, issue: "declared artifact is missing" });
+    const sarifRead = readConfinedBytes(snapshotDir, "reports/audit.sarif");
+    if (!sarifRead.ok) {
+      drift.partIssues.push({ part: sarifKey, issue: "declared artifact is missing or not a regular file" });
+    } else if (
+      sha256Hex(sarifRead.bytes) !== sarifArtifact.sha256 ||
+      sarifRead.bytes.length !== sarifArtifact.byteSize
+    ) {
+      drift.partIssues.push({ part: sarifKey, issue: "artifact does not match its recorded digest" });
     }
   }
 

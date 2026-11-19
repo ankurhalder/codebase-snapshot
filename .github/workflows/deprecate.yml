@@ -36,6 +36,8 @@ jobs:
       SPEC: ${{ inputs.spec }}
       MESSAGE: ${{ inputs.message }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Refuse a non-exact spec
         # A parse, not a glob: `*@*.*.*` accepted `pkg@>=1.2.3` and `pkg@1.x.x`, and `npm
         # deprecate` applies a range to every matching version.

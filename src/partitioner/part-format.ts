@@ -36,7 +36,7 @@ const LEGACY_INCLUDED_LINES_PREFIX = "- Included Lines: ";
  * for. The counts are found the other way round, by position ({@link readIncludedLines}), because
  * they are the only field with a fixed shape.
  */
-const INCLUSION_MODES = new Set(["full", "preview", "signatures"]);
+const INCLUSION_MODES = new Set(["full", "preview", "signatures", "comments-stripped"]);
 
 /**
  * The included-line count from the last field of a compact `- Meta:` line.

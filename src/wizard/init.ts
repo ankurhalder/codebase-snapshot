@@ -1,7 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { stripJsonComments } from "../ast/structured.js";
-import { ARTIFACT_NAMES, parseByteSize, supportsTypeScriptImports } from "../config.js";
+import {
+  ARTIFACT_NAMES,
+  MIN_MAX_PART_BYTES,
+  parseByteSize,
+  supportsTypeScriptImports,
+} from "../config.js";
 import { appendGitignoreEntries } from "../gitignore.js";
 import { detectPreset, listPresetNames } from "../presets/index.js";
 import { getGitInfo } from "../scanner/files.js";
@@ -699,7 +704,14 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
         try {
           const raw = await text(io, "Part size (e.g. 150k, 1.5mb, 900000)", {
             defaultValue: currentBudget,
-            validate: (value) => (parseByteSize(value) === undefined ? "Not a valid size." : null),
+            validate: (value) => {
+              const parsed = parseByteSize(value);
+              if (parsed === undefined) return "Not a valid size.";
+              if (parsed < MIN_MAX_PART_BYTES) {
+                return `A part budget below ${MIN_MAX_PART_BYTES} bytes cannot hold the truncation notice.`;
+              }
+              return null;
+            },
             allowBack: true,
           });
           answers.maxPartBytes = parseByteSize(raw) ?? answers.maxPartBytes;

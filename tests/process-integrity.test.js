@@ -241,7 +241,7 @@ const hookConfig = (dir, withTimer) =>
     .filter(Boolean)
     .join("\n");
 
-test("generateInWorker does not run hooks.afterGenerate", async (t) => {
+test("generateInWorker refuses an executable config and does not run hooks", async (t) => {
   const dir = makeRepo(t, {
     "package.json": '{"name":"fixture","version":"1.0.0"}\n',
     "src/a.ts": "export const a = 1;\n",
@@ -249,15 +249,13 @@ test("generateInWorker does not run hooks.afterGenerate", async (t) => {
   fs.writeFileSync(path.join(dir, "snapshot.config.mjs"), hookConfig(dir, true), "utf8");
 
   const result = await generateInWorker(dir, { cwd: dir });
-  assert.equal(result.ok, true, result.ok ? "" : result.message);
+  assert.equal(result.ok, false, "repository code must not run in the MCP worker");
+  assert.match(result.ok ? "" : result.message, /executable config/);
   assert.equal(
     fs.existsSync(path.join(dir, "hook-ran.txt")),
     false,
     "docs/mcp.md promises hooks do not run for a generation started over MCP"
   );
-
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "snapshot", "manifest.json"), "utf8"));
-  assert.ok(manifest.counts.totalFiles > 0, "the snapshot was still generated");
 });
 
 test("a CLI generate in the same repository does run the hook", async (t) => {

@@ -184,7 +184,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "version",
   ],
   diff: ["format", "mode", "no-config", "no-update-check", "help", "version"],
-  describe: ["format", "mode", "help", "version"],
+  describe: ["format", "mode", "no-update-check", "help", "version"],
   init: [
     "install-hook",
     "cwd",
@@ -205,7 +205,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "help",
     "version",
   ],
-  skill: ["cwd", "format", "mode", "install", "target", "help", "version"],
+  skill: ["cwd", "format", "mode", "install", "target", "no-update-check", "help", "version"],
   // `mcp` reads the repository, so it takes --cwd. It has no --format: stdout carries JSON-RPC
   // messages, and there is no second shape to choose, so offering the flag would be a lie.
   serve: ["port", "host", "token", "no-auth", "allow-private", "cwd", "no-update-check", "help"],
@@ -265,6 +265,7 @@ const COMMAND_ORDER: readonly CommandName[] = [
   "health",
   "report",
   "explain",
+  "update",
   "init",
   "setup",
   "diff",

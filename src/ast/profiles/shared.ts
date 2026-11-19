@@ -68,7 +68,7 @@ export function finalizeSummary(summary: SourceSummary): SourceSummary {
 /** Visits each line, bounded by {@link MAX_SUMMARY_CHARS}. */
 export function eachLine(content: string, visit: (line: string) => void): void {
   const text = content.length > MAX_SUMMARY_CHARS ? content.slice(0, MAX_SUMMARY_CHARS) : content;
-  for (const line of text.split(/\r?\n/)) visit(line);
+  for (const line of text.split(/\r\n|\n|\r/)) visit(line);
 }
 
 /** True when the line starts in column zero (a top-level declaration). */

@@ -2,9 +2,10 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { generateSnapshot } from "../index.js";
 import { loadConfigFileDetailed } from "../config.js";
 import { createServer } from "../mcp/run.js";
+import { generateInWorker } from "../mcp/generate-worker.js";
+import { buildTools } from "../mcp/tools.js";
 import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
@@ -75,6 +76,24 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   // every socket let client A's server/discover force client B's legacy initialize to fail, and
   // let request id 1 in one client cancel request id 1 in another. A per-socket server is the
   // smallest state boundary the HTTP transport can honestly provide.
+  const toolCount = buildTools().length;
+  /** Bound the browser API's request rate; one slow scanner should not starve every other route. */
+  const rateWindows = new Map<string, { count: number; resetAt: number }>();
+  const rateLimited = (request: http.IncomingMessage): boolean => {
+    const remote = request.socket.remoteAddress ?? "unknown";
+    const now = Date.now();
+    const window = rateWindows.get(remote);
+    if (window === undefined || window.resetAt <= now) {
+      if (!rateWindows.has(remote) && rateWindows.size >= 1024) {
+        for (const [key, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key);
+      }
+      rateWindows.set(remote, { count: 1, resetAt: now + 10_000 });
+      return false;
+    }
+    if (window.count >= 120) return true;
+    window.count += 1;
+    return false;
+  };
   const mcpPerSocket = new WeakMap<object, ReturnType<typeof createMcp>>();
   const mcpFor = (socket: object): ReturnType<typeof createMcp> => {
     let server = mcpPerSocket.get(socket);
@@ -112,11 +131,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
       return null;
     }
   };
+  const fold = (value: string): string =>
+    process.platform === "win32" || process.platform === "darwin" ? value.toLowerCase() : value;
   const inside = (resolved: string): boolean =>
     allowedRoots.some((root) => {
       const canonicalRoot = canonical(root);
       if (canonicalRoot === null) return false;
-      const relative = path.relative(canonicalRoot, resolved);
+      const relative = path.relative(fold(canonicalRoot), fold(resolved));
       return (
         relative === "" ||
         (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
@@ -128,10 +149,10 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   };
   /** Lexical containment: used to answer 403 before 404 without following a link. */
   const lexicallyInside = (candidate: string): boolean => {
-    const resolved = path.resolve(candidate);
+    const resolved = fold(path.resolve(candidate));
     return allowedRoots.some((root) => {
-      const prefix = path.resolve(root) + path.sep;
-      return resolved === path.resolve(root) || resolved.startsWith(prefix);
+      const resolvedRoot = fold(path.resolve(root));
+      return resolved === resolvedRoot || resolved.startsWith(resolvedRoot + path.sep);
     });
   };
   /** The same check for a directory this request is about to create. */
@@ -196,8 +217,12 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
       response.end();
       return;
     }
+    if (rateLimited(request)) {
+      send(429, { error: "too many requests" }, { "retry-after": "10" });
+      return;
+    }
     if (request.method === "GET" && request.url === "/healthz") {
-      send(200, { ok: true, name: "codebase-snapshot", tools: 12 });
+      send(200, { ok: true, name: "codebase-snapshot", tools: toolCount });
       return;
     }
     if (request.method === "GET" && (request.url === "/" || request.url === "/index.html")) {
@@ -269,7 +294,14 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           }
           if (answers.length === 0) send(202, "");
           else send(200, Array.isArray(message) ? answers : answers[0]);
-        })();
+        })().catch((error: unknown) => {
+          log("serve: " + (error as Error).message);
+          try {
+            send(500, { error: "internal error" });
+          } catch {
+            // The response is already gone.
+          }
+        });
       });
       return;
     }
@@ -325,7 +357,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           }
           const isRemote = /^(https?|file):\/\//i.test(source);
           let target: string;
-          let provenance: Manifest["source"];
+          let provenance: Manifest["source"] | undefined;
           if (isRemote) {
             const parsed = parseRemoteSource(source, { allowPrivate: options.allowPrivate === true });
             if (!parsed.ok) {
@@ -375,7 +407,12 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           // produced a different snapshot from the browser than from the CLI, and an executable
           // config was silently ignored rather than refused — the one thing the MCP server and the
           // security review both promise this surface does not do.
-          const loaded = await loadConfigFileDetailed(target, { allowExecutableConfig: false });
+          // A remote clone's config is repository content, not a decision about this host. The CLI
+          // sets noConfig for --remote; serve loaded it, so a hostile package.json-adjacent config
+          // could supply a catastrophic custom secret regex and freeze the server.
+          const loaded = isRemote
+            ? { config: null, errors: [] as string[] }
+            : await loadConfigFileDetailed(target, { allowExecutableConfig: false });
           if (loaded.errors.length > 0) {
             send(400, { error: loaded.errors.join("; ") });
             return;
@@ -386,7 +423,6 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           // config, but the resulting output directory must still be inside the served roots.
           const runConfig = isRemote
             ? {
-                ...(loaded.config ?? {}),
                 outDir: "snapshot",
                 tmpDir: "snapshot.tmp",
                 hooks: {},
@@ -414,11 +450,37 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           }
           const started = Date.now();
           try {
-            const manifest = generateSnapshot({ ...runConfig, cwd: target }, {
-              ...(provenance === undefined ? {} : { source: provenance }),
-              ...(mode === "slice" ? { slice: { question } } : {}),
-              ...(mode === "budget" && budgetTokens !== undefined ? { budgetTokens } : {}),
-            });
+            // Generate off the request thread: a 3,000-file scan used to freeze every other
+            // browser request and the MCP endpoint for the duration of the scan.
+            const generated = await generateInWorker(
+              target,
+              { cwd: target },
+              {
+                config: runConfig,
+                ...(provenance === undefined ? {} : { source: provenance }),
+                ...(mode === "slice" && question.length >= 3
+                  ? { narrow: { slice: { question } } }
+                  : {}),
+                ...(mode === "budget" && budgetTokens !== undefined
+                  ? { narrow: { budgetTokens } }
+                  : {}),
+              }
+            );
+            if (!generated.ok) {
+              send(500, { error: generated.message });
+              return;
+            }
+            const manifestRead = readConfinedText(snapshotDir, "manifest.json");
+            if (!manifestRead.ok) {
+              send(500, { error: "the generate worker did not write manifest.json" });
+              return;
+            }
+            const manifest = JSON.parse(manifestRead.text) as Manifest;
+            const shape = describeManifestShapeProblem(manifest);
+            if (shape !== null) {
+              send(500, { error: "the generated manifest is not a snapshot manifest: " + shape });
+              return;
+            }
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
             // The audit runs on what was just written, so the page shows whether the artifact is
             // safe to hand over rather than only how big it is.
@@ -443,7 +505,14 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           } catch (error) {
             send(500, { error: (error as Error).message });
           }
-        })();
+        })().catch((error: unknown) => {
+          log("serve: " + (error as Error).message);
+          try {
+            send(500, { error: "internal error" });
+          } catch {
+            // The response is already gone.
+          }
+        });
       });
       return;
     }
@@ -454,15 +523,24 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      if (!fs.existsSync(path.join(target, "manifest.json"))) {
-        send(404, { error: "no manifest.json under " + target });
+      if (!fs.existsSync(target)) {
+        send(404, { error: "no snapshot directory at " + target });
         return;
       }
       if (!insideAllowedRoots(target)) {
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      const report = auditSnapshot({ snapshotDir: target, repoDir: path.dirname(target) });
+      const repoDir = path.dirname(target);
+      if (!insideAllowedRoots(repoDir)) {
+        send(403, { error: "the repository root for this snapshot is outside the served directory" });
+        return;
+      }
+      if (!fs.existsSync(path.join(target, "manifest.json"))) {
+        send(404, { error: "no manifest.json under " + target });
+        return;
+      }
+      const report = auditSnapshot({ snapshotDir: target, repoDir });
       send(200, { score: report.score, counts: report.counts, checks: report.checks });
       return;
     }
@@ -473,7 +551,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      if (!fs.existsSync(path.join(target, "manifest.json"))) {
+      if (!fs.existsSync(target)) {
         send(404, { error: "no manifest.json under " + target });
         return;
       }
@@ -524,12 +602,16 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      if (!fs.existsSync(path.join(target, "manifest.json")) && !fs.existsSync(path.join(target, ".codebase-snapshot"))) {
+      if (!fs.existsSync(target)) {
         send(404, { error: "not a snapshot directory: " + target });
         return;
       }
       if (!insideAllowedRoots(target)) {
         send(403, { error: "outside the served directory: " + target });
+        return;
+      }
+      if (!fs.existsSync(path.join(target, "manifest.json")) && !fs.existsSync(path.join(target, ".codebase-snapshot"))) {
+        send(404, { error: "not a snapshot directory: " + target });
         return;
       }
       try {
