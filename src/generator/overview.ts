@@ -62,12 +62,20 @@ function readSummary(cwd: string): { summary?: string } {
     .replace(/<\/(p|div|section|header|footer|li)>/gi, "\n")
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    // Decode once, in one pass. Sequential replacements turn `&amp;lt;` into `<` after the first
+    // pass, which is a double-unescape: a README can smuggle markup back into the brief through an
+    // otherwise inert entity.
+    .replace(/&(nbsp|amp|lt|gt|quot|#39);/g, (match, name: string) => {
+      const entities: Record<string, string> = {
+        nbsp: " ",
+        amp: "&",
+        lt: "<",
+        gt: ">",
+        quot: '"',
+        "#39": "'",
+      };
+      return entities[name] ?? match;
+    });
   const paragraph: string[] = [];
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
