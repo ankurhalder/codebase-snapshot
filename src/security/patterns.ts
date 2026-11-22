@@ -636,4 +636,8 @@ export const PEM_BLOCK_PATTERN =
  * test fixture is not followed into the prose after it.
  */
 export const PEM_UNTERMINATED_PATTERN =
-  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:\r\n|\n|\r)(?:(?:[ \t]*(?:Proc-Type|DEK-Info|Comment|Version):[^\r\n]*|[ \t]*)(?:\r\n|\n|\r))*(?:[ \t]*[A-Za-z0-9+/=]{8,}[ \t]*(?:\r\n|\n|\r|$))+/g;
+  // The header and body counts are bounded. The previous version nested unbounded repetitions of
+  // "a header line or a blank line" and "a base64 line", which is exponential for a file full of
+  // Comment: lines; a PEM key never has more than a handful of RFC 1421 header lines or 10,000
+  // body lines, so bounding both keeps the match shape while removing the blow-up.
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:\r\n|\n|\r)(?:(?:[ \t]*(?:Proc-Type|DEK-Info|Comment|Version):[^\r\n]*[ \t]*(?:\r\n|\n|\r))|(?:[ \t]*(?:\r\n|\n|\r))){0,16}(?:[ \t]*[A-Za-z0-9+/=]{8,}[ \t]*(?:\r\n|\n|\r|$)){1,10000}/g;

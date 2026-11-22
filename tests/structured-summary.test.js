@@ -76,3 +76,19 @@ test("a single-file component is listed once, not once per sighting", () => {
     "and the list stays sorted after the component is added"
   );
 });
+
+test("an SFC closing tag with whitespace still ends the script block", () => {
+  // HTML permits whitespace before the '>' in an end tag. Treating </script > as markup left the
+  // entire script block unparsed, so a valid component got a template-only summary.
+  const source = [
+    '<script setup lang="ts">',
+    'import { ref } from "vue";',
+    "export const answer = ref(42);",
+    "</script >",
+  ].join("\n");
+
+  const { summary, quality } = summarizeWithProfile("components/Answer.vue", source);
+
+  assert.equal(quality, "ast");
+  assert.ok(summary.imports.includes("vue"), "the script block is parsed, not treated as markup");
+});

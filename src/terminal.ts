@@ -83,9 +83,12 @@ export function inlineCode(value: string): string {
  * table it is listed in. The escaping that already protects the terminal does not cover either.
  */
 export function tableCell(value: string): string {
-  return escapeControls(value)
-    .replace(/\|/g, "\\|")
-    .replace(/\r\n?|\n/g, " ");
+  // A pipe is the cell delimiter. Escape the run of backslashes immediately before it with an
+  // additional backslash per backslash (2n + 1 in total), so a name ending in `\|` cannot turn
+  // the delimiter back into an unescaped pipe while ordinary backslashes stay readable.
+  return escapeControls(
+    value.replace(/(\\*)\|/g, (_match, slashes: string) => "\\".repeat(slashes.length * 2 + 1))
+  ).replace(/\r\n?|\n/g, " ");
 }
 
 /**

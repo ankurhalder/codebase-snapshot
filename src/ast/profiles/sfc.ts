@@ -2,7 +2,7 @@ import { summarizeTypeScriptSource } from "../ts-parser.js";
 import type { LanguageProfile } from "./shared.js";
 import { emptySummary, finalizeSummary } from "./shared.js";
 
-const SCRIPT_BLOCK = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+const SCRIPT_BLOCK = /<script([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 
 /** `lang="tsx"` / `lang='jsx'`: the block holds JSX, whatever the component's extension says. */
 const JSX_LANG = /\blang\s*=\s*["']?[tj]sx\b/i;

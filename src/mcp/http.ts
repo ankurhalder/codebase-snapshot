@@ -3,6 +3,7 @@ import * as crypto from "node:crypto";
 import { createServer } from "./run.js";
 import { buildTools } from "./tools.js";
 import { GENERATOR_VERSION } from "../version.js";
+import { parseBearerToken } from "../auth.js";
 import type { McpServer } from "./server.js";
 import type { JsonRpcResponse } from "./protocol.js";
 
@@ -161,9 +162,8 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   >();
   const tokenAccepted = (request: http.IncomingMessage, url: URL): boolean => {
     if (token === null) return true;
-    const header = request.headers.authorization ?? "";
-    const match = /^Bearer\s+(.+)$/i.exec(header);
-    if (match !== null && timingSafeEqual(match[1].trim(), token)) return true;
+    const presented = parseBearerToken(request.headers.authorization);
+    if (presented !== null && timingSafeEqual(presented, token)) return true;
     const fromQuery = url.searchParams.get("token");
     return fromQuery !== null && timingSafeEqual(fromQuery, token);
   };
@@ -489,9 +489,8 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
 
     if (token !== null) {
-      const header = request.headers.authorization ?? "";
-      const match = /^Bearer\s+(.+)$/i.exec(header);
-      if (match === null || !timingSafeEqual(match[1].trim(), token)) {
+      const presented = parseBearerToken(request.headers.authorization);
+      if (presented === null || !timingSafeEqual(presented, token)) {
         send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
         return;
       }

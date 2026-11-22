@@ -12,6 +12,7 @@ import { describeManifestShapeProblem } from "../validator/validate.js";
 import { readConfinedText } from "../security/confine.js";
 import type { Manifest } from "../types.js";
 import { writeZip } from "./zip.js";
+import { parseBearerToken } from "../auth.js";
 import { SERVE_PAGE } from "./ui.js";
 
 /**
@@ -172,10 +173,9 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
   const authorized = (request: http.IncomingMessage): boolean => {
     if (token === null) return true;
-    const header = request.headers.authorization ?? "";
-    const match = /^Bearer\s+(.+)$/i.exec(header);
-    if (match === null) return false;
-    const given = Buffer.from(match[1].trim(), "utf8");
+    const presented = parseBearerToken(request.headers.authorization);
+    if (presented === null) return false;
+    const given = Buffer.from(presented, "utf8");
     const expected = Buffer.from(token, "utf8");
     return given.length === expected.length && timingSafeEqual(given, expected);
   };

@@ -1,10 +1,8 @@
 import type { Manifest } from "../types.js";
-import { escapeControls } from "../terminal.js";
+import { tableCell } from "../terminal.js";
 
 /** Markdown table cell: control-free and one physical line. */
-function cell(value: string): string {
-  return escapeControls(value).replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
-}
+const cell = tableCell;
 
 /** Deterministic ordering independent of the machine's locale. */
 function byCodeUnit(left: string, right: string): number {

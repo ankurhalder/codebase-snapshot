@@ -1,9 +1,7 @@
 import type { Manifest } from "../types.js";
-import { escapeControls } from "../terminal.js";
+import { tableCell } from "../terminal.js";
 
-function cell(value: string): string {
-  return escapeControls(value).replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
-}
+const cell = tableCell;
 
 /**
  * The selection report: why this snapshot holds what it holds.
