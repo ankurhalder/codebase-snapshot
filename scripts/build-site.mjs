@@ -78,7 +78,7 @@ const TITLES = {
   install: "Install codebase-snapshot with npm, yarn, pnpm or bun",
   cli: "CLI reference: every command and option",
   configuration: "Configuration, byte budgets and the 25 project presets",
-  answer: "snapshot_answer: a question in, cited, line-numbered context out",
+  answer: "snapshot_answer: cited, line-numbered context in one call",
   output: "Snapshot output: parts, manifest and reports",
   agent: "Using codebase-snapshot with an AI agent",
   mcp: "MCP server: serve a codebase to any AI client",
@@ -103,7 +103,7 @@ const TITLES = {
 const DESCRIPTIONS = {
   index:
     "Turn a repository into LLM-ready parts under a hard byte budget, with a manifest that " +
-    "indexes every file and every skip, and a validate command that fails on drift.",
+    "indexes every file and skip, and a validate command that fails on drift.",
   install:
     "Install with npm, yarn, pnpm or bun, or run it with npx. Node 18+. A global install gives " +
     "you the short `snapshot` command.",
@@ -126,8 +126,8 @@ const DESCRIPTIONS = {
     "snapshot_answer turns one question into cited, line-numbered windows inside a token budget, " +
     "and names every planned file that did not fit.",
   tools:
-    "All 26 MCP tools in one reference: what each answers, its cost class, and a call you can " +
-    "send as it stands, from status and search to the planner, review and health.",
+    "All 26 MCP tools in one reference: what each answers, its cost class, and a call it accepts, " +
+    "from status and search to the planner, review and health.",
   mcp:    "Serve a repository to Claude, Cursor or any MCP client: 26 tools and snapshot:// " +
     "resources, so an agent reads the one part it needs instead of all of them.",
   health:

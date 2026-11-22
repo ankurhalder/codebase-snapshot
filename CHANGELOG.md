@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.7
+
+**Discovery release: the npm metadata now points at the documentation site and describes the
+package in the words people actually search for. No runtime behavior changed.**
+
+- The npm homepage is the docs site, not the GitHub README. The README still links both.
+- The description leads with "repository", "Markdown", "manifest", "redaction", "validation" and
+  "MCP server", and adds the broad discovery keywords `repository-context`, `ai-context`,
+  `codebase-context`, `code-to-prompt` and `llm-tools`.
+- Three page-metadata outliers were trimmed: the home and tools descriptions are under 160
+  characters, and the `snapshot_answer` title is under 60.
+- This is also the first GitHub Release since 0.17.0, so the repository's latest release and
+  npm's latest version now agree.
+
 ## 0.20.6
 
 **The third 0.20 audit verified forty reported defects and fixed every one that reproduced, with a
