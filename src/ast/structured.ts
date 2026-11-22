@@ -244,9 +244,10 @@ export function summarizeMarkdown(content: string): MarkdownSummary {
     }
     if (fence !== null) continue;
 
-    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    const headingMatch = /^(#{1,6})\s+/.exec(trimmed);
     if (headingMatch) {
-      headings.push(`${headingMatch[1]} ${headingMatch[2].trim()}`);
+      const text = trimmed.slice(headingMatch[0].length).trim();
+      if (text.length > 0) headings.push(`${headingMatch[1]} ${text}`);
     }
   }
 
