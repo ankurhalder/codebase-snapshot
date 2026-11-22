@@ -87,7 +87,7 @@ export function tableCell(value: string): string {
   // additional backslash per backslash (2n + 1 in total), so a name ending in `\|` cannot turn
   // the delimiter back into an unescaped pipe while ordinary backslashes stay readable.
   return escapeControls(
-    value.replace(/(\\*)\|/g, (_match, slashes: string) => "\\".repeat(slashes.length * 2 + 1))
+    value.replace(/(\\*)\|/g, (_match, slashes: string) => "\\".repeat(slashes.length * 2 + 1) + "|")
   ).replace(/\r\n?|\n/g, " ");
 }
 
