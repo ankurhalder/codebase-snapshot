@@ -30,6 +30,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.8
+
+**Security hardening from the first CodeQL pass. The public API and artifact shape are unchanged; hostile names, headers and truncated keys are handled without backtracking or table escape.**
+
+- Markdown table cells now escape the run of backslashes immediately before a pipe with an odd count. A layer or path containing `|\|` can no longer terminate the cell, while ordinary backslashes stay readable.
+- The Authorization header parser is an index scan instead of `/^Bearer\s+(.+)$/i`. It accepts the same space and tab separators without the polynomial backtracking path on a hostile header.
+- The unterminated-PEM pattern bounds RFC 1421 header lines and base64 body lines, and Markdown headings are parsed without a greedy whitespace-plus-text pair. Both were flagged as ReDoS.
+- Single-file component end tags accept trailing whitespace and attributes that HTML parsers tolerate; the old pattern left those script blocks unparsed.
+- README entity decoding is one pass, so `&amp;lt;` cannot become `<` through a second decode.
+- A guarded `Dependabot auto-merge` workflow now squashes minor and patch updates only after every pull-request check is green. Major updates still wait for a human.
+
 ## 0.20.7
 
 **Discovery release: the npm metadata now points at the documentation site and describes the
