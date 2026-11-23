@@ -34,9 +34,16 @@ individual pieces are `npm run coverage-diff` and `npm run reproducible`.
 Verification is local, deliberately, and `npm run verify` is the same command every workflow
 runs. GitHub Actions does more than publish: `pr.yml` verifies pull requests, `publish.yml`
 verifies and uploads on a tag, `pages.yml` builds the docs site, `seo-rank.yml` measures search
-visibility weekly, and `deprecate.yml`/`unpublish.yml` are manual release operations. None of
-them adds a check `verify` does not run, so there is no matrix to wait for, and nothing a pull
-request can fail that you could not have caught on your own machine.
+visibility weekly, and `deprecate.yml`/`unpublish.yml` are manual release operations. Apart from
+the live docs sync described below, none of them adds a check `verify` does not run, so there is
+no matrix to wait for, and nothing a pull request can fail that you could not have caught on your
+own machine.
+
+**Docs sync is the one network-only gate.** `npm run check:docs` clones the public wiki and reads
+the deployed site, then checks the version labels, every `npx` pin, every sidebar page, internal
+links and the modern MCP rules against `PUBLISHED`. `docs-sync.yml` runs it after the Pages
+deployment and daily, so a release that updates `docs/` but not the wiki goes red instead of
+shipping a stale surface. Run it before tagging when you changed documentation.
 
 ## Test headers and the version line
 

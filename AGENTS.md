@@ -123,6 +123,14 @@ line, and do not go past `0.20` while it applies.
 unpublished patch is a command that 404s. Update `PUBLISHED` in the same commit that publishes a
 milestone; a test fails if a doc pin and `PUBLISHED` disagree.
 
+**Docs, site and wiki are three surfaces of one release.** `README.md` and `docs/*.md` are the
+source; `npm run site` renders them into the deployed site. The wiki is a separate git repository,
+so it is updated in the same release, not later. `npm run check:docs` clones the live wiki and
+checks the version labels, every copyable pin, every sidebar page, internal links and the MCP
+transport rules against the deployed site's Markdown twin. `docs-sync.yml` runs it after the
+Pages deployment and daily; a stale wiki is a red workflow, not a silent omission. The check is
+network-only by design and is not part of the offline `npm run verify`.
+
 ## Conventions
 
 - Commits: `type: summary` (`feat`, `fix`, `docs`, `ci`, `chore`), with a body explaining the

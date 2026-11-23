@@ -101,6 +101,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "node scripts/lint.mjs",
     "check:workflows": "node scripts/check-workflows.mjs",
+    "check:docs": "node scripts/check-docs-sync.mjs",
     "check": "npm run lint && npm run typecheck && npm test",
     "pretest": "npm run build",
     "test": "node scripts/test-run.mjs",
