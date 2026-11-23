@@ -6,8 +6,7 @@ import { GENERATOR_VERSION } from "../version.js";
 import { parseBearerToken } from "../auth.js";
 import type { McpServer } from "./server.js";
 import type { JsonRpcResponse } from "./protocol.js";
-import { isJsonObject } from "./protocol.js";
-import { inspectModernMeta } from "./era.js";
+import { modernHttpStatus, validateModernHttpHeaders } from "./http-headers.js";
 
 
 /**
@@ -126,17 +125,6 @@ function isToolCall(message: unknown): boolean {
 
 function methodOf(message: unknown): string | null {
   return isObject(message) && typeof message.method === "string" ? message.method : null;
-}
-
-/** True when any message in a request carries complete modern `_meta`. */
-function hasModernMeta(message: unknown): boolean {
-  const messages = Array.isArray(message) ? message : [message];
-  return messages.some(
-    (item) =>
-      isJsonObject(item) &&
-      isJsonObject(item.params) &&
-      inspectModernMeta(item.params).kind === "present"
-  );
 }
 
 /**
@@ -308,7 +296,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
       "access-control-allow-origin": allowed,
       vary: "origin",
       "access-control-allow-headers":
-        "authorization, content-type, mcp-protocol-version, mcp-session-id",
+        "authorization, content-type, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
       // Without this a browser can send the header but cannot read it: mcp-session-id is not a
       // CORS-safelisted response header, so every cross-origin client silently lost its session.
       "access-control-expose-headers": "mcp-session-id",
@@ -561,6 +549,15 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         send(response, 400, { error: "JSON-RPC batch is limited to 100 messages" }, cors);
         return;
       }
+      // Modern Streamable HTTP mirrors the method, name and protocol revision into headers and
+      // requires the server to reject a mismatch before dispatch. This also rejects a modern
+      // batch, which the 2026-07-28 transport does not permit.
+      const headers = validateModernHttpHeaders(request, message);
+      if (headers.error !== undefined) {
+        send(response, 400, headers.error, cors);
+        return;
+      }
+      const modern = headers.modern;
       // The envelope was charged above. Charge the remaining JSON-RPC messages, so the
       // documented 60-per-10s bound applies to dispatches rather than envelopes.
       if (batch.length > 1 && rateLimited(request, batch.length - 1)) {
@@ -592,6 +589,12 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         rememberAnonymous(anonymousKey(request), server);
         responseSession = newSessionId();
         rememberSession(responseSession, server, Date.now());
+      } else if (modern) {
+        // A stateless modern request is complete on its own. It has no protocol session, so an
+        // `Mcp-Session-Id` header is ignored rather than looked up. Sharing the anonymous pool
+        // with a co-located legacy client would let that client's initialize overwrite the era
+        // state, so a fresh dispatcher is the only state the request is entitled to.
+        server = createMcp();
       } else if (supplied !== "") {
         const now = Date.now();
         pruneSessions(now);
@@ -605,12 +608,6 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         existing.lastSeen = now;
         server = existing.server;
         responseSession = supplied;
-      } else if (hasModernMeta(message)) {
-        // A stateless modern request is complete on its own. Sharing the anonymous pool with a
-        // co-located legacy client let that client's initialize overwrite the era state, so a
-        // later modern response was shaped as legacy. A fresh dispatcher has exactly the state
-        // a stateless request is entitled to.
-        server = createMcp();
       } else {
         server = fallbackServer(request);
       }
@@ -636,7 +633,8 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
           send(response, 202, "", sessionHeaders);
           return;
         }
-        send(response, 200, Array.isArray(message) ? answers : answers[0], sessionHeaders);
+        const status = modern ? modernHttpStatus(answers[0]) : 200;
+        send(response, status, Array.isArray(message) ? answers : answers[0], sessionHeaders);
       })().catch((error: unknown) => {
         log("mcp/http: " + (error as Error).message);
         send(response, 500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);
@@ -782,7 +780,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       cors["access-control-allow-origin"] = allowed;
       cors.vary = "origin";
       cors["access-control-allow-headers"] =
-        "authorization, content-type, mcp-protocol-version, mcp-session-id";
+        "authorization, content-type, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name";
       cors["access-control-expose-headers"] = "mcp-session-id";
       cors["access-control-allow-methods"] = "POST, GET, OPTIONS, DELETE";
       cors["access-control-max-age"] = "600";

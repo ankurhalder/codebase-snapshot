@@ -98,7 +98,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.12 (project dependency ^0.20.12)
+   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.13 (project dependency ^0.20.13)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -224,7 +224,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.json (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.12
+   Added devDependency: codebase-snapshot ^0.20.13
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -276,7 +276,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.json (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.12
+   Added devDependency: codebase-snapshot ^0.20.13
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -481,7 +481,9 @@ codebase-snapshot mcp --cwd <path>    # serve another repository
 Serves the repository to a Model Context Protocol client over stdio: 26 tools, `snapshot://`
 resources and seven prompts. Stdout carries JSON-RPC messages and nothing else; every note goes to
 stderr. It speaks both protocol eras — the legacy `initialize` handshake and the stateless
-`2026-07-28` revision — and answers whichever the client starts with.
+`2026-07-28` revision — and answers whichever the client starts with. With `--http`, modern
+requests carry `MCP-Protocol-Version`, `Mcp-Method` and (for named calls) `Mcp-Name`;
+mismatches are refused with `-32020` before dispatch.
 
 `--cwd` is the only directory it will read. A tool's `root` argument can name a sub-directory of it
 and nothing outside, symlinks included. It never installs packages and never writes a config file.

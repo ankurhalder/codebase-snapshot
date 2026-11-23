@@ -1,4 +1,4 @@
-# Migrating to 0.20.12
+# Migrating to 0.20.13
 
 Nothing was removed. Every command, flag, config key and MCP tool that existed in 0.12.14 still
 works. This page maps what was added and the behaviour changes that matter when upgrading an old
@@ -54,7 +54,7 @@ stdio is still the default. `--http` adds Streamable HTTP with a bearer token an
 bind; `--no-auth` is refused on a non-loopback bind. The page and the MCP endpoint can share
 one port with `serve`.
 
-## 0.18.0 to 0.20.12: what changed
+## 0.18.0 to 0.20.13: what changed
 
 | Change | Since | Why it matters |
 | :--- | :--- | :--- |
@@ -63,6 +63,7 @@ one port with `serve`.
 | The audit verifies snapshot claims, not only hashes | 0.20.1, 0.20.2 | Artifact counts, bodies, packs and workspace indexes are recomputed; a hand-edited snapshot fails. |
 | `health` skips a secret check in linear time | 0.20.3 | A large skipped-secret set no longer re-reads the snapshot per token. |
 | Security hardening across CLI, scanner, redaction, MCP, serve and remote | 0.20.4-0.20.12 | CodeQL, audit and live-verdict findings: path confinement, redaction continuations, rate limiting, 413 flushing, part-size caps, IPv6 remote parsing, git/walk parity and clone cleanup. |
+| MCP 2026-07-28 transport conformance | 0.20.13 | Required HTTP routing headers and header/body agreement, cache hints on every cacheable result, `-32602` for a missing modern resource, and stateless handling of `mcp-session-id`. Official v2 client tests cover modern stdio and HTTP. |
 
 ## Behaviour changes to know
 
@@ -74,6 +75,10 @@ one port with `serve`.
    must run everywhere.
 3. **The 0.20.12 HTTP/MCP limits are stricter.** Empty JSON-RPC batches are invalid, oversized
    bodies return 413 before the socket closes, and content tools refuse a part above 16 MiB.
+4. **The 0.20.13 modern transport is stricter.** A `2026-07-28` HTTP request must carry
+   `MCP-Protocol-Version`, `Mcp-Method` and, for named calls, `Mcp-Name`; a mismatch is
+   refused before dispatch instead of being silently routed on the body. Modern cacheable
+   results carry `ttlMs: 0` and `cacheScope: "private"`, and a missing resource is `-32602`.
 
 `validate` on a snapshot written by an older version still works: newer manifest keys are
 optional, and an artifact the manifest does not record is not required to exist.

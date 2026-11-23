@@ -473,6 +473,23 @@ test("modern session", async (t) => {
     assert.ok(response.result._meta["io.modelcontextprotocol/serverInfo"]);
   });
 
+  await t.test("every cacheable operation carries the required hints", async () => {
+    const { server } = makeServer();
+    const calls = [
+      [23, "tools/list", {}],
+      [24, "prompts/list", {}],
+      [25, "resources/list", {}],
+      [26, "resources/templates/list", {}],
+      [27, "resources/read", { uri: "snapshot://manifest" }],
+    ];
+    for (const [id, method, params] of calls) {
+      const response = await modernCall(server, id, method, params);
+      assert.equal(response.result.resultType, "complete", method);
+      assert.equal(response.result.cacheScope, "private", method);
+      assert.equal(response.result.ttlMs, 0, method);
+    }
+  });
+
   await t.test("initialize and ping no longer exist", async () => {
     const { server } = makeServer();
     // A metadata-less discover is only a probe; a modern _meta request is what commits the era.

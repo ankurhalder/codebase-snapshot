@@ -97,13 +97,22 @@ export const ERROR_CODES = {
    */
   resourceTooLarge: -32000,
   /**
-   * A known resource that this snapshot does not contain.
+   * A known resource that this snapshot does not contain, under a legacy revision.
    *
-   * `-32002` is the MCP code for "resource not found". Answering `-32602` ("Unknown resource")
-   * for `snapshot://prompt` in a snapshot generated with `--skip-artifacts prompt` told the
-   * client its URI was wrong when the artifact had simply been left out.
+   * `-32002` was the resource-not-found code through protocol revision `2025-11-25`. The
+   * `2026-07-28` revision assigns missing resources to `-32602` and says clients SHOULD still
+   * accept `-32002` from older servers. The dispatcher therefore chooses by era: `-32602` for
+   * modern requests and this code for legacy ones. Answering `-32602` for `snapshot://prompt`
+   * in a snapshot generated with `--skip-artifacts prompt` would tell a legacy client its URI
+   * was wrong when the artifact had simply been left out.
    */
   resourceNotFound: -32002,
+  /**
+   * Streamable HTTP headers that are missing, malformed or disagree with the request body.
+   *
+   * Protocol revision `2026-07-28` reserves `-32020` for this. The HTTP status is `400`.
+   */
+  headerMismatch: -32020,
   /**
    * The server is at its concurrency limit.
    *

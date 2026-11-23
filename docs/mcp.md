@@ -46,8 +46,12 @@ there, and clients that spawn without a shell cannot execute it directly.
 npx -y codebase-snapshot@0.20.12 mcp --http --port 4789
 ```
 
-This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
-the JSON-RPC answer from the response body. `GET /healthz` answers
+This is the Streamable HTTP shape: POST one JSON-RPC message to `/mcp` and read the JSON-RPC
+answer from the response body. Modern (`2026-07-28`) requests must also carry
+`MCP-Protocol-Version`, `Mcp-Method` and — for `tools/call`, `resources/read` and
+`prompts/get` — `Mcp-Name`. A missing header, or one that disagrees with the body, is refused
+with HTTP `400` and JSON-RPC `-32020` before dispatch; the CORS preflight allows all three
+names. Legacy requests keep the session behaviour below. `GET /healthz` answers
 `{ ok, name, version, tools, uptimeSeconds }` without a token, and `GET /metrics` answers Prometheus
 text: `snapshot_requests_total`, `snapshot_requests_by_method_total{method="…"}` (fixed labels,
 never a path or a credential), `snapshot_requests_refused_total` (every 4xx except 429: an
@@ -78,14 +82,16 @@ reachable from the network must not be readable by any page that guesses the por
 CORS is granted to loopback origins (`localhost`, `127.0.0.1`, `[::1]`, any port) and to the
 origins you list. Any other `Origin` gets `403`.
 
-The first `initialize` response carries an `mcp-session-id` header. Send it on every later
-request: era and cancellation state belong to that session, so one client's
-`server/discover` cannot reject another client's legacy handshake. A client that ignores the
-header falls back to a per-address server; two such clients on one host with the same user agent
-share state, which is why forwarding the header matters. An unknown `mcp-session-id` is answered
-with `404`, never used to mint state; sessions expire after 30 minutes idle, the oldest is evicted
-when the table is full, and `DELETE /mcp` closes one explicitly. JSON-RPC batches are capped at
-100 messages, and the body cap applies before parsing.
+Modern requests are stateless: `mcp-session-id` is ignored, never minted and never echoed. The
+legacy era still opens with `initialize`, whose response carries an `mcp-session-id` header;
+send it on every later legacy request. Era and cancellation state belong to that session, so one
+client's `server/discover` cannot reject another client's legacy handshake. A legacy client that
+ignores the header falls back to a per-address server; two such clients on one host with the same
+user agent share state, which is why forwarding the header matters. An unknown `mcp-session-id`
+is answered with `404`, never used to mint state; sessions expire after 30 minutes idle, the
+oldest is evicted when the table is full, and `DELETE /mcp` closes one explicitly. Legacy
+JSON-RPC batches are capped at 100 messages; a modern request is one message, and a modern batch
+is refused. The body cap applies before parsing.
 
 ### Legacy SSE, for clients that cannot send a header
 
@@ -113,6 +119,11 @@ Every tool states its cost class in `tools/list` as `_meta["codebase-snapshot/co
 reads the manifest, `medium` reads one or a few parts, `expensive` reads the repository or writes.
 Two tools that answer the same question can differ by an order of magnitude, and a client choosing
 between them should not have to guess.
+
+Modern cacheable results — `server/discover`, `tools/list`, `prompts/list`, `resources/list`,
+`resources/read` and `resources/templates/list` — carry `ttlMs: 0` and
+`cacheScope: "private"`. The snapshot is private to the caller and a regeneration can replace any
+part of it between two reads, so a positive TTL would invite a client to serve stale bytes.
 
 | Tool | Answers | Writes |
 | :-- | :-- | :-- |
@@ -217,9 +228,11 @@ resource — `snapshot://manifest`, each `snapshot://parts/{index}`, the report 
 `snapshot://prompt`, `snapshot://contract` and `snapshot://skill`.
 
 A URI this build serves but this snapshot does not contain — `snapshot://prompt` when the prompt
-artifact was disabled, a report when that artifact was — is answered with `-32002` (resource not
-found) and a message naming the artifact and the cause. An unknown URI is still "Unknown resource":
-the two are different mistakes and a client should be able to tell them apart.
+artifact was disabled, a report when that artifact was — is answered with `-32602` (Invalid
+Params) under the modern revision, and with the legacy `-32002` for a legacy client. The message
+names the artifact and the cause. Modern clients also accept `-32002` from older servers, but this
+server does not make a modern client guess. An unknown URI is still "Unknown resource": the two
+are different mistakes and a client should be able to tell them apart.
 
 Part resources carry their size in the description, so a client choosing between them can see that
 one is 300 kB before attaching it; a part above the limit says in its description that it will be
@@ -276,25 +289,34 @@ says what happened rather than pretending the call never ran.
 
 ## Both protocol eras
 
-Revision `2026-07-28` removed the handshake that every client in use today still performs. The
-server speaks both and answers whichever arrives first.
+Revision `2026-07-28` removed the handshake most deployed clients still perform. The server speaks
+both and answers whichever arrives first.
 
 | Era | Revisions | Opening move |
 | :-- | :-- | :-- |
 | Legacy | `2025-11-25`, `2025-06-18` | `initialize`, then `notifications/initialized` |
 | Modern | `2026-07-28` | `server/discover`, or `_meta` on every request; a stateless request with valid `_meta` is complete on its own |
 
-The two disagree about an unsupported version, and the difference is observable: a legacy client is
-negotiated *down* to a revision the server speaks, while a modern client receives `-32022` with the
-list of supported revisions so it can retry.
+A modern request over HTTP is complete only when its mirroring headers agree with its body, and its
+cacheable results carry the fields the revision requires. Those rules are enforced in
+`src/mcp/http-headers.ts` and `src/mcp/server.ts`, not just documented.
 
-## Why there is no SDK
+The two eras disagree about an unsupported version, and the difference is observable: a legacy
+client is negotiated *down* to a revision the server speaks, while a modern client receives
+`-32022` with the list of supported revisions so it can retry.
+
+## Why there is no runtime SDK
 
 `@modelcontextprotocol/sdk` is 4.5 MB unpacked and brings Express, Hono, Ajv, JOSE and Zod with it.
 The transport here is newline-delimited JSON-RPC, which is roughly 400 lines of readable code, and
 the package's only runtime dependency remains `typescript`. The parity test — a live `tools/list`
-compared against `describe --format json` — is what keeps the protocol implementation honest, not
-the presence of a library.
+compared against `describe --format json` — is what keeps the protocol contract honest, not the
+presence of a library.
+
+The official v2 client (`@modelcontextprotocol/client`) is a **dev-only** dependency. Two
+interoperability tests drive this server through it over modern stdio and modern HTTP, including
+`server/discover`, `tools/list`, `tools/call`, `resources/read` and the cache fields. It is not
+shipped, and it does not make the runtime depend on the SDK.
 
 ## Performance
 

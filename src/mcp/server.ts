@@ -86,6 +86,20 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   const ok = (id: JsonRpcId | null, result: JsonObject, modern: boolean): JsonRpcResponse =>
     successResponse(id, result, modern, options.info);
 
+  /**
+   * Adds the modern revision's required caching hints to a cacheable result.
+   *
+   * The repository snapshot is private to the caller and a regeneration can replace any part of it
+   * between two reads, so `private` is the only honest scope and `0` is the only honest TTL. The
+   * fields are still mandatory: a modern client validates them, and an omitted `ttlMs` is defined
+   * as immediately stale rather than absent.
+   */
+  const cacheable = (result: JsonObject): JsonObject => ({
+    ...result,
+    cacheScope: "private",
+    ttlMs: 0,
+  });
+
   /** Cancellations registered by the running call, keyed by the request id a client quotes. */
   const cancellations = new Map<JsonRpcId, () => void>();
 
@@ -141,15 +155,11 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     // unusable to the only client that could ask for it.
     return ok(
       id,
-      {
+      cacheable({
         supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS],
         capabilities: capabilities(),
         instructions: options.instructions,
-        // The capability set depends on which repository the server was started for, so the answer
-        // may be cached only by the client that asked, and not at all after this response.
-        cacheScope: "private",
-        ttlMs: 0,
-      },
+      }),
       true
     );
   }
@@ -164,7 +174,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       annotations: tool.annotations,
       _meta: { "codebase-snapshot/cost": tool.cost },
     }));
-    return ok(id, { tools }, modern);
+    return ok(id, cacheable({ tools }), modern);
   }
 
   async function callTool(
@@ -260,7 +270,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
 
   async function listResources(id: JsonRpcId, modern: boolean): Promise<JsonRpcResponse> {
     const resources = await options.resources.list(options.context);
-    return ok(id, { resources }, modern);
+    return ok(id, cacheable({ resources }), modern);
   }
 
   async function readResource(
@@ -280,7 +290,14 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       // Truncating it instead would hand a model half a JSON document or half a part, which is
       // worse than a refusal because nothing downstream can tell the difference.
       if (error instanceof ResourceNotFoundError) {
-        return errorResponse(id, ERROR_CODES.resourceNotFound, error.message, { uri: error.uri });
+        // The modern revision moved missing resources to Invalid Params; legacy clients still
+        // expect the older resource-not-found code. Choose by era rather than advertising both.
+        return errorResponse(
+          id,
+          modern ? ERROR_CODES.invalidParams : ERROR_CODES.resourceNotFound,
+          error.message,
+          { uri: error.uri }
+        );
       }
       if (error instanceof ResourceTooLargeError) {
         options.context.log(
@@ -298,7 +315,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     if (!contents) {
       return errorResponse(id, ERROR_CODES.invalidParams, `Unknown resource "${uri}".`);
     }
-    return ok(id, { contents: [contents] }, modern);
+    return ok(id, cacheable({ contents: [contents] }), modern);
   }
 
   function listPrompts(id: JsonRpcId, modern: boolean): JsonRpcResponse {
@@ -308,7 +325,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       description: prompt.description,
       arguments: prompt.arguments,
     }));
-    return ok(id, { prompts }, modern);
+    return ok(id, cacheable({ prompts }), modern);
   }
 
   function getPrompt(
@@ -406,7 +423,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       case METHOD.resourcesRead:
         return readResource(id, modern, params);
       case METHOD.resourceTemplatesList:
-        return ok(id, { resourceTemplates: options.resources.templates() }, modern);
+        return ok(id, cacheable({ resourceTemplates: options.resources.templates() }), modern);
       case METHOD.promptsList:
         return listPrompts(id, modern);
       case METHOD.promptsGet:

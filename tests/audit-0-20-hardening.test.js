@@ -302,12 +302,20 @@ test("F12: two HTTP clients with session ids do not share era or cancellations",
   const root = tempDir(t);
   const transport = await startHttpTransport({ cwd: root, port: 0, token: null, log: () => {} });
   t.after(() => transport.close());
-  const call = (session, body) =>
+  const call = (session, body, extraHeaders = {}) =>
     fetch(transport.url, {
       method: "POST",
-      headers: { "content-type": "application/json", "mcp-session-id": session },
+      headers: { "content-type": "application/json", "mcp-session-id": session, ...extraHeaders },
       body: JSON.stringify(body),
     });
+  const modernHeaders = {
+    "mcp-protocol-version": "2026-07-28",
+    "mcp-method": "server/discover",
+  };
+  const modernMeta = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": {},
+  };
   // Session ids are minted by initialize; a caller-chosen id is a 404 by design. Two
   // independent initialize calls give the two clients their own state.
   const legacy = await fetch(transport.url, {
@@ -336,28 +344,31 @@ test("F12: two HTTP clients with session ids do not share era or cancellations",
   assert.equal(modernInit.status, 200);
   const clientB = modernInit.headers.get("mcp-session-id");
   assert.ok(clientB);
-  const modern = await call(clientB, {
-    jsonrpc: "2.0",
-    id: 3,
-    method: "server/discover",
-    params: {},
-  });
-  assert.equal(modern.status, 200);
+  const modern = await call(
+    clientB,
+    {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "server/discover",
+      params: { _meta: modernMeta },
+    },
+    modernHeaders
+  );
+  assert.equal(modern.status, 200, await modern.clone().text());
   const legacyTools = await call(clientA, { jsonrpc: "2.0", id: 4, method: "tools/list", params: {} });
   assert.equal(legacyTools.status, 200);
   assert.ok((await legacyTools.json()).result.tools.length > 0);
-  const modernTools = await call(clientB, {
-    jsonrpc: "2.0",
-    id: 4,
-    method: "tools/list",
-    params: {
-      _meta: {
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {},
-      },
+  const modernTools = await call(
+    clientB,
+    {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/list",
+      params: { _meta: modernMeta },
     },
-  });
-  assert.equal(modernTools.status, 200);
+    { "mcp-protocol-version": "2026-07-28", "mcp-method": "tools/list" }
+  );
+  assert.equal(modernTools.status, 200, await modernTools.clone().text());
   assert.ok((await modernTools.json()).result.tools.length > 0);
 });
 

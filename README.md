@@ -224,6 +224,11 @@ tree, so an excluded file stays excluded and a redacted value stays redacted, an
 `snapshot_validate` answers the question an agent otherwise cannot ask: is the context I was given
 still true?
 
+It speaks both protocol eras, including the `2026-07-28` revision: stateless `server/discover`,
+required `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` HTTP headers, cache hints on every
+cacheable result, and the modern resource-not-found code. The suite drives it through the official
+MCP v2 client over both modern stdio and modern HTTP.
+
 → [Using this with an AI agent](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) · [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) · [AGENTS.md](https://github.com/ankurhalder/codebase-snapshot/blob/main/AGENTS.md) · [llms.txt](https://github.com/ankurhalder/codebase-snapshot/blob/main/llms.txt)
 
 ## Configuration
@@ -278,12 +283,12 @@ others.
 | [Benchmarks](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/benchmarks.md) | Reproducible token and time numbers for the three modes |
 | [Security review](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/security-review.md) | Threat model, controls, tests and residual risks |
 | [Deploy](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/deploy.md) | Container, compose and systemd, with the token requirement |
-| [Migrating](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/migration.md) | What changed from 0.12.14 to 0.20.12, and the behaviour changes that matter |
+| [Migrating](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/migration.md) | What changed from 0.12.14 to 0.20.13, and the behaviour changes that matter |
 | [Workspaces](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/workspace.md) | `--workspace`: one snapshot per member, plus the index |
 | [Token budget](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/budget.md) | `--budget-tokens`: whole files chosen to fit a limit, not torn to fit a part |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |
 | [AI agents](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/agent.md) | The contract, the skill, what an agent should avoid |
-| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | 26 tools, resources, both protocol eras |
+| [MCP server](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/mcp.md) | 26 tools, resources, both protocol eras, modern HTTP conformance |
 | [Troubleshooting](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/troubleshooting.md) | Every message and what to do about it |
 | [Changelog](https://github.com/ankurhalder/codebase-snapshot/blob/main/CHANGELOG.md) | Release history and breaking changes |
 

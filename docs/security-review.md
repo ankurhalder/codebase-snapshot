@@ -57,6 +57,12 @@ executable config in it is refused, because a fetched repository is not a truste
   `--no-auth` is refused on a non-loopback bind.
 - **Constant-time** token comparison; the token is generated with `crypto.randomBytes`.
 - **CORS only for loopback origins** and explicit `--allow-origin` values; everything else is 403.
+  The allowed request headers include `Mcp-Method` and `Mcp-Name` so a browser can send the
+  modern routing headers.
+- **Header/body agreement.** A modern request is refused with HTTP 400 and `-32020` when
+  `MCP-Protocol-Version`, `Mcp-Method` or `Mcp-Name` is missing or disagrees with the parsed
+  body. Routing decisions cannot be made from a header the handler did not verify against the
+  value it executes.
 - **Bounded work**: 2 MiB bodies, 60 requests per 10 s per address, one JSON document per response,
   and at most four MCP tool calls in flight across all HTTP sessions. The session and rate maps are
   capped and evicted, so a client cannot grow either without bound.
@@ -114,7 +120,7 @@ to treat file content as data. This is a real, documented limitation, not a solv
 
 ## What changed since this review was written
 
-The review was written at 0.12.34. Between then and 0.20.12 the surfaces it covers grew; each
+The review was written at 0.12.34. Between then and 0.20.13 the surfaces it covers grew; each
 addition was reviewed with the same question — what new input arrives, and what does it reach?
 
 - **`GET /metrics`** (0.13.3) publishes counters with a fixed label set. Repo paths, tokens and
@@ -158,6 +164,9 @@ addition was reviewed with the same question — what new input arrives, and wha
   for a missing local source and cleans an in-flight clone on close; IPv6 remote literals parse;
   `**` counts as one wildcard and brace products are bounded; and the describe contract, tool
   annotations and documentation statements were corrected where the source disagreed.
+- **The 0.20.13 MCP conformance pass** checked the modern Streamable HTTP rules against the
+  published revision and the official v2 client: header/body agreement, cache fields and
+  resource errors.
 
 The residual risks below are unchanged, including the two that are deliberate rather than solved.
 
@@ -169,6 +178,8 @@ The residual risks below are unchanged, including the two that are deliberate ra
 | Redaction masks the span only | redaction suite (hundreds of cases) |
 | Health catches a leaked secret and never echoes it | `tests/health.test.js` |
 | HTTP: 401 without token, 403 cross-origin, 413 oversize, 400 bad JSON | `tests/mcp-http.test.js` |
+| Modern HTTP: required headers, mismatch 400/-32020, cache fields, -32602, CORS | `tests/mcp-modern-http.test.js` |
+| Official MCP v2 client: modern stdio and modern HTTP, discovery, tools, resources | `tests/mcp-sdk-interop.test.js` |
 | SSE: token required, unknown session 404, shutdown does not hang | `tests/mcp-http.test.js` |
 | Remote: private addresses refused, credentials in URL refused, `file:` gated | `tests/remote-source.test.js` |
 | Serve: page without token, API with token, zip restricted | `tests/web-serve.test.js` |

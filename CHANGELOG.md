@@ -31,6 +31,17 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.13
+
+**MCP 2026-07-28 conformance: the modern HTTP headers, cache metadata and resource error code now match the revision, and an independent client drives both modern transports.**
+
+- Streamable HTTP validates `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` against the parsed body before dispatch, returns HTTP `400` with `-32020` for a missing or mismatched header, decodes the Base64 sentinel, and allows the headers in CORS preflights.
+- `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/read` and `resources/templates/list` carry the required `ttlMs` and `cacheScope` fields in the modern era. `ttlMs` is `0` and the scope is `private`: a regenerated snapshot must not be served from a stale cache.
+- A missing modern resource returns `-32602` (Invalid Params); legacy clients keep `-32002`. Unknown methods and unsupported versions use the modern HTTP statuses (404 and 400).
+- Modern requests are stateless: an `mcp-session-id` is ignored rather than looked up, and a modern request never mints or echoes one.
+- New tests drive the server through the official MCP v2 client over modern stdio and modern HTTP (`server/discover`, `tools/list`, `tools/call`, `resources/read`), and a Windows CI job builds and runs the transport suites. The client is a dev-only dependency; the runtime still depends only on `typescript`.
+- The docs now state the modern header, caching and error rules, and the security review names the header/body agreement check.
+
 ## 0.20.12
 
 **Live execution of the fourth audit's hypotheses: every claim was reproduced against the built CLI before it was fixed, and each class has a regression test.**
