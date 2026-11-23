@@ -10,7 +10,7 @@ platforms and iOS do not accept SVG.
 | `logo-dark.svg` | dark backgrounds | Light ink. Pair with `logo.svg` through `<picture>` when both schemes must be served. |
 | `apple-touch-icon.png` | site, iOS home screen | 180×180, drawn from the same 32-unit grid as `favicon.svg`. |
 | `social-card.svg` | source of the card below | The layout, in the tokens the card is drawn in. |
-| `social-card.png` | `og:image`, `twitter:image`, GitHub social preview | **1200×630.** This is the file platforms actually fetch. |
+| `social-card.png` | `og:image`, `twitter:image` | **1200×630.** This is the file platforms actually fetch. |
 | `how-it-works.svg` | README, site | The dump-versus-snapshot contrast: the pitch, drawn. |
 
 ## Why the PNG is checked in
@@ -21,8 +21,12 @@ the card means editing `social-card.svg`, re-rendering at exactly 1200×630, and
 both. `scripts/audit-site.mjs` fails the build if any page references an `og:image` that is
 missing or the wrong size, so a stale PNG cannot ship quietly.
 
-The GitHub **social preview** is uploaded in repository settings — there is no API for it — and
-should be `social-card.png`.
+## The GitHub repository card
+
+GitHub's social-preview uploader recommends 1280×640, while the site card above is 1200×630.
+The upload-only card therefore lives at `.github/social-preview.png`, with its SVG source at
+`.github/social-preview.svg`, so `npm run site` does not copy an image no documentation page
+references. Upload the PNG in repository settings; there is no API for it.
 
 ## Colour and type
 

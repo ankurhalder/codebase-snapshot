@@ -1,0 +1,149 @@
+<!-- Source for .github/social-preview.png.
+
+     GitHub recommends 1280x640 for a repository social preview. The card is drawn at that exact
+     size, and every piece of text sits at least 84px from an edge; GitHub's safe area is 40px, so
+     the 40px border from its template is never crossed. Render the SVG in a browser at 1280x640
+     with the system font stack below; do not resample the PNG. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img"
+     aria-label="codebase-snapshot. A snapshot you can prove is current. Byte-budgeted parts, a manifest of every file and skip, and a validate command that fails on drift.">
+  <defs>
+    <radialGradient id="green-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#2da44e" stop-opacity=".17"/>
+      <stop offset=".68" stop-color="#2da44e" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blue-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#58a6ff" stop-opacity=".055"/>
+      <stop offset=".70" stop-color="#58a6ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="grid-fade" cx="42%" cy="38%" r="72%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".78" stop-color="#000000"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity=".032" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111923"/>
+      <stop offset="1" stop-color="#0c121a"/>
+    </linearGradient>
+    <filter id="card-shadow" x="-30%" y="-30%" width="170%" height="180%">
+      <feDropShadow dx="0" dy="28" stdDeviation="27" flood-color="#000000" flood-opacity=".44"/>
+    </filter>
+    <filter id="soft-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="38"/>
+    </filter>
+    <clipPath id="card-clip">
+      <rect x="740" y="150" width="456" height="330" rx="15"/>
+    </clipPath>
+    <symbol id="check" viewBox="0 0 16 16">
+      <path d="M3.2 8.3l3.1 3.1 6.5-6.6" fill="none" stroke="#3fb950" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <mask id="grid-mask">
+      <rect width="1280" height="640" fill="url(#grid-fade)"/>
+    </mask>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .wordmark { font-size: 29px; font-weight: 650; letter-spacing: -.7px; fill: #e6edf3; }
+      .meta { font-size: 11.5px; font-weight: 500; letter-spacing: 1.7px; fill: #9da7b3; }
+      .headline { font-size: 68px; font-weight: 720; letter-spacing: -2.7px; fill: #e6edf3; }
+      .sub { font-size: 23px; font-weight: 400; letter-spacing: -.2px; fill: #b8c2cf; }
+      .sub-mono { font-size: 22px; font-weight: 500; letter-spacing: -.3px; fill: #e6edf3; }
+      .cmd { font-size: 17px; font-weight: 500; }
+      .term-cmd { font-size: 17px; font-weight: 500; fill: #c3ccd7; }
+      .term-title { font-size: 12px; font-weight: 500; letter-spacing: .3px; fill: #7f8b98; }
+      .term-tail { font-size: 11px; font-weight: 500; fill: #596573; }
+      .status { font-size: 22px; font-weight: 650; letter-spacing: -.4px; fill: #e6edf3; }
+      .status-small { font-size: 11px; font-weight: 500; letter-spacing: .8px; fill: #7d8895; }
+      .check-text { font-size: 16.2px; font-weight: 400; letter-spacing: -.1px; fill: #b9c3ce; }
+      .term-foot { font-size: 10px; font-weight: 500; letter-spacing: .5px; fill: #606b78; }
+      .url { font-size: 17px; font-weight: 500; fill: #9aa5b1; }
+      .kinds { font-size: 12px; font-weight: 500; letter-spacing: 1.8px; fill: #6e7781; }
+    </style>
+  </defs>
+
+  <!-- Base, ambient light and a technical grid that fades out before the edges. -->
+  <rect width="1280" height="640" fill="#0d1117"/>
+  <ellipse cx="1011" cy="128" rx="520" ry="420" fill="url(#green-glow)"/>
+  <ellipse cx="230" cy="563" rx="520" ry="360" fill="url(#blue-glow)"/>
+  <rect width="1280" height="640" fill="url(#grid)" mask="url(#grid-mask)"/>
+
+  <!-- The same closing frame as the mark, at the card edge. -->
+  <g fill="none" stroke="#2da44e" stroke-width="4" stroke-linecap="square" opacity=".84">
+    <path d="M46 120V46h74"/>
+    <path d="M1160 46h74v74"/>
+    <path d="M46 520v74h74"/>
+    <path d="M1160 594h74v-74"/>
+  </g>
+
+  <!-- Header: the mark and wordmark, plus the one-line licence label. -->
+  <g transform="translate(84 64) scale(1.3125)" fill="none" stroke="#e6edf3" stroke-linecap="square">
+    <g stroke-width="2.1">
+      <path d="M3.5 11V3.5H11"/>
+      <path d="M21 3.5h7.5V11"/>
+      <path d="M28.5 21v7.5H21"/>
+      <path d="M11 28.5H3.5V21"/>
+    </g>
+    <g stroke-width="1.7" stroke-linecap="round">
+      <path d="M16 11.2a4.8 4.8 0 0 1 4.8 4.8"/>
+      <path d="M11.2 16A4.8 4.8 0 0 1 16 11.2"/>
+      <path d="M13.1 20.4A6 6 0 0 1 11.2 16"/>
+    </g>
+    <circle cx="16" cy="19.6" r="1.7" fill="#e6edf3" stroke="none"/>
+  </g>
+  <text class="sans wordmark" x="141" y="94">codebase-snapshot</text>
+
+  <circle cx="1037" cy="82" r="3" fill="#3fb950"/>
+  <text class="mono meta" x="1196" y="86" text-anchor="end">OPEN SOURCE · MIT</text>
+
+  <!-- The pitch. -->
+  <text class="sans headline" x="84" y="231">A snapshot you can</text>
+  <text class="sans headline" x="84" y="302"><tspan fill="#3fb950">prove</tspan> is current.</text>
+
+  <text class="sans sub" x="84" y="369">Byte-budgeted parts. A manifest of every file.</text>
+  <text class="sans sub" x="84" y="404">Every skip recorded. <tspan class="mono sub-mono">validate</tspan> fails on drift.</text>
+
+  <!-- A command a reader can copy, not a decorative chip. -->
+  <rect x="84" y="446" width="340" height="50" rx="9" fill="#161b22" fill-opacity=".88" stroke="#303a45" stroke-width="1"/>
+  <text class="mono cmd" x="101" y="477" fill="#d6dee8"><tspan fill="#3fb950">$</tspan><tspan dx="8" fill="#56616e">npx</tspan><tspan dx="3" fill="#d6dee8">codebase-snapshot generate</tspan></text>
+
+  <!-- The proof: a terminal that shows what validate actually establishes. -->
+  <ellipse cx="968" cy="308" rx="245" ry="160" fill="#2da44e" opacity=".14" filter="url(#soft-glow)"/>
+  <g filter="url(#card-shadow)">
+    <rect x="740" y="150" width="456" height="330" rx="15" fill="url(#panel)" stroke="#303a45" stroke-width="1"/>
+  </g>
+  <g clip-path="url(#card-clip)">
+    <rect x="740" y="150" width="456" height="43" fill="#ffffff" fill-opacity=".012"/>
+    <line x1="740" y1="193" x2="1196" y2="193" stroke="#222c36"/>
+
+    <circle cx="759.5" cy="171.5" r="4.5" fill="#d1584b"/>
+    <circle cx="774.5" cy="171.5" r="4.5" fill="#c99b45"/>
+    <circle cx="789.5" cy="171.5" r="4.5" fill="#3e9b52"/>
+    <text class="mono term-title" x="968" y="176" text-anchor="middle">snapshot / validate</text>
+    <text class="mono term-tail" x="1181" y="176" text-anchor="end">zsh</text>
+
+    <text class="mono term-cmd" x="764" y="231"><tspan fill="#3fb950">$</tspan><tspan dx="8">snapshot validate</tspan></text>
+
+    <circle cx="780" cy="282" r="16" fill="#3fb950" fill-opacity=".14" stroke="#3fb950" stroke-opacity=".42"/>
+    <use href="#check" x="772" y="274" width="16" height="16"/>
+    <text class="sans status" x="809" y="286">Snapshot is current</text>
+    <text class="mono status-small" x="809" y="303">MANIFEST VERIFIED</text>
+
+    <line x1="764" y1="320" x2="1180" y2="320" stroke="#222c36"/>
+    <use href="#check" x="764" y="335" width="15" height="15"/>
+    <text class="sans check-text" x="790" y="347">every file indexed</text>
+    <use href="#check" x="764" y="362" width="15" height="15"/>
+    <text class="sans check-text" x="790" y="374">every skip explained</text>
+    <use href="#check" x="764" y="389" width="15" height="15"/>
+    <text class="sans check-text" x="790" y="401">every part within budget</text>
+
+    <line x1="764" y1="428" x2="1180" y2="428" stroke="#222c36"/>
+    <text class="mono term-foot" x="764" y="448">SHA-256 · MANIFEST</text>
+    <text class="mono term-foot" x="1180" y="448" text-anchor="end" fill="#3e9b52">0 DRIFT</text>
+  </g>
+  <rect x="740" y="150" width="456" height="330" rx="15" fill="none" stroke="#303a45" stroke-width="1"/>
+
+  <!-- Footer: where to find it, and what it is. -->
+  <text class="mono url" x="84" y="590">github.com/<tspan fill="#c9d1d9">ankurhalder/codebase-snapshot</tspan></text>
+  <text class="mono kinds" x="1196" y="590" text-anchor="end">MCP SERVER · CLI · LIBRARY</text>
+</svg>
