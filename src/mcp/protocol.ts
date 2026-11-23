@@ -150,8 +150,15 @@ export function isJsonObject(value: unknown): value is JsonObject {
  * Deliberately not `unknown`: the tool table is authored by hand, and the compiler catching a
  * misspelled keyword is worth more than accepting every dialect feature we never emit.
  */
+export type JsonSchemaType = "object" | "string" | "number" | "integer" | "boolean" | "array";
+
 export interface JsonSchema {
-  type?: "object" | "string" | "number" | "integer" | "boolean" | "array";
+  /**
+   * A single type, or the union a human-facing byte budget needs: `maxPartBytes` accepts both
+   * `307200` and `"300k"`, and the generated JSON Schema should say so rather than document one
+   * shape and reject it.
+   */
+  type?: JsonSchemaType | readonly JsonSchemaType[];
   description?: string;
   properties?: Record<string, JsonSchema>;
   required?: string[];

@@ -10,7 +10,7 @@ walk — that the client sees.
 ## Start it
 
 ```bash
-npx -y codebase-snapshot@0.20.8 mcp
+npx -y codebase-snapshot@0.20.9 mcp
 ```
 
 The server serves the directory it was started in. `--cwd <path>` points it elsewhere, and that
@@ -25,7 +25,7 @@ Claude Desktop and Cursor:
   "mcpServers": {
     "codebase-snapshot": {
       "command": "npx",
-      "args": ["-y", "codebase-snapshot@0.20.8", "mcp", "--cwd", "/absolute/path/to/repo"]
+      "args": ["-y", "codebase-snapshot@0.20.9", "mcp", "--cwd", "/absolute/path/to/repo"]
     }
   }
 }
@@ -34,7 +34,7 @@ Claude Desktop and Cursor:
 Claude Code registers the same thing from a shell:
 
 ```bash
-claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.20.8 mcp --cwd /absolute/path/to/repo
+claude mcp add codebase-snapshot -- npx -y codebase-snapshot@0.20.9 mcp --cwd /absolute/path/to/repo
 ```
 
 On Windows, wrap the command as `cmd /c npx` with the same arguments — `npx` is a `.cmd` shim
@@ -43,7 +43,7 @@ there, and clients that spawn without a shell cannot execute it directly.
 ## Over HTTP, for clients that cannot spawn a process
 
 ```bash
-npx -y codebase-snapshot@0.20.8 mcp --http --port 4789
+npx -y codebase-snapshot@0.20.9 mcp --http --port 4789
 ```
 
 This is the Streamable HTTP shape: POST one JSON-RPC message (or an array) to `/mcp` and read
@@ -73,6 +73,7 @@ reachable from the network must not be readable by any page that guesses the por
 | `--token <value>` | generated | Bearer token |
 | `--no-auth` | off | Unauthenticated; loopback only |
 | `--allow-origin <list>` | unset | Extra CORS origins, comma separated |
+| `--no-config` | off | Ignore every config file and use the detected preset plus defaults |
 
 CORS is granted to loopback origins (`localhost`, `127.0.0.1`, `[::1]`, any port) and to the
 origins you list. Any other `Origin` gets `403`.
@@ -81,8 +82,10 @@ The first `initialize` response carries an `mcp-session-id` header. Send it on e
 request: era and cancellation state belong to that session, so one client's
 `server/discover` cannot reject another client's legacy handshake. A client that ignores the
 header falls back to a per-address server; two such clients on one host with the same user agent
-share state, which is why forwarding the header matters. JSON-RPC batches are capped at 100
-messages, and the body cap applies before parsing.
+share state, which is why forwarding the header matters. An unknown `mcp-session-id` is answered
+with `404`, never used to mint state; sessions expire after 30 minutes idle, the oldest is evicted
+when the table is full, and `DELETE /mcp` closes one explicitly. JSON-RPC batches are capped at
+100 messages, and the body cap applies before parsing.
 
 ### Legacy SSE, for clients that cannot send a header
 
@@ -260,7 +263,10 @@ says what happened rather than pretending the call never ran.
   before the check.
 - **Emit a sensitive file.** `.env`, `*.pem` and the rest stay out, and `includeSensitiveFiles` is
   not a tool argument — a prompt cannot ask for it. Reads come from the emitted snapshot, so
-  redaction applies to everything the client sees.
+  redaction applies to everything the client sees. A repository config that enables
+  `includeSensitiveFiles`, disables the default secret patterns, or supplies a custom regex that
+  can consume the event loop is refused with a clear error instead of being silently overridden.
+  The CLI still honors those settings because the user invoked it directly.
 - **Install or configure.** `snapshot_generate` writes the snapshot directory and nothing else. It
   never runs a package manager and never writes a config file.
 - **Touch the network.** The stdio server makes no outbound connection. `--http` binds a loopback
@@ -276,7 +282,7 @@ server speaks both and answers whichever arrives first.
 | Era | Revisions | Opening move |
 | :-- | :-- | :-- |
 | Legacy | `2025-11-25`, `2025-06-18` | `initialize`, then `notifications/initialized` |
-| Modern | `2026-07-28` | `server/discover`, or `_meta` on every request |
+| Modern | `2026-07-28` | `server/discover`, or `_meta` on every request; a stateless request with valid `_meta` is complete on its own |
 
 The two disagree about an unsupported version, and the difference is observable: a legacy client is
 negotiated *down* to a revision the server speaks, while a modern client receives `-32022` with the

@@ -46,6 +46,9 @@ export interface GenerateSummary {
    */
   skipReasons: Array<{ reason: string; count: number }>;
   warnings: string[];
+  /** The in-memory integrity check recorded in `manifest.validation`. */
+  validationStatus: "passed" | "failed";
+  validationErrors: string[];
 }
 
 export type WorkerResults =
@@ -94,13 +97,16 @@ const { parentPort, workerData } = require("node:worker_threads");
   try {
     const mod = await import(workerData.entryUrl);
     const loaded =
-      workerData.config === null || workerData.config === undefined
-        ? await mod.loadConfigFileDetailed(workerData.cwd, { allowExecutableConfig: false })
-        : { config: workerData.config, errors: [] };
+      workerData.noConfig === true
+        ? { config: null, errors: [] }
+        : workerData.configLoaded === true
+          ? { config: workerData.config, errors: [] }
+          : await mod.loadConfigFileDetailed(workerData.cwd, { allowExecutableConfig: false });
     if (loaded.errors.length > 0) {
       parentPort.postMessage({ ok: false, message: loaded.errors.join("; ") });
       return;
     }
+    mod.assertServerSafeConfig(loaded.config, workerData.cwd);
     // \`hooks: {}\` is a value, not an absence: the config is applied with the hook list emptied,
     // so the run is the documented MCP run rather than the CLI run with one setting removed.
     const base = loaded.config ? { ...loaded.config, hooks: {} } : null;
@@ -138,6 +144,8 @@ const { parentPort, workerData } = require("node:worker_threads");
         layers: manifest.layers,
         skipReasons: skipReasons,
         warnings: manifest.warnings,
+        validationStatus: manifest.validation.status,
+        validationErrors: manifest.validation.errors.slice(0, 20),
       },
     });
   } catch (error) {
@@ -168,8 +176,16 @@ export function generateInWorker(
     runId?: string;
     /** Directories whose locks/staging this run may own; used only for abandoned-worker cleanup. */
     lockRoots?: readonly string[];
-    /** A configuration already loaded on this thread; skips a second, possibly untrusted, load. */
-    config?: SnapshotConfig;
+    /**
+     * A configuration already loaded on this thread; skips a second, possibly untrusted, load.
+     * `null` is meaningful when `configLoaded` is true: it says "there is no config file", not
+     * "load one".
+     */
+    config?: SnapshotConfig | null;
+    /** True when `config` is the complete answer, including the no-config case. */
+    configLoaded?: boolean;
+    /** True when `--no-config` asked to ignore every config file. */
+    noConfig?: boolean;
     /** Provenance for a clone this process made; it is a value, so it crosses the boundary. */
     source?: Manifest["source"];
   } = {}
@@ -208,7 +224,9 @@ export function generateInWorker(
           cliOptions,
           dryRun: options.dryRun === true,
           narrow: options.narrow ?? {},
-          ...(options.config === undefined ? {} : { config: options.config }),
+          ...(options.configLoaded === true ? { configLoaded: true, config: options.config ?? null } : {}),
+          ...(options.noConfig === true ? { noConfig: true } : {}),
+          ...(options.configLoaded !== true && options.config !== undefined ? { config: options.config } : {}),
           ...(options.source === undefined ? {} : { source: options.source }),
           ...(options.runId === undefined ? {} : { runId: options.runId }),
         },

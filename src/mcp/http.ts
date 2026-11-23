@@ -37,6 +37,8 @@ export interface HttpTransportOptions {
   /** Extra origins, beyond loopback. */
   allowedOrigins?: readonly string[];
   maxBodyBytes?: number;
+  /** True when `mcp --no-config` asked to ignore every config file. */
+  noConfig?: boolean;
   log?: (line: string) => void;
 }
 
@@ -48,6 +50,28 @@ export interface HttpTransport {
   close(): Promise<void>;
 }
 
+export interface McpHttpHandlerOptions {
+  cwd: string;
+  token: string | null;
+  allowedOrigins?: readonly string[];
+  maxBodyBytes?: number;
+  noConfig?: boolean;
+  log?: (line: string) => void;
+  /** Called for every MCP request, including a refused one. */
+  onRequest?: (method: string) => void;
+  /** Called for a 4xx refusal other than 429. */
+  onRefused?: () => void;
+  /** Called for a 429. */
+  onRateLimited?: () => void;
+}
+
+export interface McpHttpHandler {
+  readonly toolCount: number;
+  /** Handles /mcp, /sse and /messages when the URL matches; false otherwise. */
+  handle(request: http.IncomingMessage, response: http.ServerResponse): boolean;
+  close(): Promise<void>;
+}
+
 const DEFAULT_PORT = 4789;
 const DEFAULT_MAX_BODY = 2 * 1024 * 1024;
 const RATE_LIMIT = 60;
@@ -56,6 +80,8 @@ const RATE_WINDOW_MS = 10_000;
 const MAX_IN_FLIGHT = 4;
 /** Bound on per-session servers and per-remote rate windows. */
 const MAX_SESSION_ENTRIES = 64;
+/** A session with no request for this long is no longer reachable. */
+const SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_SSE_SESSIONS = 64;
 const MAX_RATE_WINDOWS = 1024;
 
@@ -82,159 +108,142 @@ function timingSafeEqual(left: string, right: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-export async function startHttpTransport(options: HttpTransportOptions): Promise<HttpTransport> {
-  const host = options.host ?? "127.0.0.1";
-  const port = options.port ?? DEFAULT_PORT;
+function sessionHeader(request: http.IncomingMessage): string {
+  const header = request.headers["mcp-session-id"];
+  return typeof header === "string" ? header.trim() : "";
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isToolCall(message: unknown): boolean {
+  return isObject(message) && message.method === "tools/call";
+}
+
+function methodOf(message: unknown): string | null {
+  return isObject(message) && typeof message.method === "string" ? message.method : null;
+}
+
+/**
+ * One mountable MCP HTTP/SSE handler.
+ *
+ * `startHttpTransport` and `serve` both use this function. They used to carry two separate
+ * implementations: the second one kept MCP state per TCP socket, ignored `mcp-session-id`, omitted
+ * the header from CORS, and had no /sse or /messages at all even though the deployment docs
+ * advertised them. A transport bug fixed in one copy could not reach the other.
+ */
+export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHandler {
   const log = options.log ?? ((line: string) => process.stderr.write(line + "\n"));
-  const token = options.token === undefined ? generateToken() : options.token;
+  const token = options.token;
   const maxBody = options.maxBodyBytes ?? DEFAULT_MAX_BODY;
   const extraOrigins = options.allowedOrigins ?? [];
-  if (token === null && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
-    throw new Error(
-      "Refusing to serve " + host + " without a token: a repository reachable from the network " +
-        "must require Authorization. Drop --no-auth, or bind the loopback address."
-    );
-  }
-
-  const createMcp = (): McpServer => createServer({ cwd: options.cwd, log });
+  const createMcp = (): McpServer =>
+    createServer({
+      cwd: options.cwd,
+      log,
+      ...(options.noConfig === true ? { noConfig: true } : {}),
+    });
   const toolCount = buildTools().length;
-  /**
-   * One server per client, not one per process.
-   *
-   * The era and the cancellation map are session state. A shared instance let client A's
-   * `server/discover` permanently reject client B's legacy `initialize`, and let a cancellation
-   * from one client stop request id 1 in another. Streamable HTTP clients name their session with
-   * `mcp-session-id`; clients that do not get one server per TCP socket.
-   */
-  const mcpSessions = new Map<string, McpServer>();
+
+  const mcpSessions = new Map<string, { server: McpServer; lastSeen: number }>();
   const socketServers = new WeakMap<object, McpServer>();
-  /** Insert a server by session id, evicting the oldest when the table is full. */
-  const rememberSession = (id: string, server: McpServer): void => {
-    // Do not evict an existing session to make room for a caller-chosen id. A client that sends
-    // 64 random ids could otherwise push real clients out; a new id beyond the cap gets a server
-    // for this request but no stored state.
-    if (!mcpSessions.has(id) && mcpSessions.size >= MAX_SESSION_ENTRIES) return;
-    mcpSessions.set(id, server);
-  };
-  // Fallback for clients that do not forward the session header. The spec-compliant path is the
-  // header; a client that ignores it still needs initialize and tools/list to share state, so
-  // this pool is keyed by remote address and user agent. Two clients on one host with the same
-  // user agent remain a limitation, and naming the session header is the fix.
   const anonymousServers = new Map<string, McpServer>();
-  const serverFor = (request: http.IncomingMessage): McpServer => {
-    const header = request.headers["mcp-session-id"];
-    const supplied = typeof header === "string" ? header.trim() : "";
-    if (supplied !== "") {
-      let existing = mcpSessions.get(supplied);
-      if (existing === undefined) {
-        existing = createMcp();
-        rememberSession(supplied, existing);
-      }
-      return existing;
-    }
-    const onSocket = socketServers.get(request.socket);
-    if (onSocket !== undefined) return onSocket;
-    const userAgent =
-      typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : "";
-    const fallbackKey = (request.socket.remoteAddress ?? "unknown") + "\0" + userAgent;
-    let fallback = anonymousServers.get(fallbackKey);
-    if (fallback === undefined) {
-      fallback = createMcp();
-      if (anonymousServers.size >= 64) {
-        const oldest = anonymousServers.keys().next().value;
-        if (oldest !== undefined) anonymousServers.delete(oldest);
-      }
-      anonymousServers.set(fallbackKey, fallback);
-    }
-    socketServers.set(request.socket, fallback);
-    return fallback;
-  };
-  const newSessionId = (): string => crypto.randomBytes(12).toString("hex");
-  /**
-   * Legacy SSE sessions: `GET /sse` hands out an endpoint URL, `POST /messages` answers on the
-   * open stream. It exists for clients that predate Streamable HTTP and cannot send headers —
-   * which is also why the token may arrive as a query parameter here. That is a leak into logs,
-   * so it is confined to this path and the docs say so.
-   */
   const sseSessions = new Map<
     string,
     { write: (payload: string) => void; end: () => void; server: McpServer }
   >();
-  const tokenAccepted = (request: http.IncomingMessage, url: URL): boolean => {
+  const rateWindows = new Map<string, { count: number; resetAt: number }>();
+  let inFlight = 0;
+
+  const newSessionId = (): string => crypto.randomBytes(12).toString("hex");
+
+  /** Drop sessions past their idle TTL before any lookup or insertion. */
+  const pruneSessions = (now: number): void => {
+    for (const [id, entry] of mcpSessions) {
+      if (now - entry.lastSeen > SESSION_TTL_MS) mcpSessions.delete(id);
+    }
+  };
+
+  /** Insert a session, evicting the oldest idle session rather than silently dropping a new one. */
+  const rememberSession = (id: string, server: McpServer, now: number): void => {
+    pruneSessions(now);
+    if (!mcpSessions.has(id) && mcpSessions.size >= MAX_SESSION_ENTRIES) {
+      let oldestId: string | null = null;
+      let oldestSeen = Infinity;
+      for (const [candidate, entry] of mcpSessions) {
+        if (entry.lastSeen < oldestSeen) {
+          oldestSeen = entry.lastSeen;
+          oldestId = candidate;
+        }
+      }
+      if (oldestId !== null) mcpSessions.delete(oldestId);
+    }
+    mcpSessions.set(id, { server, lastSeen: now });
+  };
+
+  const anonymousKey = (request: http.IncomingMessage): string => {
+    const userAgent =
+      typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : "";
+    return (request.socket.remoteAddress ?? "unknown") + "\0" + userAgent;
+  };
+  const rememberAnonymous = (key: string, server: McpServer): void => {
+    if (anonymousServers.size >= 64 && !anonymousServers.has(key)) {
+      const oldest = anonymousServers.keys().next().value;
+      if (oldest !== undefined) anonymousServers.delete(oldest);
+    }
+    anonymousServers.set(key, server);
+  };
+  const fallbackServer = (request: http.IncomingMessage): McpServer => {
+    // Fallback for clients that do not forward the session header. The spec-compliant path is the
+    // header; a client that ignores it still needs initialize and tools/list to share state, so
+    // this pool is keyed by remote address and user agent.
+    const onSocket = socketServers.get(request.socket);
+    if (onSocket !== undefined) return onSocket;
+    const fallbackKey = anonymousKey(request);
+    let fallback = anonymousServers.get(fallbackKey);
+    if (fallback === undefined) {
+      fallback = createMcp();
+      rememberAnonymous(fallbackKey, fallback);
+    }
+    socketServers.set(request.socket, fallback);
+    return fallback;
+  };
+  const allowedOrigin = (origin: string | undefined): string | null => {
+    if (origin === undefined) return null;
+    if (isLoopbackOrigin(origin)) return origin;
+    return extraOrigins.includes(origin) ? origin : null;
+  };
+
+  const tokenAccepted = (
+    request: http.IncomingMessage,
+    url: URL,
+    allowQuery: boolean
+  ): boolean => {
     if (token === null) return true;
     const presented = parseBearerToken(request.headers.authorization);
     if (presented !== null && timingSafeEqual(presented, token)) return true;
+    if (!allowQuery) return false;
     const fromQuery = url.searchParams.get("token");
     return fromQuery !== null && timingSafeEqual(fromQuery, token);
   };
-  const sessions = new Map<string, { count: number; resetAt: number }>();
-  /**
-   * Admission control for expensive calls.
-   *
-   * `runStdioServer` has `MAX_IN_FLIGHT`; HTTP had none, so 50 concurrent `snapshot_generate`
-   * requests spawned 50 workers and could exhaust the process. The limit is shared by the
-   * Streamable HTTP and legacy SSE paths because both dispatch to the same tool table.
-   */
-  let inFlight = 0;
-  const acquireToolSlot = (): boolean => {
-    if (inFlight >= MAX_IN_FLIGHT) return false;
-    inFlight += 1;
-    return true;
-  };
-  const releaseToolSlot = (): void => {
-    if (inFlight > 0) inFlight -= 1;
-  };
-  const busyResponse = (id: unknown): JsonRpcResponse => ({
-    jsonrpc: "2.0",
-    id: typeof id === "string" || typeof id === "number" || id === null ? id : null,
-    error: {
-      code: -32001,
-      message: "server busy: too many tool calls are already in flight",
-    },
-  });
-  const isToolCall = (message: unknown): boolean =>
-    message !== null &&
-    typeof message === "object" &&
-    (message as { method?: unknown }).method === "tools/call";
 
-  /** Bound the rate table as addresses rotate; expired entries are dropped first. */
   const rememberRateWindow = (remote: string, now: number): void => {
-    if (!sessions.has(remote) && sessions.size >= MAX_RATE_WINDOWS) {
-      for (const [key, value] of sessions) if (value.resetAt <= now) sessions.delete(key);
-      while (sessions.size >= MAX_RATE_WINDOWS) {
-        const oldest = sessions.keys().next().value;
+    if (!rateWindows.has(remote) && rateWindows.size >= MAX_RATE_WINDOWS) {
+      for (const [key, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key);
+      while (rateWindows.size >= MAX_RATE_WINDOWS) {
+        const oldest = rateWindows.keys().next().value;
         if (oldest === undefined) break;
-        sessions.delete(oldest);
+        rateWindows.delete(oldest);
       }
     }
-    sessions.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    rateWindows.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
   };
 
-  /**
-   * Request counters for `/metrics`.
-   *
-   * Deliberately tiny: a total, a count per method, and the number of rate-limited or refused
-   * requests. Nothing per-tool and nothing per-path — a metric label built from a URL is an
-   * unbounded map and a way to leak what was asked for into a monitoring system.
-   */
-  const metrics = {
-    requests: 0,
-    byMethod: new Map<string, number>(),
-    refused: 0,
-    rateLimited: 0,
-    started: Date.now(),
-  };
-  const noteRequest = (request: http.IncomingMessage): void => {
-    metrics.requests += 1;
-    const method = request.method ?? "UNKNOWN";
-    metrics.byMethod.set(method, (metrics.byMethod.get(method) ?? 0) + 1);
-  };
-
-  /** True when this remote address has spent its window; the caller sends the 429. */
   const rateLimited = (request: http.IncomingMessage): boolean => {
     const remote = request.socket.remoteAddress ?? "unknown";
     const now = Date.now();
-    const window = sessions.get(remote);
+    const window = rateWindows.get(remote);
     if (window === undefined || window.resetAt <= now) {
       rememberRateWindow(remote, now);
       return false;
@@ -244,14 +253,442 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     return false;
   };
 
+  const send = (
+    response: http.ServerResponse,
+    status: number,
+    body: unknown,
+    cors: Record<string, string>,
+    extra: Record<string, string> = {}
+  ): void => {
+    if (response.headersSent || response.writableEnded) return;
+    const text = typeof body === "string" ? body : JSON.stringify(body);
+    const headers: Record<string, string> = {
+      ...cors,
+      "content-type":
+        typeof body === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8",
+      "content-length": String(Buffer.byteLength(text, "utf8")),
+      "x-content-type-options": "nosniff",
+      ...extra,
+    };
+    if (status >= 400 && status < 500 && status !== 429) options.onRefused?.();
+    try {
+      response.writeHead(status, headers);
+      response.end(text);
+    } catch {
+      // The peer may have closed between the check and the write.
+    }
+  };
+
+  const corsFor = (
+    request: http.IncomingMessage,
+    response: http.ServerResponse
+  ): Record<string, string> | null => {
+    const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
+    const allowed = allowedOrigin(origin);
+    if (origin !== undefined && allowed === null) {
+      send(response, 403, { error: "origin not allowed" }, {});
+      return null;
+    }
+    if (allowed === null) return {};
+    return {
+      "access-control-allow-origin": allowed,
+      vary: "origin",
+      "access-control-allow-headers":
+        "authorization, content-type, mcp-protocol-version, mcp-session-id",
+      "access-control-allow-methods": "POST, GET, OPTIONS, DELETE",
+      "access-control-max-age": "600",
+    };
+  };
+
+  const unauthorized = (
+    response: http.ServerResponse,
+    cors: Record<string, string>
+  ): void => {
+    send(response, 401, { error: "unauthorized" }, cors, {
+      "www-authenticate": 'Bearer realm="codebase-snapshot"',
+    });
+  };
+
+  const tooMany = (response: http.ServerResponse, cors: Record<string, string>): void => {
+    options.onRateLimited?.();
+    send(response, 429, { error: "too many requests" }, cors, { "retry-after": "10" });
+  };
+
+  const busyResponse = (id: unknown): JsonRpcResponse => ({
+    jsonrpc: "2.0",
+    id: typeof id === "string" || typeof id === "number" || id === null ? id : null,
+    error: {
+      code: -32001,
+      message: "server busy: too many tool calls are already in flight",
+    },
+  });
+
+  const acquireToolSlot = (): boolean => {
+    if (inFlight >= MAX_IN_FLIGHT) return false;
+    inFlight += 1;
+    return true;
+  };
+  const releaseToolSlot = (): void => {
+    if (inFlight > 0) inFlight -= 1;
+  };
+
+  const readJsonBody = (
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    cors: Record<string, string>,
+    onBody: (message: unknown) => void
+  ): void => {
+    let received = 0;
+    let tooLarge = false;
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => {
+      if (tooLarge) return;
+      received += chunk.length;
+      if (received > maxBody) {
+        tooLarge = true;
+        request.destroy();
+        send(response, 413, { error: "request body too large", limit: maxBody }, cors);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      if (tooLarge) return;
+      let message: unknown;
+      try {
+        message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch (error) {
+        send(
+          response,
+          400,
+          { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error: " + (error as Error).message } },
+          cors
+        );
+        return;
+      }
+      onBody(message);
+    });
+    request.on("error", () => {
+      try {
+        response.destroy();
+      } catch {
+        // Already gone.
+      }
+    });
+  };
+
+  const handleSse = (
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    url: URL,
+    cors: Record<string, string>
+  ): void => {
+    if (!tokenAccepted(request, url, true)) {
+      unauthorized(response, cors);
+      return;
+    }
+    if (rateLimited(request)) {
+      tooMany(response, cors);
+      return;
+    }
+    if (sseSessions.size >= MAX_SSE_SESSIONS) {
+      send(response, 503, { error: "too many open SSE sessions" }, cors, { "retry-after": "10" });
+      return;
+    }
+    const id = crypto.randomBytes(12).toString("hex");
+    const streamCors = {
+      ...cors,
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    };
+    response.writeHead(200, streamCors);
+    const write = (payload: string): void => {
+      try {
+        response.write(payload);
+      } catch {
+        // A client that disconnected mid-call is not a server failure.
+      }
+    };
+    sseSessions.set(id, {
+      write,
+      end: () => {
+        try {
+          response.end();
+        } catch {
+          // Already closed.
+        }
+      },
+      server: createMcp(),
+    });
+    const heartbeat = setInterval(() => write(": ping\n\n"), 15_000);
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      sseSessions.delete(id);
+    };
+    request.on("close", cleanup);
+    response.on("close", cleanup);
+    write("event: endpoint\ndata: /messages?sessionId=" + id + "\n\n");
+  };
+
+  const handleMessages = (
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    url: URL,
+    cors: Record<string, string>
+  ): void => {
+    if (!tokenAccepted(request, url, true)) {
+      unauthorized(response, cors);
+      return;
+    }
+    if (rateLimited(request)) {
+      tooMany(response, cors);
+      return;
+    }
+    const id = url.searchParams.get("sessionId") ?? "";
+    const stream = sseSessions.get(id);
+    if (stream === undefined) {
+      send(response, 404, { error: "unknown sessionId; open GET /sse first" }, cors);
+      return;
+    }
+    readJsonBody(request, response, cors, (message) => {
+      const gated = isToolCall(message);
+      if (gated && !acquireToolSlot()) {
+        const answer = busyResponse(isObject(message) ? message.id : null);
+        stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
+        send(response, 202, "", cors);
+        return;
+      }
+      void (async () => {
+        try {
+          const answer = await stream.server.handle(message);
+          if (answer !== null) stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
+        } finally {
+          if (gated) releaseToolSlot();
+        }
+        send(response, 202, "", cors);
+      })().catch((error: unknown) => {
+        log("mcp/http: " + (error as Error).message);
+        send(response, 500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);
+      });
+    });
+  };
+
+  const handleMcp = (
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    cors: Record<string, string>
+  ): void => {
+    if (!tokenAccepted(request, new URL(request.url ?? "/", "http://localhost"), false)) {
+      unauthorized(response, cors);
+      return;
+    }
+    if (rateLimited(request)) {
+      tooMany(response, cors);
+      return;
+    }
+
+    if (request.method === "DELETE") {
+      const supplied = sessionHeader(request);
+      if (supplied === "") {
+        send(response, 400, { error: "DELETE /mcp requires mcp-session-id" }, cors);
+        return;
+      }
+      const now = Date.now();
+      pruneSessions(now);
+      if (!mcpSessions.has(supplied)) {
+        send(response, 404, { error: "unknown mcp-session-id" }, cors);
+        return;
+      }
+      mcpSessions.delete(supplied);
+      send(response, 204, "", cors);
+      return;
+    }
+
+    if (request.method !== "POST") {
+      send(response, 405, { error: "method not allowed" }, cors, { allow: "POST, DELETE, OPTIONS" });
+      return;
+    }
+
+    readJsonBody(request, response, cors, (message) => {
+      const batch = Array.isArray(message) ? message : [message];
+      if (batch.length > 100) {
+        send(response, 400, { error: "JSON-RPC batch is limited to 100 messages" }, cors);
+        return;
+      }
+
+      const supplied = sessionHeader(request);
+      let server: McpServer;
+      let responseSession = "";
+      if (supplied !== "") {
+        const now = Date.now();
+        pruneSessions(now);
+        const existing = mcpSessions.get(supplied);
+        if (existing === undefined) {
+          // Never mint state for a caller-chosen id. The old implementation created a server for
+          // any header and then silently failed to store it once the table was full.
+          send(response, 404, { error: "unknown mcp-session-id" }, cors);
+          return;
+        }
+        existing.lastSeen = now;
+        server = existing.server;
+        responseSession = supplied;
+      } else if (!Array.isArray(message) && methodOf(message) === "initialize") {
+        // A new initialize gets a new server even on a reused connection. Reusing the per-socket
+        // fallback here meant two clients that both initialized without forwarding the header
+        // shared one era state, so one client's `server/discover` rejected the other's legacy
+        // requests. The socket map is updated so a client that ignores the header on later
+        // requests still reaches this server.
+        server = createMcp();
+        socketServers.set(request.socket, server);
+        // A client that ignores the header can reconnect; keep the initialized server reachable
+        // through the documented per-address fallback as well as this socket.
+        rememberAnonymous(anonymousKey(request), server);
+        responseSession = newSessionId();
+        rememberSession(responseSession, server, Date.now());
+      } else {
+        server = fallbackServer(request);
+      }
+
+      const sessionHeaders =
+        responseSession === "" ? cors : { ...cors, "mcp-session-id": responseSession };
+      const answers: JsonRpcResponse[] = [];
+      void (async () => {
+        for (const item of batch) {
+          const gated = isToolCall(item);
+          if (gated && !acquireToolSlot()) {
+            answers.push(busyResponse(isObject(item) ? item.id : null));
+            continue;
+          }
+          try {
+            const answer = await server.handle(item);
+            if (answer !== null) answers.push(answer);
+          } finally {
+            if (gated) releaseToolSlot();
+          }
+        }
+        if (answers.length === 0) {
+          send(response, 202, "", sessionHeaders);
+          return;
+        }
+        send(response, 200, Array.isArray(message) ? answers : answers[0], sessionHeaders);
+      })().catch((error: unknown) => {
+        log("mcp/http: " + (error as Error).message);
+        send(response, 500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);
+      });
+    });
+  };
+
+  return {
+    toolCount,
+    handle(request: http.IncomingMessage, response: http.ServerResponse): boolean {
+      let url: URL;
+      try {
+        url = new URL(request.url ?? "/", "http://localhost");
+      } catch {
+        return false;
+      }
+      if (url.pathname !== "/mcp" && url.pathname !== "/sse" && url.pathname !== "/messages") {
+        return false;
+      }
+      options.onRequest?.(request.method ?? "UNKNOWN");
+      const cors = corsFor(request, response);
+      if (cors === null) return true;
+      if (request.method === "OPTIONS") {
+        send(response, 204, "", cors);
+        return true;
+      }
+      if (url.pathname === "/sse") {
+        if (request.method !== "GET") {
+          send(response, 405, { error: "method not allowed" }, cors, { allow: "GET, OPTIONS" });
+          return true;
+        }
+        handleSse(request, response, url, cors);
+        return true;
+      }
+      if (url.pathname === "/messages") {
+        if (request.method !== "POST") {
+          send(response, 405, { error: "method not allowed" }, cors, { allow: "POST, OPTIONS" });
+          return true;
+        }
+        handleMessages(request, response, url, cors);
+        return true;
+      }
+      handleMcp(request, response, cors);
+      return true;
+    },
+    async close(): Promise<void> {
+      for (const [, session] of sseSessions) {
+        try {
+          session.end();
+        } catch {
+          // The client may already be gone.
+        }
+      }
+      sseSessions.clear();
+      mcpSessions.clear();
+      anonymousServers.clear();
+      rateWindows.clear();
+    },
+  };
+}
+
+export async function startHttpTransport(options: HttpTransportOptions): Promise<HttpTransport> {
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? DEFAULT_PORT;
+  const log = options.log ?? ((line: string) => process.stderr.write(line + "\n"));
+  const token = options.token === undefined ? generateToken() : options.token;
+  if (token === null && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+    throw new Error(
+      "Refusing to serve " + host + " without a token: a repository reachable from the network " +
+        "must require Authorization. Drop --no-auth, or bind the loopback address."
+    );
+  }
+
+  const metrics = {
+    requests: 0,
+    byMethod: new Map<string, number>(),
+    refused: 0,
+    rateLimited: 0,
+    started: Date.now(),
+  };
+  const noteRequest = (method: string): void => {
+    metrics.requests += 1;
+    metrics.byMethod.set(method, (metrics.byMethod.get(method) ?? 0) + 1);
+  };
+  const mcp = createMcpHttpHandler({
+    cwd: options.cwd,
+    token,
+    ...(options.allowedOrigins === undefined ? {} : { allowedOrigins: options.allowedOrigins }),
+    ...(options.maxBodyBytes === undefined ? {} : { maxBodyBytes: options.maxBodyBytes }),
+    ...(options.noConfig === true ? { noConfig: true } : {}),
+    log,
+    onRequest: noteRequest,
+    onRefused: () => {
+      metrics.refused += 1;
+    },
+    onRateLimited: () => {
+      metrics.rateLimited += 1;
+    },
+  });
+  const toolCount = mcp.toolCount;
+  const extraOrigins = options.allowedOrigins ?? [];
   const allowedOrigin = (origin: string | undefined): string | null => {
     if (origin === undefined) return null;
     if (isLoopbackOrigin(origin)) return origin;
     return extraOrigins.includes(origin) ? origin : null;
   };
+  const tokenAccepted = (request: http.IncomingMessage, _url: URL): boolean => {
+    if (token === null) return true;
+    const presented = parseBearerToken(request.headers.authorization);
+    return presented !== null && timingSafeEqual(presented, token);
+  };
 
   const httpServer = http.createServer((request, response) => {
-    noteRequest(request);
+    if (mcp.handle(request, response)) return;
+    noteRequest(request.method ?? "UNKNOWN");
+
     // One response per request. Oversized bodies arrive in several chunks; without this flag the
     // data handler answered 413 once per chunk and the second writeHead threw
     // ERR_HTTP_HEADERS_SENT, taking the server down.
@@ -260,9 +697,6 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       if (responseSent) return;
       responseSent = true;
       const text = typeof body === "string" ? body : JSON.stringify(body);
-      // One place counts refusals, so a future early return cannot forget to. A 4xx is a
-      // refusal (the client's request was not dispatched); 429 has its own counter because the
-      // question it answers is different, and a 5xx is our failure, not a refusal.
       if (status >= 400 && status < 500 && status !== 429) metrics.refused += 1;
       response.writeHead(status, {
         "content-type": typeof body === "string" ? "text/plain; charset=utf-8" : "application/json",
@@ -282,9 +716,10 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const cors: Record<string, string> = {};
     if (allowed !== null) {
       cors["access-control-allow-origin"] = allowed;
-      cors["vary"] = "origin";
-      cors["access-control-allow-headers"] = "authorization, content-type, mcp-protocol-version, mcp-session-id";
-      cors["access-control-allow-methods"] = "POST, GET, OPTIONS";
+      cors.vary = "origin";
+      cors["access-control-allow-headers"] =
+        "authorization, content-type, mcp-protocol-version, mcp-session-id";
+      cors["access-control-allow-methods"] = "POST, GET, OPTIONS, DELETE";
       cors["access-control-max-age"] = "600";
     }
 
@@ -294,8 +729,6 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
 
     if (request.method === "GET" && request.url === "/healthz") {
-      // A load balancer needs liveness and a human needs to know which build answered. Both
-      // are cheap; uptime is seconds since this server started listening.
       send(
         200,
         {
@@ -311,9 +744,6 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
 
     if (request.method === "GET" && request.url === "/metrics") {
-      // Metrics are not repository content, but on a network bind they still reveal request
-      // volume and uptime. Keep the loopback convenience and require the same bearer token when
-      // the server is reachable from another machine.
       if (
         token !== null &&
         host !== "127.0.0.1" &&
@@ -324,10 +754,6 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
         send(401, { error: "unauthorized" }, { "www-authenticate": 'Bearer realm="codebase-snapshot"' });
         return;
       }
-      // Prometheus text format, no dependency. The values are process-local: this server does not
-      // aggregate across instances, and a monitoring system that needs that can sum them. No metric
-      // carries a path or a tool name — a label built from a URL is an unbounded map, and it would
-      // publish what was asked for to the monitoring system.
       const lines = [
         "# HELP snapshot_uptime_seconds Seconds since the process started.",
         "# TYPE snapshot_uptime_seconds gauge",
@@ -355,125 +781,6 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       return;
     }
 
-    const url = new URL(request.url ?? "/", "http://localhost");
-
-    if (request.method === "GET" && url.pathname === "/sse") {
-      if (!tokenAccepted(request, url)) {
-        send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
-        return;
-      }
-      if (rateLimited(request)) {
-        metrics.rateLimited += 1;
-        send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
-        return;
-      }
-      if (sseSessions.size >= MAX_SSE_SESSIONS) {
-        send(503, { error: "too many open SSE sessions" }, { ...cors, "retry-after": "10" });
-        return;
-      }
-      const id = crypto.randomBytes(12).toString("hex");
-      response.writeHead(200, {
-        ...cors,
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-        "x-accel-buffering": "no",
-      });
-      const write = (payload: string): void => {
-        try {
-          response.write(payload);
-        } catch {
-          // A client that disconnected mid-call is not a server failure.
-        }
-      };
-      sseSessions.set(id, {
-        write,
-        end: () => {
-          try {
-            response.end();
-          } catch {
-            // Already closed.
-          }
-        },
-        server: createMcp(),
-      });
-      const heartbeat = setInterval(() => write(": ping\n\n"), 15_000);
-      const cleanup = (): void => {
-        clearInterval(heartbeat);
-        sseSessions.delete(id);
-      };
-      request.on("close", cleanup);
-      response.on("close", cleanup);
-      write("event: endpoint\ndata: /messages?sessionId=" + id + "\n\n");
-      return;
-    }
-
-    if (request.method === "POST" && url.pathname === "/messages") {
-      if (!tokenAccepted(request, url)) {
-        send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
-        return;
-      }
-      if (rateLimited(request)) {
-        metrics.rateLimited += 1;
-        send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
-        return;
-      }
-      const id = url.searchParams.get("sessionId") ?? "";
-      const stream = sseSessions.get(id);
-      if (stream === undefined) {
-        send(404, { error: "unknown sessionId; open GET /sse first" });
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let received = 0;
-      let tooLarge = false;
-      request.on("data", (chunk: Buffer) => {
-        if (tooLarge) return;
-        received += chunk.length;
-        if (received > maxBody) {
-          tooLarge = true;
-          request.destroy();
-          send(413, { error: "request body too large", limit: maxBody });
-          return;
-        }
-        chunks.push(chunk);
-      });
-      request.on("end", () => {
-        if (tooLarge) return;
-        void (async () => {
-          let message: unknown;
-          try {
-            message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          } catch (error) {
-            send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: String(error) } });
-            return;
-          }
-          const gated = isToolCall(message);
-          if (gated && !acquireToolSlot()) {
-            const answer = busyResponse((message as { id?: unknown }).id);
-            stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
-            send(202, "", cors);
-            return;
-          }
-          try {
-            const answer = await stream.server.handle(message);
-            if (answer !== null) stream.write("event: message\ndata: " + JSON.stringify(answer) + "\n\n");
-          } finally {
-            if (gated) releaseToolSlot();
-          }
-          send(202, "", cors);
-        })().catch((error: unknown) => {
-          log("mcp/http: " + (error as Error).message);
-          try {
-            send(500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);
-          } catch {
-            // The stream is already gone.
-          }
-        });
-      });
-      return;
-    }
-
     if (request.url === "/") {
       send(
         200,
@@ -483,99 +790,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       return;
     }
 
-    if (request.method !== "POST" || request.url !== "/mcp") {
-      send(405, { error: "method not allowed" }, { ...cors, allow: "POST, OPTIONS" });
-      return;
-    }
-
-    if (token !== null) {
-      const presented = parseBearerToken(request.headers.authorization);
-      if (presented === null || !timingSafeEqual(presented, token)) {
-        send(401, { error: "unauthorized" }, { ...cors, "www-authenticate": 'Bearer realm="codebase-snapshot"' });
-        return;
-      }
-    }
-
-    if (rateLimited(request)) {
-      metrics.rateLimited += 1;
-      send(429, { error: "too many requests" }, { ...cors, "retry-after": "10" });
-      return;
-    }
-
-    const activeServer = serverFor(request);
-    const sessionHeader = request.headers["mcp-session-id"];
-    let sessionId = typeof sessionHeader === "string" ? sessionHeader.trim() : "";
-    let received = 0;
-    let tooLarge = false;
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => {
-      if (tooLarge) return;
-      received += chunk.length;
-      if (received > maxBody) {
-        tooLarge = true;
-        request.destroy();
-        send(413, { error: "request body too large", limit: maxBody }, cors);
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on("end", () => {
-      if (tooLarge) return;
-      void (async () => {
-        let message: unknown;
-        try {
-          message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        } catch (error) {
-          send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error: " + (error as Error).message } }, cors);
-          return;
-        }
-        const batch = Array.isArray(message) ? message : [message];
-        if (batch.length > 100) {
-          send(400, { error: "JSON-RPC batch is limited to 100 messages" }, cors);
-          return;
-        }
-        // Assign a session on the first initialize and return it in the header. A client that
-        // ignores the header still gets the per-socket server above, so state cannot leak.
-        if (
-          sessionId === "" &&
-          !Array.isArray(message) &&
-          (message as { method?: unknown }).method === "initialize"
-        ) {
-          sessionId = newSessionId();
-          rememberSession(sessionId, activeServer);
-        }
-        const sessionHeaders = sessionId === "" ? cors : { ...cors, "mcp-session-id": sessionId };
-        const answers: JsonRpcResponse[] = [];
-        for (const item of batch) {
-          const gated = isToolCall(item);
-          if (gated && !acquireToolSlot()) {
-            answers.push(busyResponse((item as { id?: unknown }).id));
-            continue;
-          }
-          try {
-            const answer = await activeServer.handle(item);
-            if (answer !== null) answers.push(answer);
-          } finally {
-            if (gated) releaseToolSlot();
-          }
-        }
-        if (answers.length === 0) {
-          send(202, "", sessionHeaders);
-          return;
-        }
-        send(200, Array.isArray(message) ? answers : answers[0], sessionHeaders);
-      })().catch((error: unknown) => {
-        log("mcp/http: " + (error as Error).message);
-        send(500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } }, cors);
-      });
-    });
-    request.on("error", () => {
-      try {
-        response.destroy();
-      } catch {
-        // The socket is already gone; there is nothing to report to.
-      }
-    });
+    send(405, { error: "method not allowed" }, { ...cors, allow: "POST, GET, OPTIONS, DELETE" });
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -595,20 +810,12 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     port: actualPort,
     host,
     token,
-    close: () =>
-      new Promise<void>((resolve) => {
-        // An open SSE stream keeps `close()` waiting forever, and a shutdown that never finishes
-        // is indistinguishable from a server that ignored the signal.
-        for (const [, session] of sseSessions) {
-          try {
-            session.end();
-          } catch {
-            // The client may already be gone.
-          }
-        }
-        sseSessions.clear();
+    close: async () => {
+      await mcp.close();
+      await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();
-      }),
+      });
+    },
   };
 }

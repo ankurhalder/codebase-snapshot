@@ -63,8 +63,15 @@ test("a part filename in the manifest cannot reach outside snapshot/parts", asyn
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
   const provider = buildResourceProvider();
-  const resource = await provider.read("snapshot://parts/1", contextFor(root));
-  assert.equal(resource, null, "the resource read must not return a file outside parts/");
+  await assert.rejects(
+    () => provider.read("snapshot://parts/1", contextFor(root)),
+    (error) => {
+      assert.equal(error.name, "ResourceNotFoundError");
+      assert.doesNotMatch(error.message, /not-for-the-model/);
+      return true;
+    },
+    "the resource read refuses a manifest whose part name leaves parts/"
+  );
 
   const read = await tools.get("snapshot_read").handler(
     { path: "index.ts" },

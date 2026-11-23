@@ -217,6 +217,7 @@ export const COMMAND_OPTION_SCOPE: Record<CommandName, readonly string[]> = {
     "no-auth",
     "allow-origin",
     "cwd",
+    "no-config",
     "no-update-check",
     "help",
   ],

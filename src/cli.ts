@@ -1968,6 +1968,7 @@ async function runCommand(argv: string[]): Promise<number> {
     if (invocation.http === true) {
       const transport = await startHttpTransport({
         cwd: path.resolve(invocation.cwd),
+        noConfig: invocation.noConfig,
         ...(invocation.host === undefined ? {} : { host: invocation.host }),
         ...(invocation.port === undefined ? {} : { port: invocation.port }),
         ...tokenOption,
@@ -1991,7 +1992,10 @@ async function runCommand(argv: string[]): Promise<number> {
       });
       return 0;
     }
-    return await runStdioServer({ cwd: path.resolve(invocation.cwd) });
+    return await runStdioServer({
+      cwd: path.resolve(invocation.cwd),
+      noConfig: invocation.noConfig,
+    });
   }
 
   // `setup` runs before config discovery because it may be the run that *creates* the config: it
@@ -2162,9 +2166,25 @@ async function runCommand(argv: string[]): Promise<number> {
           rows.push({ name, score: 0, counts: { pass: 0, warn: 0, fail: 1 }, failed: [], error: "no snapshot at " + snapshotDir });
           continue;
         }
+        // A workspace member may have its own `secrets.customPatterns`; using only the root
+        // config made a member's own token shape invisible to `health --all-members`.
+        let memberSecretRules = resolved.customSecretRules ?? [];
+        try {
+          const memberLoaded = await loadConfigFileDetailed(repoDir, {
+            allowExecutableConfig: false,
+          });
+          if (memberLoaded.errors.length === 0) {
+            memberSecretRules =
+              resolveConfig(memberLoaded.config, undefined, repoDir).customSecretRules ?? [];
+          }
+        } catch {
+          // A member config that cannot be read is already reflected in the member's health rows;
+          // the root rules still apply and the audit does not disappear.
+        }
         const report = auditSnapshot({
           snapshotDir,
           repoDir,
+          ...(memberSecretRules.length === 0 ? {} : { secretRules: memberSecretRules }),
           ...(invocation.deep === true ? { deep: true } : {}),
         });
         rows.push({
@@ -2198,6 +2218,9 @@ async function runCommand(argv: string[]): Promise<number> {
     const report = auditSnapshot({
       snapshotDir,
       repoDir: resolved.cwd,
+      ...(resolved.customSecretRules === undefined || resolved.customSecretRules.length === 0
+        ? {}
+        : { secretRules: resolved.customSecretRules }),
       ...(invocation.deep === true ? { deep: true } : {}),
     });
     emit(invocation.format, report, () => renderHealthText(report));

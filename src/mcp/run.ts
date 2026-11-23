@@ -28,6 +28,8 @@ export interface ServerOptions {
   notify?: (message: JsonObject) => void;
   /** Additional directories callers may name as `root`. Defaults to `cwd` alone. */
   roots?: string[];
+  /** True when `--no-config` asked to ignore every configuration file. */
+  noConfig?: boolean;
   /** Where operational notes go. Never stdout, which carries protocol messages only. */
   log?: (line: string) => void;
 }
@@ -39,6 +41,7 @@ export function createServer(options: ServerOptions): McpServer {
   const context: ToolContext = {
     cwd,
     roots,
+    ...(options.noConfig === true ? { noConfig: true } : {}),
     log: options.log ?? ((line: string) => process.stderr.write(`${line}\n`)),
   };
 
@@ -69,15 +72,6 @@ export function createServer(options: ServerOptions): McpServer {
 export async function runStdioServer(options: ServerOptions): Promise<number> {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
   const writer = createWriter(process.stdout);
-  const server = createServer({
-    ...options,
-    notify: (message) => {
-      // A notification is not a response: it must not take a slot in the response chain and it
-      // has no id to route, so it is written through the same serialiser and forgotten.
-      void writer.write(message).catch(() => undefined);
-    },
-  });
-
   let writeChain: Promise<void> = Promise.resolve();
   const send = (message: unknown): Promise<void> => {
     writeChain = writeChain.then(() => writer.write(message)).catch((error: unknown) => {
@@ -86,6 +80,15 @@ export async function runStdioServer(options: ServerOptions): Promise<number> {
     });
     return writeChain;
   };
+  const server = createServer({
+    ...options,
+    notify: (message) => {
+      // A notification is a protocol message too. It must enter the same serialiser as responses:
+      // writing it directly let a progress event overtake a response already queued on a slow
+      // stream, and shutdown did not wait for it.
+      void send(message);
+    },
+  });
 
   /**
    * How many requests may run at once.

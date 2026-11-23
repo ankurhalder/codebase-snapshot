@@ -30,6 +30,20 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.9
+
+**MCP hardening: a regex denial of service, a session-table wedge, stateless modern clients, config compatibility and transport drift are fixed together, with a regression for each.**
+
+- `unsafeRegExpReason` no longer skips the interior of an invalid `{...}` (JavaScript parses it literally without the `u` flag), caps a bounded repetition at 200, and refuses a pattern that chains more than two repeating quantifiers. `snapshot_search`, `snapshot_routes` and `snapshot_query` cannot be made to freeze the event loop with those shapes.
+- Streamable HTTP accepts a session id only after `initialize`; an unknown `mcp-session-id` is a 404, sessions expire after 30 minutes idle, the oldest is evicted instead of silently dropping a new one, and `DELETE /mcp` closes a session.
+- A modern `2026-07-28` request with valid `_meta` is complete without `server/discover`, as the stateless revision requires.
+- `mcp` accepts `--no-config`, and a JSON config beside an executable config is loaded without running the executable one. A repository created by `init` can therefore be served with the documented JSON export or with `--no-config`; it still cannot execute its own TypeScript config inside the server.
+- MCP and `serve` refuse a repository config that enables sensitive-file emission, disables the default secret patterns, or contains a custom regex that can consume the event loop. The CLI keeps honoring those settings; a server does not.
+- `snapshot_health` and `snapshot_review` pass a project's `secrets.customPatterns` to the audit instead of reporting a clean secret check without them.
+- `snapshot serve` mounts the same MCP HTTP/SSE handler as `mcp --http`: session ids, CORS and the documented `/sse` and `/messages` endpoints no longer differ between the two commands.
+- `snapshot_read` omits `nextFromLine` when the file is complete instead of emitting a null for an integer field; `snapshot_review` caps its response at 64 KiB and bounds `linesPerFile`; known-but-absent resources answer `-32002`; `snapshot_plan` and `snapshot_generate` accept numeric byte/token budgets; a token-budget snapshot validates against the narrowed byte budget it actually used.
+- `snapshot_generate` reports a failed in-memory integrity check as a tool error, cancellation is registered before the config await, progress notifications are serialized with responses, and `snapshot_explain` and `snapshot_validate` are labelled expensive rather than cheap or medium.
+
 ## 0.20.8
 
 **Security hardening from the first CodeQL pass. The public API and artifact shape are unchanged; hostile names, headers and truncated keys are handled without backtracking or table escape.**

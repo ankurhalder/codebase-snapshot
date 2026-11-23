@@ -4223,6 +4223,7 @@ export {
   classifyKind,
   classifyLayer,
   configDigest,
+  assertServerSafeConfig,
   loadConfigFileDetailed,
   parseByteSize,
   supportsTypeScriptImports,

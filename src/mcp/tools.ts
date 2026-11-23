@@ -118,7 +118,7 @@ const SCOPE_PROPERTIES: Record<string, JsonSchema> = {
     description: "Globs to exclude, added to the config deny-list for this run.",
   },
   maxPartTokens: {
-    type: "string",
+    type: ["string", "number"],
     description:
       'Token ceiling per part, for example 32000 or "32k". Narrower than maxPartBytes; it converts at four bytes per token.',
   },
@@ -287,6 +287,7 @@ async function prepare(
   // prompt, the other from the server's launch directory, and a tool argument may not widen either.
   const opened = await openWorkspace(rootOutcome.root, overrides, context.roots, {
     allowExecutableConfig: false,
+    ...(context.noConfig === true ? { noConfig: true } : {}),
   });
   if (!opened.ok) return { ok: false, outcome: failure(opened.message) };
   return { ok: true, workspace: opened.workspace };
@@ -1051,7 +1052,12 @@ const reviewTool: ToolSpec = {
     type: "object",
     properties: {
       paths: { type: "array", items: { type: "string" }, description: "Changed paths to include." },
-      linesPerFile: { type: "integer", description: "Head lines per path (default 60).", minimum: 10 },
+      linesPerFile: {
+        type: "integer",
+        description: "Head lines per path (default 60).",
+        minimum: 10,
+        maximum: 2000,
+      },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
     },
@@ -1073,7 +1079,10 @@ const reviewTool: ToolSpec = {
     const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
-    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 60);
+    const linesPerFile = Math.max(
+      10,
+      Math.min(2000, typeof args.linesPerFile === "number" ? args.linesPerFile : 60)
+    );
     const read = readManifest(workspace);
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
 
@@ -1086,6 +1095,9 @@ const reviewTool: ToolSpec = {
     const report = auditSnapshot({
       snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
       repoDir: workspace.root,
+      ...(workspace.config.customSecretRules === undefined || workspace.config.customSecretRules.length === 0
+        ? {}
+        : { secretRules: workspace.config.customSecretRules }),
     });
     const failed = report.checks.filter((check) => check.status === "fail").map((check) => check.id + ": " + check.detail);
 
@@ -1116,8 +1128,17 @@ const reviewTool: ToolSpec = {
         continue;
       }
       const window = windowText(section.body, 1, linesPerFile);
-      files.push({ path: file.relativePath, part: file.part, lines: window.text === "" ? 0 : window.text.split("\n").length });
-      body.push("### " + file.relativePath + " (" + file.part + ")", window.text);
+      const clipped = capResultText(window.text);
+      files.push({
+        path: file.relativePath,
+        part: file.part,
+        lines: clipped.text === "" ? 0 : clipped.text.split("\n").length,
+        ...(clipped.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      });
+      body.push(
+        "### " + file.relativePath + " (" + file.part + (clipped.clipped ? ", first 64 KiB" : "") + ")",
+        clipped.text
+      );
     }
 
     // A route method is the shape of the change a reviewer most needs to see, and the summary
@@ -1140,9 +1161,25 @@ const reviewTool: ToolSpec = {
     if (routes.length > 0) {
       summary.push("Routes touched: " + routes.map((route) => route.methods.join("/") + " " + route.path).join("; "));
     }
+    const combined = summary.join("\n") + (body.length === 0 ? "" : "\n\n" + body.join("\n\n"));
+    // `snapshot_review` was the one body-rendering tool with no cap. A single long line could
+    // return a multi-megabyte payload and flood the client's context window.
+    const capped = capResultText(combined);
+    const notice = "\n\n[response capped at 64 KiB; narrow paths or linesPerFile]";
+    const text = capped.clipped
+      ? truncateToBytes(combined, MAX_RESULT_BYTES - Buffer.byteLength(notice, "utf8")).content + notice
+      : combined;
     return {
-      text: summary.join("\n") + (body.length === 0 ? "" : "\n\n" + body.join("\n\n")),
-      structured: { current: validation.valid, score: report.score, failed, files, missing, routes },
+      text,
+      structured: {
+        current: validation.valid,
+        score: report.score,
+        failed,
+        files,
+        missing,
+        routes,
+        ...(capped.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      },
     };
   },
 };
@@ -1898,6 +1935,11 @@ const healthTool: ToolSpec = {
     const report = auditSnapshot({
       snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
       repoDir: workspace.root,
+      // The audit adds the built-in patterns itself. Passing the project's full rule list made
+      // every built-in run twice; passing none made a project-defined token shape invisible.
+      ...(workspace.config.customSecretRules === undefined || workspace.config.customSecretRules.length === 0
+        ? {}
+        : { secretRules: workspace.config.customSecretRules }),
       ...(typeof args.maxScanBytes === "number" ? { maxScanBytes: args.maxScanBytes } : {}),
       ...(args.deep === true ? { deep: true } : {}),
     });
@@ -2030,7 +2072,7 @@ const planTool: ToolSpec = {
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
       maxPartBytes: {
-        type: "string",
+        type: ["string", "number"],
         description:
           'Byte budget per part, for example 307200 or "300k". Defaults to the project configuration.',
       },
@@ -2051,6 +2093,10 @@ const planTool: ToolSpec = {
   },
   annotations: READ_ONLY,
   async handler(args, context) {
+    // Register before the first await. A cancellation notification is read on the main loop while
+    // `prepare` loads the config; registering after it dropped exactly those cancellations.
+    const controller = new AbortController();
+    context.onCancel?.(() => controller.abort());
     const prepared = await prepare(args, context, workspaceOverrides(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
@@ -2059,14 +2105,21 @@ const planTool: ToolSpec = {
     // parses every file in the repository, so a synchronous one stops this server answering
     // `ping` for seconds — the failure the worker was added to fix. It was applied to one of the
     // two generate call sites.
-    const controller = new AbortController();
-    context.onCancel?.(() => controller.abort());
     const result = await generateInWorker(workspace.root, workspace.cliOptions, {
       dryRun: true,
       signal: controller.signal,
+      config: workspace.sourceConfig,
+      configLoaded: true,
+      noConfig: workspace.cliOptions.noConfig === true,
     });
     if (!result.ok) return failure(result.message);
     const summary = result.summary;
+    if (summary.validationStatus === "failed") {
+      return failure(
+        "The dry run would write an invalid snapshot:\n- " +
+          summary.validationErrors.slice(0, 10).join("\n- ")
+      );
+    }
     const topReasons = summary.skipReasons;
 
     const lines = [
@@ -2117,7 +2170,7 @@ const generateTool: ToolSpec = {
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
       maxPartBytes: {
-        type: "string",
+        type: ["string", "number"],
         description:
           'Byte budget per part, for example 307200 or "300k". Defaults to the project configuration.',
       },
@@ -2174,10 +2227,16 @@ const generateTool: ToolSpec = {
       skipped: { type: "integer" },
       parts: { type: "integer" },
       emittedBytes: { type: "integer" },
+      validationStatus: { type: "string", enum: ["passed", "failed"] },
+      validationErrors: { type: "array", items: { type: "string" } },
     },
   },
   annotations: WRITES,
   async handler(args, context) {
+    // The config load is an await; a client can cancel during it. Register first so that
+    // notification reaches this call instead of disappearing before the worker exists.
+    const controller = new AbortController();
+    context.onCancel?.(() => controller.abort());
     const prepared = await prepare(args, context, workspaceOverrides(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
@@ -2186,8 +2245,6 @@ const generateTool: ToolSpec = {
     // seconds on a large repository, and a client with a socket timeout then reports a working
     // tool call as a dead server.
     context.notify?.({ message: "generating", progress: 1, total: 2 });
-    const controller = new AbortController();
-    context.onCancel?.(() => controller.abort());
     const reportOptions = {
       ...(args.includeDiffs === true ? { includeDiffs: true as const } : {}),
       ...(typeof args.includeLogs === "number" ? { includeLogs: args.includeLogs } : {}),
@@ -2219,7 +2276,17 @@ const generateTool: ToolSpec = {
     const result = await generateInWorker(
       workspace.root,
       { ...workspace.cliOptions, ...reportOptions },
-      { signal: controller.signal, narrow, runId: randomUUID(), lockRoots }
+      {
+        signal: controller.signal,
+        narrow,
+        runId: randomUUID(),
+        lockRoots,
+        // Hand the already-checked config to the worker. Reloading it there opened a TOCTOU window
+        // in which the repository could replace the config after `prepare` accepted it.
+        config: workspace.sourceConfig,
+        configLoaded: true,
+        noConfig: workspace.cliOptions.noConfig === true,
+      }
     );
     if (!result.ok) return failure(result.message);
     context.notify?.({ message: "writing the snapshot", progress: 2, total: 2 });
@@ -2228,6 +2295,7 @@ const generateTool: ToolSpec = {
     // cannot be served a snapshot from before this write on a filesystem with coarse mtimes.
     forgetManifest(manifestPathFor(workspace));
 
+    const validationFailed = summary.validationStatus === "failed";
     const written = relativeFor(workspace, path.resolve(workspace.root, workspace.config.outDir));
     const lines = [
       `Wrote ${written}/`,
@@ -2240,9 +2308,16 @@ const generateTool: ToolSpec = {
       lines.push(`Warnings (${summary.warnings.length}):`);
       for (const warning of summary.warnings.slice(0, 5)) lines.push(`  - ${warning}`);
     }
+    if (validationFailed) {
+      lines.push(
+        `Validation failed (${summary.validationErrors.length} error(s)): the snapshot was written but is not trustworthy.`
+      );
+      for (const error of summary.validationErrors.slice(0, 5)) lines.push(`  - ${error}`);
+    }
 
     return {
       text: lines.join("\n"),
+      isError: validationFailed ? true : undefined,
       structured: {
         fingerprint: summary.fingerprint,
         files: summary.totalFiles,
@@ -2252,6 +2327,8 @@ const generateTool: ToolSpec = {
         outDir: written,
         partFiles: summary.parts.map((part) => part.filename),
         warningCount: summary.warnings.length,
+        validationStatus: summary.validationStatus,
+        validationErrors: summary.validationErrors.slice(0, 10),
       },
     };
   },
@@ -2311,8 +2388,49 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
       : configured(key)
         ? current
         : (recordedValue ?? current);
+  // A token ceiling is converted into a byte ceiling before the run: 32k tokens means 131,072
+  // bytes, and that number also caps largeFileBytes and budgets.default. Reconstructing only
+  // maxPartTokens left the other three at the current (un-narrowed) values, so a freshly generated
+  // `--max-part-tokens` snapshot failed its own validate with four configuration mismatches.
+  const recordedTokensOnly =
+    cli.maxPartTokens === undefined && !configured("maxPartTokens")
+      ? recorded?.maxPartTokens
+      : undefined;
+  const adoptedMaxPartBytes =
+    recordedTokensOnly === undefined
+      ? workspace.config.maxPartBytes
+      : Math.min(
+          workspace.config.maxPartBytes,
+          recorded?.maxPartBytes ?? workspace.config.maxPartBytes
+        );
+  const adoptedLargeFileBytes =
+    recordedTokensOnly === undefined || configured("largeFileBytes")
+      ? workspace.config.largeFileBytes
+      : Math.min(
+          workspace.config.largeFileBytes,
+          recorded?.largeFileBytes ?? workspace.config.largeFileBytes
+        );
+  const adoptedBudgets =
+    recordedTokensOnly === undefined
+      ? workspace.config.budgets
+      : {
+          default: Math.min(workspace.config.budgets.default, adoptedMaxPartBytes),
+          byLayer: Object.fromEntries(
+            Object.entries(workspace.config.budgets.byLayer).map(([name, bytes]) => [
+              name,
+              Math.min(bytes, adoptedMaxPartBytes),
+            ])
+          ),
+        };
   return {
     ...workspace.config,
+    ...(adoptedMaxPartBytes === workspace.config.maxPartBytes
+      ? {}
+      : { maxPartBytes: adoptedMaxPartBytes }),
+    ...(adoptedLargeFileBytes === workspace.config.largeFileBytes
+      ? {}
+      : { largeFileBytes: adoptedLargeFileBytes }),
+    budgets: adoptedBudgets,
     ...(artifactOverride ? { artifacts } : {}),
     ...(cli.stripComments === true || configured("stripComments") || recorded?.stripComments !== undefined
       ? { stripComments: choose("stripComments", recorded?.stripComments, workspace.config.stripComments, cli.stripComments === true ? true : undefined) }
@@ -2927,7 +3045,10 @@ const readTool: ToolSpec = {
         ...(clippedInsideLine
           ? { reason: "line exceeds the result limit; its remainder is not reachable by fromLine" }
           : {}),
-        nextFromLine: moreRemain ? window.fromLine + returnedLines : null,
+        // Declared as an integer, so `null` on every complete read failed clients that validate
+        // structuredContent against the outputSchema. Absence is the correct signal for "no next
+        // page"; the field is not required.
+        ...(moreRemain ? { nextFromLine: window.fromLine + returnedLines } : {}),
         sha256: entry.hashSha256,
       },
     };
@@ -3028,11 +3149,11 @@ const TOOL_COSTS: Record<string, ToolCost> = {
   snapshot_answer: "medium",
   snapshot_plan: "expensive",
   snapshot_generate: "expensive",
-  snapshot_validate: "medium",
+  snapshot_validate: "expensive",
   snapshot_locate: "cheap",
   snapshot_dependents: "cheap",
   snapshot_read: "medium",
-  snapshot_explain: "cheap",
+  snapshot_explain: "expensive",
 };
 
 export function buildTools(): McpTool[] {

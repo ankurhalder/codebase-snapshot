@@ -1,6 +1,6 @@
 {
   "name": "codebase-snapshot",
-  "version": "0.20.8",
+  "version": "0.20.9",
   "description": "Turn a repository into LLM-ready Markdown under a hard byte budget: a manifest of every included and skipped file, secret redaction, drift validation, and an MCP server for Claude, ChatGPT and Cursor.",
   "keywords": [
     "codebase-snapshot",

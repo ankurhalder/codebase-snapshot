@@ -43,50 +43,68 @@ function checkValue(path: string, schema: JsonSchema, value: unknown): string[] 
     return [`"${path}" must be one of: ${schema.enum.join(", ")}`];
   }
 
-  switch (schema.type) {
-    case "string": {
-      if (typeof value !== "string") return [`"${path}" must be a string`];
-      const problems: string[] = [];
-      if (schema.minLength !== undefined && value.length < schema.minLength) {
-        problems.push(`"${path}" must be at least ${schema.minLength} character(s)`);
-      }
-      if (schema.maxLength !== undefined && value.length > schema.maxLength) {
-        problems.push(`"${path}" must be at most ${schema.maxLength} character(s)`);
-      }
-      return problems;
+  const declared: readonly string[] =
+    schema.type === undefined ? [] : Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (declared.length > 0 && !declared.some((type) => matchesType(type, value))) {
+    // Preserve the sequence callers learned: an integer field first says "must be a number" for a
+    // non-number, and only a fractional number says "must be an integer".
+    if (declared.length === 1 && declared[0] === "integer" && typeof value !== "number") {
+      return [`"${path}" must be a number`];
     }
-    case "number":
-    case "integer": {
-      if (typeof value !== "number" || Number.isNaN(value)) {
-        return [`"${path}" must be a number`];
-      }
-      if (schema.type === "integer" && !Number.isInteger(value)) {
-        return [`"${path}" must be an integer`];
-      }
-      const problems: string[] = [];
-      if (schema.minimum !== undefined && value < schema.minimum) {
-        problems.push(`"${path}" must be >= ${schema.minimum}`);
-      }
-      if (schema.maximum !== undefined && value > schema.maximum) {
-        problems.push(`"${path}" must be <= ${schema.maximum}`);
-      }
-      return problems;
+    const article = (type: string): string =>
+      type === "integer" || type === "object" || type === "array" ? `an ${type}` : `a ${type}`;
+    return [`"${path}" must be ${declared.map(article).join(" or ")}`];
+  }
+
+  const problems: string[] = [];
+  if (declared.includes("string") && typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < schema.minLength) {
+      problems.push(`"${path}" must be at least ${schema.minLength} character(s)`);
     }
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+      problems.push(`"${path}" must be at most ${schema.maxLength} character(s)`);
+    }
+  }
+  if (
+    (declared.includes("number") || declared.includes("integer")) &&
+    typeof value === "number" &&
+    !Number.isNaN(value)
+  ) {
+    if (declared.includes("integer") && !declared.includes("number") && !Number.isInteger(value)) {
+      problems.push(`"${path}" must be an integer`);
+    }
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      problems.push(`"${path}" must be >= ${schema.minimum}`);
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      problems.push(`"${path}" must be <= ${schema.maximum}`);
+    }
+  }
+  if (declared.includes("array") && Array.isArray(value) && schema.items) {
+    value.forEach((item, index) => {
+      problems.push(...checkValue(`${path}[${index}]`, schema.items as JsonSchema, item));
+    });
+  }
+  return problems;
+}
+
+/** True when a value is one of the JSON types the schema names. */
+function matchesType(type: string, value: unknown): boolean {
+  switch (type) {
+    case "string":
+      return typeof value === "string";
     case "boolean":
-      return typeof value === "boolean" ? [] : [`"${path}" must be a boolean`];
-    case "array": {
-      if (!Array.isArray(value)) return [`"${path}" must be an array`];
-      if (!schema.items) return [];
-      const problems: string[] = [];
-      value.forEach((item, index) => {
-        problems.push(...checkValue(`${path}[${index}]`, schema.items as JsonSchema, item));
-      });
-      return problems;
-    }
+      return typeof value === "boolean";
+    case "number":
+      return typeof value === "number" && !Number.isNaN(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "array":
+      return Array.isArray(value);
     case "object":
-      return isJsonObject(value) ? [] : [`"${path}" must be an object`];
+      return isJsonObject(value);
     default:
-      return [];
+      return false;
   }
 }
 
@@ -123,7 +141,12 @@ export function coerceNumericStrings(schema: InputSchema, value: JsonObject): Js
   for (const [key, propertySchema] of Object.entries(schema.properties)) {
     const raw = out[key];
     if (typeof raw !== "string") continue;
-    if (propertySchema.type !== "number" && propertySchema.type !== "integer") continue;
+    const declared = Array.isArray(propertySchema.type)
+      ? propertySchema.type
+      : propertySchema.type === undefined
+        ? []
+        : [propertySchema.type];
+    if (!declared.includes("number") && !declared.includes("integer")) continue;
     if (raw.trim().length === 0) continue;
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) out[key] = parsed;

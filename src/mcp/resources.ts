@@ -127,7 +127,10 @@ function formatBytes(bytes: number): string {
 async function workspaceFor(context: ToolContext): Promise<Workspace | { error: string }> {
   const root = resolveRoot(undefined, context);
   if (!root.ok) return { error: root.message };
-  const opened = await openWorkspace(root.root, {}, undefined, { allowExecutableConfig: false });
+  const opened = await openWorkspace(root.root, {}, undefined, {
+    allowExecutableConfig: false,
+    ...(context.noConfig === true ? { noConfig: true } : {}),
+  });
   if (!opened.ok) return { error: opened.message };
   return opened.workspace;
 }
@@ -269,7 +272,15 @@ export function buildResourceProvider(): ResourceProvider {
       }
 
       const workspace = await workspaceFor(context);
-      if ("error" in workspace) return null;
+      if ("error" in workspace) {
+        // A known resource whose repository cannot be opened is "this snapshot does not contain
+        // it", not "the URI is unknown". The old `null` became -32602 even though
+        // resources/list had advertised the manifest all along.
+        throw new ResourceNotFoundError(
+          uri,
+          "The repository could not be opened, so this resource is unavailable: " + workspace.error
+        );
+      }
       const snapshotDir = path.resolve(workspace.root, workspace.config.outDir);
 
       if (uri === PROMPT_URI) {
@@ -310,9 +321,17 @@ export function buildResourceProvider(): ResourceProvider {
 
       if (uri === "snapshot://manifest") {
         const read = readManifest(workspace);
-        if (!read.ok) return null;
+        if (!read.ok) {
+          throw new ResourceNotFoundError(uri, read.message);
+        }
         const confined = readConfinedText(path.dirname(read.file), path.basename(read.file));
-        if (!confined.ok) return null;
+        if (!confined.ok) {
+          throw new ResourceNotFoundError(
+            uri,
+            "This snapshot's manifest is not a readable regular file inside the snapshot: " +
+              confined.message
+          );
+        }
         return {
           uri,
           mimeType: "application/json",
@@ -323,15 +342,31 @@ export function buildResourceProvider(): ResourceProvider {
       const partMatch = PART_URI.exec(uri);
       if (partMatch) {
         const read = readManifest(workspace);
-        if (!read.ok) return null;
+        if (!read.ok) {
+          throw new ResourceNotFoundError(uri, read.message);
+        }
         const index = Number(partMatch[1]);
         const part = read.manifest.parts.find((candidate) => candidate.index === index);
-        if (!part) return null;
+        if (!part) {
+          throw new ResourceNotFoundError(
+            uri,
+            "This snapshot has " +
+              read.manifest.parts.length +
+              " part(s); part " +
+              index +
+              " does not exist. Run snapshot_status or read snapshot://manifest to see what is present."
+          );
+        }
         // Confined: `parts[].filename` comes out of a file on disk. `readManifest` rejects a name
         // that is not bare, so this is the second of two answers to the same question — and the
         // cheap one, at the only call site where being wrong reads arbitrary files.
         const partPath = partPathFor(workspace, part.filename);
-        if (partPath === null) return null;
+        if (partPath === null) {
+          throw new ResourceNotFoundError(
+            uri,
+            part.filename + " is recorded in the manifest but does not resolve to a regular part file."
+          );
+        }
         // The recorded size is a fact from the manifest, but the file on disk is what would be
         // returned, so the refusal is decided by the file. Checking before the read means a part
         // far over the limit never has to be loaded into memory to be refused.
@@ -339,11 +374,13 @@ export function buildResourceProvider(): ResourceProvider {
         try {
           partBytes = fs.statSync(partPath).size;
         } catch {
-          return null;
+          throw new ResourceNotFoundError(uri, part.filename + " is missing from this snapshot.");
         }
         if (partBytes > MAX_RESOURCE_BYTES) refuseTooLarge(uri, partBytes, PART_ADVICE);
         const text = readFileIfPresent(partPath);
-        if (text === null) return null;
+        if (text === null) {
+          throw new ResourceNotFoundError(uri, part.filename + " could not be read.");
+        }
         return { uri, mimeType: "text/markdown", text: ensureSingleRead(uri, text, PART_ADVICE) };
       }
 

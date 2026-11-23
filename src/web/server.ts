@@ -2,10 +2,9 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { loadConfigFileDetailed } from "../config.js";
-import { createServer } from "../mcp/run.js";
+import { assertServerSafeConfig, loadConfigFileDetailed } from "../config.js";
+import { createMcpHttpHandler } from "../mcp/http.js";
 import { generateInWorker } from "../mcp/generate-worker.js";
-import { buildTools } from "../mcp/tools.js";
 import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
@@ -52,8 +51,6 @@ export interface ServeHandle {
 const DEFAULT_PORT = 4788;
 const MAX_BODY = 64 * 1024;
 const MAX_PREVIEW = 64 * 1024;
-/** Same admission bound as the MCP HTTP transport: a browser tab must not spawn a worker per click. */
-const MAX_MCP_IN_FLIGHT = 4;
 
 function isLoopback(origin: string): boolean {
   try {
@@ -72,12 +69,15 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   if (token === null && !["127.0.0.1", "localhost", "::1"].includes(host)) {
     throw new Error("Refusing to serve " + host + " without a token.");
   }
-  const createMcp = () => createServer({ cwd: options.cwd, log });
-  // MCP session state (era, pending cancellations) belongs to one client. One server shared by
-  // every socket let client A's server/discover force client B's legacy initialize to fail, and
-  // let request id 1 in one client cancel request id 1 in another. A per-socket server is the
-  // smallest state boundary the HTTP transport can honestly provide.
-  const toolCount = buildTools().length;
+  // One mountable MCP transport, the same one `mcp --http` uses. `serve` used to carry a
+  // per-socket copy with no session header, no CORS header for it, and no /sse or /messages.
+  const mcp = createMcpHttpHandler({
+    cwd: options.cwd,
+    token,
+    maxBodyBytes: 2 * 1024 * 1024,
+    log,
+  });
+  const toolCount = mcp.toolCount;
   /** Bound the browser API's request rate; one slow scanner should not starve every other route. */
   const rateWindows = new Map<string, { count: number; resetAt: number }>();
   const rateLimited = (request: http.IncomingMessage): boolean => {
@@ -95,18 +95,8 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
     window.count += 1;
     return false;
   };
-  const mcpPerSocket = new WeakMap<object, ReturnType<typeof createMcp>>();
-  const mcpFor = (socket: object): ReturnType<typeof createMcp> => {
-    let server = mcpPerSocket.get(socket);
-    if (server === undefined) {
-      server = createMcp();
-      mcpPerSocket.set(socket, server);
-    }
-    return server;
-  };
   /** Clones made by this process; removed when it closes, because the page can still be reading them. */
   const temporaryClones = new Set<string>();
-  let mcpInFlight = 0;
 
   /**
    * Directories this server may read from: the working directory it was started for, plus the
@@ -181,6 +171,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   };
 
   const server = http.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    // The shared MCP handler owns /mcp, /sse and /messages, including their auth, CORS and session
+    // headers. Mount it before the browser API's token gate so an EventSource-style client can
+    // authenticate /sse with ?token= exactly as it can on `mcp --http`.
+    if (url.pathname === "/mcp" || url.pathname === "/sse" || url.pathname === "/messages") {
+      if (mcp.handle(request, response)) return;
+    }
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     const cors: Record<string, string> = {};
     if (origin !== undefined) {
@@ -232,77 +229,6 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
 
     if (!authorized(request)) {
       send(401, { error: "unauthorized" }, { "www-authenticate": 'Bearer realm="codebase-snapshot"' });
-      return;
-    }
-
-    const url = new URL(request.url ?? "/", "http://localhost");
-    if (request.method === "POST" && (request.url === "/mcp" || (request.url ?? "").startsWith("/mcp?"))) {
-      let received = 0;
-      let tooLarge = false;
-      const chunks: Buffer[] = [];
-      request.on("data", (chunk: Buffer) => {
-        if (tooLarge) return;
-        received += chunk.length;
-        if (received > 2 * 1024 * 1024) {
-          tooLarge = true;
-          request.destroy();
-          send(413, { error: "request body too large" });
-          return;
-        }
-        chunks.push(chunk);
-      });
-      request.on("end", () => {
-        if (tooLarge) return;
-        void (async () => {
-          let message: unknown;
-          try {
-            message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          } catch (error) {
-            send(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: String(error) } });
-            return;
-          }
-          const batch = Array.isArray(message) ? message : [message];
-          if (batch.length > 100) {
-            send(400, { error: "JSON-RPC batch is limited to 100 messages" });
-            return;
-          }
-          const server = mcpFor(request.socket);
-          const answers = [];
-          for (const item of batch) {
-            const gated =
-              item !== null &&
-              typeof item === "object" &&
-              (item as { method?: unknown }).method === "tools/call";
-            if (gated && mcpInFlight >= MAX_MCP_IN_FLIGHT) {
-              answers.push({
-                jsonrpc: "2.0",
-                id: (item as { id?: unknown }).id ?? null,
-                error: {
-                  code: -32001,
-                  message: "server busy: too many tool calls are already in flight",
-                },
-              });
-              continue;
-            }
-            if (gated) mcpInFlight += 1;
-            try {
-              const answer = await server.handle(item);
-              if (answer !== null) answers.push(answer);
-            } finally {
-              if (gated) mcpInFlight -= 1;
-            }
-          }
-          if (answers.length === 0) send(202, "");
-          else send(200, Array.isArray(message) ? answers : answers[0]);
-        })().catch((error: unknown) => {
-          log("serve: " + (error as Error).message);
-          try {
-            send(500, { error: "internal error" });
-          } catch {
-            // The response is already gone.
-          }
-        });
-      });
       return;
     }
 
@@ -411,10 +337,16 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           // sets noConfig for --remote; serve loaded it, so a hostile package.json-adjacent config
           // could supply a catastrophic custom secret regex and freeze the server.
           const loaded = isRemote
-            ? { config: null, errors: [] as string[] }
+            ? { config: null, file: null, errors: [] as string[] }
             : await loadConfigFileDetailed(target, { allowExecutableConfig: false });
           if (loaded.errors.length > 0) {
             send(400, { error: loaded.errors.join("; ") });
+            return;
+          }
+          try {
+            assertServerSafeConfig(loaded.config, loaded.file ?? target);
+          } catch (error) {
+            send(400, { error: error instanceof Error ? error.message : String(error) });
             return;
           }
           // A remote repository's config is data from the repository, not a decision about this
@@ -457,6 +389,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
               { cwd: target },
               {
                 config: runConfig,
+                configLoaded: true,
                 ...(provenance === undefined ? {} : { source: provenance }),
                 ...(mode === "slice" && question.length >= 3
                   ? { narrow: { slice: { question } } }
@@ -649,16 +582,18 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
     port: actualPort,
     host,
     token,
-    close: () =>
-      new Promise<void>((resolve) => {
-        for (const directory of temporaryClones) {
-          try {
-            fs.rmSync(directory, { recursive: true, force: true });
-          } catch {
-            // A leftover temp tree is better than a crash on shutdown.
-          }
+    close: async () => {
+      await mcp.close();
+      for (const directory of temporaryClones) {
+        try {
+          fs.rmSync(directory, { recursive: true, force: true });
+        } catch {
+          // A leftover temp tree is better than a crash on shutdown.
         }
+      }
+      await new Promise<void>((resolve) => {
         server.close(() => resolve());
-      }),
+      });
+    },
   };
 }

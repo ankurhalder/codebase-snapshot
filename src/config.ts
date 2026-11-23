@@ -14,6 +14,7 @@ import {
 } from "./scanner/files.js";
 import { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
 import { compileSecretRules } from "./security/redact.js";
+import { unsafeRegExpReason } from "./security/regex.js";
 import { bytesForTokens } from "./tokenize.js";
 import type {
   ByteSize,
@@ -42,6 +43,65 @@ const CONFIG_FILENAMES = [
   ".snapshotrc.json",
   ".snapshotrc",
 ];
+
+/**
+ * Rejects configuration that is not safe for a server that answers untrusted prompts.
+ *
+ * The CLI may honor `includeSensitiveFiles` and a deliberately broad custom pattern: the user
+ * invoked the repository's own command. An MCP or `serve` process cannot make that assumption —
+ * the config and the request can both come from a repository the user is reviewing. The check is
+ * a refusal rather than a silent override, because a setting that was ignored and a setting that
+ * was applied must never look alike.
+ */
+export function assertServerSafeConfig(
+  config: SnapshotConfig | null,
+  source = "The configuration"
+): void {
+  if (config === null) return;
+  if (config.includeSensitiveFiles === true) {
+    throw new Error(
+      source +
+        " enables includeSensitiveFiles. The MCP and serve transports never emit sensitive files; " +
+        "remove that setting or run the CLI directly."
+    );
+  }
+  if (config.secrets !== undefined && config.secrets !== null) {
+    if (config.secrets.disableDefaultPatterns === true) {
+      throw new Error(
+        source +
+          " disables the default secret patterns. The MCP and serve transports always keep the " +
+          "built-in secret rules; remove that setting or run the CLI directly."
+      );
+    }
+  }
+
+  const rules: unknown[] = [];
+  if (Array.isArray(config.secrets?.customPatterns)) rules.push(...config.secrets.customPatterns);
+  if (Array.isArray(config.secretRules)) rules.push(...config.secretRules);
+  for (let index = 0; index < rules.length; index += 1) {
+    const entry = rules[index];
+    let pattern: string | null = null;
+    if (typeof entry === "string") pattern = entry;
+    else if (entry instanceof RegExp) pattern = entry.source;
+    else if (entry !== null && typeof entry === "object" && "pattern" in entry) {
+      const candidate = (entry as { pattern?: unknown }).pattern;
+      if (typeof candidate === "string") pattern = candidate;
+      else if (candidate instanceof RegExp) pattern = candidate.source;
+    }
+    if (pattern === null) continue;
+    const reason = unsafeRegExpReason(pattern);
+    if (reason !== null) {
+      throw new Error(
+        source +
+          " contains an unsafe custom secret regex (" +
+          reason +
+          "). The MCP and serve transports refuse patterns that can consume the event loop; " +
+          "narrow the rule or run the CLI directly."
+      );
+    }
+  }
+}
+
 
 /**
  * Where a configuration would be read from, without loading it.
@@ -277,6 +337,7 @@ export function normalizeResolvedConfig(
     ...(config.brief === undefined ? {} : { brief: config.brief }),
     includeMonolith: artifacts.monolith,
     secretRules: compileSecretRules(config.secretRules),
+    customSecretRules: config.customSecretRules ?? [],
     artifacts,
     include: resolveInclude(config.include),
     preset: typeof config.preset === "string" ? config.preset : "generic",
@@ -633,6 +694,8 @@ export async function loadConfigFileDetailed(
   const warnings: string[] = [];
   const errors: string[] = [];
   const configDirectories: string[] = [];
+  /** Executable-config refusals that a later, usable JSON config makes irrelevant. */
+  const executableRefusals = new Set<string>();
 
   for (const filename of CONFIG_FILENAMES) {
     const fullPath = path.join(cwd, filename);
@@ -662,6 +725,14 @@ export async function loadConfigFileDetailed(
           );
         }
         assertKnownConfigKeys(config as Record<string, unknown>, fullPath);
+        // An executable config earlier in the list was refused, but this JSON file is a complete,
+        // inert configuration. Keeping the refusal as an error made the documented remedy
+        // ("export the settings to snapshot.config.json") impossible: the error was already in
+        // `errors`, so openWorkspace failed even though the JSON loaded cleanly.
+        for (const refusal of executableRefusals) {
+          const at = errors.indexOf(refusal);
+          if (at !== -1) errors.splice(at, 1);
+        }
         return { config: attachConfigDir(config, fullPath), file: fullPath, warnings, errors };
       } catch (err) {
         // A read failure (an `EISDIR` from a config that is a directory, a permission error) comes
@@ -686,6 +757,7 @@ export async function loadConfigFileDetailed(
         `repository code. Export the same settings from snapshot.config.json instead.`;
       warnings.push(message);
       errors.push(message);
+      executableRefusals.add(message);
       continue;
     }
 
@@ -735,6 +807,10 @@ export async function loadConfigFileDetailed(
           snapshotKey as Record<string, unknown>,
           `${pkgJsonPath} (the "snapshot" key)`
         );
+        for (const refusal of executableRefusals) {
+          const at = errors.indexOf(refusal);
+          if (at !== -1) errors.splice(at, 1);
+        }
         return {
           config: attachConfigDir(snapshotKey as SnapshotConfig, pkgJsonPath),
           file: pkgJsonPath,
@@ -1772,6 +1848,7 @@ export function resolveConfig(
       "maxMonolithBytes"
     ),
     includeSensitiveFiles,
+    customSecretRules: compiledCustomRules,
     attachmentSlots: resolveAttachmentSlots(
       cliOptions?.attachmentSlots ?? userConfig?.attachmentSlots
     ),

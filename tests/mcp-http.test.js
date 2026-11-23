@@ -246,7 +246,7 @@ test("/metrics counts every refusal and the rate limit it applies", async (t) =>
   });
   assert.equal(crossOrigin.status, 403);
   const wrongMethod = await fetch(transport.url, { method: "DELETE", headers: auth });
-  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.status, 400, "DELETE without a session id is a bad request");
 
   let limited = 0;
   for (let index = 0; index < 90; index += 1) {

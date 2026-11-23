@@ -13,7 +13,23 @@
  * the exception expensive. A caller can narrow the search instead.
  */
 const MAX_PATTERN_LENGTH = 256;
-const MAX_QUANTIFIER_REPEAT = 10_000;
+/**
+ * A bounded quantifier is not automatically cheap: `a{1,10000}` explores 10,000 states per
+ * starting position, and chaining a handful of them turns that into a polynomial that a long line
+ * can make effectively unbounded. The ceiling is deliberately far below the previous 10,000.
+ */
+const MAX_QUANTIFIER_REPEAT = 200;
+/**
+ * Every atom can carry one repetition, and a second one is already enough to build a two-level
+ * backtracking stack. Beyond two, the pattern is a denial-of-service attempt rather than a search.
+ */
+const MAX_REPETITIONS = 2;
+/**
+ * The product of bounded repetition widths. Two independent `{1,200}` atoms can still explore
+ * 40,000 states per starting position, which a long line turns into a quadratic freeze even though
+ * neither quantifier alone is unreasonable. The product is the budget that catches that chain.
+ */
+const MAX_REPETITION_PRODUCT = 1_000;
 
 /** Returns a human-readable reason the pattern is refused, or null when it may be compiled. */
 export function unsafeRegExpReason(source: string): string | null {
@@ -24,6 +40,8 @@ export function unsafeRegExpReason(source: string): string | null {
 
   let inClass = false;
   let unbounded = 0;
+  let repetitions = 0;
+  let repetitionProduct = 1;
   const groups: Array<{ quantified: boolean; alternation: boolean }> = [];
 
   for (let index = 0; index < source.length; index += 1) {
@@ -84,6 +102,10 @@ export function unsafeRegExpReason(source: string): string | null {
     }
     if (char === "*" || char === "+") {
       unbounded += 1;
+      repetitions += 1;
+      if (repetitions > MAX_REPETITIONS) {
+        return "the pattern chains more repeating quantifiers than the search budget can evaluate safely";
+      }
       const group = groups[groups.length - 1];
       if (group !== undefined) group.quantified = true;
       continue;
@@ -94,14 +116,28 @@ export function unsafeRegExpReason(source: string): string | null {
       const body = source.slice(index + 1, close);
       const match = /^(\d+)(?:,(\d*))?$/.exec(body);
       if (match === null) {
-        index = close;
+        // JavaScript without the `u` flag parses an invalid `{...}` as literal characters. The
+        // previous `index = close` skipped every token inside the braces, so `{z|(.+)+!|}`
+        // was accepted wholesale and then compiled with its catastrophic inner expression intact.
+        // Treat the brace as a literal and keep scanning the interior.
         continue;
       }
-      const max = match[2] === undefined ? Number(match[1]) : match[2] === "" ? Infinity : Number(match[2]);
+      const min = Number(match[1]);
+      const max = match[2] === undefined ? min : match[2] === "" ? Infinity : Number(match[2]);
       if (max > MAX_QUANTIFIER_REPEAT) {
         return "a repetition bound is larger than the search budget can evaluate safely";
       }
       if (max === Infinity) unbounded += 1;
+      if (max > 1) {
+        repetitions += 1;
+        if (repetitions > MAX_REPETITIONS) {
+          return "the pattern chains more repeating quantifiers than the search budget can evaluate safely";
+        }
+        repetitionProduct *= Number.isFinite(max) ? max : 1;
+        if (repetitionProduct > MAX_REPETITION_PRODUCT) {
+          return "the pattern's bounded repetition widths multiply beyond the search budget";
+        }
+      }
       const group = groups[groups.length - 1];
       if (group !== undefined) group.quantified = true;
       index = close;

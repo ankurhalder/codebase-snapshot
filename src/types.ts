@@ -910,6 +910,14 @@ export interface ResolvedSnapshotConfig {
   kinds: KindRule[];
   excludePatterns: string[];
   secretRules: SecretRule[];
+  /**
+   * The custom rules only, separated from the built-ins.
+   *
+   * Health and review already add the default rules themselves. Passing the full `secretRules`
+   * list made every built-in rule run twice, and omitting the custom rules entirely let a project's
+   * own token shape pass a clean audit. This is the half they need.
+   */
+  customSecretRules?: SecretRule[];
 }
 
 export interface CliOptions {

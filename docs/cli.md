@@ -98,7 +98,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.8 (project dependency ^0.20.8)
+   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.9 (project dependency ^0.20.9)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -223,7 +223,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.ts (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.8
+   Added devDependency: codebase-snapshot ^0.20.9
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -275,7 +275,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.ts (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.8
+   Added devDependency: codebase-snapshot ^0.20.9
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -425,8 +425,8 @@ agent](agent.md).
 Ask the npm registry whether a newer release exists, and print the version it compared against:
 
 ```bash
-npx codebase-snapshot@0.20.8 update          # is 0.17.0 still current? print the answer
-npx codebase-snapshot@0.20.8 update --format json
+npx codebase-snapshot@0.20.9 update          # is 0.17.0 still current? print the answer
+npx codebase-snapshot@0.20.9 update --format json
 ```
 
 ```text
@@ -552,7 +552,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--watch` | flag | off | generate | Regenerate on every change until interrupted. Redaction and parsing are cached per file across runs in the same process, keyed on the content hash, so a one-file edit regenerates from that one file instead of from the whole repository. The cache is memory only and is dropped when the process exits. |
 | `--autopilot` | flag | off | generate | Set the project up without asking — config, `.gitignore`, npm scripts, devDependency, install — then generate. Never overwrites an existing config; refuses an empty directory (exit `1`); contradicts `--no-config` (exit `2`). |
 | `--no-install` | flag | off | setup, generate `--autopilot` | Skip the dependency install. Anywhere else it is a usage error, because it would change nothing. |
-| `--no-config` | flag | off | generate, validate, report, explain, diff | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency. |
+| `--no-config` | flag | off | generate, validate, report, explain, diff, mcp | Ignore every `snapshot.config.*` file and run on the built-in defaults. `diff` never loads a config anyway and accepts the flag for consistency; `mcp` uses it when a repository config cannot be read or should not be trusted. |
 | `--discovery <mode>` | enum | `auto` | generate, validate, explain, setup | How files are found: `auto` lists through git when git works and refuses when a `.git` directory cannot be listed; `git` requires git; `walk` scans the tree and reads `.gitignore` files directly. The escape hatch for a broken `.git`. |
 | `--preset <name>` | name | detected | init, setup | Force a preset instead of detecting one. |
 | `--include <globs>` | list | unset | init, setup | Allow-list recorded in the generated config. |

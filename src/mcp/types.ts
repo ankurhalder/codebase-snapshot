@@ -13,6 +13,8 @@ export interface ToolContext {
   cwd: string;
   /** Absolute directories a `root` argument is allowed to resolve into. */
   roots: string[];
+  /** True when `mcp --no-config` asked to ignore every configuration file. */
+  noConfig?: boolean;
   /** Writes one line to stderr. Never stdout, which carries protocol messages only. */
   log: (line: string) => void;
   /**

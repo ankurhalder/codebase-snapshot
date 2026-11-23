@@ -308,24 +308,45 @@ test("F12: two HTTP clients with session ids do not share era or cancellations",
       headers: { "content-type": "application/json", "mcp-session-id": session },
       body: JSON.stringify(body),
     });
-  const legacy = await call("client-a", {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: { protocolVersion: "2025-06-18", capabilities: {} },
+  // Session ids are minted by initialize; a caller-chosen id is a 404 by design. Two
+  // independent initialize calls give the two clients their own state.
+  const legacy = await fetch(transport.url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {} },
+    }),
   });
   assert.equal(legacy.status, 200);
-  const modern = await call("client-b", {
+  const clientA = legacy.headers.get("mcp-session-id");
+  assert.ok(clientA);
+  const modernInit = await fetch(transport.url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {} },
+    }),
+  });
+  assert.equal(modernInit.status, 200);
+  const clientB = modernInit.headers.get("mcp-session-id");
+  assert.ok(clientB);
+  const modern = await call(clientB, {
     jsonrpc: "2.0",
-    id: 2,
+    id: 3,
     method: "server/discover",
     params: {},
   });
   assert.equal(modern.status, 200);
-  const legacyTools = await call("client-a", { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
+  const legacyTools = await call(clientA, { jsonrpc: "2.0", id: 4, method: "tools/list", params: {} });
   assert.equal(legacyTools.status, 200);
   assert.ok((await legacyTools.json()).result.tools.length > 0);
-  const modernTools = await call("client-b", {
+  const modernTools = await call(clientB, {
     jsonrpc: "2.0",
     id: 4,
     method: "tools/list",

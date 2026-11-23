@@ -16,7 +16,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadConfigFileDetailed, parseByteSize, resolveConfig } from "../config.js";
+import { assertServerSafeConfig, loadConfigFileDetailed, parseByteSize, resolveConfig } from "../config.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
 import { readConfinedText } from "../security/confine.js";
 import type { Manifest, ResolvedSnapshotConfig, SnapshotConfig } from "../types.js";
@@ -182,6 +182,8 @@ export interface WorkspaceCliOptions {
   /** Per-run narrowing, as the CLI's `--only` and `--ignore`; the config's lists are the default. */
   only?: string[];
   ignore?: string[];
+  /** True when `mcp --no-config` asked to ignore every config file. */
+  noConfig?: true;
 }
 
 /**
@@ -195,9 +197,12 @@ export async function openWorkspace(
   root: string,
   overrides: WorkspaceOverrides = {},
   allowedRoots?: readonly string[],
-  options: { allowExecutableConfig?: boolean } = {}
+  options: { allowExecutableConfig?: boolean; noConfig?: boolean } = {}
 ): Promise<WorkspaceOutcome> {
-  const loaded = await loadConfigFileDetailed(root, options);
+  const loaded =
+    options.noConfig === true
+      ? { config: null, file: null, warnings: [], errors: [] }
+      : await loadConfigFileDetailed(root, options);
   if (loaded.errors.length > 0) {
     return {
       ok: false,
@@ -206,8 +211,16 @@ export async function openWorkspace(
         "Fix it, or delete it to use the defaults — this server will not silently ignore it.",
     };
   }
+  try {
+    assertServerSafeConfig(loaded.config, loaded.file ?? root);
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
 
-  const cliOptions: WorkspaceCliOptions = { cwd: root };
+  const cliOptions: WorkspaceCliOptions = {
+    cwd: root,
+    ...(options.noConfig === true ? { noConfig: true as const } : {}),
+  };
 
   if (overrides.maxPartBytes !== undefined) {
     const parsed = parseByteSize(overrides.maxPartBytes as number | string);

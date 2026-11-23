@@ -382,7 +382,10 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         break;
     }
 
-    if (!session.ready) {
+    // The modern era has no handshake: a request is complete when it carries valid _meta, and
+    // `server/discover` is optional. Gating it on `ready` made a stateless modern client's first
+    // `tools/list` fail with instructions to call a method that does not exist in its revision.
+    if (!modern && !session.ready) {
       return errorResponse(
         id,
         ERROR_CODES.invalidRequest,
@@ -452,6 +455,9 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       if (decision.kind === "era" && session.era === null) {
         session.era = decision.era;
         session.protocolVersion = decision.version;
+        // A modern notification is a complete stateless message too; subsequent modern requests
+        // must not be told to initialize on a connection that never had a handshake.
+        if (decision.era === "modern") session.ready = true;
       }
       handleNotification(method, named);
       return null;
@@ -467,6 +473,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     if (session.era === null) {
       session.era = decision.era;
       session.protocolVersion = decision.version;
+      if (decision.era === "modern") session.ready = true;
     }
 
     return route(method, id, modern, named);

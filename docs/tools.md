@@ -15,8 +15,9 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```json
   { "name": "snapshot_status", "arguments": {} }
   ```
-- **`snapshot_explain`** — cheap, read-only. Why is a path in or out of the snapshot? Reads the
-  manifest, so a `--slice` drop is reported as `not-selected` with the run's detail.
+- **`snapshot_explain`** — expensive, read-only. Why is a path in or out of the snapshot? It
+  resolves the same scan the generator would use, so a `--slice` drop is reported as
+  `not-selected` with the run's detail.
   ```json
   { "name": "snapshot_explain", "arguments": { "path": "src/index.ts" } }
   ```
@@ -164,7 +165,7 @@ Every tool is read-only unless it says **writes**. Cost is the class `tools/list
   ```json
   { "name": "snapshot_generate", "arguments": { "slice": "how is auth done", "sliceTokens": 20000 } }
   ```
-- **`snapshot_validate`** — medium, read-only. Drift check: files changed or deleted since the
+- **`snapshot_validate`** — expensive, read-only. Drift check: files changed or deleted since the
   snapshot, part damage, bookkeeping, **and the settings the manifest recorded** — a snapshot
   generated with `tokenTree`, `includeDiffs`, `removeEmptyLines` or `skeleton` validates clean
   without re-passing the flags, while a changed config file is still drift.
