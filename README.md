@@ -13,6 +13,7 @@
     <a href="#license"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
     <a href="https://nodejs.org"><img alt="node: 18 or newer" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg"></a>
     <a href="https://ankurhalder.github.io/codebase-snapshot/"><img alt="documentation" src="https://img.shields.io/badge/docs-read-1a7f37"></a>
+    <a href="https://m8ven.ai/mcp/ankurhalder/codebase-snapshot?s=readme"><img alt="M8ven score: independently scored" src="https://m8ven.ai/badge/mcp/ankurhalder/codebase-snapshot?variant=verified"></a>
   </p>
 </div>
 
