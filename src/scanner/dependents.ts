@@ -13,6 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import ts from "typescript";
+import { readConfinedText } from "../security/confine.js";
 
 const RELATIVE_SPECIFIER = /^\.{1,2}\//;
 
@@ -120,9 +121,39 @@ export function tsconfigPathsFor(cwd: string): TsconfigPaths | null {
 
   let value: TsconfigPaths | null = null;
   try {
-    const read = ts.readConfigFile(configPath, ts.sys.readFile);
+    // A tsconfig is repository input. Passing `ts.sys` as the parse host made TypeScript expand
+    // `include` globs with `readDirectory` and follow `extends` with `readFile` across the host:
+    // `include: ["../../**/*"]` froze the MCP main thread before any tool logic ran. The host
+    // below answers only inside the repository, refuses a symlinked file, and returns no
+    // directory entries because only `baseUrl` and `paths` are used here, never `fileNames`.
+    const configRead = readConfinedText(cwd, "tsconfig.json", 4 * 1024 * 1024);
+    if (!configRead.ok) return null;
+    const read = ts.parseConfigFileTextToJson(configPath, configRead.text);
     if (read.error === undefined) {
-      const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, cwd, undefined, configPath);
+      const insideCwd = (file: string): string | null => {
+        const absolute = path.resolve(cwd, file);
+        const relative = path.relative(cwd, absolute);
+        if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+          return null;
+        }
+        return relative;
+      };
+      const parseHost: ts.ParseConfigHost = {
+        useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
+        readDirectory: () => [],
+        fileExists: (file) => {
+          const relative = insideCwd(file);
+          return relative !== null && readConfinedText(cwd, relative).ok;
+        },
+        readFile: (file) => {
+          const relative = insideCwd(file);
+          if (relative === null) return undefined;
+          const text = readConfinedText(cwd, relative);
+          return text.ok ? text.text : undefined;
+        },
+        getDirectories: () => [],
+      };
+      const parsed = ts.parseJsonConfigFileContent(read.config, parseHost, cwd, undefined, configPath);
       const options = parsed.options;
       const baseUrl =
         typeof options.baseUrl === "string" ? repositoryRelative(cwd, options.baseUrl) : null;

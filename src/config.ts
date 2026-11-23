@@ -7,6 +7,8 @@ import { stripJsonComments } from "./ast/structured.js";
 import { parseOwnerBrief } from "./generator/brief.js";
 import { detectPreset, getPreset, listPresetNames, unknownPresetMessage } from "./presets/index.js";
 import {
+  defaultIgnoreReason,
+  globComplexityReason,
   isDiscoveryMode,
   isSensitivePath,
   matchesExclude,
@@ -78,6 +80,16 @@ export function assertServerSafeConfig(
   const rules: unknown[] = [];
   if (Array.isArray(config.secrets?.customPatterns)) rules.push(...config.secrets.customPatterns);
   if (Array.isArray(config.secretRules)) rules.push(...config.secretRules);
+  // Every rule runs on every line, path and summary string. A repository can otherwise supply
+  // tens of thousands of individually valid regexes and make a read-only tool do unbounded work
+  // even though each one passes unsafeRegExpReason.
+  if (rules.length > 64) {
+    throw new Error(
+      source +
+        " defines " + rules.length + " custom secret rules; the MCP and serve transports accept " +
+        "at most 64. Remove rules, or run the CLI directly."
+    );
+  }
   for (let index = 0; index < rules.length; index += 1) {
     const entry = rules[index];
     let pattern: string | null = null;
@@ -754,7 +766,8 @@ export async function loadConfigFileDetailed(
     if (options.allowExecutableConfig === false) {
       const message =
         `${fullPath} was not loaded: it is an executable config, and this server does not run ` +
-        `repository code. Export the same settings from snapshot.config.json instead.`;
+        `repository code. Export the same settings from snapshot.config.json instead, or pass ` +
+        `--no-config to ignore every config file for this server.`;
       warnings.push(message);
       errors.push(message);
       executableRefusals.add(message);
@@ -1150,6 +1163,14 @@ function readConfiguredBrief(cwd: string, value: unknown): OwnerBrief | undefine
         "secrets, so it cannot be used as the owner brief."
     );
   }
+  const ignored = defaultIgnoreReason(posixRelative);
+  if (ignored !== null) {
+    throw new Error(
+      'brief "' + value + '" is in a path the scanner ignores (' + ignored + '). ' +
+        "Repository metadata and dependency trees are not snapshot content, so they cannot be " +
+        "used as the owner brief either."
+    );
+  }
   let text: string;
   try {
     const stats = fs.statSync(filePath);
@@ -1221,7 +1242,14 @@ function resolveExcludePatterns(value: unknown): string[] {
       `\`excludePatterns\` must be an array of glob strings such as ["**/*.test.ts"] (received ${describeValue(value)}).`
     );
   }
-  return value.map((pattern) => pattern.trim()).filter(Boolean);
+  const patterns = value.map((pattern) => pattern.trim()).filter(Boolean);
+  for (const pattern of patterns) {
+    const reason = globComplexityReason(pattern);
+    if (reason !== null) {
+      throw new Error(`\`excludePatterns\` pattern "${pattern}" is too complex to match safely: ${reason}.`);
+    }
+  }
+  return patterns;
 }
 
 /**
@@ -1306,6 +1334,12 @@ function resolveRuleList(value: unknown, kind: "layer" | "kind"): NormalisedRule
     }
     if (typeof match === "string" && match.trim() === "") {
       throw new Error(`${where}.match must not be an empty string.`);
+    }
+    if (typeof match === "string" && /[*?{[]/.test(match)) {
+      const reason = globComplexityReason(match);
+      if (reason !== null) {
+        throw new Error(`${where}.match is too complex to match safely: ${reason}.`);
+      }
     }
 
     return {
@@ -1458,7 +1492,14 @@ function resolveInclude(include: SnapshotConfig["include"] | string[]): string[]
   if (!Array.isArray(include) || include.some((pattern) => typeof pattern !== "string")) {
     throw new Error("`include` must be an array of glob strings.");
   }
-  return include.map((pattern) => pattern.trim()).filter(Boolean);
+  const patterns = include.map((pattern) => pattern.trim()).filter(Boolean);
+  for (const pattern of patterns) {
+    const reason = globComplexityReason(pattern);
+    if (reason !== null) {
+      throw new Error(`\`include\` pattern "${pattern}" is too complex to match safely: ${reason}.`);
+    }
+  }
+  return patterns;
 }
 
 function resolveLayersMode(mode: SnapshotConfig["layersMode"]): "merge" | "replace" {
@@ -1680,9 +1721,10 @@ export function resolveConfig(
   // precedence (an explicit skip outranks a request).
   const requestedArtifacts = {
     ...(userConfig?.artifacts ?? {}),
-    ...(cliOptions?.includeDiffs === true ? { diff: true } : {}),
+    // An explicit `false` turns the artifact off; only `undefined` means "use the config".
+    ...(cliOptions?.includeDiffs !== undefined ? { diff: cliOptions.includeDiffs } : {}),
     ...(cliOptions?.includeLogs !== undefined ? { log: true } : {}),
-    ...(cliOptions?.tokenTree === true ? { tokenTree: true } : {}),
+    ...(cliOptions?.tokenTree !== undefined ? { tokenTree: cliOptions.tokenTree } : {}),
   };
   const artifacts = resolveArtifacts(
     Object.keys(requestedArtifacts).length === 0 ? undefined : requestedArtifacts,
@@ -1870,9 +1912,11 @@ export function resolveConfig(
     // the count, and it used to be read from `logCount` alone — so `--include-logs 3` wrote the
     // default twenty and said three. The number is the request; a request that is accepted and
     // dropped is the silent fallback this project forbids.
-    removeEmptyLines:
-      cliOptions?.removeEmptyLines === true ||
-      strictBoolean(userConfig?.removeEmptyLines, false, "`removeEmptyLines`"),
+    removeEmptyLines: strictBoolean(
+      cliOptions?.removeEmptyLines ?? userConfig?.removeEmptyLines,
+      false,
+      "`removeEmptyLines`"
+    ),
     logCount: resolveLogCount(
       (cliOptions as { logCount?: unknown } | undefined)?.logCount ??
         (cliOptions as { includeLogs?: unknown } | undefined)?.includeLogs ??

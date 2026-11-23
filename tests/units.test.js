@@ -834,10 +834,10 @@ test("runInit writes a config from flags without a TTY", async () => {
   const result = await runInit({ cwd: dir, yes: true, io: quietIO, maxPartBytes: "120k" });
   assert.equal(result.written, true);
   assert.equal(result.preset, "go", "the detected preset is used");
-  assert.ok(result.configText.includes('maxPartBytes: "120k"'));
+  assert.ok(result.configText.includes('"maxPartBytes": "120k"'));
   // One canonical config: the settings the run did not touch are still listed, because
   // this file is where the user goes to change them.
-  assert.ok(result.configText.includes("previewHeadLines:"), "the complete config is the only shape");
+  assert.ok(result.configText.includes('"previewHeadLines"'), "the complete config is the only shape");
 
   const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   assert.equal(pkg.scripts.snapshot, "npx codebase-snapshot generate");
@@ -855,7 +855,7 @@ test("runInit writes a config from flags without a TTY", async () => {
   assert.ok(fs.readFileSync(path.join(dir, ".gitignore"), "utf8").includes("snapshot/"));
   assert.deepEqual(
     fs.readdirSync(dir).sort(),
-    [".gitignore", "BRIEF.md", "go.mod", "package.json", "snapshot.config.mjs"],
+    [".gitignore", "BRIEF.md", "go.mod", "package.json", "snapshot.config.json"],
     "the brief scaffold, but no agent file"
   );
 
@@ -889,7 +889,7 @@ test("runInit --dry-run renders without touching the disk", async () => {
   const result = await runInit({ cwd: dir, yes: true, io: quietIO, dryRun: true });
   assert.equal(result.written, false);
   assert.equal(result.preset, "rust");
-  assert.ok(result.configText.includes('preset: "rust"'));
+  assert.ok(result.configText.includes('"preset": "rust"'));
   assert.equal(fs.existsSync(result.configPath), false);
   assert.equal(fs.existsSync(path.join(dir, ".gitignore")), false);
 
@@ -900,9 +900,10 @@ test("runInit honours the artifact selection", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "init-art-"));
   const result = await runInit({ cwd: dir, yes: true, io: quietIO, onlyArtifacts: ["parts"] });
 
-  assert.ok(/parts: true/.test(result.configText));
-  assert.ok(/audit: false/.test(result.configText));
-  assert.ok(/readme: false/.test(result.configText));
+  const config = JSON.parse(result.configText);
+  assert.equal(config.artifacts.parts, true);
+  assert.equal(config.artifacts.audit, false);
+  assert.equal(config.artifacts.readme, false);
 
   fs.rmSync(dir, { recursive: true, force: true });
 });

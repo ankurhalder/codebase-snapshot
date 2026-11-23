@@ -55,11 +55,11 @@ test("setup --only-artifacts monolith enables the monolith instead of disabling 
   const result = run(dir, "setup", ["--only-artifacts", "monolith"]);
 
   assert.equal(result.code, 0, result.stderr);
-  const text = fs.readFileSync(path.join(dir, configName(dir)), "utf8");
-  assert.match(text, /includeMonolith:\s*true/, "the named artifact must be enabled");
-  assert.match(text, /monolith:\s*true/, "and the artifact switch agrees");
-  assert.match(text, /readme:\s*false/, "everything else is off");
-  assert.match(text, /parts:\s*false/);
+  const config = JSON.parse(fs.readFileSync(path.join(dir, configName(dir)), "utf8"));
+  assert.equal(config.includeMonolith, true, "the named artifact must be enabled");
+  assert.equal(config.artifacts.monolith, true, "and the artifact switch agrees");
+  assert.equal(config.artifacts.readme, false, "everything else is off");
+  assert.equal(config.artifacts.parts, false);
 });
 
 test("init --yes --only-artifacts monolith writes a config that generates something", (t) => {
@@ -68,8 +68,8 @@ test("init --yes --only-artifacts monolith writes a config that generates someth
   const result = run(dir, "init", ["--yes", "--only-artifacts", "monolith"]);
 
   assert.equal(result.code, 0, result.stderr);
-  const text = fs.readFileSync(path.join(dir, configName(dir)), "utf8");
-  assert.match(text, /includeMonolith:\s*true/);
+  const config = JSON.parse(fs.readFileSync(path.join(dir, configName(dir)), "utf8"));
+  assert.equal(config.includeMonolith, true);
 });
 
 test("setup forwards the size flags it accepted", (t) => {

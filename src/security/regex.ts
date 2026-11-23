@@ -30,6 +30,15 @@ const MAX_REPETITIONS = 2;
  * neither quantifier alone is unreasonable. The product is the budget that catches that chain.
  */
 const MAX_REPETITION_PRODUCT = 1_000;
+/**
+ * Optional atoms are repetition too.
+ *
+ * `(.|.)?` repeated thirty times has no `+`, `*` or `{n}` and therefore passed every check above,
+ * while V8 explored 3^30 paths on a thirty-character line. Each optional atom multiplies the
+ * branch count by two; eight is already 256 and the product budget rejects the tenth. The separate
+ * count keeps a long chain of harmless-looking `a?` atoms from being treated as linear.
+ */
+const MAX_OPTIONAL_QUANTIFIERS = 8;
 
 /** Returns a human-readable reason the pattern is refused, or null when it may be compiled. */
 export function unsafeRegExpReason(source: string): string | null {
@@ -42,11 +51,34 @@ export function unsafeRegExpReason(source: string): string | null {
   let unbounded = 0;
   let repetitions = 0;
   let repetitionProduct = 1;
+  let optionalQuantifiers = 0;
   const groups: Array<{ quantified: boolean; alternation: boolean }> = [];
+
+  /** Counts one optional atom and enforces the branch budget. */
+  const countOptional = (): string | null => {
+    optionalQuantifiers += 1;
+    if (optionalQuantifiers > MAX_OPTIONAL_QUANTIFIERS) {
+      return "the pattern chains more optional quantifiers than the search budget can evaluate safely";
+    }
+    repetitionProduct *= 2;
+    if (repetitionProduct > MAX_REPETITION_PRODUCT) {
+      return "the pattern's optional quantifiers multiply beyond the search budget";
+    }
+    return null;
+  };
 
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index] as string;
     if (char === "\\") {
+      if (!inClass) {
+        const next = source[index + 1];
+        if (next !== undefined && /[1-9]/.test(next)) {
+          return "backreferences are not supported; the search budget cannot bound their backtracking";
+        }
+        if (next === "k" && source[index + 2] === "<") {
+          return "named backreferences are not supported; the search budget cannot bound their backtracking";
+        }
+      }
       index += 1;
       continue;
     }
@@ -95,6 +127,8 @@ export function unsafeRegExpReason(source: string): string | null {
       // group syntax, not optional quantifiers. A lazy `+?` / `*?` / `??` is not an extra atom.
       const previous = source[index - 1];
       if (previous !== "(" && previous !== "?" && previous !== "*" && previous !== "+" && previous !== "}") {
+        const budgetProblem = countOptional();
+        if (budgetProblem !== null) return budgetProblem;
         const group = groups[groups.length - 1];
         if (group !== undefined) group.quantified = true;
       }
@@ -128,6 +162,10 @@ export function unsafeRegExpReason(source: string): string | null {
         return "a repetition bound is larger than the search budget can evaluate safely";
       }
       if (max === Infinity) unbounded += 1;
+      if (min === 0 && max === 1) {
+        const budgetProblem = countOptional();
+        if (budgetProblem !== null) return budgetProblem;
+      }
       if (max > 1) {
         repetitions += 1;
         if (repetitions > MAX_REPETITIONS) {

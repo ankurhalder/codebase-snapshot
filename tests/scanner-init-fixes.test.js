@@ -165,27 +165,19 @@ async function initAndReadConfig(dir) {
 
 test("SI-07: init on a repository checked out on master writes branch: \"master\"", async (t) => {
   const dir = initRepo(t, { gitBranch: "master" });
-  const configText = await initAndReadConfig(dir);
+  const config = JSON.parse(await initAndReadConfig(dir));
 
-  assert.match(
-    configText,
-    /^\s*branch: "master",$/m,
-    "the generated config must record the repository's actual branch"
-  );
-  assert.doesNotMatch(
-    configText,
-    /^\s*branch: "main",$/m,
-    "the hardcoded default must not survive on a master checkout"
-  );
+  assert.equal(config.branch, "master", "the generated config must record the repository's actual branch");
+  assert.notEqual(config.branch, "main", "the hardcoded default must not survive on a master checkout");
 });
 
 test("SI-08: init in a non-git directory falls back to branch: \"main\"", async (t) => {
   const dir = initRepo(t);
-  const configText = await initAndReadConfig(dir);
+  const config = JSON.parse(await initAndReadConfig(dir));
 
-  assert.match(
-    configText,
-    /^\s*branch: "main",$/m,
+  assert.equal(
+    config.branch,
+    "main",
     "without git there is no branch to report, so the documented fallback applies"
   );
 });

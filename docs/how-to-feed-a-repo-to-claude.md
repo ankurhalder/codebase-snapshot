@@ -31,9 +31,9 @@ snapshot                 # installed globally: one word, and it asks once
 npx codebase-snapshot setup   # or from a checkout with no global install
 ```
 
-`setup` detects the project type from the repository, writes a commented `snapshot.config.mjs`, adds
-the npm scripts and the devDependency, installs it, and generates. It does not overwrite a config you
-already have. Use `--no-install` if you would rather not touch the lockfile. `npx codebase-snapshot
+`setup` detects the project type from the repository, writes a data-only `snapshot.config.json`,
+adds the npm scripts and the devDependency, installs it, and generates. It does not overwrite a
+config you already have. Use `--no-install` if you would rather not touch the lockfile. `npx codebase-snapshot
 --autopilot` does the same thing with no questions at all, which is what you want in CI.
 
 If you prefer to see each stage:
@@ -56,14 +56,11 @@ destination, not from taste:
 | A RAG index | 120–300 KB per part, chunked by heading |
 | An agent's context | 60–150 KB; smaller parts leave room to reason |
 
-```js
-// snapshot.config.mjs
-const config = {
-  maxPartBytes: "120k",
-  // Per-layer ceilings, when docs and code deserve different treatment.
-  budgets: { default: "120k", byLayer: { docs: 40_000 } },
-};
-export default config;
+```json
+{
+  "maxPartBytes": "120k",
+  "budgets": { "default": "120k", "byLayer": { "docs": 40000 } }
+}
 ```
 
 A file is never cut down to make a part fit. A file above `largeFileBytes` — which defaults to the

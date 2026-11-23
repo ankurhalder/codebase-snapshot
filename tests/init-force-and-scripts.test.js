@@ -40,17 +40,20 @@ function configFiles(dir) {
 
 // ------------------------------------------------------------------------- D-1
 
-test("D-1: --force over a JSON config refuses instead of shadowing it", async (t) => {
+test("D-1: --force rewrites a JSON config in place, without a second file", async (t) => {
   const dir = tempDir(t);
   writeProject(dir);
   const jsonConfig = path.join(dir, "snapshot.config.json");
   fs.writeFileSync(jsonConfig, '{"outDir": "custom-out"}\n');
 
-  await assert.rejects(runInit({ cwd: dir, yes: true, force: true }), /snapshot\.config\.json/);
+  const result = await runInit({ cwd: dir, yes: true, force: true });
 
-  // Nothing was written beside it, and the user's file is untouched.
+  // A JSON config is data: --force can rewrite it directly, and no executable file is created
+  // beside it to shadow it.
+  assert.equal(path.basename(result.configPath), "snapshot.config.json");
   assert.deepEqual(configFiles(dir), ["snapshot.config.json"]);
-  assert.equal(fs.readFileSync(jsonConfig, "utf8"), '{"outDir": "custom-out"}\n');
+  const rewritten = JSON.parse(fs.readFileSync(jsonConfig, "utf8"));
+  assert.equal(rewritten.outDir, "snapshot", "the wizard's answer replaced the old value");
 
   // The loader therefore sees exactly the one config the user wrote.
   const loaded = await loadConfigFileDetailed(dir);

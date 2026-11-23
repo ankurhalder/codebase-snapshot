@@ -175,7 +175,7 @@ export function getGitInfo(cwd: string, fallbackBranch = "main"): GitInfo {
     // passes a limit — this one just kept Node's default.
     const output = childProcess.execFileSync(
       "git",
-      ["status", "--porcelain=v2", "--branch", "-z"],
+      ["-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "-z"],
       {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
@@ -260,6 +260,15 @@ const SENSITIVE_BASENAME =
 const SENSITIVE_PATH =
   /(?:^|\/)\.(?:aws|ssh|gnupg)\/|(?:^|\/)\.docker\/config\.json$|(?:^|\/)\.kube\/config$|(?:^|\/)\.config\/gcloud\/|(?:^|\/)\.composer\/|(?:^|\/)\.terraform\/credentials\.tfrc\.json$/i;
 const SENSITIVE_EXT = /\.(?:pem|key|p12|pfx|jks|keystore|ppk|asc|kdbx|tfstate|tfvars)$/i;
+/**
+ * Directories where a "template" suffix does not make a credential a template.
+ *
+ * `.ssh/id_rsa.example` may be a real key someone renamed, and the path-based rules only match
+ * the unsuffixed name. A checked-in `.env.example` stays exempt; an example inside a credential
+ * directory is still excluded.
+ */
+const CREDENTIAL_DIRECTORY =
+  /(?:^|\/)\.(?:aws|ssh|gnupg|kube|docker|terraform)\/|(?:^|\/)\.config\/gcloud\//i;
 
 /**
  * A template marker as the final or penultimate segment: `name.example`, `name.sample.json`.
@@ -305,10 +314,18 @@ export function isSensitivePath(relativePath: string): boolean {
   const posixPath = relativePath.replace(/\\/g, "/");
   const raw = posixPath.split("/").pop() ?? posixPath;
   const base = normaliseName(raw);
+  // The path rules are anchored to the unsuffixed name (`.kube/config$`). Matching the original
+  // path let `.kube/config.bak` and `.docker/config.json~` through even though `normaliseName`
+  // had already stripped the suffix for the basename rules.
+  const normalisedPath = posixPath.includes("/")
+    ? posixPath.slice(0, posixPath.lastIndexOf("/") + 1) + base
+    : base;
 
-  if (templateOfCredentialFile(posixPath, base)) return false;
+  if (!CREDENTIAL_DIRECTORY.test(normalisedPath) && templateOfCredentialFile(normalisedPath, base)) {
+    return false;
+  }
 
-  return matchesSensitiveList(posixPath, base);
+  return matchesSensitiveList(normalisedPath, base);
 }
 
 /**
@@ -492,6 +509,58 @@ export function maskSkipPaths(
 }
 
 /**
+ * Ceilings on a glob's branching, before it is translated into a backtracking RegExp.
+ *
+ * The glob language has no timeout. `{?,?,?}` repeated twenty-five times compiled to twenty-five
+ * nested alternatives and froze the MCP main thread on any path without the final `!`; a chain of
+ * `*a` does the same with stars. These are the same conservative bounds `unsafeRegExpReason`
+ * applies to caller-supplied regexes, expressed in the glob language.
+ */
+const MAX_GLOB_LENGTH = 512;
+const MAX_GLOB_WILDCARDS = 16;
+const MAX_GLOB_BRACE_GROUPS = 8;
+const MAX_GLOB_ALTERNATIVES = 32;
+
+export function globComplexityReason(glob: string): string | null {
+  if (glob.length > MAX_GLOB_LENGTH) {
+    return `it is longer than ${MAX_GLOB_LENGTH} characters`;
+  }
+  let wildcards = 0;
+  let braceGroups = 0;
+  let alternatives = 1;
+  let braceDepth = 0;
+  for (let index = 0; index < glob.length; index += 1) {
+    const char = glob[index];
+    if (char === "*" || char === "?") {
+      wildcards += 1;
+      if (wildcards > MAX_GLOB_WILDCARDS) {
+        return `it chains more than ${MAX_GLOB_WILDCARDS} wildcard characters`;
+      }
+      continue;
+    }
+    if (char === "{") {
+      braceGroups += 1;
+      braceDepth += 1;
+      if (braceGroups > MAX_GLOB_BRACE_GROUPS) {
+        return `it chains more than ${MAX_GLOB_BRACE_GROUPS} brace groups`;
+      }
+      continue;
+    }
+    if (char === "}" && braceDepth > 0) {
+      braceDepth -= 1;
+      continue;
+    }
+    if (char === "," && braceDepth === 1) {
+      alternatives += 1;
+      if (alternatives > MAX_GLOB_ALTERNATIVES) {
+        return `it expands to more than ${MAX_GLOB_ALTERNATIVES} brace alternatives`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Translates a glob (`**`, `*`, `?`, `{a,b}`, `[abc]`) into a RegExp. A pattern
  * without a leading `/` matches at any depth, mirroring `.gitignore` semantics.
  *
@@ -508,6 +577,12 @@ export function maskSkipPaths(
 export function globToRegExp(glob: string): RegExp {
   const cached = GLOB_REGEX_CACHE.get(glob);
   if (cached !== undefined) return cached;
+  const complexity = globComplexityReason(glob);
+  if (complexity !== null) {
+    throw new Error(
+      `"${glob}" is too complex to match safely: ${complexity}. Narrow the glob, or use a literal path.`
+    );
+  }
 
   const normalized = glob.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   const anchored = normalized.startsWith("/");
@@ -750,6 +825,10 @@ function matchGitignorePattern(target: string, pattern: string): boolean {
  * line too.
  */
 function compileGitignorePattern(pattern: string): RegExp {
+  // A .gitignore is repository input too, and this compiler has the same backtracking shape as
+  // globToRegExp. A pattern beyond the branch budget matches nothing rather than freezing the scan;
+  // git itself answers "no match" for a pattern it cannot use.
+  if (globComplexityReason(pattern) !== null) return /$^/;
   const anchored = pattern.startsWith("/");
   const body = anchored ? pattern.slice(1) : pattern;
   let source = "";
@@ -988,7 +1067,7 @@ export function recentCommits(cwd: string, limit = 10): CommitRecord[] {
       "git",
       // \x1f between fields and \x1e between records: neither can appear in a commit message, so
       // the parse cannot be confused by a message that contains a newline or a dash.
-      ["log", "-n", String(limit), "--pretty=format:%s%x1f%b%x1e", "--no-color"],
+      ["-c", "core.fsmonitor=false", "log", "-n", String(limit), "--pretty=format:%s%x1f%b%x1e", "--no-color"],
       {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
@@ -1037,7 +1116,7 @@ function listIgnoredPaths(cwd: string): string[] {
   try {
     const stdout = childProcess.execFileSync(
       "git",
-      ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      ["-c", "core.fsmonitor=false", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
       {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
@@ -1211,7 +1290,7 @@ function makeToolOwnedDecider(
   const reservedPaths = new Set(toolOwnedPaths.filter((entry) => entry.length > 0));
   return (relativePath: string): boolean => {
     const parts = relativePath.replace(/\\/g, "/").split("/");
-    for (let depth = 1; depth < parts.length; depth += 1) {
+    for (let depth = 1; depth <= parts.length; depth += 1) {
       const prefix = parts.slice(0, depth).join("/");
       let hasMarker = markers.get(prefix);
       if (hasMarker === undefined) {
@@ -1393,7 +1472,7 @@ function listGitCandidates(
 ): string[] {
   const stdout = childProcess.execFileSync(
     "git",
-    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    ["-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
     {
       cwd,
       stdio: ["ignore", "pipe", "ignore"],

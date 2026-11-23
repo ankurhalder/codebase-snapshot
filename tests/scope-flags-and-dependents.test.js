@@ -146,8 +146,9 @@ test("setup writes a config that a plain validate agrees with", (t) => {
     path.join(dir, fs.readdirSync(dir).find((name) => /^snapshot\.config\./.test(name))),
     "utf8"
   );
-  assert.match(configText, /discovery: "walk"/);
-  assert.match(configText, /largeFileBytes: 100000/);
+  const config = JSON.parse(configText);
+  assert.equal(config.discovery, "walk");
+  assert.equal(config.largeFileBytes, 100000);
 });
 
 test("setup persists the compression settings it was asked for", (t) => {
@@ -162,9 +163,10 @@ test("setup persists the compression settings it was asked for", (t) => {
     path.join(dir, fs.readdirSync(dir).find((name) => /^snapshot\.config\./.test(name))),
     "utf8"
   );
-  assert.match(configText, /skeleton: true/);
-  assert.match(configText, /sarif: true/);
-  assert.match(configText, /maxPartTokens: 32768/);
+  const config = JSON.parse(configText);
+  assert.equal(config.skeleton, true);
+  assert.equal(config.sarif, true);
+  assert.equal(config.maxPartTokens, 32768);
   assert.ok(fs.existsSync(path.join(dir, "snapshot", "reports", "audit.sarif")));
 });
 

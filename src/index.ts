@@ -3013,11 +3013,16 @@ export function generateSnapshot(
     const plan = planForQuestion(pseudo, options.slice.question, {
       ...(options.slice.maxTokens === undefined ? {} : { maxTokens: options.slice.maxTokens }),
     });
+    // The question is written into manifest.json, PROMPT.md and reports/selection.md. It can
+    // contain a credential the caller is probing for; masking it here means those artifacts cannot
+    // become an oracle for a value from an excluded .env. The planner still receives the original,
+    // because masking it first would change the selection.
+    const recordedQuestion = maskProse(options.slice.question, config.secretRules, "slice-question");
     const keep = new Set(plan.files.map((file) => file.path));
     const scanned = files.length;
     narrowTo(keep);
     sliceBlock = {
-      question: options.slice.question,
+      question: recordedQuestion,
       budgetTokens: plan.budgetTokens,
       usedTokens: plan.usedTokens,
       files: plan.files.map((file) => file.path),
@@ -3025,7 +3030,7 @@ export function generateSnapshot(
     };
     selectionReport = {
       kind: "slice",
-      detail: "Question: " + options.slice.question + "\nBudget: " + plan.budgetTokens.toLocaleString("en-US") + " tokens",
+      detail: "Question: " + recordedQuestion + "\nBudget: " + plan.budgetTokens.toLocaleString("en-US") + " tokens",
       files: plan.files.map((file) => ({ path: file.path, tokens: file.tokens, why: file.why })),
     };
     // A slice that selected nothing is the same class of fact as a budget that fit nothing, and
@@ -3685,11 +3690,14 @@ export function generateSnapshot(
       const entry: FileEntry = {
         ...file,
         content,
-        // `fullContents` is the pre-preview body but still carries comments and blank lines: the
-        // monolith is the whole source, not the comments-stripped variant. Calling it
-        // `comments-stripped` (or copying `emptyLinesRemoved`) described a transformation this
-        // artifact did not perform.
-        inclusionMode: "full",
+        // A preview/skeleton is restored to its full redacted body here, so those modes become
+        // `full`. Comment-stripped and blank-line-removed bodies stay transformed: calling them
+        // `full` made the pack claim code it had deleted. `emptyLinesRemoved` travels with the
+        // entry from the spread, so a consumer can see that transformation too.
+        inclusionMode:
+          file.inclusionMode === "preview" || file.inclusionMode === "signatures"
+            ? "full"
+            : file.inclusionMode,
         isPreviewTruncated: false,
         includedBytes: Buffer.byteLength(content, "utf8"),
         includedLines: countLines(content),
@@ -4182,6 +4190,7 @@ export {
 };
 
 export { DEFAULT_SECRET_PATTERNS } from "./security/patterns.js";
+export { auditSnapshot } from "./auditor/health.js";
 export { explainPath, renderExplainText } from "./explain.js";
 export type { ExplainResult } from "./explain.js";
 export { compareManifests, loadManifest, renderDiffText } from "./diff.js";

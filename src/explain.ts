@@ -201,6 +201,9 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
     // `explain` must enumerate files exactly as `generate` would, or it explains a
     // decision the generator never made.
     discovery: config.discovery,
+    // A staged file that is absent from the working tree is still a candidate: `generate --staged`
+    // reads its index blob, and `explain --staged` has to explain that same selection.
+    ...(stagedBlob === null ? {} : { extraPaths: [relative] }),
     // Same exclusion `generate` applies, so `explain` never says "not-discovered" about a file
     // that is only missing because the walker dropped the tool's own output directory.
     toolOwnedPaths: [config.outDir, config.tmpDir]

@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { readConfinedBytes } from "./security/confine.js";
 
 /**
  * Signed manifests.
@@ -82,25 +83,45 @@ export type VerifyOutcome =
  * Three failures are distinguished because they mean different things: no signature, a signature
  * that no longer matches the manifest (tampering), and a signature record that is malformed.
  */
+/** A signature record is a handful of fields; anything larger is not one. */
+const MAX_SIGNATURE_BYTES = 64 * 1024;
+
 export function verifySnapshotSignature(snapshotDir: string): VerifyOutcome {
-  const signaturePath = path.join(snapshotDir, SIGNATURE_FILE);
-  const manifestPath = path.join(snapshotDir, "manifest.json");
-  if (!fs.existsSync(signaturePath)) return { ok: false, reason: "no signature.json in this snapshot" };
+  const signatureRead = readConfinedBytes(snapshotDir, SIGNATURE_FILE);
+  if (!signatureRead.ok) {
+    return {
+      ok: false,
+      reason:
+        signatureRead.reason === "missing"
+          ? "no signature.json in this snapshot"
+          : "signature.json is not a readable regular file inside the snapshot",
+    };
+  }
+  if (signatureRead.bytes.length > MAX_SIGNATURE_BYTES) {
+    return { ok: false, reason: "signature.json is larger than a signature record can be" };
+  }
   let record: SignatureRecord;
   try {
-    record = JSON.parse(fs.readFileSync(signaturePath, "utf8")) as SignatureRecord;
-  } catch (error) {
-    return { ok: false, reason: "signature.json is not JSON: " + (error as Error).message };
+    record = JSON.parse(signatureRead.bytes.toString("utf8")) as SignatureRecord;
+  } catch {
+    // Do not echo the parser's message: on Node 20+ it quotes the opening bytes of the target,
+    // which made a symlinked signature.json a host-file prefix leak.
+    return { ok: false, reason: "signature.json is not valid JSON" };
   }
   if (record.algorithm !== "ed25519" || typeof record.signature !== "string" || typeof record.publicKey !== "string") {
     return { ok: false, reason: "signature.json is not an ed25519 record" };
   }
-  let bytes: Buffer;
-  try {
-    bytes = fs.readFileSync(manifestPath);
-  } catch {
-    return { ok: false, reason: "the signed manifest is missing" };
+  const manifestRead = readConfinedBytes(snapshotDir, "manifest.json");
+  if (!manifestRead.ok) {
+    return {
+      ok: false,
+      reason:
+        manifestRead.reason === "missing"
+          ? "the signed manifest is missing"
+          : "the signed manifest is not a readable regular file inside the snapshot",
+    };
   }
+  const bytes = manifestRead.bytes;
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   if (sha256 !== record.manifestSha256) {
     return { ok: false, reason: "manifest.json changed after it was signed" };

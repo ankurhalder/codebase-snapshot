@@ -219,7 +219,20 @@ function isOpeningQuote(line: string, index: number): boolean {
   const code = line.charCodeAt(index);
   if (code === 96) return true;
   if (code !== 34 && code !== 39) return false;
-  return index === 0 || !/[A-Za-z0-9]/.test(line[index - 1]);
+  if (index === 0) return true;
+  const previous = line[index - 1] as string;
+  if (!/[A-Za-z0-9]/.test(previous)) return true;
+  // Python's literal prefixes are part of the syntax, not an identifier touching the quote:
+  // `b"auth:"`, `r"…"`, `f"…"`, and the two-letter forms. Without this, the opening quote was
+  // ignored, the closing quote opened a phantom literal, and the next assignment on the line was
+  // read as being inside a string and skipped.
+  let start = index - 1;
+  let prefixLength = 0;
+  while (start >= 0 && prefixLength < 2 && /[rRbBuUfF]/.test(line[start] as string)) {
+    start -= 1;
+    prefixLength += 1;
+  }
+  return prefixLength > 0 && (start < 0 || !/[A-Za-z0-9_]/.test(line[start] as string));
 }
 
 /** Quote state before every character in `line`, with escapes honoured. */
@@ -332,32 +345,6 @@ function lineValueEnd(line: string, start: number, context: LineContext): number
   return end;
 }
 
-/** True when a quote on the line is preceded by syntax that can own a string value. */
-function hasStructuralQuote(line: string): boolean {
-  for (let index = 0; index < line.length; index += 1) {
-    const ch = line[index];
-    if (ch !== '"' && ch !== "'" && ch !== "`") continue;
-    if (ch === "'" && index > 0 && /[A-Za-z0-9]/.test(line[index - 1])) continue;
-    let backslashes = 0;
-    for (let before = index - 1; before >= 0 && line[before] === "\\"; before -= 1) backslashes += 1;
-    if (backslashes % 2 === 1) continue;
-    let before = index - 1;
-    while (before >= 0 && (line[before] === " " || line[before] === "\t")) before -= 1;
-    if (before < 0 || "+,=:([{".includes(line[before] as string)) return true;
-  }
-  return false;
-}
-
-/** Masks a PEM line that is not inside a quoted segment, keeping indentation and comment syntax. */
-function maskRawPemLine(line: string): string {
-  if (line.trim() === "") return line;
-  const leading = /^[ \t]*(?:#|\/\/|;)?[ \t]*/.exec(line)?.[0] ?? "";
-  let rest = line.slice(leading.length);
-  const trailing = /[ \t]*(?:[,;\\+])?[ \t]*$/.exec(rest)?.[0] ?? "";
-  rest = rest.slice(0, rest.length - trailing.length);
-  return leading + (rest.length > 0 ? PEM_REDACTION_MARKER : "") + trailing;
-}
-
 /**
  * Replaces one physical line of a PEM block with a skeleton that keeps the syntax around it.
  *
@@ -369,52 +356,19 @@ function maskRawPemLine(line: string): string {
  */
 function skeletonisePemLine(
   line: string,
-  initialQuote: number
+  _initialQuote: number
 ): { text: string; quote: number } {
-  const hasQuote = line.includes('"') || line.includes("'") || line.includes("`");
-  const structural =
-    initialQuote !== 0 ||
-    (hasQuote && (hasStructuralQuote(line) || /-----BEGIN|-----END/.test(line)));
-  if (!structural) return { text: maskRawPemLine(line), quote: initialQuote };
-
-  let out = "";
-  let quote = initialQuote;
-  let masking = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const code = line.charCodeAt(index);
-    if (quote === 0) {
-      if (isOpeningQuote(line, index)) {
-        quote = code;
-        masking = false;
-      }
-      out += line[index];
-      continue;
-    }
-    if (code === 92) {
-      // The marker for the run before the escape was already emitted when that run began;
-      // emitting another here put two markers inside one quoted segment.
-      masking = false;
-      out += line[index];
-      if (index + 1 < line.length) {
-        out += line[index + 1];
-        index += 1;
-      }
-      continue;
-    }
-    if (code === quote) {
-      // The marker was already emitted when the content run began; emitting another here put two
-      // markers inside one quoted segment.
-      masking = false;
-      quote = 0;
-      out += line[index];
-      continue;
-    }
-    if (!masking) {
-      out += PEM_REDACTION_MARKER;
-      masking = true;
-    }
-  }
-  return { text: out, quote };
+  if (line.trim() === "") return { text: line, quote: 0 };
+  // Keep only the syntactic edges of the physical line: indentation, an optional comment marker,
+  // an optional Python string prefix, the opening quote, and the matching closing quote plus a
+  // comma/plus escape. The middle is the key material. The earlier implementation preserved
+  // scattered punctuation from the base64 body, which produced output that was not a subsequence
+  // of the source and made health's redaction-aware fidelity check fail.
+  const leading = /^[ \t]*(?:(?:#|\/\/|;)[ \t]*)?(?:[bBrRuUfF]{1,2})?[\"'`]?/.exec(line)?.[0] ?? "";
+  const rest = line.slice(leading.length);
+  const trailing = /(?:\\[nrt])?[\"'`]?[ \t]*(?:[,;+])?[ \t]*$/.exec(rest)?.[0] ?? "";
+  if (leading.length + trailing.length >= line.length) return { text: line, quote: 0 };
+  return { text: leading + PEM_REDACTION_MARKER + trailing, quote: 0 };
 }
 
 /** Start and end of the physical line(s) touched by `[start, end)` in `text`. */
@@ -446,7 +400,9 @@ function redactPemSpan(
 ): { replacement: string; start: number; end: number } {
   const span = lineSpanAt(text, matchStart, matchEnd);
   const segments = text.slice(span.start, span.end).split(LINE_BREAK);
-  let quote = quoteStateAfter(text, 0, matchStart);
+  // The block mask is local; a quote state from earlier in the file is exactly the input that
+  // inverted on comments, regex literals and Python prefixes.
+  let quote = 0;
   let cursor = span.start;
   for (let index = 0; index < segments.length; index += 2) {
     const line = segments[index];
@@ -554,9 +510,14 @@ export function scanAndRedactSecrets(
 
   const segments = redacted.split(LINE_BREAK);
   let lineNumber = 1;
+  // A backtick literal can span physical lines. Pass 2 reset quote state at every newline, so
+  // `DB_PASSWORD=…` on line 2 of a template looked like code and the unquoted-expression guard
+  // dropped it. Carry only the template state, and only for source files.
+  let templateCarry = 0;
 
   for (let index = 0; index < segments.length; index += 2) {
     const line = segments[index];
+    const startsInTemplate = templateCarry === 96;
 
     if (line.length > 0) {
       const spans: Span[] = [];
@@ -587,6 +548,7 @@ export function scanAndRedactSecrets(
             group &&
             isUnquotedValue(line, group[0]) &&
             isSourceCodeFile(filePath) &&
+            !startsInTemplate &&
             (quoteStateFor(line, context)[match.index] ?? 0) === 0
           ) {
             continue;
@@ -763,6 +725,10 @@ export function scanAndRedactSecrets(
       }
     }
 
+    if (isSourceCodeFile(filePath)) {
+      const next = quoteStateAfter(line, templateCarry);
+      templateCarry = next === 96 ? 96 : 0;
+    }
     if (index + 1 < segments.length) lineNumber += 1;
   }
 
@@ -775,15 +741,11 @@ export function scanAndRedactSecrets(
   finalText = redactStructuredValues(finalText, filePath, recordFinding);
   finalText = redactDockerfileEnv(finalText, filePath, recordFinding);
 
-  // A line that already carried the marker was redacted before this scan; reporting it again is
-  // how the audit came to fail a snapshot for containing the tool's own output. The masking above
-  // still runs — a credential added after the marker is still removed — only the finding is dropped.
-  const originalLines = content.split(/\r\n|\r|\n/);
+  // Do not suppress every finding on a line merely because it contains a marker. That turned a
+  // line into a blind spot: a real credential beside the marker was masked (or not), but the
+  // audit, SARIF and manifest counted zero findings. The exact-marker placeholder check above is
+  // the only exemption.
   const findings: SecretFinding[] = [...findingsByLine.entries()]
-    .filter(([line]) => {
-      const original = originalLines[line - 1] ?? "";
-      return !original.includes(REDACTION_MARKER) && !original.includes(PEM_REDACTION_MARKER);
-    })
     .sort(([left], [right]) => left - right)
     .map(([line, rulesForLine]) => ({
       rules: [...rulesForLine],
@@ -831,7 +793,9 @@ function isStructuredFile(filePath: string | undefined): boolean {
 function isDockerfile(filePath: string | undefined): boolean {
   if (filePath === undefined) return false;
   const normalised = filePath.replace(/\\/g, "/");
-  return /^(?:Dockerfile|[^/]*\.dockerfile)$/i.test(
+  // Docker, Podman and BuildKit all accept the suffix and Containerfile spellings. Matching only
+  // the literal "Dockerfile" left ENV API_KEY … in Dockerfile.prod and Containerfile in clear.
+  return /^(?:(?:Dockerfile|Containerfile)(?:\.[^/]*)?|[^/]*\.(?:dockerfile|containerfile))$/i.test(
     normalised.slice(normalised.lastIndexOf("/") + 1)
   );
 }
@@ -861,7 +825,8 @@ function maskValueLine(line: string): string {
 }
 
 /** `key:` or `key=`, optionally quoted, with the rest of the line after the separator. */
-const STRUCTURED_KEY = /^([ \t]*)["']?([A-Za-z0-9_$.-]{1,128})["']?[ \t]*([:=])[ \t]*(.*)$/;
+const STRUCTURED_KEY =
+  /^([ \t]*)(?:-[ \t]+)?["']?([A-Za-z0-9_$.-]{1,128})["']?[ \t]*([:=])[ \t]*(.*)$/;
 /** A YAML block scalar indicator: `|`, `>`, with optional chomping and indentation digits. */
 const BLOCK_SCALAR = /^[|>][+-]?\d*[ \t]*(?:#.*)?$/;
 
@@ -1106,6 +1071,33 @@ function startsInsideStringLiteral(
   if (quote === 96 && /\.(?:md|mdx)$/i.test(filePath ?? "")) return true;
   // Without a value span there is nothing to weigh: the match is the credential itself.
   if (valueStart === undefined) return true;
+  // A quoted key-name list — `["awsSecret:", "apiKey:", …]` — is a match that starts inside one
+  // string and whose "value" is the closing quote, comma and next opening quote. It is a list of
+  // names, not an assignment, and must survive. Check that shape before the opener override below.
+  if (
+    valueStart > 0 &&
+    line[valueStart - 1] === String.fromCharCode(quote) &&
+    /^["'],\s*["']/.test(line.slice(valueStart - 1))
+  ) {
+    return true;
+  }
+  // If the value itself opens with a quote, the key is outside that literal. Treating the quote
+  // state left by an earlier regex literal or Python prefix as proof otherwise skipped a
+  // syntactically well-formed `password = "…"` and emitted the value in clear.
+  if (valueStart > 0) {
+    const opener = line[valueStart - 1] as string;
+    if (
+      (opener === '"' || opener === "'" || opener === "`") &&
+      (valueStart < 2 || line[valueStart - 2] !== "\\") &&
+      // The quote must open the value, not close the literal that contains the key. In
+      // `API_KEY=" + "value"` the value span begins with a space and the quote at valueStart-1
+      // is the closing quote of the key literal; overriding the inside-string guard there masked
+      // the ` + ` operator and produced two markers.
+      !/[\s,;+)\]]/.test(line[valueStart] ?? "")
+    ) {
+      return false;
+    }
+  }
   for (let index = matchIndex; index < valueStart; index += 1) {
     const code = line.charCodeAt(index);
     if (code === 92) {
@@ -1239,7 +1231,9 @@ function isPlaceholderValue(value: string): boolean {
   // of a repository that quotes a snapshot (these docs do) contains the marker literally. Without
   // this check the audit re-found the tool's own marker and failed the snapshot it had just
   // redacted — 7 artifacts, score 70/100, on a run that leaked nothing.
-  if (trimmed.includes(REDACTION_MARKER) || trimmed.includes(PEM_REDACTION_MARKER)) return true;
+  // Only the marker itself is a placeholder. `includes` exempted a real credential that merely
+  // contained the text (a value copied from a snapshot, or a value chosen to suppress the rule).
+  if (trimmed === REDACTION_MARKER || trimmed === PEM_REDACTION_MARKER) return true;
   // A value containing three dots anywhere is not a placeholder: a real password can contain
   // "...", and exempting it because of a substring inside the credential was a bypass.
   return false;

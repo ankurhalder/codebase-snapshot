@@ -93,7 +93,7 @@ test("an agent following describe's own workflow reaches a validated snapshot", 
   assert.equal(init.code, 0, init.stderr);
   const configName = fs
     .readdirSync(cwd)
-    .find((name) => /^snapshot\.config\.(ts|mjs|cjs|js)$/.test(name));
+    .find((name) => /^snapshot\.config\.(ts|mjs|cjs|js|json)$/.test(name));
   assert.ok(configName, "init wrote no config file");
   const configText = fs.readFileSync(path.join(cwd, configName), "utf8");
   for (const setting of contract.config.settings) {

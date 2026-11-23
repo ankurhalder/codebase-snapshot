@@ -1,0 +1,45 @@
+{
+  "preset": "node-lib",
+  "branch": "main",
+  "outDir": "snapshot",
+  "tmpDir": "snapshot.tmp",
+  "maxPartBytes": "292k",
+  "largeFileBytes": "200k",
+  "previewHeadLines": 80,
+  "previewTailLines": 40,
+  "budgets": {
+    "default": "292k",
+    "byLayer": {}
+  },
+  "maxParts": 9,
+  "include": [],
+  "excludePatterns": [
+    "audit/**",
+    "CHANGELOG.md",
+    "tests/**",
+    "GOAL.md",
+    "seo-log.jsonl",
+    "llms.txt"
+  ],
+  "discovery": "auto",
+  "layersMode": "merge",
+  "layers": [],
+  "kinds": [],
+  "includeSensitiveFiles": false,
+  "secrets": {
+    "customPatterns": [],
+    "disableDefaultPatterns": false
+  },
+  "artifacts": {
+    "readme": true,
+    "manifest": true,
+    "parts": true,
+    "navigation": true,
+    "projectTree": true,
+    "audit": true,
+    "monolith": false
+  },
+  "maxMonolithBytes": null,
+  "includeMonolith": false,
+  "hooks": {}
+}

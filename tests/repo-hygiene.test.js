@@ -42,6 +42,7 @@ function trackedTextFiles() {
   return output
     .split("\0")
     .filter(Boolean)
+    .filter((relative) => fs.existsSync(path.join(ROOT, relative)))
     .filter((relative) => TEXT_EXTENSIONS.has(path.extname(relative).toLowerCase()));
 }
 

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 
@@ -256,6 +256,79 @@ export async function assertPublicHost(host: string, allowPrivate: boolean): Pro
   }
 }
 
+
+interface GitRun {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  error: Error | null;
+}
+
+/**
+ * Runs git without blocking the event loop.
+ *
+ * `cloneRepository` is async because `serve` awaits it on the HTTP thread. It used spawnSync,
+ * so one tarpit URL froze /healthz, /mcp and every SSE heartbeat for up to three minutes. The
+ * output is bounded here too: a failing clone's stderr is truncated to its last 64 KiB.
+ */
+function runGitAsync(
+  args: string[],
+  options: { env: NodeJS.ProcessEnv; timeoutMs: number }
+): Promise<GitRun> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("git", args, {
+        env: options.env,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      resolve({
+        status: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+    const MAX_OUTPUT = 64 * 1024;
+    const append = (current: string, chunk: Buffer | string): string => {
+      const next = current + chunk.toString();
+      return next.length > MAX_OUTPUT ? next.slice(-MAX_OUTPUT) : next;
+    };
+    let timer: NodeJS.Timeout | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+    const finish = (status: number | null, error: Error | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+      resolve({ status, stdout, stderr, timedOut, error });
+    };
+    child.stdout?.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
+    child.stderr?.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
+    child.on("error", (error) => finish(null, error));
+    child.on("close", (code) => finish(code, null));
+    timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (!settled) {
+          child.kill("SIGKILL");
+          finish(null, new Error("git did not exit after SIGTERM"));
+        }
+      }, 2_000);
+    }, options.timeoutMs);
+  });
+}
+
 export interface CloneOptions {
   dest: string;
   token?: string | null;
@@ -348,25 +421,30 @@ export async function cloneRepository(source: RemoteSource, options: CloneOption
 
   log("clone: " + source.url + (ref ? " (" + ref + ")" : ""));
   const started = Date.now();
-  const result = spawnSync("git", args, {
-    env: {
-      ...gitEnvironment(options.token, source.host === "file" ? "localhost" : source.host),
-      ...(source.kind === "https" ? { GIT_ALLOW_PROTOCOL: "https" } : {}),
-    },
-    timeout: options.timeoutMs ?? 180_000,
-    encoding: "utf8",
-    windowsHide: true,
+  const env: NodeJS.ProcessEnv = {
+    ...gitEnvironment(options.token, source.host === "file" ? "localhost" : source.host),
+    ...(source.kind === "https" ? { GIT_ALLOW_PROTOCOL: "https" } : {}),
+  };
+  const result = await runGitAsync(args, {
+    env,
+    timeoutMs: options.timeoutMs ?? 180_000,
   });
-  if (result.error !== undefined && result.error !== null) {
+  if (result.error !== null) {
     throw new Error("git clone could not run: " + result.error.message);
   }
   if (result.status !== 0) {
-    const detail = (result.stderr ?? "").trim().split("\n").slice(-3).join(" ");
-    throw new Error("git clone failed (exit " + result.status + "): " + (detail || "no output"));
+    const detail = result.stderr.trim().split("\n").slice(-3).join(" ");
+    throw new Error(
+      "git clone failed (" + (result.timedOut ? "timed out" : "exit " + String(result.status)) + "): " +
+        (detail || "no output")
+    );
   }
 
-  const head = spawnSync("git", ["-C", dest, "rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true });
-  const commit = head.status === 0 ? (head.stdout ?? "").trim() : "";
+  const head = await runGitAsync(["-C", dest, "rev-parse", "HEAD"], {
+    env,
+    timeoutMs: 30_000,
+  });
+  const commit = head.status === 0 ? head.stdout.trim() : "";
   if (commit === "") throw new Error("the clone has no HEAD; refusing to describe it");
 
   const bytes = directorySize(dest);

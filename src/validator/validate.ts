@@ -784,12 +784,20 @@ export function validateSnapshot(
       .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
   });
 
+  const discovered = new Set(collection.files);
+
   for (const diskFile of collection.files) {
     const snapshotHash = manifestFileMap.get(diskFile);
     if (snapshotHash === undefined) {
       // A path in `skipped[]` is not permanently exempt: re-evaluate it and
       // report drift when it would now be included.
       const skipReason = skippedReasonOnDisk(diskFile);
+      // `git rm --cached` stages a deletion while leaving the file on disk. `generate --staged`
+      // records it as `deleted`; `wouldNowBeIncluded` only sees the working tree and calls it
+      // present, so validate reported "new file" immediately after a correct generate.
+      if (skipReason === "deleted" && recordedStaged) {
+        if (readStagedBlob(config.cwd, diskFile) === null) continue;
+      }
       // A file skipped as `unchanged` was narrowed out on purpose, so it is not missing. Asking
       // `wouldNowBeIncluded` about it — which only answers "is this text?" — said yes for every
       // source file in the repository and reported all of them as `new file:`, failing
@@ -867,6 +875,11 @@ export function validateSnapshot(
       }
       continue;
     }
+    // The first loop already hashed every file the current rules discover, and recorded a read
+    // failure there. Anything left is a file the manifest lists but the current scan no longer
+    // selects: deleted, replaced by a directory/symlink, or newly excluded. The old code statted
+    // it anyway, so a file replaced by a directory still "existed" and validate returned valid.
+    if (discovered.has(snapshotFile)) continue;
     // The manifest is an input, and `path.join` accepts `../..`, so this loop used to answer
     // "does this path exist?" for any file on the machine: a traversal entry was silently accepted
     // when the target existed and reported as `deleted: ../../secret` when it did not. A recorded
@@ -880,14 +893,13 @@ export function validateSnapshot(
       });
       continue;
     }
-    // `existsSync` answers false for a path this process is not allowed to *stat*, and that is a
-    // runtime difference: on Node 18 a Windows Deny-Read ACE makes `statSync` throw EPERM, while
-    // Node 20+ stats it fine. Trusting the boolean reported an unreadable file as "no longer
-    // exists on disk" — the precise wrong answer this class exists to prevent. Ask *why* the path
-    // is not statable instead.
+    // lstat, not stat: a symlink recorded in a manifest must not be followed to its target. The
+    // old statSync followed it, so a link to an existing host file was silently accepted and a
+    // link to a missing one reported "deleted" — a host existence oracle on an auto-approved tool.
     let statFailure: NodeJS.ErrnoException | null = null;
+    let stats: fs.Stats | null = null;
     try {
-      fs.statSync(confined);
+      stats = fs.lstatSync(confined);
     } catch (err) {
       statFailure = err as NodeJS.ErrnoException;
     }
@@ -897,7 +909,29 @@ export function validateSnapshot(
       } else {
         drift.unreadable.push(snapshotFile);
       }
+      continue;
     }
+    if (stats !== null && stats.isSymbolicLink()) {
+      drift.configMismatches.push(
+        `selection: ${maskedPath(snapshotFile, config.secretRules)} is a symbolic link; it is not followed and is no longer part of the snapshot selection`
+      );
+      continue;
+    }
+    if (stats !== null && stats.isDirectory()) {
+      drift.configMismatches.push(
+        `selection: ${maskedPath(snapshotFile, config.secretRules)} is a directory now, not the file the snapshot recorded`
+      );
+      continue;
+    }
+    if (stats !== null && !stats.isFile()) {
+      drift.configMismatches.push(
+        `selection: ${maskedPath(snapshotFile, config.secretRules)} is no longer a regular file`
+      );
+      continue;
+    }
+    drift.configMismatches.push(
+      `selection: ${maskedPath(snapshotFile, config.secretRules)} is on disk but the current ignore/filter rules no longer include it`
+    );
   }
 
   // A tracked-but-deleted file is seen by both loops above — the read fails, then

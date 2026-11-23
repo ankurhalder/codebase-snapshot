@@ -58,11 +58,35 @@ function readIncludedLines(fields: readonly string[]): number | null {
   return counts === null ? null : Number(counts[1]);
 }
 
+/**
+ * First line after the part's own `## Contents` header, or 0 for a pre-header part.
+ *
+ * Filenames are emitted verbatim inside the `## Files` fence. Scanning from line 0 therefore
+ * found a real file named `### FILE: a.ts` in the listing before the section it named, then
+ * jumped over the real section. The listing fence is chosen to be longer than any backtick run
+ * in the paths, so skipping it is deterministic; `## Contents` is the writer's own header.
+ */
+function contentsStart(lines: readonly string[]): number {
+  const filesHeader = lines.indexOf("## Files");
+  if (filesHeader === -1) return 0;
+  let open = filesHeader + 1;
+  while (open < lines.length && lines[open].trim() === "") open += 1;
+  const fenceMatch = /^(`{3,})/.exec(lines[open] ?? "");
+  if (fenceMatch === null) return 0;
+  const fence = fenceMatch[1];
+  let close = open + 1;
+  while (close < lines.length && lines[close] !== fence) close += 1;
+  if (close >= lines.length) return 0;
+  let contents = close + 1;
+  while (contents < lines.length && lines[contents].trim() === "") contents += 1;
+  return lines[contents] === "## Contents" ? contents + 1 : 0;
+}
+
 /** Splits a part into one section per emitted file. */
 export function parsePartSections(partText: string): PartSection[] {
   const lines = partText.split("\n");
   const sections: PartSection[] = [];
-  let index = 0;
+  let index = contentsStart(lines);
 
   while (index < lines.length) {
     if (!lines[index].startsWith(FILE_HEADING)) {
@@ -103,7 +127,8 @@ export function parsePartSections(partText: string): PartSection[] {
     }
 
     if (cursor >= lines.length || !CONTENT_MARKERS.has(lines[cursor])) {
-      index = cursor + 1;
+      // If the metadata scan stopped on the next heading, resume at it rather than skipping it.
+      index = cursor < lines.length && lines[cursor].startsWith(FILE_HEADING) ? cursor : cursor + 1;
       continue;
     }
 

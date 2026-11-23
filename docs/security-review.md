@@ -33,10 +33,11 @@ untrusted input can arrive.
 - **A symlink is only a second name for included content.** The target must survive the same
   include/exclude/ignore filters as the link alias; `.git/config` cannot be reached through a
   tracked `notes.txt`.
-- **Every snapshot file read is confined.** PROMPT.md, reports, the manifest and WORKSPACE.json
-  are opened through one reader that refuses a symlink and requires the canonical target inside
-  the snapshot directory. The MCP resources, `snapshot_history`, `snapshot_workspace` and
-  `serve` use it; the part reader keeps its older equivalent.
+- **Every snapshot file read is confined.** PROMPT.md, reports, the manifest, WORKSPACE.json and
+  signature.json are opened through one reader that refuses a symlink and requires the canonical
+  target inside the snapshot directory. The MCP resources, `snapshot_history`,
+  `snapshot_workspace`, signing verification and `serve` use it; a part lookup also requires its
+  `parts/` directory and the resolved part to stay inside the snapshot.
 - **The diff report fails closed.** Git is forced to emit unquoted ASCII prefixes, a section that
   cannot be attributed to a path is omitted rather than trusted, redaction runs before truncation
   with the diffed file's extension, and `--only` applies to the diff too.
@@ -60,8 +61,9 @@ executable config in it is refused, because a fetched repository is not a truste
   and at most four MCP tool calls in flight across all HTTP sessions. The session and rate maps are
   capped and evicted, so a client cannot grow either without bound.
 - **Untrusted regexes are bounded.** `snapshot_search`, `snapshot_routes` and `snapshot_query`
-  reject nested quantifiers, more than one unbounded repetition and oversized repetition bounds
-  before compiling; JavaScript has no regex timeout, so the alternative is a main-thread stall.
+  reject nested quantifiers, more than one unbounded repetition, optional-chain blowups and
+  backreferences before compiling; glob and gitignore patterns are bounded by wildcard, brace and
+  alternative counts. JavaScript has no regex timeout, so the alternative is a main-thread stall.
 - **Errors are JSON-RPC error objects**, never stack traces.
 
 ### The browser page
@@ -69,7 +71,8 @@ executable config in it is refused, because a fetched repository is not a truste
 - The page is HTML and is served without a token; **every API call requires one**. The token is not
   baked into the HTML, so serving `/` cannot leak it.
 - A request with a cross-origin `Origin` is refused before any auth check.
-- `api/snapshot.zip` only zips a directory that contains a manifest or an ownership marker.
+- `api/snapshot.zip` zips only the parts, artifacts and signature the manifest declares; a
+  directory with a PWA `manifest.json` and an arbitrary file is refused.
 - Every path is resolved with `realpath` before the allowed-root check, so a symlink inside the
   served directory cannot read or zip a target outside it. `POST /api/generate` applies the same
   check to its local source and to the `outDir` it is about to write; a remote clone's
@@ -132,6 +135,14 @@ addition was reviewed with the same question — what new input arrives, and wha
   catastrophic MCP regexes are refused before compilation, HTTP tool concurrency is bounded,
   failed clones are removed, workspace dry runs write nothing, staged validation reads the index,
   and hook installation refuses a symlink or hard link.
+- **The 0.20.10 third audit** closed the remaining gaps: parts-directory and configured
+  `outDir`/`tmpDir` escapes are refused; WORKSPACE/signature reads are confined; PEM quote
+  tracking, template literals, YAML block scalars, Dockerfile variants and diff prefixes are
+  redacted; optional-quantifier and backreference ReDoS and exponential globs are refused;
+  MCP era probes, CORS session exposure, whole-response caps, explicit false overrides and an
+  empty-first-line read are fixed; validation distinguishes replaced files and skipped paths from
+  drift; MCP runs health/validate/review/explain in a worker, and `serve` zips only manifest
+  inventory and runs its health audit and remote clone without blocking request handling.
 
 The residual risks below are unchanged, including the two that are deliberate rather than solved.
 

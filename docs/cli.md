@@ -98,7 +98,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.9 (project dependency ^0.20.9)
+   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.10 (project dependency ^0.20.10)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -209,8 +209,9 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 `--autopilot` uses, spelled as a command word:
 
 1. Detects the project preset.
-2. Writes `snapshot.config.ts` (or `.mjs`) — **only when the repository has none**. An existing
-   config is kept byte for byte and the output says `Keeping …`.
+2. Writes `snapshot.config.json` — **only when the repository has none**. An existing config is
+   kept byte for byte and the output says `Keeping …`. A data-only config is intentional: the MCP
+   server and `serve` refuse executable repository code.
 3. Adds `scripts.snapshot`, `scripts.snapshot:validate`, the `devDependencies` entry and the
    `.gitignore` entries, exactly as `init` does.
 4. Installs dependencies with the package manager the repository already uses — a lockfile
@@ -221,9 +222,9 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 
 ```
 🚀 Setup for: /path/to/repo
-✅ Created snapshot.config.ts (preset: nextjs)
+✅ Created snapshot.config.json (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.9
+   Added devDependency: codebase-snapshot ^0.20.10
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -265,17 +266,17 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 codebase-snapshot init [options]
 ```
 
-Detects the project and writes `snapshot.config.ts` (or `.mjs`, see below) containing
-**every** setting at its current value, commented and grouped. It is a reference you can
-keep, not just a diff — there is no shorter variant, because the file that documents the
-settings is the file you edit.
+Detects the project and writes `snapshot.config.json` containing **every** setting at its
+current value. It is a reference you can keep, not just a diff — there is no shorter variant,
+because the file that documents the settings is the file you edit. JSON is deliberate: the MCP
+server and `serve` refuse executable repository configs, so `init` never writes one.
 
 It also has three side effects on files you own, and it says so when it does them:
 
 ```
-✅ Created snapshot.config.ts (preset: node-lib)
+✅ Created snapshot.config.json (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.9
+   Added devDependency: codebase-snapshot ^0.20.10
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -558,7 +559,7 @@ for the two install flags, and the init-and-setup flags list both commands.
 | `--include <globs>` | list | unset | init, setup | Allow-list recorded in the generated config. |
 | `--exclude <globs>` | list | unset | init, setup | Exclude globs recorded in the generated config. |
 | `--yes` | flag | off | init, setup | Never prompt; accept every default. |
-| `--force` | flag | off | init, setup | Replace an existing `.ts`/`.js`/`.mjs` config in place. A JSON-family config is refused, naming the file to remove. |
+| `--force` | flag | off | init, setup | Replace an existing JSON-family config in place. An executable `.ts`/`.js`/`.mjs` config is refused, naming the file to remove. |
 | `--install` | flag | off | *skill only* | Write the skill into the repository instead of printing it. |
 | `--target <name>` | enum | `all` | *skill only* | `claude`, `cursor` or `all`. |
 | `-h`, `--help` | flag | — | every command | Print usage. |

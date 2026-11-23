@@ -8,10 +8,9 @@ npm create codebase-snapshot
 ```
 
 It detects the project type, asks a handful of questions with sensible defaults,
-and writes the config file this project can actually load — `snapshot.config.ts`
-for an ES-module project on Node ≥ 22.6, `snapshot.config.mjs` everywhere else —
-listing **every setting at its default**, so the config doubles as the
-documentation.
+and writes a data-only `snapshot.config.json` listing **every setting at its
+default**, so the config doubles as the documentation and can be loaded by the
+CLI, the MCP server and `serve` without executing repository code.
 
 ```bash
 npm create codebase-snapshot -- --preset react-vite --yes
@@ -27,7 +26,7 @@ npm create codebase-snapshot -- --preset react-vite --yes
 
 | Path | Notes |
 | :--- | :--- |
-| `snapshot.config.ts` / `snapshot.config.mjs` | Every setting at its default. `.ts` needs an ES-module `package.json` and Node ≥ 22.6; `.mjs` is used otherwise, because a `.ts` config is loaded with the enclosing package's module type. |
+| `snapshot.config.json` | Every setting at its default. JSON is deliberate: the MCP and `serve` commands refuse executable repository configs. |
 | `package.json` → `scripts.snapshot`, `scripts.snapshot:validate` | Skipped when there is no `package.json` to hold them. |
 | `package.json` → `devDependencies` | `codebase-snapshot` at the version this scaffolder shipped with. A range you already declared is never overwritten. |
 | `.gitignore` | `snapshot/`, `snapshot.tmp/`. |

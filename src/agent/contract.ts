@@ -273,9 +273,8 @@ export function buildAgentContract(): AgentContract {
         id: "configure",
         run: `npx ${PACKAGE_NAME}@latest init --yes`,
         expect:
-          "writes a commented config file listing every setting at its current value: " +
-          "snapshot.config.ts only when the running Node can strip types (>= 22.6) and the project " +
-          'is an ES module (`"type": "module"` in package.json); snapshot.config.mjs otherwise',
+          "writes snapshot.config.json by default: every setting at its current value, in a " +
+          "data-only form the CLI, MCP server and serve command all load without executing repository code",
         notes:
           "Non-interactive. The detected preset is chosen automatically; override with --preset <name>. " +
           "Skip this step to run on built-in defaults.",
@@ -361,10 +360,10 @@ export function buildAgentContract(): AgentContract {
         name: "init",
         aliases: [],
         summary:
-          "Write a commented config file (snapshot.config.ts only when Node can strip types and the " +
-          "project is an ES module; snapshot.config.mjs otherwise), add the snapshot scripts and the " +
-          "devDependency, ignore the snapshot directories, and write a BRIEF.md scaffold for the " +
-          "owner half of PROMPT.md. No agent file is written. Interactive, or --yes for CI.",
+          "Write a data-only snapshot.config.json (an existing executable config is preserved by " +
+          "--force), add the snapshot scripts and the devDependency, ignore the snapshot directories, " +
+          "and write a BRIEF.md scaffold for the owner half of PROMPT.md. No agent file is written. " +
+          "Interactive, or --yes for CI.",
         positionals: [],
         exits: [0, 1, 2],
       },

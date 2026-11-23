@@ -101,24 +101,46 @@ function resolveConfined(
 }
 
 /** Reads a confined file as bytes; used where the caller must hash the exact source bytes. */
-export function readConfinedBytes(baseDir: string, relativePath: string): ConfinedBytesResult {
+export function readConfinedBytes(
+  baseDir: string,
+  relativePath: string,
+  maxBytes?: number
+): ConfinedBytesResult {
   const resolved = resolveConfined(baseDir, relativePath);
   if (!resolved.ok) return resolved;
+  if (maxBytes !== undefined && resolved.stats.size > maxBytes) {
+    return {
+      ok: false,
+      reason: "unreadable",
+      message: "the file is larger than the " + maxBytes + "-byte read limit",
+    };
+  }
   try {
     const bytes = fs.readFileSync(resolved.path);
-    return { ok: true, bytes, path: resolved.path, stats: fs.statSync(resolved.path) };
+    return { ok: true, bytes, path: resolved.path, stats: resolved.stats };
   } catch {
     return { ok: false, reason: "unreadable", message: "the file could not be read" };
   }
 }
 
 /** Reads a confined file as UTF-8 text. */
-export function readConfinedText(baseDir: string, relativePath: string): ConfinedTextResult {
+export function readConfinedText(
+  baseDir: string,
+  relativePath: string,
+  maxBytes?: number
+): ConfinedTextResult {
   const resolved = resolveConfined(baseDir, relativePath);
   if (!resolved.ok) return resolved;
+  if (maxBytes !== undefined && resolved.stats.size > maxBytes) {
+    return {
+      ok: false,
+      reason: "unreadable",
+      message: "the file is larger than the " + maxBytes + "-byte read limit",
+    };
+  }
   try {
     const text = fs.readFileSync(resolved.path, "utf8");
-    return { ok: true, text, path: resolved.path, stats: fs.statSync(resolved.path) };
+    return { ok: true, text, path: resolved.path, stats: resolved.stats };
   } catch {
     return { ok: false, reason: "unreadable", message: "the file could not be read" };
   }

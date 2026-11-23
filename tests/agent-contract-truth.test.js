@@ -104,15 +104,15 @@ test("B-2: the configure step matches init's real config filename", () => {
   const step = contract.workflow.find((entry) => entry.id === "configure");
   assert.ok(step, "the contract must keep a configure step");
 
-  // Real behaviour: a CommonJS project gets snapshot.config.mjs on every
-  // supported Node version (a .ts config needs Node >= 22.6 *and* an ES module).
+  // Real behaviour: init writes a data-only JSON config, which is the one file the
+  // CLI, MCP server and serve command can all load without executing repository code.
   const dir = makeCommonJsFixture();
   try {
     const result = run(["init", "--yes", "--cwd", dir]);
     assert.equal(result.status, 0, `init failed: ${result.stderr}`);
     assert.ok(
-      fs.existsSync(path.join(dir, "snapshot.config.mjs")),
-      "init must write snapshot.config.mjs for a CommonJS project"
+      fs.existsSync(path.join(dir, "snapshot.config.json")),
+      "init must write snapshot.config.json for a CommonJS project"
     );
     assert.equal(
       fs.existsSync(path.join(dir, "snapshot.config.ts")),
@@ -124,16 +124,11 @@ test("B-2: the configure step matches init's real config filename", () => {
   }
 
   const text = `${step.expect} ${step.notes ?? ""}`;
-  assert.match(text, /snapshot\.config\.mjs/, `the configure step must mention .mjs: ${text}`);
+  assert.match(text, /snapshot\.config\.json/, `the configure step must mention .json: ${text}`);
   assert.match(
     text,
-    /ES module|"type"\s*:\s*"module"|type: module/i,
-    `the configure step must name the ES-module condition: ${text}`
-  );
-  assert.match(
-    text,
-    /22\.6|strip types|type stripping/i,
-    `the configure step must name the Node requirement for a .ts config: ${text}`
+    /data-only|without executing repository code|CLI, MCP server and serve/i,
+    `the configure step must explain why the config is JSON: ${text}`
   );
   assert.doesNotMatch(
     step.expect,
@@ -180,7 +175,11 @@ test("the shipped skill repeats the same honest rules", () => {
     new RegExp(`v${contract.version.replace(/\./g, "\\.")}\\b`),
     "the skill must not pin the exact patch against @latest"
   );
-  assert.match(skill, /snapshot\.config\.mjs/, "the skill must mention the .mjs config fallback");
-  assert.match(skill, /22\.6|strip types|type stripping/i, "the skill must name the Node requirement");
+  assert.match(skill, /snapshot\.config\.json/, "the skill must mention the data-only config");
+  assert.match(
+    skill,
+    /data|executable|MCP and serve/i,
+    "the skill must explain why the config is data-only"
+  );
   assert.match(skill, /summaryOmitted/, "the skill must explain summaryOmitted");
 });

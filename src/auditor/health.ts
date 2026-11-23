@@ -92,14 +92,6 @@ function sha256(buffer: Buffer | string): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-function readText(file: string): string | null {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    return null;
-  }
-}
-
 /** Reads a snapshot-relative text file through the same confinement every resource uses. */
 function snapshotText(snapshotDir: string, relative: string): string | null {
   const read = readConfinedText(snapshotDir, relative);
@@ -192,9 +184,13 @@ function secretTokens(text: string): string[] {
  * re-read the whole directory per token: with 400 tokens against a 4 MiB snapshot that was close
  * to 2 GiB of reads for one check.
  */
-function readArtifactTexts(snapshotDir: string, maxBytes = 32 * 1024 * 1024): string[] {
+function readArtifactTexts(
+  snapshotDir: string,
+  maxBytes = 32 * 1024 * 1024
+): { texts: string[]; truncated: boolean } {
   const texts: string[] = [];
   let bytes = 0;
+  let truncated = false;
   for (const relative of walk(snapshotDir)) {
     if (!TEXT_ARTIFACT.test(relative)) continue;
     const full = path.join(snapshotDir, relative);
@@ -204,14 +200,19 @@ function readArtifactTexts(snapshotDir: string, maxBytes = 32 * 1024 * 1024): st
     } catch {
       continue;
     }
-    if (bytes + size > maxBytes) break;
+    if (bytes + size > maxBytes) {
+      // Skip this artifact and keep looking: a 32 MB monolith first in the walk must not hide
+      // every smaller part behind it.
+      truncated = true;
+      continue;
+    }
     const text = snapshotText(snapshotDir, relative);
     if (text !== null) {
       texts.push(text);
       bytes += Buffer.byteLength(text, "utf8");
     }
   }
-  return texts;
+  return { texts, truncated };
 }
 
 
@@ -220,7 +221,7 @@ function findHostPaths(
   snapshotDir: string,
   repoDir: string,
   maxBytes = 32 * 1024 * 1024
-): string[] {
+): { hits: string[]; truncated: boolean } {
   const patterns = [
     /\/home\/[A-Za-z0-9._-]+/g,
     /\/Users\/[A-Za-z0-9._-]+/g,
@@ -232,6 +233,7 @@ function findHostPaths(
   const repoPattern = new RegExp(escapeRegExp(repoDir), "g");
   const hits = new Set<string>();
   let scanned = 0;
+  let truncated = false;
   for (const relative of walk(snapshotDir)) {
     if (!TEXT_ARTIFACT.test(relative)) continue;
     let size: number;
@@ -240,7 +242,10 @@ function findHostPaths(
     } catch {
       continue;
     }
-    if (scanned + size > maxBytes) break;
+    if (scanned + size > maxBytes) {
+      truncated = true;
+      continue;
+    }
     const text = snapshotText(snapshotDir, relative);
     if (text === null) continue;
     scanned += Buffer.byteLength(text, "utf8");
@@ -250,7 +255,7 @@ function findHostPaths(
     repoPattern.lastIndex = 0;
     if (repoPattern.test(text)) hits.add(relative + ": the repository absolute path");
   }
-  return [...hits];
+  return { hits: [...hits], truncated };
 }
 
 /** What git says now versus what the manifest recorded. */
@@ -1177,55 +1182,114 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   // A workspace index describes its members. When this snapshot is one of them, the two records
   // have to agree, or the deliverable says two different things about the same directory.
   const indexParent = path.dirname(snapshotDir);
-  const indexPath = path.join(indexParent, "WORKSPACE.json");
-  if (fs.existsSync(indexPath)) {
-    const indexText = readText(indexPath);
-    let members: Array<{ name?: unknown; path?: unknown; fingerprint?: unknown; files?: unknown }> = [];
-    let problem: string | null = null;
-    try {
-      const parsed = JSON.parse(indexText ?? "null") as { members?: unknown };
-      if (!Array.isArray(parsed?.members)) problem = "its members field is not an array";
-      else members = parsed.members as typeof members;
-    } catch (error) {
-      problem = (error as Error).message;
-    }
-    const memberName = path.basename(snapshotDir);
-    const member = members.find((entry) => entry.name === memberName);
-    if (problem !== null) {
-      checks.push(check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
-        "WORKSPACE.json could not be read: " + problem));
-    } else if (member === undefined) {
-      checks.push(check("workspace.index", "The workspace index agrees with this member", "warning", "skip",
-        "WORKSPACE.json lists no member named " + memberName + "."));
-    } else {
-      const disagreements: string[] = [];
-      if (member.fingerprint !== manifest.fingerprint) disagreements.push("fingerprint");
-      if (typeof member.files === "number" && member.files !== manifest.counts.totalFiles) {
-        disagreements.push("file count");
+  // A workspace member's snapshot lives at <workspace>/snapshot/<member>, so its WORKSPACE.json
+  // is one directory above the member repository. The read is still confined to the directory
+  // that holds the snapshot; a symlinked WORKSPACE.json is refused, and member.path is never
+  // stat'ed until it resolves inside repoDir.
+  const indexRead = readConfinedText(indexParent, "WORKSPACE.json");
+  if (indexRead.ok) {
+      let members: Array<{ name?: unknown; path?: unknown; fingerprint?: unknown; files?: unknown }> = [];
+      let problem: string | null = null;
+      try {
+        const parsed = JSON.parse(indexRead.text) as { members?: unknown };
+        if (!Array.isArray(parsed?.members)) problem = "its members field is not an array";
+        else members = parsed.members as typeof members;
+      } catch {
+        // Never echo the parser's message. Node 20+ includes the opening bytes of the input there,
+        // which made a symlinked WORKSPACE.json a host-file prefix leak.
+        problem = "it is not valid JSON";
       }
-      const sourceGone =
-        typeof member.path === "string" && !fs.existsSync(member.path)
-          ? "Member " + memberName + " source directory is gone (" + member.path + "); the snapshot still describes it. Regenerate the workspace."
-          : null;
-      checks.push(
-        sourceGone !== null
-          ? check("workspace.index", "The workspace index agrees with this member", "warning", "warn", sourceGone)
-          : disagreements.length === 0
-            ? check("workspace.index", "The workspace index agrees with this member", "warning", "pass",
-                "Member " + memberName + " matches the index fingerprint and file count.")
-            : check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
-                "The index disagrees with this member on: " + disagreements.join(", ") + ". Regenerate the workspace.")
-      );
+      const memberName = path.basename(snapshotDir);
+      const member = members.find((entry) => entry.name === memberName);
+      if (problem !== null) {
+        checks.push(check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
+          "WORKSPACE.json could not be read: " + problem));
+      } else if (member === undefined) {
+        checks.push(check("workspace.index", "The workspace index agrees with this member", "warning", "skip",
+          "WORKSPACE.json lists no member named " + memberName + "."));
+      } else {
+        const disagreements: string[] = [];
+        if (member.fingerprint !== manifest.fingerprint) disagreements.push("fingerprint");
+        if (typeof member.files === "number" && member.files !== manifest.counts.totalFiles) {
+          disagreements.push("file count");
+        }
+        // A WORKSPACE.json is repository content. Its member.path is untrusted input: using
+        // fs.existsSync on it was a host-file existence oracle (and followed a symlink out of the
+        // repository). Resolve only a path whose canonical target stays inside the repository.
+        let sourceGone: string | null = null;
+        if (typeof member.path === "string") {
+          const memberPath = member.path;
+          // WORKSPACE.json stores member paths relative to the workspace root, which is one
+          // directory above the snapshot root for a workspace run. A single-snapshot index at the
+          // repository root uses the snapshot parent instead. Try each anchor lexically, then
+          // choose the one that lands inside this member's repository; never stat a candidate
+          // outside it.
+          // A member path is workspace-relative for --all-members and for a member health run;
+          // repoDir is the workspace root in the first case and the member repository in the
+          // second. The workspace root is one directory above the snapshot root. Exclude the
+          // snapshot root itself: a missing member source there is a directory in the snapshot,
+          // not the repository the manifest describes.
+          const candidates = [path.dirname(indexParent), repoDir]
+            .map((anchor) => path.resolve(anchor, memberPath))
+            .filter((candidate) => {
+              const relative = path.relative(repoDir, candidate);
+              return (
+                relative !== ".." &&
+                !relative.startsWith(".." + path.sep) &&
+                !path.isAbsolute(relative)
+              );
+            });
+          // Prefer a candidate that exists; when none does, the first one is the missing source
+          // path we want to report.
+          const resolved = candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+          if (resolved === undefined) {
+            sourceGone =
+              "Member " + memberName + " source directory resolves outside the repository; not inspected.";
+          } else {
+            let canonical: string | null = null;
+            try {
+              canonical = fs.realpathSync(resolved);
+            } catch {
+              canonical = null;
+            }
+            const canonicalRelative =
+              canonical === null ? null : path.relative(repoDir, canonical);
+            const canonicalInside =
+              canonical !== null &&
+              (canonicalRelative === "" ||
+                (canonicalRelative !== null &&
+                  !canonicalRelative.startsWith("..") &&
+                  !path.isAbsolute(canonicalRelative)));
+            if (canonical !== null && !canonicalInside) {
+              sourceGone =
+                "Member " + memberName + " source directory resolves outside the repository; not inspected.";
+            } else if (canonical === null || !fs.existsSync(resolved)) {
+              sourceGone =
+                "Member " + memberName + " source directory is gone (" + member.path +
+                "); the snapshot still describes it. Regenerate the workspace.";
+            }
+          }
+        }
+        checks.push(
+          sourceGone !== null
+            ? check("workspace.index", "The workspace index agrees with this member", "warning", "warn", sourceGone)
+            : disagreements.length === 0
+              ? check("workspace.index", "The workspace index agrees with this member", "warning", "pass",
+                  "Member " + memberName + " matches the index fingerprint and file count.")
+              : check("workspace.index", "The workspace index agrees with this member", "warning", "warn",
+                  "The index disagrees with this member on: " + disagreements.join(", ") + ". Regenerate the workspace.")
+        );
+      }
     }
-  }
 
   // Leaks
   const rules = [...compileSecretRules(DEFAULT_SECRET_PATTERNS), ...(options.secretRules ?? [])];
   const scanBudget = options.maxScanBytes ?? 32 * 1024 * 1024;
   const leakHits: string[] = [];
   let scannedBytes = 0;
+  let skippedArtifacts = 0;
   for (const relative of walk(snapshotDir)) {
-    if (!TEXT_ARTIFACT.test(relative) || scannedBytes > scanBudget) continue;
+    if (!TEXT_ARTIFACT.test(relative)) continue;
     // The signature record is scanned below, without its key material: a random ed25519 public
     // key or signature contains a 52-character alphanumeric run often enough (about one run in
     // forty) to match the Azure DevOps token shape, and the audit then failed the snapshot it had
@@ -1238,7 +1302,12 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     } catch {
       continue;
     }
-    if (scannedBytes + size > scanBudget) break;
+    if (scannedBytes + size > scanBudget) {
+      // Keep scanning the smaller artifacts. Breaking here reported "Scanned 0 B" as a pass when
+      // the first file in the walk was larger than the caller's budget.
+      skippedArtifacts += 1;
+      continue;
+    }
     const text = snapshotText(snapshotDir, relative);
     if (text === null) continue;
     scannedBytes += Buffer.byteLength(text, "utf8");
@@ -1295,11 +1364,15 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   }
 
   checks.push(
-    leakHits.length === 0
-      ? check("secrets.artifacts", "No unmasked secret survives in an artifact", "critical", "pass",
-          "Scanned " + formatBytes(scannedBytes) + " across the written artifacts.")
-      : check("secrets.artifacts", "No unmasked secret survives in an artifact", "critical", "fail",
+    leakHits.length > 0
+      ? check("secrets.artifacts", "No unmasked secret survives in an artifact", "critical", "fail",
           leakHits.length + " artifact(s) contain a secret-shaped value: " + sample(leakHits))
+      : skippedArtifacts > 0
+        ? check("secrets.artifacts", "No unmasked secret survives in an artifact", "critical", "warn",
+            "Scanned " + formatBytes(scannedBytes) + " and skipped " + skippedArtifacts +
+              " artifact(s) larger than the remaining scan budget; the snapshot was not fully checked.")
+        : check("secrets.artifacts", "No unmasked secret survives in an artifact", "critical", "pass",
+            "Scanned " + formatBytes(scannedBytes) + " across the written artifacts.")
   );
 
   const skippedSensitive = manifest.skipped.filter((record) =>
@@ -1309,7 +1382,8 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
   let compared = 0;
   // Read once even when nothing sensitive was excluded: the cost is one walk, and it keeps the
   // per-token check below from re-reading the directory hundreds of times.
-  const artifactTexts = readArtifactTexts(snapshotDir, scanBudget);
+  const artifactScan = readArtifactTexts(snapshotDir, scanBudget);
+  const artifactTexts = artifactScan.texts;
   const artifactContains = (token: string): boolean =>
     artifactTexts.some((text) => text.includes(token));
   for (const record of skippedSensitive.slice(0, 40)) {
@@ -1329,22 +1403,31 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
     }
   }
   checks.push(
-    leakedFrom.length === 0
+    leakedFrom.length > 0
       ? check("secrets.skipped", "No value from an excluded sensitive file appears in an artifact",
-          "critical", "pass",
-          skippedSensitive.length + " sensitive path(s) excluded; " + compared + " value(s) compared.")
-      : check("secrets.skipped", "No value from an excluded sensitive file appears in an artifact",
           "critical", "fail",
           "A value from " + sample([...new Set(leakedFrom)]) + " appears in the snapshot.")
+      : artifactScan.truncated
+        ? check("secrets.skipped", "No value from an excluded sensitive file appears in an artifact",
+            "critical", "warn",
+            skippedSensitive.length + " sensitive path(s) excluded; " + compared +
+              " value(s) compared, but some artifacts were larger than the scan budget and were not checked.")
+        : check("secrets.skipped", "No value from an excluded sensitive file appears in an artifact",
+            "critical", "pass",
+            skippedSensitive.length + " sensitive path(s) excluded; " + compared + " value(s) compared.")
   );
 
   const pii = findHostPaths(snapshotDir, repoDir, scanBudget);
   checks.push(
-    pii.length === 0
-      ? check("pii.paths", "No host path or machine identity leaks into the text", "warning", "pass",
-          "No absolute home path or repository root found.")
-      : check("pii.paths", "No host path or machine identity leaks into the text", "warning", "warn",
-          pii.length + " hit(s): " + sample(pii))
+    pii.hits.length > 0
+      ? check("pii.paths", "No host path or machine identity leaks into the text", "warning", "warn",
+          pii.hits.length + " hit(s): " + sample(pii.hits) +
+            (pii.truncated ? " (scan stopped at the byte budget; more may remain)" : ""))
+      : pii.truncated
+        ? check("pii.paths", "No host path or machine identity leaks into the text", "warning", "warn",
+            "Some artifacts were larger than the scan budget and were not checked for host paths.")
+        : check("pii.paths", "No host path or machine identity leaks into the text", "warning", "pass",
+            "No absolute home path or repository root found.")
   );
 
   // Cost

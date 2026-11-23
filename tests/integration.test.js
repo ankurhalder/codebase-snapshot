@@ -1643,10 +1643,10 @@ test("CLI init writes a config in non-interactive mode", () => {
   const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
   assert.ok(configName, "a config file must be written");
 
-  const text = fs.readFileSync(path.join(dir, configName), "utf8");
-  assert.ok(text.includes('preset: "go"'));
-  assert.ok(text.includes('maxPartBytes: "120k"'));
-  assert.ok(text.includes("artifacts:"), "the full annotated config is written by default");
+  const config = JSON.parse(fs.readFileSync(path.join(dir, configName), "utf8"));
+  assert.equal(config.preset, "go");
+  assert.equal(config.maxPartBytes, "120k");
+  assert.equal(typeof config.artifacts, "object", "the full config is written by default");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -1760,7 +1760,7 @@ test("init's whole footprint is the config, package.json, .gitignore and the bri
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(
     fs.readdirSync(dir).sort(),
-    [".gitignore", "BRIEF.md", "package.json", "snapshot.config.mjs"],
+    [".gitignore", "BRIEF.md", "package.json", "snapshot.config.json"],
     "the config, the brief scaffold, and no agent file"
   );
 
@@ -1771,9 +1771,9 @@ test("init's whole footprint is the config, package.json, .gitignore and the bri
     "the package is declared, so npm install puts it in node_modules"
   );
 
-  const config = fs.readFileSync(path.join(dir, "snapshot.config.mjs"), "utf8");
-  for (const key of ["preset:", "outDir:", "maxPartBytes:", "previewHeadLines:", "layersMode:", "artifacts:", "hooks:"]) {
-    assert.ok(config.includes(key), `the one config file must list every setting: ${key}`);
+  const config = JSON.parse(fs.readFileSync(path.join(dir, "snapshot.config.json"), "utf8"));
+  for (const key of ["preset", "outDir", "maxPartBytes", "previewHeadLines", "layersMode", "artifacts", "hooks"]) {
+    assert.ok(Object.prototype.hasOwnProperty.call(config, key), `the one config file must list every setting: ${key}`);
   }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -1799,18 +1799,13 @@ test("init writes a config that generate can actually load (CommonJS project)", 
 
   const written = fs.readdirSync(dir).filter((name) => name.startsWith("snapshot.config"));
   assert.equal(written.length, 1, `expected exactly one config, got ${written.join(", ")}`);
-  assert.equal(written[0], "snapshot.config.mjs", "a CommonJS project cannot load a .ts ESM config");
+  assert.equal(written[0], "snapshot.config.json", "init always writes data, never executable code");
 
   const text = fs.readFileSync(path.join(dir, written[0]), "utf8");
-  // Name-independent on purpose: the header comment legitimately names the generator, so
-  // matching the package string would forbid the tool from saying who wrote the file. What
-  // must never happen is the config importing the package, which would make it unloadable
-  // in the very project it is meant for.
-  assert.doesNotMatch(
-    text,
-    /^\s*(?:import\b|const\s+\w+\s*=\s*require\()/m,
-    "the config must not import the package"
-  );
+  // The JSON config must parse without executing anything; a module would need an import or
+  // export and would be refused by the MCP and serve commands.
+  assert.doesNotThrow(() => JSON.parse(text), "the config is plain JSON");
+  assert.doesNotMatch(text, /^\s*(?:import\b|export\b|const\s+\w+\s*=\s*require\()/m);
 
   // The whole point: the next command works.
   const generated = runCli(["generate", "--cwd", dir]);
@@ -1819,7 +1814,7 @@ test("init writes a config that generate can actually load (CommonJS project)", 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("init writes a .ts config for an ESM project when Node can load it", () => {
+test("init writes a data-only config for an ESM project", () => {
   const dir = makeRepo("rt-esm-", {
     "package.json": '{"name":"fixture","version":"1.0.0","type":"module"}',
   });
@@ -1827,26 +1822,21 @@ test("init writes a .ts config for an ESM project when Node can load it", () => 
   assert.equal(init.code, 0, init.stderr);
 
   const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
-  if (supportsTypeScriptImportsForTests()) {
-    assert.equal(configName, "snapshot.config.ts");
-  } else {
-    assert.equal(configName, "snapshot.config.mjs");
-  }
+  assert.equal(configName, "snapshot.config.json");
 
   const generated = runCli(["generate", "--cwd", dir]);
   assert.equal(generated.code, 0, `generate must load ${configName}:\n${generated.stderr}`);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("a generated config is a plain object, not a defineConfig call", () => {
+test("a generated config is plain JSON, not a defineConfig call", () => {
   const dir = makeRepo("rt-plain-", {
     "package.json": '{"name":"fixture","version":"1.0.0","type":"module"}',
   });
   assert.equal(runCli(["init", "--yes", "--cwd", dir]).code, 0);
   const configName = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config"));
   const text = fs.readFileSync(path.join(dir, configName), "utf8");
-  assert.match(text, /export default config;/, "the object is exported by name");
-  assert.doesNotMatch(text, /export default \{/, "an anonymous default export is a lint error in Next.js");
+  assert.doesNotThrow(() => JSON.parse(text));
   assert.doesNotMatch(text, /defineConfig/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

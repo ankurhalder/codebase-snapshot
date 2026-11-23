@@ -30,6 +30,10 @@ function runGit(cwd: string, args: string[]): { ok: boolean; out: string } {
       "diff.noprefix=false",
       "-c",
       "diff.mnemonicPrefix=false",
+      // A hostile or merely customized git config can turn a diff into an external program. The
+      // report is generated from a repository the caller may not trust.
+      "-c",
+      "core.fsmonitor=false",
       ...args,
     ],
     { cwd, encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }
@@ -166,8 +170,8 @@ export function generateDiffReport(
   let omittedUnparseable = 0;
 
   const commands: Array<[string, string[]]> = [
-    ["Unstaged", ["diff", "--no-color"]],
-    ["Staged", ["diff", "--cached", "--no-color"]],
+    ["Unstaged", ["diff", "--no-color", "--no-ext-diff", "--no-textconv"]],
+    ["Staged", ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv"]],
   ];
   for (const [title, args] of commands) {
     const result = runGit(cwd, args);
@@ -198,12 +202,31 @@ export function generateDiffReport(
       // Redact before truncating, using the diffed file's own extension: YAML, INI, shell and
       // Dockerfile rules are selected by file type. Truncating first split a credential at the
       // boundary and left its prefix unredacted.
+      //
+      // Unified-diff body lines begin with "+", "-" or " ". The format-aware rules are anchored
+      // to the start of a line, so `+api_secret: |` and `+ENV API_KEY …` never matched and the
+      // secret was written to reports/diff.md while the same bytes in parts/*.md were redacted.
+      // Remove exactly one diff prefix, scan the logical file, then restore the same prefix.
       const sourcePath = paths[0] ?? "reports/diff.md";
-      const redactedSection = scanAndRedactSecrets(
-        rawSection,
+      const diffLines = rawSection.split("\n");
+      const diffPrefixes = diffLines.map((line) => (/^[+\- ]/.test(line) ? line[0] : ""));
+      const logicalLines = diffLines.map((line, index) =>
+        diffPrefixes[index] === "" ? line : line.slice(1)
+      );
+      const logicalRedacted = scanAndRedactSecrets(
+        logicalLines.join("\n"),
         options.secretRules ?? [],
         sourcePath
       ).redacted;
+      const logicalRedactedLines = logicalRedacted.split("\n");
+      // Redaction preserves physical line count (it only replaces spans), but if a future rule
+      // ever changes it, fall back to scanning the raw section rather than misaligning prefixes.
+      const redactedSection =
+        logicalRedactedLines.length === diffLines.length
+          ? logicalRedactedLines
+              .map((line, index) => diffPrefixes[index] + line)
+              .join("\n")
+          : scanAndRedactSecrets(rawSection, options.secretRules ?? [], sourcePath).redacted;
       const chunk = truncateToBytes(redactedSection, remaining);
       if (chunk.isTruncated) truncated = true;
       sections.push(

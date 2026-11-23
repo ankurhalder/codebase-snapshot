@@ -368,9 +368,10 @@ test("init writes a brief scaffold and points the config at it", (t) => {
 
   const config = fs.readdirSync(dir).find((name) => name.startsWith("snapshot.config."));
   assert.ok(config, "a config was written");
-  // Commented, not enabled: a config pointing at a scaffold the user may delete would turn
-  // "delete the template" into "generate now fails".
-  assert.match(fs.readFileSync(path.join(dir, config), "utf8"), /\/\/ brief: "docs\/brief\.md"/);
+  // Null, not enabled: a config pointing at a scaffold the user may delete would turn
+  // "delete the template" into "generate now fails". JSON has no comment syntax, so the
+  // disabled state is an explicit null key.
+  assert.match(fs.readFileSync(path.join(dir, config), "utf8"), /"brief": null/);
 
   // An untouched scaffold renders no owner section: comments are guidance, not assertions.
   const generated = cli(["generate"], dir);
@@ -404,7 +405,7 @@ test("a filled scaffold section is merged at its slot", (t) => {
   const configPath = path.join(dir, configName);
   fs.writeFileSync(
     configPath,
-    fs.readFileSync(configPath, "utf8").replace(/\/\/ brief: "docs\/brief\.md"/, 'brief: "BRIEF.md"')
+    fs.readFileSync(configPath, "utf8").replace(/"brief": null/, '"brief": "BRIEF.md"')
   );
   fs.writeFileSync(
     path.join(dir, "BRIEF.md"),

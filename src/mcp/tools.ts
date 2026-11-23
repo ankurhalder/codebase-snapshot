@@ -18,16 +18,43 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { auditSnapshot } from "../auditor/health.js";
 import { planForQuestion } from "./retrieval.js";
-import { explainPath, renderExplainText } from "../explain.js";
+import { renderExplainText } from "../explain.js";
 import type { ExplainResult } from "../explain.js";
 import { buildImportResolver, resolveSafeOutputDirs, resolveSpecifier, tsconfigPathsFor } from "../index.js";
 
 /** One search reads at most this many bytes of part text. */
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
+
+/** Runs one repository-wide analysis off the JSON-RPC thread. */
+async function runAnalysis<T>(request: AnalysisTask): Promise<T> {
+  const outcome = await analysisInWorker(request);
+  if (!outcome.ok) throw new Error(outcome.message);
+  return outcome.result as T;
+}
+
+/**
+ * A structured-clone-safe configuration.
+ *
+ * Preset layer/kind matchers are functions; `postMessage` refuses them. The worker rehydrates the
+ * source it is given. Hooks are dropped because no analysis runs them and a hook is usually a
+ * function. A RegExp or string matcher crosses as itself.
+ */
+function analysisConfig(config: Workspace["config"]): unknown {
+  const encodeMatch = (match: unknown): unknown =>
+    typeof match === "function" ? { __functionSource: String(match) } : match;
+  return {
+    ...config,
+    hooks: {},
+    layers: config.layers.map((rule) => ({ ...rule, match: encodeMatch(rule.match) })),
+    kinds: config.kinds.map((rule) => ({ ...rule, match: encodeMatch(rule.match) })),
+  };
+}
+
 import { truncateToBytes } from "../partitioner/preview.js";
-import { validateSnapshot } from "../validator/validate.js";
 import { GENERATOR_VERSION } from "../version.js";
 import { generateInWorker } from "./generate-worker.js";
+import { analysisInWorker } from "./analysis-worker.js";
+import type { AnalysisTask } from "./analysis-worker.js";
 import { findSection, parsePartSections, windowText } from "./part.js";
 import { estimateTokens } from "../tokenize.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -72,6 +99,22 @@ const MAX_RESULT_BYTES = 64 * 1024;
 function capResultText(text: string): { text: string; clipped: boolean } {
   const clipped = truncateToBytes(text, MAX_RESULT_BYTES);
   return { text: clipped.isTruncated ? clipped.content : text, clipped: clipped.isTruncated };
+}
+
+/**
+ * Caps a whole assembled response, not one file block.
+ *
+ * `snapshot_answer` capped each body at 64 KiB and then returned up to fifty of them, plus a
+ * second copy in `structuredContent`; a single request could emit megabytes. The limit applies to
+ * the text the client receives, and the caller drops the duplicated structured bodies when it clips.
+ */
+function capResponseText(text: string): { text: string; clipped: boolean } {
+  const notice = "\n\n[response capped at 64 KiB; narrow the request]";
+  const budget = MAX_RESULT_BYTES - Buffer.byteLength(notice, "utf8");
+  const clipped = truncateToBytes(text, budget);
+  return clipped.isTruncated
+    ? { text: clipped.content + notice, clipped: true }
+    : { text, clipped: false };
 }
 
 const ROOT_PROPERTY = {
@@ -501,9 +544,14 @@ const testsTool: ToolSpec = {
       tsconfig: tsconfigPathsFor(prepared.workspace.root),
     });
     const testFiles = read.manifest.files.filter((file) => isTest(file.relativePath));
+    // One map, not a linear scan of every import record for every test file: 10,000 tests over
+    // 10,000 files was 100 million string comparisons on the MCP event loop.
+    const importsByPath = new Map(
+      read.manifest.indexes.imports.byFile.map((candidate) => [candidate.path, candidate.imports])
+    );
     const importsOf = (filePath: string): string[] => {
-      const entry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === filePath);
-      return (entry?.imports ?? [])
+      const imports = importsByPath.get(filePath);
+      return (imports ?? [])
         .map((specifier) => resolveSpecifier(filePath, specifier, resolver))
         .filter((target): target is string => target !== null && byPath.has(target));
     };
@@ -641,21 +689,24 @@ const neighborsTool: ToolSpec = {
     const resolver = buildImportResolver(read.manifest.files, {
       tsconfig: tsconfigPathsFor(prepared.workspace.root),
     });
-    const entry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === file.relativePath);
+    const importsByPath = new Map(
+      read.manifest.indexes.imports.byFile.map((candidate) => [candidate.path, candidate.imports])
+    );
+    const entry = importsByPath.get(file.relativePath) ?? [];
     const imports: Array<{ path: string; part: string | null; resolved: boolean }> = [];
-    for (const specifier of entry?.imports ?? []) {
+    for (const specifier of entry) {
       const resolved = resolveSpecifier(file.relativePath, specifier, resolver);
       const target = resolved === null ? undefined : byPath.get(resolved);
       imports.push({ path: resolved ?? specifier, part: target?.part ?? null, resolved: target !== undefined });
     }
     const importedBy: Array<{ path: string; part: string }> = [];
-    for (const other of read.manifest.files) {
-      if (other.relativePath === file.relativePath) continue;
-      const otherEntry = read.manifest.indexes.imports.byFile.find((candidate) => candidate.path === other.relativePath);
-      if (otherEntry === undefined) continue;
-      for (const specifier of otherEntry.imports) {
-        if (resolveSpecifier(other.relativePath, specifier, resolver) === file.relativePath) {
-          importedBy.push({ path: other.relativePath, part: other.part });
+    for (const [otherPath, otherImports] of importsByPath) {
+      if (otherPath === file.relativePath) continue;
+      const other = byPath.get(otherPath);
+      if (other === undefined) continue;
+      for (const specifier of otherImports) {
+        if (resolveSpecifier(otherPath, specifier, resolver) === file.relativePath) {
+          importedBy.push({ path: otherPath, part: other.part });
           break;
         }
       }
@@ -821,38 +872,64 @@ const cyclesTool: ToolSpec = {
       }
     }
 
-    let index = 0;
+    let nextIndex = 0;
     const indices = new Map<string, number>();
     const low = new Map<string, number>();
     const onStack = new Set<string>();
     const stack: string[] = [];
     const components: string[][] = [];
-    const strongConnect = (node: string): void => {
-      indices.set(node, index);
-      low.set(node, index);
-      index += 1;
-      stack.push(node);
-      onStack.add(node);
-      for (const target of edges.get(node) ?? []) {
-        if (!indices.has(target)) {
-          strongConnect(target);
-          low.set(node, Math.min(low.get(node) as number, low.get(target) as number));
-        } else if (onStack.has(target)) {
-          low.set(node, Math.min(low.get(node) as number, indices.get(target) as number));
+    // Iterative Tarjan. A recursive strongConnect overflowed the JavaScript stack around ten
+    // thousand files, which is an ordinary monorepo and a crash in an auto-approved tool.
+    for (const root of byPath.keys()) {
+      if (indices.has(root)) continue;
+      const frames: Array<{ node: string; targets: string[]; next: number }> = [];
+      const push = (node: string): void => {
+        indices.set(node, nextIndex);
+        low.set(node, nextIndex);
+        nextIndex += 1;
+        stack.push(node);
+        onStack.add(node);
+        frames.push({ node, targets: edges.get(node) ?? [], next: 0 });
+      };
+      push(root);
+      while (frames.length > 0) {
+        const frame = frames[frames.length - 1] as { node: string; targets: string[]; next: number };
+        if (frame.next < frame.targets.length) {
+          const target = frame.targets[frame.next] as string;
+          frame.next += 1;
+          if (!indices.has(target)) {
+            push(target);
+          } else if (onStack.has(target)) {
+            low.set(
+              frame.node,
+              Math.min(low.get(frame.node) as number, indices.get(target) as number)
+            );
+          }
+          continue;
+        }
+        frames.pop();
+        const node = frame.node;
+        const parent = frames[frames.length - 1];
+        if (parent !== undefined) {
+          low.set(
+            parent.node,
+            Math.min(low.get(parent.node) as number, low.get(node) as number)
+          );
+        }
+        if (low.get(node) === indices.get(node)) {
+          const component: string[] = [];
+          for (;;) {
+            const member = stack.pop() as string;
+            onStack.delete(member);
+            component.push(member);
+            if (member === node) break;
+          }
+          if (component.length > 1 || (edges.get(node) ?? []).includes(node)) {
+            components.push(component.sort());
+          }
         }
       }
-      if (low.get(node) === indices.get(node)) {
-        const component: string[] = [];
-        for (;;) {
-          const member = stack.pop() as string;
-          onStack.delete(member);
-          component.push(member);
-          if (member === node) break;
-        }
-        if (component.length > 1 || (edges.get(node) ?? []).includes(node)) components.push(component.sort());
-      }
-    };
-    for (const node of byPath.keys()) if (!indices.has(node)) strongConnect(node);
+    }
 
     components.sort((left, right) => right.length - left.length || left[0].localeCompare(right[0]));
     const reported = components.slice(0, cap).map((component) => ({ size: component.length, files: component }));
@@ -928,13 +1005,14 @@ const searchTool: ToolSpec = {
       if (matches.length >= cap) { truncated = true; break; }
       const partPath = partPathFor(workspace, part.filename);
       if (partPath === null) continue;
-      let text: string;
+      // Ask the filesystem for the size before reading. A 200 MB part used to be loaded into a
+      // JavaScript string and only then skipped for exceeding the 4 MB search budget.
+      let partBytes: number;
       try {
-        text = fs.readFileSync(partPath, "utf8");
+        partBytes = fs.statSync(partPath).size;
       } catch {
         continue;
       }
-      const partBytes = Buffer.byteLength(text, "utf8");
       if (partBytes > MAX_SEARCH_BYTES) {
         skippedOversize.push(part.filename);
         truncated = true;
@@ -943,6 +1021,12 @@ const searchTool: ToolSpec = {
       if (scanned + partBytes > MAX_SEARCH_BYTES) {
         truncated = true;
         break;
+      }
+      let text: string;
+      try {
+        text = fs.readFileSync(partPath, "utf8");
+      } catch {
+        continue;
       }
       scanned += partBytes;
       for (const section of parsePartSections(text)) {
@@ -1086,19 +1170,28 @@ const reviewTool: ToolSpec = {
     const read = readManifest(workspace);
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
 
-    let validation;
+    let validation: ValidationResult;
+    let report: ReturnType<typeof auditSnapshot>;
     try {
-      validation = validateSnapshot(configAsGenerated(workspace, read.manifest));
+      const analysis = await runAnalysis<{
+        validation: ValidationResult;
+        report: ReturnType<typeof auditSnapshot>;
+      }>({
+        task: "review",
+        config: analysisConfig(configAsGenerated(workspace, read.manifest)),
+        options: {
+          snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
+          repoDir: workspace.root,
+          ...(workspace.config.customSecretRules === undefined || workspace.config.customSecretRules.length === 0
+            ? {}
+            : { secretRules: workspace.config.customSecretRules }),
+        },
+      });
+      validation = analysis.validation;
+      report = analysis.report;
     } catch (error) {
       return { text: (error as Error).message, isError: true };
     }
-    const report = auditSnapshot({
-      snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
-      repoDir: workspace.root,
-      ...(workspace.config.customSecretRules === undefined || workspace.config.customSecretRules.length === 0
-        ? {}
-        : { secretRules: workspace.config.customSecretRules }),
-    });
     const failed = report.checks.filter((check) => check.status === "fail").map((check) => check.id + ": " + check.detail);
 
     const wanted = Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === "string") : [];
@@ -1194,8 +1287,8 @@ const diffContextTool: ToolSpec = {
     type: "object",
     properties: {
       paths: { type: "array", items: { type: "string" }, description: "Changed paths, as the manifest names them." },
-      maxTokens: { type: "integer", description: "Budget for the block (default 15000).", minimum: 500 },
-      linesPerFile: { type: "integer", description: "Head lines per changed file (default 80).", minimum: 10 },
+      maxTokens: { type: "integer", description: "Budget for the block (default 15000).", minimum: 500, maximum: 200000 },
+      linesPerFile: { type: "integer", description: "Head lines per changed file (default 80).", minimum: 10, maximum: 2000 },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
     },
@@ -1221,8 +1314,14 @@ const diffContextTool: ToolSpec = {
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
     const wanted = Array.isArray(args.paths) ? args.paths.filter((item) => typeof item === "string") : [];
     if (wanted.length === 0) return { text: "paths must be a non-empty array", isError: true };
-    const budget = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 15000);
-    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80);
+    const budget = Math.min(
+      200000,
+      Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 15000)
+    );
+    const linesPerFile = Math.min(
+      2000,
+      Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80)
+    );
     const byPath = new Map(read.manifest.files.map((file) => [file.relativePath.toLowerCase(), file]));
     // The importers are resolved with the generator's resolver, not a hand-rolled one. The old
     // loop handled only relative specifiers and a fixed extension list, so a tsconfig path alias
@@ -1298,9 +1397,18 @@ const diffContextTool: ToolSpec = {
           : dependents.length + " dependent(s): " + dependents.map((item) => item.path).join(", ");
     const missingNote =
       missing.length === 0 || changed.length === 0 ? "" : "Also not returned: " + missing.join(", ") + ".";
+    const assembled = [text.join("\n\n"), note, missingNote].filter((part) => part !== "").join("\n\n");
+    const response = capResponseText(assembled);
     return {
-      text: [text.join("\n\n"), note, missingNote].filter((part) => part !== "").join("\n\n"),
-      structured: { budgetTokens: budget, usedTokens: used, changed, dependents, missing },
+      text: response.text,
+      structured: {
+        budgetTokens: budget,
+        usedTokens: used,
+        changed,
+        dependents,
+        missing,
+        ...(response.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      },
     };
   },
 };
@@ -1356,6 +1464,15 @@ const symbolTool: ToolSpec = {
     for (const file of candidates.slice(0, cap)) {
       const partPath = partPathFor(workspace, file.part);
       if (partPath === null) continue;
+      let partBytes: number;
+      try {
+        partBytes = fs.statSync(partPath).size;
+      } catch {
+        continue;
+      }
+      // A symbol definition still has to be found in the part, but never by loading an oversized
+      // one first. The search budget is the same ceiling the reference scan uses.
+      if (partBytes > MAX_SEARCH_BYTES) continue;
       let partText: string;
       try {
         partText = fs.readFileSync(partPath, "utf8");
@@ -1413,18 +1530,23 @@ const symbolTool: ToolSpec = {
             referencesTruncated = true;
             break;
           }
+          let partBytes: number;
+          try {
+            partBytes = fs.statSync(partPath).size;
+          } catch {
+            continue;
+          }
+          if (scanned + partBytes > MAX_SEARCH_BYTES) {
+            referencesTruncated = true;
+            break;
+          }
           let partText: string;
           try {
             partText = fs.readFileSync(partPath, "utf8");
           } catch {
             continue;
           }
-          const bytes = Buffer.byteLength(partText, "utf8");
-          if (scanned + bytes > MAX_SEARCH_BYTES) {
-            referencesTruncated = true;
-            break;
-          }
-          scanned += bytes;
+          scanned += partBytes;
           sections = parsePartSections(partText);
           sectionsByPart.set(partPath, sections);
         }
@@ -1475,8 +1597,8 @@ const contextTool: ToolSpec = {
     properties: {
       files: { type: "array", items: { type: "string" }, description: "Paths, as the manifest names them." },
       symbols: { type: "array", items: { type: "string" }, description: "Exported symbol names." },
-      maxTokens: { type: "integer", description: "Budget for the block (default 20000).", minimum: 500 },
-      linesPerFile: { type: "integer", description: "Head lines per file (default 80).", minimum: 10 },
+      maxTokens: { type: "integer", description: "Budget for the block (default 20000).", minimum: 500, maximum: 200000 },
+      linesPerFile: { type: "integer", description: "Head lines per file (default 80).", minimum: 10, maximum: 2000 },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
     },
@@ -1506,8 +1628,14 @@ const contextTool: ToolSpec = {
     if (wantedFiles.length === 0 && wantedSymbols.length === 0) {
       return { text: "Provide at least one of files or symbols.", isError: true };
     }
-    const budget = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 20000);
-    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80);
+    const budget = Math.min(
+      200000,
+      Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 20000)
+    );
+    const linesPerFile = Math.min(
+      2000,
+      Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 80)
+    );
 
     const byPath = new Map(manifest.files.map((file) => [file.relativePath.toLowerCase(), file]));
     const targets: FileEntry[] = [];
@@ -1587,9 +1715,17 @@ const contextTool: ToolSpec = {
     const notes = [];
     if (missing.length > 0) notes.push("Not returned: " + missing.join(", ") + ".");
     if (blocks.length === 0 && notes.length === 0) notes.push("Nothing was requested.");
+    const assembled = [text.join("\n\n"), ...notes].filter((part) => part !== "").join("\n\n");
+    const response = capResponseText(assembled);
     return {
-      text: [text.join("\n\n"), ...notes].filter((part) => part !== "").join("\n\n"),
-      structured: { budgetTokens: budget, usedTokens: used, files: blocks, missing },
+      text: response.text,
+      structured: {
+        budgetTokens: budget,
+        usedTokens: used,
+        files: blocks,
+        missing,
+        ...(response.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      },
     };
   },
 };
@@ -1683,7 +1819,7 @@ const planForTool: ToolSpec = {
     type: "object",
     properties: {
       question: { type: "string", description: "What you need to answer, in the user words." },
-      maxTokens: { type: "integer", description: "Budget for the plan (default 30000).", minimum: 500 },
+      maxTokens: { type: "integer", description: "Budget for the plan (default 30000).", minimum: 500, maximum: 200000 },
       includeTests: { type: "boolean", description: "Include test files (default false)." },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
@@ -1741,8 +1877,8 @@ const answerTool: ToolSpec = {
     type: "object",
     properties: {
       question: { type: "string", description: "What you need to answer." },
-      maxTokens: { type: "integer", description: "Budget for the whole block (default 20000).", minimum: 500 },
-      linesPerFile: { type: "integer", description: "Head lines per file (default 60).", minimum: 10 },
+      maxTokens: { type: "integer", description: "Budget for the whole block (default 20000).", minimum: 500, maximum: 200000 },
+      linesPerFile: { type: "integer", description: "Head lines per file (default 60).", minimum: 10, maximum: 2000 },
       includeTests: { type: "boolean", description: "Include test files (default false)." },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
@@ -1768,8 +1904,14 @@ const answerTool: ToolSpec = {
     if (!prepared.ok) return prepared.outcome;
     const read = readManifest(prepared.workspace);
     if (!read.ok) return { text: read.message + " Call snapshot_generate first.", isError: true };
-    const maxTokens = Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 20000);
-    const linesPerFile = Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 60);
+    const maxTokens = Math.min(
+      200000,
+      Math.max(500, typeof args.maxTokens === "number" ? args.maxTokens : 20000)
+    );
+    const linesPerFile = Math.min(
+      2000,
+      Math.max(10, typeof args.linesPerFile === "number" ? args.linesPerFile : 60)
+    );
     const plan = planForQuestion(read.manifest, question, {
       maxTokens,
       ...(args.includeTests === true ? { includeTests: true } : {}),
@@ -1790,6 +1932,7 @@ const answerTool: ToolSpec = {
       truncated: boolean;
       totalLines: number;
       clippedAtBytes?: number;
+      contentOmitted?: true;
     }> = [];
     // The planner's own skips belong in the answer. With a tight budget it planned one cheap file
     // and left the strong match out; the text said "1 skipped for budget" while `omitted` was
@@ -1886,9 +2029,24 @@ const answerTool: ToolSpec = {
       lines.push("Notes:");
       for (const note of plan.notes) lines.push("- " + note);
     }
+    const assembled = lines.join("\n");
+    const response = capResponseText(assembled);
+    if (response.clipped) {
+      for (const block of blocks) {
+        block.text = "";
+        block.contentOmitted = true;
+      }
+    }
     return {
-      text: lines.join("\n"),
-      structured: { question, budgetTokens: maxTokens, usedTokens: used, files: blocks, omitted },
+      text: response.text,
+      structured: {
+        question,
+        budgetTokens: maxTokens,
+        usedTokens: used,
+        files: blocks,
+        omitted,
+        ...(response.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      },
     };
   },
 };
@@ -1932,17 +2090,25 @@ const healthTool: ToolSpec = {
     const prepared = await prepare(args, context, outDirOverride(args));
     if (!prepared.ok) return prepared.outcome;
     const workspace = prepared.workspace;
-    const report = auditSnapshot({
-      snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
-      repoDir: workspace.root,
-      // The audit adds the built-in patterns itself. Passing the project's full rule list made
-      // every built-in run twice; passing none made a project-defined token shape invisible.
-      ...(workspace.config.customSecretRules === undefined || workspace.config.customSecretRules.length === 0
-        ? {}
-        : { secretRules: workspace.config.customSecretRules }),
-      ...(typeof args.maxScanBytes === "number" ? { maxScanBytes: args.maxScanBytes } : {}),
-      ...(args.deep === true ? { deep: true } : {}),
-    });
+    let report: ReturnType<typeof auditSnapshot>;
+    try {
+      report = await runAnalysis<ReturnType<typeof auditSnapshot>>({
+        task: "health",
+        options: {
+          snapshotDir: path.resolve(workspace.root, workspace.config.outDir),
+          repoDir: workspace.root,
+          // The audit adds the built-in patterns itself. Passing the project's full rule list made
+          // every built-in run twice; passing none made a project-defined token shape invisible.
+          ...(workspace.config.customSecretRules === undefined || workspace.config.customSecretRules.length === 0
+            ? {}
+            : { secretRules: workspace.config.customSecretRules }),
+          ...(typeof args.maxScanBytes === "number" ? { maxScanBytes: args.maxScanBytes } : {}),
+          ...(args.deep === true ? { deep: true } : {}),
+        },
+      });
+    } catch (error) {
+      return { text: (error as Error).message, isError: true };
+    }
     const lines = [
       "Health: " + report.score + "/100 (" + report.counts.pass + " passed, " +
         report.counts.warn + " warning(s), " + report.counts.fail + " failed)",
@@ -2203,6 +2369,7 @@ const generateTool: ToolSpec = {
       },
       slice: {
         type: "string",
+        maxLength: 500,
         description: "Narrow the snapshot to what the planner picks for this question.",
       },
       sliceTokens: {
@@ -2246,11 +2413,11 @@ const generateTool: ToolSpec = {
     // tool call as a dead server.
     context.notify?.({ message: "generating", progress: 1, total: 2 });
     const reportOptions = {
-      ...(args.includeDiffs === true ? { includeDiffs: true as const } : {}),
+      ...(typeof args.includeDiffs === "boolean" ? { includeDiffs: args.includeDiffs } : {}),
       ...(typeof args.includeLogs === "number" ? { includeLogs: args.includeLogs } : {}),
-      ...(args.tokenTree === true ? { tokenTree: true as const } : {}),
-      ...(args.stripComments === true ? { stripComments: true as const } : {}),
-      ...(args.removeEmptyLines === true ? { removeEmptyLines: true as const } : {}),
+      ...(typeof args.tokenTree === "boolean" ? { tokenTree: args.tokenTree } : {}),
+      ...(typeof args.stripComments === "boolean" ? { stripComments: args.stripComments } : {}),
+      ...(typeof args.removeEmptyLines === "boolean" ? { removeEmptyLines: args.removeEmptyLines } : {}),
       ...(typeof args.pack === "string" ? { pack: args.pack as "single" | "xml" | "json" } : {}),
       ...(Array.isArray(args.only) ? { only: args.only.filter((value) => typeof value === "string") } : {}),
       ...(Array.isArray(args.ignore) ? { ignore: args.ignore.filter((value) => typeof value === "string") } : {}),
@@ -2392,8 +2559,15 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
   // bytes, and that number also caps largeFileBytes and budgets.default. Reconstructing only
   // maxPartTokens left the other three at the current (un-narrowed) values, so a freshly generated
   // `--max-part-tokens` snapshot failed its own validate with four configuration mismatches.
+  // A token ceiling is reconstructed from the manifest only when no byte budget or token budget
+  // was supplied by the config or the call. Gating on maxPartTokens alone clamped a config's new
+  // maxPartBytes back down to the manifest's old value, so raising the budget looked current.
   const recordedTokensOnly =
-    cli.maxPartTokens === undefined && !configured("maxPartTokens")
+    cli.maxPartTokens === undefined &&
+    cli.maxPartBytes === undefined &&
+    !configured("maxPartTokens") &&
+    !configured("maxPartBytes") &&
+    !configured("budgets")
       ? recorded?.maxPartTokens
       : undefined;
   const adoptedMaxPartBytes =
@@ -2499,7 +2673,10 @@ const validateTool: ToolSpec = {
     if (!read.ok) return failure(read.message);
     let result: ValidationResult;
     try {
-      result = validateSnapshot(configAsGenerated(workspace, read.manifest));
+      result = await runAnalysis<ValidationResult>({
+        task: "validate",
+        config: analysisConfig(configAsGenerated(workspace, read.manifest)),
+      });
     } catch (error) {
       return failure(error instanceof Error ? error.message : String(error));
     }
@@ -2771,12 +2948,15 @@ const dependentsTool: ToolSpec = {
     const resolver = buildImportResolver(manifest.files, {
       tsconfig: tsconfigPathsFor(prepared.workspace.root),
     });
+    const importsByPath = new Map(
+      manifest.indexes.imports.byFile.map((candidate) => [candidate.path, candidate.imports])
+    );
     const imports: Array<{ path: string; specifier: string; part: string }> = [];
     const unresolved: string[] = [];
 
     if (direction !== "imported-by") {
-      const own = manifest.indexes.imports.byFile.find((file) => file.path === entry.relativePath);
-      for (const specifier of own?.imports ?? []) {
+      const own = importsByPath.get(entry.relativePath) ?? [];
+      for (const specifier of own) {
         const resolved = resolveSpecifier(entry.relativePath, specifier, resolver);
         if (resolved === null) {
           unresolved.push(specifier);
@@ -2971,7 +3151,10 @@ const readTool: ToolSpec = {
       // no JSON parser downstream can accept. `truncateToBytes` walks the boundary.
       const clipped = truncateToBytes(body, MAX_RESULT_BYTES);
       const lastBreak = clipped.content.lastIndexOf("\n");
-      if (lastBreak > 0) {
+      if (lastBreak >= 0) {
+        // An empty first line is a complete line. The old `> 0` test treated the break at
+        // offset 0 as "inside a long line", so a file starting with a blank line and then an
+        // oversized second line was called unpaginated even though lines after it were ordinary.
         body = clipped.content.slice(0, lastBreak);
       } else {
         // A single line longer than one result can carry. The old code returned its prefix and
@@ -2982,7 +3165,12 @@ const readTool: ToolSpec = {
       }
       truncatedByBytes = true;
     }
-    const returnedLines = body.length === 0 ? 0 : body.split("\n").length;
+    const returnedLines =
+      body.length === 0
+        ? truncatedByBytes && !clippedInsideLine && window.fromLine <= window.totalLines
+          ? 1
+          : 0
+        : body.split("\n").length;
     const moreRemain =
       !clippedInsideLine && !window.pastEnd && (window.truncated || truncatedByBytes);
 
@@ -3097,7 +3285,11 @@ const explainTool: ToolSpec = {
 
     let result: ExplainResult;
     try {
-      result = explainPath(workspace.config, relativePath);
+      result = await runAnalysis<ExplainResult>({
+        task: "explain",
+        config: analysisConfig(workspace.config),
+        path: relativePath,
+      });
     } catch (error) {
       return failure(error instanceof Error ? error.message : String(error));
     }

@@ -99,7 +99,7 @@ test("C-3: a directory without package.json prints a runnable next step", (t) =>
     "must not promise an npm script that was never added"
   );
   assert.equal(fs.existsSync(path.join(target, "package.json")), false);
-  assert.ok(fs.existsSync(path.join(target, "snapshot.config.mjs")));
+  assert.ok(fs.existsSync(path.join(target, "snapshot.config.json")));
 });
 
 test("C-2: the dependency is recorded at the shim's own version", (t) => {
@@ -225,16 +225,12 @@ test("C-4: the README names the config file that is actually written", (t) => {
 
   assert.equal(run.code, 0, run.stderr);
 
-  const wroteTs = fs.existsSync(path.join(target, "snapshot.config.ts"));
-  const wroteMjs = fs.existsSync(path.join(target, "snapshot.config.mjs"));
-  assert.equal(wroteTs !== wroteMjs, true, "exactly one config file must be written");
-
-  const written = wroteTs ? "snapshot.config.ts" : "snapshot.config.mjs";
+  const written = "snapshot.config.json";
+  assert.ok(fs.existsSync(path.join(target, written)), "the JSON config must be written");
   const readme = fs.readFileSync(path.join(SHIM_SOURCE, "README.md"), "utf8");
 
   assert.ok(readme.includes(written), `the README must name ${written}`);
   assert.ok(run.stderr.includes(written), "the printed config path must match it");
-  // It documents both variants rather than claiming one fixed name.
-  assert.match(readme, /snapshot\.config\.ts/);
-  assert.match(readme, /snapshot\.config\.mjs/);
+  // The config is data, not repository code: MCP and serve can load it too.
+  assert.match(readme, /data-only|snapshot\.config\.json/);
 });

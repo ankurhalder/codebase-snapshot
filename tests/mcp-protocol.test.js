@@ -475,7 +475,8 @@ test("modern session", async (t) => {
 
   await t.test("initialize and ping no longer exist", async () => {
     const { server } = makeServer();
-    await server.handle({ jsonrpc: "2.0", id: 23, method: "server/discover" });
+    // A metadata-less discover is only a probe; a modern _meta request is what commits the era.
+    await modernCall(server, 26, "tools/list");
 
     const initialize = await modernCall(server, 24, "initialize");
     assert.equal(initialize.error.code, ERROR_CODES.methodNotFound);
@@ -510,7 +511,9 @@ test("modern session", async (t) => {
 
   await t.test("a modern request that drops _meta is rejected, not downgraded", async () => {
     const { server } = makeServer();
-    await server.handle({ jsonrpc: "2.0", id: 29, method: "server/discover" });
+    // Commit the era with a real modern request, then omit _meta on the next one. A bare
+    // discover no longer commits the era, so it cannot be the setup for this test.
+    await modernCall(server, 29, "tools/list");
     const response = await server.handle({ jsonrpc: "2.0", id: 30, method: "tools/list" });
     assert.equal(response.error.code, ERROR_CODES.invalidRequest);
     assert.match(response.error.message, /_meta/);

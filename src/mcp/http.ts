@@ -6,6 +6,9 @@ import { GENERATOR_VERSION } from "../version.js";
 import { parseBearerToken } from "../auth.js";
 import type { McpServer } from "./server.js";
 import type { JsonRpcResponse } from "./protocol.js";
+import { isJsonObject } from "./protocol.js";
+import { inspectModernMeta } from "./era.js";
+
 
 /**
  * MCP over HTTP, for clients that are not a child process.
@@ -123,6 +126,17 @@ function isToolCall(message: unknown): boolean {
 
 function methodOf(message: unknown): string | null {
   return isObject(message) && typeof message.method === "string" ? message.method : null;
+}
+
+/** True when any message in a request carries complete modern `_meta`. */
+function hasModernMeta(message: unknown): boolean {
+  const messages = Array.isArray(message) ? message : [message];
+  return messages.some(
+    (item) =>
+      isJsonObject(item) &&
+      isJsonObject(item.params) &&
+      inspectModernMeta(item.params).kind === "present"
+  );
 }
 
 /**
@@ -295,6 +309,9 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
       vary: "origin",
       "access-control-allow-headers":
         "authorization, content-type, mcp-protocol-version, mcp-session-id",
+      // Without this a browser can send the header but cannot read it: mcp-session-id is not a
+      // CORS-safelisted response header, so every cross-origin client silently lost its session.
+      "access-control-expose-headers": "mcp-session-id",
       "access-control-allow-methods": "POST, GET, OPTIONS, DELETE",
       "access-control-max-age": "600",
     };
@@ -547,6 +564,12 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         rememberAnonymous(anonymousKey(request), server);
         responseSession = newSessionId();
         rememberSession(responseSession, server, Date.now());
+      } else if (hasModernMeta(message)) {
+        // A stateless modern request is complete on its own. Sharing the anonymous pool with a
+        // co-located legacy client let that client's initialize overwrite the era state, so a
+        // later modern response was shaped as legacy. A fresh dispatcher has exactly the state
+        // a stateless request is entitled to.
+        server = createMcp();
       } else {
         server = fallbackServer(request);
       }
@@ -719,6 +742,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       cors.vary = "origin";
       cors["access-control-allow-headers"] =
         "authorization, content-type, mcp-protocol-version, mcp-session-id";
+      cors["access-control-expose-headers"] = "mcp-session-id";
       cors["access-control-allow-methods"] = "POST, GET, OPTIONS, DELETE";
       cors["access-control-max-age"] = "600";
     }

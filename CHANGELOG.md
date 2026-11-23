@@ -30,6 +30,19 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.10
+
+**Security hardening from a three-pass audit: snapshot confinement, redaction, validation, MCP protocol and serve boundaries. Every finding was reproduced before its fix, and each class has a regression test.**
+
+- **Confinement.** A committed `snapshot/parts` junction/symlink can no longer read a host file through `snapshot://parts/{n}`; a repository's `snapshot.config.json` may not place `outDir` or `tmpDir` outside the served root; `WORKSPACE.json` and `signature.json` are read through the confined reader, and a member path is never stat'ed until it resolves inside the repository.
+- **Redaction.** PEM blocks are masked structurally instead of trusting a cross-line quote state, so a preceding comment, regex literal or Python `b"..."` prefix cannot leak the base64 body. Multi-line JS/TS template literals, Python/Ruby/JS quoted assignments, YAML list-item block scalars, `Dockerfile.prod`/`Containerfile` ENV lines, backup spellings such as `.kube/config.bak`, and credentials beside a redaction marker are masked. Diff reports scan the logical file without the `+`/`-`/` ` prefix, then restore it.
+- **ReDoS.** `unsafeRegExpReason` counts optional quantifiers (`?`, `{0,1}`) and refuses backreferences; `globToRegExp` and `compileGitignorePattern` refuse globs whose brace groups or wildcard chains exceed a bounded branch budget. A custom-secret-rule list is capped at 64 in MCP and serve.
+- **MCP protocol.** A metadata-less `server/discover` and a pre-initialize `ping` no longer commit the connection's era; a modern stateless HTTP request gets its own dispatcher instead of sharing the legacy anonymous pool; `Access-Control-Expose-Headers: mcp-session-id` lets browser clients read the session they were given; `snapshot_answer`, `snapshot_context` and `snapshot_diff_context` cap the whole response at 64 KiB; explicit `false` boolean arguments are honored; `snapshot_read` stays paginated when the first line is empty.
+- **Validation.** A snapshotted file replaced by a directory or symlink, or dropped from the current ignore/filter selection, is drift rather than "valid"; `git rm --cached` with `--staged` no longer fails immediately after a correct generate; raising `maxPartBytes` in the config is detected instead of clamped to the old manifest value.
+- **Serve.** `/api/snapshot.zip` zips only the files the manifest declares and refuses a directory that merely contains a PWA `manifest.json`; the remote clone is asynchronous, so one slow URL cannot freeze `/healthz`, `/mcp` or SSE; concurrent generations and temporary clones are bounded and keep-alive connections are closed on shutdown.
+- **Agent onboarding.** `init` writes a data-only `snapshot.config.json` by default, which the CLI, MCP and `serve` can all load without executing repository code. An existing executable config is preserved by `--force`; this repository's own config is now JSON.
+- Smaller fixes: `verifySnapshotSignature` confines both reads and no longer echoes parser snippets; `slice` questions are masked before reaching the manifest; the graph tools use maps and an iterative Tarjan pass; a monolith body transformed by comment stripping is labelled `comments-stripped`, not `full`.
+
 ## 0.20.9
 
 **MCP hardening: a regex denial of service, a session-table wedge, stateless modern clients, config compatibility and transport drift are fixed together, with a regression for each.**

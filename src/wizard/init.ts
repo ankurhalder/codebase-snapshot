@@ -5,7 +5,6 @@ import {
   ARTIFACT_NAMES,
   MIN_MAX_PART_BYTES,
   parseByteSize,
-  supportsTypeScriptImports,
 } from "../config.js";
 import { appendGitignoreEntries } from "../gitignore.js";
 import { detectPreset, listPresetNames } from "../presets/index.js";
@@ -17,6 +16,7 @@ import { BRIEF_SCAFFOLD, BRIEF_SCAFFOLD_FILE } from "./brief-template.js";
 import {
   DEFAULT_ANSWERS,
   renderConfig,
+  renderJsonConfig,
   type WizardAnswers,
 } from "./config-template.js";
 import {
@@ -157,18 +157,15 @@ function readPackageJson(cwd: string): Record<string, unknown> | null {
 }
 
 /**
- * Picks the config filename this project can actually load.
+ * Picks the config filename `init` writes for a new repository.
  *
- * A `.ts` config is only usable when Node can strip types *and* the package is an
- * ES module: Node applies the enclosing `package.json` `type` field to a `.ts`
- * file, so an `export default` config in a CommonJS project fails to load. That
- * made `codebase-snapshot init` write a file the next `codebase-snapshot generate` refused to read. `.mjs`
- * works everywhere, so it is the safe default.
+ * JSON is the default because the MCP and serve transports refuse executable configs: writing
+ * `snapshot.config.ts` made `init` produce a repository its own `mcp` command could not open.
+ * The wizard's answers are all data, so no executable form is needed. An existing executable
+ * config is still preserved by `--force`; the conversion is not silent.
  */
-export function chooseConfigFileName(cwd: string): string {
-  if (!supportsTypeScriptImports()) return "snapshot.config.mjs";
-  const parsed = readPackageJson(cwd);
-  return parsed?.type === "module" ? "snapshot.config.ts" : "snapshot.config.mjs";
+export function chooseConfigFileName(_cwd: string): string {
+  return "snapshot.config.json";
 }
 
 const SIZE_CHOICES: Array<{ value: string; label: string; hint: string }> = [
@@ -814,7 +811,6 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
 
   }
 
-  const configText = renderConfig(answers);
   const preferredName = chooseConfigFileName(options.cwd);
   const presentConfigs = CONFIG_CANDIDATES.filter((name) =>
     fs.existsSync(path.join(options.cwd, name))
@@ -836,6 +832,11 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
   // user's: `--force` promised to replace it and instead disabled it.
   const configName = present !== null && options.force ? present : preferredName;
   const configPath = path.join(options.cwd, configName);
+  // Keep an existing executable config's format when --force rewrites it; a new config is data.
+  const configText =
+    configName.endsWith(".json") || configName === ".snapshotrc"
+      ? renderJsonConfig(answers)
+      : renderConfig(answers);
 
   // `setup` keeps a config it finds: it is the repository's, and rewriting it would silently
   // discard whatever the user changed. The rest of the setup still runs.
@@ -866,7 +867,13 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       `A configuration already exists (${present}). Re-run with --force to replace it.`
     );
   }
-  if (present !== null && options.force && !canWriteModuleConfig(present, options.cwd)) {
+  const presentIsJson = present !== null && (present.endsWith(".json") || present === ".snapshotrc");
+  if (
+    present !== null &&
+    options.force &&
+    !presentIsJson &&
+    !canWriteModuleConfig(present, options.cwd)
+  ) {
     throw new Error(
       `Refusing to replace ${present}: this wizard writes an ES-module config (.ts, .js, .mjs), and ` +
         `${present} is a ${configFormatLabel(present)} configuration. Writing a new file beside it would ` +

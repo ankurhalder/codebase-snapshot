@@ -5,10 +5,11 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { assertServerSafeConfig, loadConfigFileDetailed } from "../config.js";
 import { createMcpHttpHandler } from "../mcp/http.js";
 import { generateInWorker } from "../mcp/generate-worker.js";
+import { analysisInWorker } from "../mcp/analysis-worker.js";
 import { auditSnapshot } from "../auditor/health.js";
 import { assertPublicHost, cloneRepository, makeCloneDirectory, parseRemoteSource } from "../remote/source.js";
 import { describeManifestShapeProblem } from "../validator/validate.js";
-import { readConfinedText } from "../security/confine.js";
+import { readConfinedBytes, readConfinedText } from "../security/confine.js";
 import type { Manifest } from "../types.js";
 import { writeZip } from "./zip.js";
 import { parseBearerToken } from "../auth.js";
@@ -29,6 +30,23 @@ import { SERVE_PAGE } from "./ui.js";
  *  - Every response is bounded. The preview is the first 64 KiB of PROMPT.md, the file list is
  *    capped, the zip is built in memory and streamed once.
  */
+
+/** Artifact keys to their written paths. Kept in step with the manifest's artifact record. */
+const ARTIFACT_PATHS: Record<string, string> = {
+  readme: "README.md",
+  prompt: "PROMPT.md",
+  navigation: "reports/navigation.md",
+  projectTree: "reports/project-tree.md",
+  audit: "reports/audit.md",
+  diff: "reports/diff.md",
+  log: "reports/log.md",
+  tokenTree: "reports/tokens.md",
+  selection: "reports/selection.md",
+  fullJson: "full-codebase.json",
+  fullMarkdown: "full-codebase.md",
+  fullXml: "full-codebase.xml",
+  sarif: "reports/audit.sarif",
+};
 
 export interface ServeOptions {
   cwd: string;
@@ -51,6 +69,10 @@ export interface ServeHandle {
 const DEFAULT_PORT = 4788;
 const MAX_BODY = 64 * 1024;
 const MAX_PREVIEW = 64 * 1024;
+/** Concurrent browser generations. Each one owns a worker and an output directory. */
+const MAX_GENERATE_JOBS = 2;
+/** Remote clones kept alive for the page's later reads; older ones are removed on eviction. */
+const MAX_TEMPORARY_CLONES = 8;
 
 function isLoopback(origin: string): boolean {
   try {
@@ -97,6 +119,7 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   };
   /** Clones made by this process; removed when it closes, because the page can still be reading them. */
   const temporaryClones = new Set<string>();
+  let generateJobs = 0;
 
   /**
    * Directories this server may read from: the working directory it was started for, plus the
@@ -249,7 +272,13 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
       });
       request.on("end", () => {
         if (tooLarge) return;
+        if (generateJobs >= MAX_GENERATE_JOBS) {
+          send(429, { error: "too many generations in flight; wait for one to finish" });
+          return;
+        }
+        generateJobs += 1;
         void (async () => {
+          try {
           let source = "";
           let mode: "full" | "slice" | "budget" = "full";
           let question = "";
@@ -302,6 +331,16 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
               });
               temporaryClones.add(clone.directory);
               allowedRoots.push(clone.directory);
+              while (temporaryClones.size > MAX_TEMPORARY_CLONES) {
+                const oldest = temporaryClones.values().next().value;
+                if (oldest === undefined) break;
+                temporaryClones.delete(oldest);
+                try {
+                  fs.rmSync(oldest, { recursive: true, force: true });
+                } catch {
+                  // A clone that cannot be removed is still only this server's temporary tree.
+                }
+              }
               target = clone.directory;
               provenance = clone.provenance;
             } catch (error) {
@@ -417,7 +456,15 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
             // The audit runs on what was just written, so the page shows whether the artifact is
             // safe to hand over rather than only how big it is.
-            const health = auditSnapshot({ snapshotDir, repoDir: target });
+            const audit = await analysisInWorker({
+              task: "health",
+              options: { snapshotDir, repoDir: target },
+            });
+            if (!audit.ok) {
+              send(500, { error: audit.message });
+              return;
+            }
+            const health = audit.result as { score: number; counts: { warn: number }; checks: Array<{ status: string; id: string }> };
             send(200, {
               path: snapshotDir,
               health: {
@@ -437,6 +484,9 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             });
           } catch (error) {
             send(500, { error: (error as Error).message });
+          }
+          } finally {
+            generateJobs -= 1;
           }
         })().catch((error: unknown) => {
           log("serve: " + (error as Error).message);
@@ -473,8 +523,21 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(404, { error: "no manifest.json under " + target });
         return;
       }
-      const report = auditSnapshot({ snapshotDir: target, repoDir });
-      send(200, { score: report.score, counts: report.counts, checks: report.checks });
+      void analysisInWorker({
+        task: "health",
+        options: { snapshotDir: target, repoDir },
+      })
+        .then((analysis) => {
+          if (!analysis.ok) {
+            send(500, { error: analysis.message });
+            return;
+          }
+          const report = analysis.result as ReturnType<typeof auditSnapshot>;
+          send(200, { score: report.score, counts: report.counts, checks: report.checks });
+        })
+        .catch((error: unknown) => {
+          send(500, { error: error instanceof Error ? error.message : String(error) });
+        });
       return;
     }
 
@@ -543,12 +606,52 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      if (!fs.existsSync(path.join(target, "manifest.json")) && !fs.existsSync(path.join(target, ".codebase-snapshot"))) {
-        send(404, { error: "not a snapshot directory: " + target });
+      const manifestRead = readConfinedText(target, "manifest.json");
+      if (!manifestRead.ok) {
+        send(manifestRead.reason === "outside" ? 403 : 404, {
+          error: "no readable manifest.json under " + target,
+        });
+        return;
+      }
+      let zipManifest: Manifest;
+      try {
+        zipManifest = JSON.parse(manifestRead.text) as Manifest;
+      } catch {
+        send(404, { error: "manifest.json is not valid JSON" });
+        return;
+      }
+      const zipProblem = describeManifestShapeProblem(zipManifest);
+      if (zipProblem !== null) {
+        send(400, { error: "manifest.json is not a snapshot manifest: " + zipProblem });
+        return;
+      }
+      // Zip the files the manifest declares, not every regular file in the directory. Existence of
+      // a manifest (or a marker) is not evidence that its neighbours are snapshot content: a PWA
+      // manifest.json at the repository root used to turn this endpoint into a full unredacted
+      // repository archive, including .env and .git.
+      const wanted = new Set<string>(["manifest.json"]);
+      for (const part of zipManifest.parts) {
+        if (typeof part.filename === "string" && part.filename.length > 0) {
+          wanted.add("parts/" + part.filename);
+        }
+      }
+      const artifactRecord = (zipManifest.artifacts ?? {}) as Record<string, unknown>;
+      for (const [key, relative] of Object.entries(ARTIFACT_PATHS)) {
+        if (artifactRecord[key] !== undefined && artifactRecord[key] !== null) wanted.add(relative);
+      }
+      wanted.add("signature.json");
+      const entries: Array<{ name: string; content: Buffer; mtime: Date }> = [];
+      for (const relative of wanted) {
+        const read = readConfinedBytes(target, relative, 256 * 1024 * 1024);
+        if (!read.ok) continue;
+        entries.push({ name: relative, content: read.bytes, mtime: read.stats.mtime });
+      }
+      if (entries.length === 0) {
+        send(404, { error: "the snapshot manifest declares no readable files" });
         return;
       }
       try {
-        const zip = writeZip({ directory: target });
+        const zip = writeZip({ entries });
         response.writeHead(200, {
           ...cors,
           "content-type": "application/zip",
@@ -591,6 +694,9 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
           // A leftover temp tree is better than a crash on shutdown.
         }
       }
+      // Keep-alive connections hold close() open indefinitely; the MCP transport already does
+      // this, and serve needs the same shutdown behavior.
+      server.closeAllConnections();
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });

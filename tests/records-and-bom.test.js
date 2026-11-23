@@ -91,22 +91,15 @@ test("init reads a package.json that starts with a byte-order mark", async (t) =
 
   const result = await runInit({ cwd: dir, yes: true });
 
-  // The config filename depends on the runtime, not on the BOM: a `.ts` config needs Node's type
-  // stripping and a `"type": "module"` package, and the release matrix includes versions without
-  // stripping. What must not depend on the runtime is that the `"type"` field was *read* at all.
-  if (supportsTypeScriptImports()) {
-    assert.equal(
-      result.configPath.endsWith("snapshot.config.ts"),
-      true,
-      `a "type": "module" project gets the .ts config, not ${result.configPath}`
-    );
-  } else {
-    assert.equal(
-      result.configPath.endsWith("snapshot.config.mjs"),
-      true,
-      `a runtime without type stripping gets .mjs, not ${result.configPath}`
-    );
-  }
+  // The config filename is data-only regardless of the runtime or the BOM. The BOM fix is
+  // observable in the generated preset, not in a filename that no longer depends on Node's
+  // type-stripping support.
+  assert.equal(
+    result.configPath.endsWith("snapshot.config.json"),
+    true,
+    `init always writes the JSON config, not ${result.configPath}`
+  );
+  assert.doesNotThrow(() => JSON.parse(result.configText), "the config is valid JSON");
   assert.ok(result.scripts.includes("snapshot"), "the npm script is added");
   assert.equal(
     result.notes.some((note) => /could not parse package\.json/i.test(note)),

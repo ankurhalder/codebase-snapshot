@@ -88,6 +88,31 @@ function resolveThroughExistingAncestor(target: string): string {
 }
 
 /**
+ * Refuses an output directory that a config file placed outside the served roots.
+ *
+ * The same rule the `outDir` tool argument already follows applies to the value the repository's
+ * own `snapshot.config.json` supplies. A config is repository input too: in the MCP and serve
+ * transports the repository may be untrusted, so it may not redirect reads to a sibling checkout
+ * or writes to an arbitrary writable path. The CLI does not call this function and keeps its
+ * documented freedom to write outside the checkout.
+ */
+function configuredOutputProblem(
+  root: string,
+  requested: string,
+  permitted: readonly string[],
+  label: "outDir" | "tmpDir"
+): string | null {
+  const resolved = resolveThroughExistingAncestor(path.resolve(root, requested));
+  if (permitted.some((allowed) => isInside(canonicalPath(allowed), resolved))) return null;
+  const shown = permitted.map((allowed) => canonicalPath(allowed)).join(", ");
+  return (
+    `"${label}" must resolve inside the repository this server serves (${shown}). ` +
+    "A configuration file in the repository may not place snapshot output or staging outside " +
+    "the served root; move the directory inside the repository, or run the CLI directly."
+  );
+}
+
+/**
  * Resolves the `root` argument against the directories this server may read.
  *
  * The default is the directory the server was started for, so a client that passes nothing gets
@@ -101,6 +126,34 @@ export function resolveRoot(requested: unknown, context: ToolContext): RootOutco
   }
   const wanted = typeof requested === "string" ? requested.trim() : context.cwd;
   const absolute = path.resolve(context.cwd, wanted);
+  const outside = (): RootOutcome => ({
+    ok: false,
+    message:
+      `"${wanted}" resolves outside the directories this server may read (${context.roots.join(", ")}). ` +
+      "The server reads the directory it was started for; restart it with --cwd <directory> to " +
+      "serve a different repository.",
+  });
+
+  // Refuse lexically outside paths before touching the filesystem. The old order called
+  // fs.statSync first, so any read-only tool answered "does not exist", "is not a directory" or
+  // "resolves outside" for an arbitrary host path — a three-way existence and type oracle.
+  const lexicalRoots = context.roots.map((allowed) => path.resolve(allowed));
+  if (!lexicalRoots.some((allowed) => isInside(allowed, absolute))) return outside();
+
+  let linkStats: fs.Stats;
+  try {
+    linkStats = fs.lstatSync(absolute);
+  } catch {
+    return { ok: false, message: `"${wanted}" does not exist, so it cannot be a repository root.` };
+  }
+  if (linkStats.isSymbolicLink()) {
+    // The link itself is inside the served root; its target is not necessarily. Resolve before
+    // deciding, and do not stat the target until it is known to be inside.
+    const resolved = canonicalPath(absolute);
+    if (!context.roots.some((allowed) => isInside(canonicalPath(allowed), resolved))) {
+      return outside();
+    }
+  }
 
   let stats: fs.Stats;
   try {
@@ -116,14 +169,7 @@ export function resolveRoot(requested: unknown, context: ToolContext): RootOutco
   for (const allowed of context.roots) {
     if (isInside(canonicalPath(allowed), resolved)) return { ok: true, root: resolved };
   }
-  const shown = context.roots.join(", ");
-  return {
-    ok: false,
-    message:
-      `"${wanted}" resolves outside the directories this server may read (${shown}). ` +
-      "The server reads the directory it was started for; restart it with --cwd <directory> to " +
-      "serve a different repository.",
-  };
+  return outside();
 }
 
 export type WorkspaceOutcome = { ok: true; workspace: Workspace } | { ok: false; message: string };
@@ -167,17 +213,17 @@ export interface WorkspaceCliOptions {
    * override* that beats `skeleton: true` in the project's configuration — the same trap the CLI
    * documents. Absent means "whatever the configuration says".
    */
-  skeleton?: true;
-  sarif?: true;
-  staged?: true;
-  withDependents?: true;
+  skeleton?: boolean;
+  sarif?: boolean;
+  staged?: boolean;
+  withDependents?: boolean;
   changedSince?: string;
   /** Opt-in reports a client can ask for by name; absent means "whatever the configuration says". */
-  includeDiffs?: true;
+  includeDiffs?: boolean;
   includeLogs?: number;
-  tokenTree?: true;
-  stripComments?: true;
-  removeEmptyLines?: true;
+  tokenTree?: boolean;
+  stripComments?: boolean;
+  removeEmptyLines?: boolean;
   pack?: "single" | "xml" | "json";
   /** Per-run narrowing, as the CLI's `--only` and `--ignore`; the config's lists are the default. */
   only?: string[];
@@ -275,11 +321,12 @@ export async function openWorkspace(
     }
     cliOptions.changedSince = overrides.changedSince.trim();
   }
-  // Never `false`: see the note on {@link WorkspaceCliOptions}.
-  if (overrides.skeleton === true) cliOptions.skeleton = true;
-  if (overrides.sarif === true) cliOptions.sarif = true;
-  if (overrides.staged === true) cliOptions.staged = true;
-  if (overrides.withDependents === true) cliOptions.withDependents = true;
+  // An explicit `false` is an override too. Dropping it let a config set `skeleton: true` while
+  // a client asking for `skeleton: false` silently received a skeleton.
+  if (typeof overrides.skeleton === "boolean") cliOptions.skeleton = overrides.skeleton;
+  if (typeof overrides.sarif === "boolean") cliOptions.sarif = overrides.sarif;
+  if (typeof overrides.staged === "boolean") cliOptions.staged = overrides.staged;
+  if (typeof overrides.withDependents === "boolean") cliOptions.withDependents = overrides.withDependents;
   for (const key of ["only", "ignore"] as const) {
     const value = overrides[key];
     if (value === undefined) continue;
@@ -291,6 +338,14 @@ export async function openWorkspace(
 
   try {
     const config = resolveConfig(loaded.config, cliOptions, root);
+    const permitted = allowedRoots !== undefined && allowedRoots.length > 0 ? allowedRoots : [root];
+    for (const [label, value] of [
+      ["outDir", config.outDir],
+      ["tmpDir", config.tmpDir],
+    ] as const) {
+      const problem = configuredOutputProblem(root, value, permitted, label);
+      if (problem !== null) return { ok: false, message: problem };
+    }
     return {
       ok: true,
       workspace: {
@@ -323,6 +378,8 @@ interface CacheEntry {
  */
 const MANIFEST_CACHE_LIMIT = 8;
 const manifestCache = new Map<string, CacheEntry>();
+/** A manifest larger than this is not a snapshot manifest; refuse before allocating it. */
+const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 
 export type ManifestOutcome =
   | { ok: true; manifest: Manifest; file: string }
@@ -368,7 +425,17 @@ export function partPathFor(workspace: Workspace, filename: string): string | nu
   }
   if (!stats.isFile()) return null;
   try {
-    if (path.dirname(fs.realpathSync(resolved)) !== fs.realpathSync(partsDir)) return null;
+    // The final component is not a link (checked above), but an intermediate component can be:
+    // a committed `snapshot/parts -> /home/victim/.ssh` is copied by git clone, lstat sees a
+    // regular file through it, and comparing the two realpaths agrees because both point at
+    // the same outside directory. Confine the directory itself first, so the part reader is
+    // equivalent to readConfinedText rather than merely similar to it.
+    const snapshotReal = fs.realpathSync(path.resolve(workspace.root, workspace.config.outDir));
+    const partsReal = fs.realpathSync(partsDir);
+    const resolvedReal = fs.realpathSync(resolved);
+    if (!isInside(snapshotReal, partsReal)) return null;
+    if (!isInside(partsReal, resolvedReal)) return null;
+    if (path.dirname(resolvedReal) !== partsReal) return null;
   } catch {
     return null;
   }
@@ -383,7 +450,7 @@ export function readManifest(workspace: Workspace): ManifestOutcome {
   // The manifest is a file in a snapshot this process may not have written. A symlink named
   // `manifest.json` pointing at a host file would be parsed and, through `snapshot://manifest`,
   // returned as text; every other snapshot read goes through the same confinement.
-  const confined = readConfinedText(path.dirname(file), path.basename(file));
+  const confined = readConfinedText(path.dirname(file), path.basename(file), MAX_MANIFEST_BYTES);
   if (!confined.ok) {
     if (confined.reason === "missing") {
       return {

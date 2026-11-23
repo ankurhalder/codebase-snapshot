@@ -228,20 +228,18 @@ still true?
 
 ## Configuration
 
-`snapshot.config.ts` (or `.mjs`) is written by `init` with **every** setting at its current value,
-commented and grouped, so it doubles as the reference. Deleting any line is safe: the defaults are
-real.
+`snapshot.config.json` is written by `init` with **every** setting at its current value, so it
+doubles as the reference. Deleting any line is safe: the defaults are real. JSON is deliberate:
+the MCP server and `serve` refuse executable repository configs.
 
-```js
-const config = {
-  maxPartBytes: "120k",                                   // hard budget per part
-  excludePatterns: ["vendor/**", "**/*.min.js"],
-  artifacts: { monolith: false },                         // single-file output stays off
-  budgets: { default: "120k", byLayer: { docs: 40_000 } },
-  includeSensitiveFiles: false,                           // .env, *.pem … stay out
-};
-
-export default config;
+```json
+{
+  "maxPartBytes": "120k",
+  "excludePatterns": ["vendor/**", "**/*.min.js"],
+  "artifacts": { "monolith": false },
+  "budgets": { "default": "120k", "byLayer": { "docs": 40000 } },
+  "includeSensitiveFiles": false
+}
 ```
 
 → [Configuration reference](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/configuration.md)

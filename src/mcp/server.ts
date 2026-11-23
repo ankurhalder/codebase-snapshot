@@ -23,7 +23,7 @@ import {
   successResponse,
 } from "./protocol.js";
 import type { JsonObject, JsonRpcId, JsonRpcResponse } from "./protocol.js";
-import { classifyRequest, createSession, negotiateLegacyVersion } from "./era.js";
+import { classifyRequest, createSession, inspectModernMeta, negotiateLegacyVersion } from "./era.js";
 import type { SessionState } from "./era.js";
 import { ResourceNotFoundError, ResourceTooLargeError } from "./resources.js";
 import { applyDefaults, coerceNumericStrings, validateArguments } from "./schema.js";
@@ -131,8 +131,11 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   }
 
   function discover(id: JsonRpcId): JsonRpcResponse {
-    session.era = "modern";
-    session.ready = true;
+    // Do not commit the era here. A `server/discover` without `_meta` is the documented
+    // backward-compatibility probe a legacy client may send before its `initialize`; committing
+    // modern made that initialize fail with "This request has no _meta". The dispatch path commits
+    // only when the request itself is decisive.
+    //
     // Always the modern shape, even when a legacy client is the one probing: `server/discover`
     // exists only in the revision that defines `resultType`, so omitting it would make the answer
     // unusable to the only client that could ask for it.
@@ -449,14 +452,28 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     const decision = classifyRequest(method, named, session);
     const modern = decision.kind === "era" ? decision.era === "modern" : session.era === "modern";
 
+    /**
+     * Whether this message is decisive enough to commit the connection's era.
+     *
+     * A pre-initialize ping or notification is not: a modern client is allowed to send one before
+     * its first `_meta` request, and committing "legacy" there stranded every later modern
+     * request behind the initialize gate. A `server/discover` without `_meta` is likewise only a
+     * probe. The decisive events are `initialize`, `notifications/initialized`, and a request
+     * carrying valid modern `_meta`.
+     */
+    const commitsEra = (): boolean => {
+      if (decision.kind !== "era") return false;
+      if (method === METHOD.initialize) return true;
+      if (method === METHOD.initialized) return true;
+      return decision.era === "modern" && inspectModernMeta(named).kind === "present";
+    };
+
     if (!isRequest) {
-      // Era commitment happens even for a notification: `notifications/initialized` is the moment a
-      // legacy client finishes its handshake, and refusing to learn that would leave it gated.
-      if (decision.kind === "era" && session.era === null) {
+      // A notification with valid modern `_meta` is a complete stateless message; subsequent
+      // modern requests must not be told to initialize on a connection that never had a handshake.
+      if (decision.kind === "era" && commitsEra() && session.era === null) {
         session.era = decision.era;
         session.protocolVersion = decision.version;
-        // A modern notification is a complete stateless message too; subsequent modern requests
-        // must not be told to initialize on a connection that never had a handshake.
         if (decision.era === "modern") session.ready = true;
       }
       handleNotification(method, named);
@@ -470,7 +487,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     if (decision.kind === "error") {
       return errorResponse(id, decision.code, decision.message, decision.data);
     }
-    if (session.era === null) {
+    if (decision.kind === "era" && session.era === null && commitsEra()) {
       session.era = decision.era;
       session.protocolVersion = decision.version;
       if (decision.era === "modern") session.ready = true;

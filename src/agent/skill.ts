@@ -83,9 +83,9 @@ do not assume the repository is broken.
 
 4. **Configure (recommended).** Run \`npx ${PACKAGE_NAME}@latest init --yes\`. It detects
    the project shape, then writes a commented config file listing **every** setting at its
-   current value. The filename depends on the project: \`snapshot.config.ts\` only when
-   the running Node can strip types (Node >= 22.6) **and** the project is an ES module
-   (\`"type": "module"\` in package.json); otherwise \`snapshot.config.mjs\`. Pass
+   current value. It writes \`snapshot.config.json\` by default: the answers are data, and the
+   MCP and serve commands refuse executable repository code. An existing executable config is
+   preserved by \`--force\`. Pass
    \`--preset <name>\` only if detection is wrong; the preset names are in the contract.
    Skipping this step is safe **at a terminal**: the first \`generate\` asks once, can write
    the config for you and then generates. Unattended, a \`generate\` with no config exits 2 —

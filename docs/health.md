@@ -32,7 +32,7 @@ npx codebase-snapshot health --deep         # also replay every full body from t
 | Every pack body is the part body | `packs.bodies` | critical | For full files, the bytes in the pack equal the bytes in the part; previews and signatures are whole-file by design. |
 | Every full body replays from the source | `fidelity.bodies` | critical | With `--deep`: each full body is rebuilt from the bytes on disk (redaction allowed) and compared. Skipped without `--deep`. |
 | A member matches its workspace index | `workspace.index` | warning | Fingerprint and file count equal `WORKSPACE.json`, and a member whose source directory is gone warns. |
-| No unmasked secret in any artifact | `secrets.artifacts` | critical | Every written text file is re-scanned with the secret rules; a signature record is scanned without its random key material. |
+| No unmasked secret in any artifact | `secrets.artifacts` | critical | Every written text file is re-scanned with the secret rules; a signature record is scanned without its random key material. If `maxScanBytes` truncates the scan, the check is a warning, never a pass. |
 | No value from an excluded sensitive file appears | `secrets.skipped` | critical | Values from `.env`, keys and similar files are compared byte-for-byte against the artifacts. |
 | No host path or machine identity | `pii.paths` | warning | `/home/…`, `/Users/…`, `C:\Users\…` and the repository's absolute path are searched for. |
 | Token estimate is plausible | `tokens.count` | warning | The recorded estimate is compared with one recomputed from the parts. |
