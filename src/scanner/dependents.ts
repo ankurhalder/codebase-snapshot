@@ -183,7 +183,11 @@ export function tsconfigPathsFor(cwd: string): TsconfigPaths | null {
 /** `target` relative to `cwd` as a POSIX path, or null when it escapes the repository. */
 function repositoryRelative(cwd: string, target: string): string | null {
   const relative = path.relative(cwd, target).replace(/\\/g, "/");
-  return relative.length === 0 || (!relative.startsWith("..") && !path.isAbsolute(relative))
+  return relative.length === 0 ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !relative.startsWith("../") &&
+      !path.isAbsolute(relative))
     ? relative
     : null;
 }

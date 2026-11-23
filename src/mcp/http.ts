@@ -242,7 +242,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
     return fromQuery !== null && timingSafeEqual(fromQuery, token);
   };
 
-  const rememberRateWindow = (remote: string, now: number): void => {
+  const rememberRateWindow = (remote: string, now: number, cost = 1): void => {
     if (!rateWindows.has(remote) && rateWindows.size >= MAX_RATE_WINDOWS) {
       for (const [key, value] of rateWindows) if (value.resetAt <= now) rateWindows.delete(key);
       while (rateWindows.size >= MAX_RATE_WINDOWS) {
@@ -251,19 +251,19 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         rateWindows.delete(oldest);
       }
     }
-    rateWindows.set(remote, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    rateWindows.set(remote, { count: cost, resetAt: now + RATE_WINDOW_MS });
   };
 
-  const rateLimited = (request: http.IncomingMessage): boolean => {
+  const rateLimited = (request: http.IncomingMessage, cost = 1): boolean => {
     const remote = request.socket.remoteAddress ?? "unknown";
     const now = Date.now();
     const window = rateWindows.get(remote);
     if (window === undefined || window.resetAt <= now) {
-      rememberRateWindow(remote, now);
-      return false;
+      rememberRateWindow(remote, now, cost);
+      return cost > RATE_LIMIT;
     }
-    if (window.count >= RATE_LIMIT) return true;
-    window.count += 1;
+    if (window.count + cost > RATE_LIMIT) return true;
+    window.count += cost;
     return false;
   };
 
@@ -501,7 +501,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
       unauthorized(response, cors);
       return;
     }
-    if (rateLimited(request)) {
+    if (request.method !== "POST" && rateLimited(request)) {
       tooMany(response, cors);
       return;
     }
@@ -534,24 +534,25 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         send(response, 400, { error: "JSON-RPC batch is limited to 100 messages" }, cors);
         return;
       }
+      // The rate limit is per JSON-RPC message, not per HTTP envelope. Charging one for a
+      // 100-message batch turned the documented 60-per-10s bound into 6,000 dispatches.
+      if (rateLimited(request, batch.length)) {
+        tooMany(response, cors);
+        return;
+      }
 
       const supplied = sessionHeader(request);
       let server: McpServer;
       let responseSession = "";
-      if (supplied !== "") {
-        const now = Date.now();
-        pruneSessions(now);
-        const existing = mcpSessions.get(supplied);
-        if (existing === undefined) {
-          // Never mint state for a caller-chosen id. The old implementation created a server for
-          // any header and then silently failed to store it once the table was full.
-          send(response, 404, { error: "unknown mcp-session-id" }, cors);
+      const initializeInBatch = batch.some((item) => methodOf(item) === "initialize");
+      if (initializeInBatch) {
+        // JSON-RPC allows a batch, but initialize is a connection handshake that must be alone.
+        // Letting it through as an array skipped the session-minting branch and returned a 200
+        // with no mcp-session-id, leaving the client on the anonymous shared fallback.
+        if (batch.length !== 1 || supplied !== "") {
+          send(response, 400, { error: "initialize must be sent alone, without mcp-session-id" }, cors);
           return;
         }
-        existing.lastSeen = now;
-        server = existing.server;
-        responseSession = supplied;
-      } else if (!Array.isArray(message) && methodOf(message) === "initialize") {
         // A new initialize gets a new server even on a reused connection. Reusing the per-socket
         // fallback here meant two clients that both initialized without forwarding the header
         // shared one era state, so one client's `server/discover` rejected the other's legacy
@@ -564,6 +565,19 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
         rememberAnonymous(anonymousKey(request), server);
         responseSession = newSessionId();
         rememberSession(responseSession, server, Date.now());
+      } else if (supplied !== "") {
+        const now = Date.now();
+        pruneSessions(now);
+        const existing = mcpSessions.get(supplied);
+        if (existing === undefined) {
+          // Never mint state for a caller-chosen id. The old implementation created a server for
+          // any header and then silently failed to store it once the table was full.
+          send(response, 404, { error: "unknown mcp-session-id" }, cors);
+          return;
+        }
+        existing.lastSeen = now;
+        server = existing.server;
+        responseSession = supplied;
       } else if (hasModernMeta(message)) {
         // A stateless modern request is complete on its own. Sharing the anonymous pool with a
         // co-located legacy client let that client's initialize overwrite the era state, so a

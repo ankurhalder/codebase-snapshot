@@ -47,7 +47,14 @@ export type FirstRunPlan =
 function describeTarget(cwd: string): string {
   const relative = path.relative(process.cwd(), cwd);
   if (relative === "") return "this directory";
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return cwd;
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    relative.startsWith("../") ||
+    path.isAbsolute(relative)
+  ) {
+    return cwd;
+  }
   return relative;
 }
 

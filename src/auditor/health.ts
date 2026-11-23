@@ -1258,7 +1258,9 @@ export function auditSnapshot(options: HealthOptions): HealthReport {
               canonical !== null &&
               (canonicalRelative === "" ||
                 (canonicalRelative !== null &&
-                  !canonicalRelative.startsWith("..") &&
+                  canonicalRelative !== ".." &&
+                  !canonicalRelative.startsWith(`..${path.sep}`) &&
+                  !canonicalRelative.startsWith("../") &&
                   !path.isAbsolute(canonicalRelative)));
             if (canonical !== null && !canonicalInside) {
               sourceGone =

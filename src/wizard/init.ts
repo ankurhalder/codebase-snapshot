@@ -486,7 +486,14 @@ function gitignoreEntriesFor(
     const relative = path.relative(cwd, path.resolve(cwd, directory)).replace(/\\/g, "/");
     // Outside the repository (an absolute `--out-dir`) or the repository itself ("./") is not
     // something `.gitignore` can or should describe.
-    if (relative === "" || relative === "." || relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (
+      relative === "" ||
+      relative === "." ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      relative.startsWith("../") ||
+      path.isAbsolute(relative)
+    ) {
       continue;
     }
     entries.push(`/${relative}/`);

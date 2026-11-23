@@ -781,7 +781,14 @@ export function validateSnapshot(
       .map((directory) =>
         path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
       )
-      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
+      .filter(
+        (relative) =>
+          relative.length > 0 &&
+          relative !== ".." &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !relative.startsWith("../") &&
+          !path.isAbsolute(relative)
+      ),
   });
 
   const discovered = new Set(collection.files);
@@ -1477,7 +1484,23 @@ export function validateSnapshot(
         if (target.length === 0 || /^[a-z][a-z0-9+.-]*:/i.test(target)) continue;
         const resolved = path.resolve(snapshotDir, "reports", target);
         const relative = path.relative(snapshotDir, resolved);
-        if (relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(resolved)) {
+        const escapes =
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          relative.startsWith("../") ||
+          path.isAbsolute(relative);
+        // Navigation links the parts even when this run deliberately skipped them. In that
+        // configuration the link is expected to dangle; validating it would fail a snapshot that
+        // generate just wrote successfully. Confinement is still enforced for every link.
+        const partsRelative = path.relative(path.join(snapshotDir, "parts"), resolved);
+        const pointsIntoParts =
+          partsRelative === "" ||
+          (partsRelative !== ".." &&
+            !partsRelative.startsWith(`..${path.sep}`) &&
+            !partsRelative.startsWith("../") &&
+            !path.isAbsolute(partsRelative));
+        const expectedToBeAbsent = !config.artifacts.parts && pointsIntoParts;
+        if (escapes || (!expectedToBeAbsent && !fs.existsSync(resolved))) {
           drift.partIssues.push({
             part: key,
             issue: `links to ${maskedPath(target, config.secretRules)}, which does not exist in the snapshot`,

@@ -143,6 +143,15 @@ addition was reviewed with the same question — what new input arrives, and wha
   empty-first-line read are fixed; validation distinguishes replaced files and skipped paths from
   drift; MCP runs health/validate/review/explain in a worker, and `serve` zips only manifest
   inventory and runs its health audit and remote clone without blocking request handling.
+- **The 0.20.11 fourth audit** closed cross-path twins: a nested ownership marker is recorded
+  as `tool-output` instead of vanishing; Dockerfile redaction is re-scan idempotent; quoted
+  credentials and unterminated PEM bodies have no length/prefix blind spot; alternation and glob
+  branch budgets bound the event loop; workspace members inherit every generation flag;
+  `validate` agrees with `--skip-artifacts parts`; HTTP batches are charged per message and
+  batched `initialize` mints a session; `snapshot_symbol` is bounded; explicit false overrides
+  reach validation; `..notes.ts` is accepted at the segment boundary; `health --all-members`
+  confines the index and members; `serve` rejects non-HTTP loopback origins and records nested
+  repository roots; and report fences grow with their content.
 
 The residual risks below are unchanged, including the two that are deliberate rather than solved.
 
@@ -159,6 +168,7 @@ The residual risks below are unchanged, including the two that are deliberate ra
 | Serve: page without token, API with token, zip restricted | `tests/web-serve.test.js` |
 | Signature: tamper detected | `tests/signing.test.js` |
 | Second 0.20 audit: symlink targets, auth case, diff quoting, brief headings, ReDoS, HTTP cap, workspace dry run, staged validation, hook links | `tests/audit-0-20-5-ultimate.test.js` |
+| Fourth 0.20 audit: marker visibility, Dockerfile re-scan, long quoted secrets, unterminated PEM, alternation/glob budgets, workspace flags, skip-parts validation, HTTP batching, symbol cap, false overrides, `..notes.ts`, CLI workspace confinement, serve origin/fences | `tests/audit-0-20-11-followup.test.js` |
 
 ## Residual risks, stated
 

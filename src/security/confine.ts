@@ -39,7 +39,13 @@ export type ConfinedBytesResult =
 
 function isInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !relative.startsWith("../") &&
+      !path.isAbsolute(relative))
+  );
 }
 
 /** Resolves a regular file under `baseDir`, refusing a symlink in the final component. */

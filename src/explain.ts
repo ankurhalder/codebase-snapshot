@@ -210,7 +210,14 @@ export function explainPath(config: ResolvedSnapshotConfig, target: string): Exp
       .map((directory) =>
         path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
       )
-      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
+      .filter(
+        (relative) =>
+          relative.length > 0 &&
+          relative !== ".." &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !relative.startsWith("../") &&
+          !path.isAbsolute(relative)
+      ),
   });
 
   if (!collection.files.includes(relative)) {

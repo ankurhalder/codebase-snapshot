@@ -357,10 +357,10 @@ interface HistoryEntry {
 }
 
 function parseHistoryReport(text: string): HistoryEntry[] {
-  const fence = /```text\n([\s\S]*?)```/.exec(text);
+  const fence = /(?:^|\n)(`{3,})text\r?\n([\s\S]*?)\r?\n\1(?:\r?\n|$)/.exec(text);
   if (fence === null) return [];
   const entries: HistoryEntry[] = [];
-  for (const line of fence[1].split("\n")) {
+  for (const line of fence[2].split("\n")) {
     const parts = line.split("\t");
     if (parts.length < 3) continue;
     entries.push({ hash: parts[0].trim(), date: parts[1].trim(), subject: parts.slice(2).join("\t").trim() });
@@ -1424,13 +1424,13 @@ const symbolTool: ToolSpec = {
     type: "object",
     properties: {
       name: { type: "string", description: "Symbol name, case-insensitive." },
-      lines: { type: "integer", description: "Window size around the definition (default 40).", minimum: 5 },
-      maxFiles: { type: "integer", description: "Cap on files searched (default 5).", minimum: 1 },
+      lines: { type: "integer", description: "Window size around the definition (default 40).", minimum: 5, maximum: 500 },
+      maxFiles: { type: "integer", description: "Cap on files searched (default 5).", minimum: 1, maximum: 20 },
       references: {
         type: "boolean",
         description: "Also report call sites: other files whose body mentions the name (default true).",
       },
-      maxReferences: { type: "integer", description: "Cap on reported call sites (default 20).", minimum: 1 },
+      maxReferences: { type: "integer", description: "Cap on reported call sites (default 20).", minimum: 1, maximum: 100 },
       root: ROOT_PROPERTY,
       outDir: OUT_DIR_PROPERTY,
     },
@@ -1455,8 +1455,8 @@ const symbolTool: ToolSpec = {
     const name = typeof args.name === "string" ? args.name.trim() : "";
     if (name === "") return { text: "name must be a non-empty string", isError: true };
     const lower = name.toLowerCase();
-    const windowSize = Math.max(5, typeof args.lines === "number" ? args.lines : 40);
-    const cap = Math.max(1, typeof args.maxFiles === "number" ? args.maxFiles : 5);
+    const windowSize = Math.min(500, Math.max(5, typeof args.lines === "number" ? args.lines : 40));
+    const cap = Math.min(20, Math.max(1, typeof args.maxFiles === "number" ? args.maxFiles : 5));
     const candidates = read.manifest.files.filter((file) =>
       symbolNamesOf(file).some((symbol) => symbol.toLowerCase() === lower || symbol.toLowerCase().endsWith("." + lower))
     );
@@ -1512,7 +1512,7 @@ const symbolTool: ToolSpec = {
     const callSites: Array<{ path: string; line: number; text: string; definition: boolean }> = [];
     let referencesTruncated = false;
     if (args.references !== false) {
-      const limit = Math.max(1, typeof args.maxReferences === "number" ? args.maxReferences : 20);
+      const limit = Math.min(100, Math.max(1, typeof args.maxReferences === "number" ? args.maxReferences : 20));
       const definitionKeys = new Set(matches.map((match) => match.path + ":" + match.line));
       const word = new RegExp("\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b");
       // One parsed part per part, not one per file in it. `scanned` is charged once when a part is
@@ -1578,9 +1578,25 @@ const symbolTool: ToolSpec = {
         ? "\n\nSearch stopped at the 4 MB part budget; call sites in later parts were not read. " +
           "Narrow the name or inspect the remaining parts directly."
         : "");
+    const response = capResponseText(text);
+    if (response.clipped) {
+      // The text already carries the truncated head. Do not hand the transport a second,
+      // multi-megabyte copy in structuredContent.
+      for (const match of matches) {
+        match.text = "";
+        (match as Record<string, unknown>).contentOmitted = true;
+      }
+      for (const site of callSites) site.text = "";
+    }
     return {
-      text,
-      structured: { found: matches.length, matches, references: callSites, truncated: referencesTruncated },
+      text: response.text,
+      structured: {
+        found: matches.length,
+        matches,
+        references: callSites,
+        truncated: referencesTruncated,
+        ...(response.clipped ? { clippedAtBytes: MAX_RESULT_BYTES } : {}),
+      },
     };
   },
 };
@@ -2537,16 +2553,16 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
   // Include artifacts whenever the manifest records them: a run flag such as --token-tree is
   // invisible in the current config and can only be reconstructed from the manifest.
   let artifactOverride = recorded?.artifacts !== undefined;
-  if (cli.includeDiffs === true) {
-    artifacts.diff = true;
+  if (cli.includeDiffs !== undefined) {
+    artifacts.diff = cli.includeDiffs;
     artifactOverride = true;
   }
   if (cli.includeLogs !== undefined) {
     artifacts.log = true;
     artifactOverride = true;
   }
-  if (cli.tokenTree === true) {
-    artifacts.tokenTree = true;
+  if (cli.tokenTree !== undefined) {
+    artifacts.tokenTree = cli.tokenTree;
     artifactOverride = true;
   }
   const choose = <T>(key: string, recordedValue: T | undefined, current: T, cliValue?: T): T =>
@@ -2606,11 +2622,11 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
       : { largeFileBytes: adoptedLargeFileBytes }),
     budgets: adoptedBudgets,
     ...(artifactOverride ? { artifacts } : {}),
-    ...(cli.stripComments === true || configured("stripComments") || recorded?.stripComments !== undefined
-      ? { stripComments: choose("stripComments", recorded?.stripComments, workspace.config.stripComments, cli.stripComments === true ? true : undefined) }
+    ...(cli.stripComments !== undefined || configured("stripComments") || recorded?.stripComments !== undefined
+      ? { stripComments: choose("stripComments", recorded?.stripComments, workspace.config.stripComments, cli.stripComments) }
       : {}),
-    ...(cli.removeEmptyLines === true || configured("removeEmptyLines") || recorded?.removeEmptyLines !== undefined
-      ? { removeEmptyLines: choose("removeEmptyLines", recorded?.removeEmptyLines, workspace.config.removeEmptyLines, cli.removeEmptyLines === true ? true : undefined) }
+    ...(cli.removeEmptyLines !== undefined || configured("removeEmptyLines") || recorded?.removeEmptyLines !== undefined
+      ? { removeEmptyLines: choose("removeEmptyLines", recorded?.removeEmptyLines, workspace.config.removeEmptyLines, cli.removeEmptyLines) }
       : {}),
     ...(cli.pack !== undefined || configured("pack") || recorded?.pack !== undefined
       ? { pack: choose("pack", recorded?.pack ?? undefined, workspace.config.pack, cli.pack) }
@@ -2618,11 +2634,11 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
     ...(cli.includeLogs !== undefined || configured("logCount") || recorded?.logCount !== undefined
       ? { logCount: choose("logCount", recorded?.logCount, workspace.config.logCount, cli.includeLogs) }
       : {}),
-    ...(cli.skeleton === true || configured("skeleton") || recorded?.skeleton !== undefined
-      ? { skeleton: choose("skeleton", recorded?.skeleton, workspace.config.skeleton, cli.skeleton === true ? true : undefined) }
+    ...(cli.skeleton !== undefined || configured("skeleton") || recorded?.skeleton !== undefined
+      ? { skeleton: choose("skeleton", recorded?.skeleton, workspace.config.skeleton, cli.skeleton) }
       : {}),
-    ...(cli.sarif === true || configured("sarif") || recorded?.sarif !== undefined
-      ? { sarif: choose("sarif", recorded?.sarif, workspace.config.sarif, cli.sarif === true ? true : undefined) }
+    ...(cli.sarif !== undefined || configured("sarif") || recorded?.sarif !== undefined
+      ? { sarif: choose("sarif", recorded?.sarif, workspace.config.sarif, cli.sarif) }
       : {}),
     ...(configured("maxParts") || recorded?.maxParts !== undefined
       ? { maxParts: choose("maxParts", recorded?.maxParts, workspace.config.maxParts) }
@@ -2633,11 +2649,11 @@ function configAsGenerated(workspace: Workspace, manifest: Manifest): Workspace[
     ...(cli.changedSince !== undefined || configured("changedSince") || recorded?.changedSince !== undefined
       ? { changedSince: choose("changedSince", recorded?.changedSince, workspace.config.changedSince, cli.changedSince) }
       : {}),
-    ...(cli.staged === true || configured("staged") || recorded?.staged !== undefined
-      ? { staged: choose("staged", recorded?.staged, workspace.config.staged, cli.staged === true ? true : undefined) }
+    ...(cli.staged !== undefined || configured("staged") || recorded?.staged !== undefined
+      ? { staged: choose("staged", recorded?.staged, workspace.config.staged, cli.staged) }
       : {}),
-    ...(cli.withDependents === true || configured("withDependents") || recorded?.withDependents !== undefined
-      ? { withDependents: choose("withDependents", recorded?.withDependents, workspace.config.withDependents, cli.withDependents === true ? true : undefined) }
+    ...(cli.withDependents !== undefined || configured("withDependents") || recorded?.withDependents !== undefined
+      ? { withDependents: choose("withDependents", recorded?.withDependents, workspace.config.withDependents, cli.withDependents) }
       : {}),
     ...(configured("promptTask") || recorded?.promptTask !== undefined
       ? { promptTask: choose("promptTask", recorded?.promptTask, workspace.config.promptTask) }
@@ -3287,7 +3303,9 @@ const explainTool: ToolSpec = {
     try {
       result = await runAnalysis<ExplainResult>({
         task: "explain",
-        config: analysisConfig(workspace.config),
+        root: workspace.root,
+        sourceConfig: workspace.sourceConfig,
+        cliOptions: workspace.cliOptions,
         path: relativePath,
       });
     } catch (error) {

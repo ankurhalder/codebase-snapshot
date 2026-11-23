@@ -110,6 +110,8 @@ export type SkipReason =
   | "gitignore"
   /** Excluded by a built-in rule: the ignore list, a preset, or an output dir. */
   | "default-ignore"
+  /** A directory with a .codebase-snapshot marker, recorded instead of silently dropped. */
+  | "tool-output"
   /** Excluded by the user's own `excludePatterns` or `include` allow-list. */
   | "excluded"
   /**

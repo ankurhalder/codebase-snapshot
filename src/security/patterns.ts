@@ -146,13 +146,13 @@ const UNQUOTED_VALUE_START = String.raw`[$!@#%^&*~+]`;
  */
 const UNQUOTED_LITERAL =
   String.raw`(` + // one capture, whichever branch matched: valueGroup is 1
-    String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))[A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{${UNQUOTED_MIN_LENGTH - 1},511}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
-    String.raw`|(?=${UNQUOTED_VALUE_START}[^ \t]{0,62}(?:[0-9]|${UNQUOTED_VALUE_START}))${UNQUOTED_VALUE_START}[${UNQUOTED_VALUE_CHARS}]{2,511}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
-    String.raw`|\([^()\s]{1,510}\)|\[[^\[\]\s]{1,510}\]|\{[^{}\s]{1,510}\}` +
+    String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))[A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{${UNQUOTED_MIN_LENGTH - 1},}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
+    String.raw`|(?=${UNQUOTED_VALUE_START}[^ \t]{0,62}(?:[0-9]|${UNQUOTED_VALUE_START}))${UNQUOTED_VALUE_START}[${UNQUOTED_VALUE_CHARS}]{2,}(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
+    String.raw`|\([^()\s]{1,}\)|\[[^\[\]\s]{1,}\]|\{[^{}\s]{1,}\}` +
     String.raw`)` +
   PROSE_CONTINUATION;
 const UNQUOTED_AMBIGUOUS_LITERAL =
-  String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))([A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{7,511})(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
+  String.raw`(?![0-9]+(?!${UNQUOTED_VALUE_END}))([A-Za-z0-9_][${UNQUOTED_VALUE_CHARS}]{7,})(?!${UNQUOTED_VALUE_END}|[({[]|[<>|\\])` +
   PROSE_CONTINUATION;
 
 /**
@@ -221,7 +221,7 @@ const QUOTED_CREDENTIAL_KEY = `["'](?!id[-_]token["'])[A-Za-z0-9_$-]{0,64}${STRO
  */
 function quotedValueFor(delimiterGroup: number): string {
   return (
-    "((?:(?!\\" + delimiterGroup + String.raw`)[^\\\n]|\\\\["'](?=[A-Za-z0-9_])|\\.){1,512})`
+    "((?:(?!\\" + delimiterGroup + String.raw`)[^\\\n]|\\\\["'](?=[A-Za-z0-9_])|\\.){1,})`
   );
 }
 const QUOTED_VALUE = quotedValueFor(1);
@@ -448,7 +448,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // never matched here: `password: "abc" and "def"` belongs to the rule above.
     rule: "credential-assignment-unterminated",
     pattern: new RegExp(
-      `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}(?<!id[-_])${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}(["'\`])((?:(?!\\1)[^\\\\\\n]|\\\\.){1,512})$`,
+      `(?:${QUOTED_CREDENTIAL_KEY}|${NOT_AFTER_QUOTE}(?<!id[-_])${STRONG_CREDENTIAL_NAME})\\s{0,8}${ASSIGN}\\s{0,8}(["'\`])((?:(?!\\1)[^\\\\\\n]|\\\\.){1,})$`,
       "i"
     ),
     valueGroup: 2,
@@ -499,7 +499,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // query parameter or `$VARIABLE` reference is not an assignment).
     rule: "credential-assignment-unquoted",
     pattern: new RegExp(
-      `(?:${QUOTED_CREDENTIAL_KEY}|${UNQUOTED_STRONG_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}=(?!=)\\s{0,8})(?![\\s#$"'\`])[^\\s]{1,512}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}:[ \t]{1,8})(?![ \t]*["'\`])(?![ \t]*[|>])${NOT_A_LITERAL_VALUE}[^\r\n#]{1,300}`,
+      `(?:${QUOTED_CREDENTIAL_KEY}|${UNQUOTED_STRONG_NAME})\\s{0,8}${ASSIGN}\\s{0,8}${NOT_A_LITERAL_VALUE}${UNQUOTED_LITERAL}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}=(?!=)\\s{0,8})(?![\\s#$"'\`])[^\\s]{1,}|(?<=${UNQUOTED_STRONG_NAME}\\s{0,8}:[ \t]{1,8})(?![ \t]*["'\`])(?![ \t]*[|>])${NOT_A_LITERAL_VALUE}[^\r\n#]{1,300}`,
       "i"
     ),
     valueGroup: 1,
@@ -539,7 +539,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // value, e.g. `"client_secret": abc123`.
     rule: "generic-secret-assignment",
     pattern:
-      /(?<!["'])(?:api[_-]?key|secret[_-]?key|auth[_-]?token|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|password|passwd|pwd)["']?\s*(?<![=!<>])[:=](?!=)\s*["']([^"'\s]{8,256})["']/i,
+      /(?<!["'])(?:api[_-]?key|secret[_-]?key|auth[_-]?token|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|password|passwd|pwd)["']?\s*(?<![=!<>])[:=](?!=)\s*["']([^"'\s]{8,})["']/i,
     valueGroup: 1,
   },
   {
@@ -589,7 +589,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretRule[] = [
     // (`NAME=f(x)`) from being read as an assigned literal.
     rule: "env-secret-assignment",
     pattern:
-      /^\s{0,64}(?:export\s{1,8})?(?=[A-Z][A-Z0-9_]{0,191}\s{0,8}=)[A-Z0-9_]{0,96}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]{0,96}\s{0,8}=(?!=)\s{0,8}(?!["'`$<{[\]\s])([^\s#;"'`()]{1,512})(?=$|[\s#;])/,
+      /^\s{0,64}(?:export\s{1,8})?(?=[A-Z][A-Z0-9_]{0,191}\s{0,8}=)[A-Z0-9_]{0,96}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]{0,96}\s{0,8}=(?!=)\s{0,8}(?!["'`$<{[\]\s])([^\s#;"'`()]{1,})(?=$|[\s#;])/,
     valueGroup: 1,
   },
 ];
@@ -640,4 +640,4 @@ export const PEM_UNTERMINATED_PATTERN =
   // "a header line or a blank line" and "a base64 line", which is exponential for a file full of
   // Comment: lines; a PEM key never has more than a handful of RFC 1421 header lines or 10,000
   // body lines, so bounding both keeps the match shape while removing the blow-up.
-  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:\r\n|\n|\r)(?:(?:[ \t]*(?:Proc-Type|DEK-Info|Comment|Version):[^\r\n]*[ \t]*(?:\r\n|\n|\r))|(?:[ \t]*(?:\r\n|\n|\r))){0,16}(?:[ \t]*[A-Za-z0-9+/=]{8,}[ \t]*(?:\r\n|\n|\r|$)){1,10000}/g;
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:(?:\r\n|\n|\r)(?:(?:[ \t]*(?:Proc-Type|DEK-Info|Comment|Version):[^\r\n]*[ \t]*(?:\r\n|\n|\r))|(?:[ \t]*(?:\r\n|\n|\r))){0,16}(?:[ \t]*(?:(?:#|\/\/|;|\*)[ \t]*)?["'`]?[A-Za-z0-9+/=]{8,}["'`]?[ \t]*(?:[,;+]?)[ \t]*(?:\r\n|\n|\r|$)){1,10000}|\\n(?:[A-Za-z0-9+/=]{0,}\\n){0,10000}[A-Za-z0-9+/=]{8,})/g;

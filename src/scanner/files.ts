@@ -1,12 +1,12 @@
 import * as childProcess from "node:child_process";
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { PRESETS } from "../presets/index.js";
 import { DEFAULT_SECRET_PATTERNS } from "../security/patterns.js";
 import { REDACTION_MARKER, advanceStringIndex } from "../security/redact.js";
-import { verifySnapshotSignature } from "../signing.js";
 import type { DiscoveryMode, SecretRule, SkipRecord } from "../types.js";
+import { verifySnapshotSignature } from "../signing.js";
 import { GENERATOR_NAME, SCHEMA_VERSION } from "../version.js";
 
 export interface GitInfo {
@@ -517,7 +517,7 @@ export function maskSkipPaths(
  * applies to caller-supplied regexes, expressed in the glob language.
  */
 const MAX_GLOB_LENGTH = 512;
-const MAX_GLOB_WILDCARDS = 16;
+const MAX_GLOB_WILDCARDS = 4;
 const MAX_GLOB_BRACE_GROUPS = 8;
 const MAX_GLOB_ALTERNATIVES = 32;
 
@@ -1134,6 +1134,28 @@ function listIgnoredPaths(cwd: string): string[] {
 }
 
 /**
+ * True when a path belongs to this tool's own output rather than to the user.
+ *
+ * A run used to record its own output directory in `skipped[]` — run 1 skipped
+ * nothing, run 2 skipped `snapshot` — so two identical runs produced different
+ * manifests, and the monolith (which embeds the manifest) changed size with
+ * them. A `--max-monolith-bytes` picked from run 1 could then flip a file off on
+ * run 2. Output and crash leftovers are therefore excluded without a `skipped[]`
+ * record, *provided the directory actually carries this tool's marker*, so two
+ * identical runs stay identical.
+ *
+ * The name alone is not enough, and used to be treated as though it were. Every
+ * directory called `snapshot`, `snapshot.tmp` or `snapshot.backup-*` was dropped
+ * at any depth, so a directory the user committed under that name vanished from
+ * the snapshot with nothing recorded anywhere — the opposite lie to the one the
+ * `skipped[]` record exists to prevent. A directory with no marker is now an
+ * ordinary directory: its contents are scanned like any others, unless it is the
+ * configured output directory or the top-level `outDir`/`tmpDir` this run is
+ * about to write (`toolOwnedPaths`), which cannot carry a marker on a first run.
+ */
+type ToolOwnership = "reserved" | "marker" | null;
+
+/**
  * True when `target` is a directory carrying this tool's ownership marker.
  */
 function hasSnapshotMarker(target: string): boolean {
@@ -1262,45 +1284,32 @@ function isToolOwnedDirectory(dir: string): boolean {
   return true;
 }
 
-/**
- * True when a path belongs to this tool's own output rather than to the user.
- *
- * A run used to record its own output directory in `skipped[]` — run 1 skipped
- * nothing, run 2 skipped `snapshot` — so two identical runs produced different
- * manifests, and the monolith (which embeds the manifest) changed size with
- * them. A `--max-monolith-bytes` picked from run 1 could then flip a file off on
- * run 2. Output and crash leftovers are therefore excluded without a `skipped[]`
- * record, *provided the directory actually carries this tool's marker*, so two
- * identical runs stay identical.
- *
- * The name alone is not enough, and used to be treated as though it were. Every
- * directory called `snapshot`, `snapshot.tmp` or `snapshot.backup-*` was dropped
- * at any depth, so a directory the user committed under that name vanished from
- * the snapshot with nothing recorded anywhere — the opposite lie to the one the
- * `skipped[]` record exists to prevent. A directory with no marker is now an
- * ordinary directory: its contents are scanned like any others, unless it is the
- * configured output directory or the top-level `outDir`/`tmpDir` this run is
- * about to write (`toolOwnedPaths`), which cannot carry a marker on a first run.
- */
+function hasToolMarker(dir: string): boolean {
+  return hasSnapshotMarker(dir);
+}
+
 function makeToolOwnedDecider(
   cwd: string,
   toolOwnedPaths: readonly string[]
-): (relativePath: string) => boolean {
-  const markers = new Map<string, boolean>();
+): (relativePath: string) => ToolOwnership {
   const reservedPaths = new Set(toolOwnedPaths.filter((entry) => entry.length > 0));
-  return (relativePath: string): boolean => {
+  const markers = new Map<string, boolean>();
+  return (relativePath: string): ToolOwnership => {
     const parts = relativePath.replace(/\\/g, "/").split("/");
     for (let depth = 1; depth <= parts.length; depth += 1) {
       const prefix = parts.slice(0, depth).join("/");
-      let hasMarker = markers.get(prefix);
-      if (hasMarker === undefined) {
-        hasMarker = isToolOwnedDirectory(path.join(cwd, prefix));
-        markers.set(prefix, hasMarker);
+      // The configured output/staging directories are silent bookkeeping. A marker elsewhere is
+      // repository-controlled: it must not disappear from skipped[] too. Record it as a tool
+      // output record so a prior snapshot does not look like source and a forged one is visible.
+      if (reservedPaths.has(prefix)) return "reserved";
+      let marker = markers.get(prefix);
+      if (marker === undefined) {
+        marker = hasToolMarker(path.join(cwd, prefix));
+        markers.set(prefix, marker);
       }
-      if (hasMarker) return true;
-      if (reservedPaths.has(prefix)) return true;
+      if (marker) return "marker";
     }
-    return false;
+    return null;
   };
 }
 
@@ -1468,7 +1477,7 @@ function dropLinkedDirectories(
 function listGitCandidates(
   cwd: string,
   skipped: SkipRecord[],
-  isToolOwned: (relativePath: string) => boolean
+  isToolOwned: (relativePath: string) => ToolOwnership
 ): string[] {
   const stdout = childProcess.execFileSync(
     "git",
@@ -1495,7 +1504,16 @@ function listGitCandidates(
   for (const ignoredPath of listIgnoredPaths(cwd)) {
     const trimmed = ignoredPath.replace(/\/+$/, "");
     if (known.has(trimmed) || known.has(ignoredPath)) continue;
-    if (isToolOwned(trimmed)) continue;
+    const ownership = isToolOwned(trimmed);
+    if (ownership === "reserved") continue;
+    if (ownership === "marker") {
+      skipped.push({
+        path: trimmed,
+        reason: "tool-output",
+        detail: "directory carries a .codebase-snapshot marker; treated as a prior tool output",
+      });
+      continue;
+    }
     if (isSensitivePath(trimmed)) {
       skipped.push({
         path: trimmed,
@@ -1607,8 +1625,18 @@ export function collectFiles(cwd: string, options: CollectOptions = {}): Collect
 
   let files = candidates
     .filter((file) => {
-      // Our own output is bookkeeping, never a user-facing skip (C25).
-      if (isToolOwned(file)) return false;
+      // The configured output is silent bookkeeping (C25). A marker anywhere else is recorded:
+      // silently dropping it hid repository content from both files[] and skipped[].
+      const ownership = isToolOwned(file);
+      if (ownership === "reserved") return false;
+      if (ownership === "marker") {
+        skipped.push({
+          path: file,
+          reason: "tool-output",
+          detail: "directory carries a .codebase-snapshot marker; treated as a prior tool output",
+        });
+        return false;
+      }
       const ignored = defaultIgnoreReason(file, toolDirNames);
       if (ignored) {
         skipped.push({ path: file, reason: "default-ignore", detail: ignored });
@@ -1860,6 +1888,14 @@ function walkDirectory(
     // `skipped[]` on the first run and omitted on later ones once it carried a marker —
     // so two identical runs produced different manifests.
     if (reservedPaths.has(relPath)) continue;
+    if (entry.isDirectory() && hasToolMarker(fullPath)) {
+      results.skipped.push({
+        path: relPath,
+        reason: "tool-output",
+        detail: "directory carries a .codebase-snapshot marker; treated as a prior tool output",
+      });
+      continue;
+    }
     if (entry.isDirectory() && DEFAULT_IGNORED_DIRS.includes(entry.name)) {
       results.skipped.push({
         path: relPath,
@@ -1880,9 +1916,10 @@ function walkDirectory(
     }
 
     if (gitignoreVerdict(frame.gitignoreLayers, relPath, entry.isDirectory()) === true) {
-      // A gitignored custom output directory is our own bookkeeping, not a
-      // user-facing skip (C25).
-      if (!hasSnapshotMarker(fullPath)) {
+      // Only the output directory this run resolved is silent bookkeeping. A marker in any
+      // other gitignored directory is repository-controlled: treating it as ownership let a
+      // self-consistent marker hide the directory from skipped[] as well as files[].
+      if (!reservedPaths.has(relPath)) {
         results.skipped.push({
           path: relPath,
           reason: isSensitivePath(relPath) ? "sensitive-file" : "gitignore",

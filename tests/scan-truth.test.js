@@ -862,15 +862,20 @@ test("C25: the tool's own output never appears in skipped[]", (t) => {
   // A second identical run must produce an identical manifest payload.
   const second = collectFiles(dir, options);
 
+  // `.context` is this run's configured output, so it is silent bookkeeping. `snapshot` is a
+  // nested marker directory: repository-controlled content must be recorded in skipped[] rather
+  // than silently dropped from both files[] and skipped[].
   assert.deepEqual(first.files, ["src/a.ts"]);
   assert.deepEqual(first, second, "identical runs must produce identical results");
-  for (const entry of second.skipped) {
-    assert.equal(
-      /^(?:\.context|snapshot)(?:\/|$)/.test(entry.path),
-      false,
-      `tool-owned path leaked into skipped[]: ${entry.path}`
-    );
-  }
+  assert.equal(
+    second.skipped.some((entry) => entry.path.startsWith(".context/")),
+    false,
+    "the configured output path must not be recorded as a skip"
+  );
+  assert.ok(
+    second.skipped.some((entry) => entry.path === "snapshot" && entry.reason === "tool-output"),
+    "a nested marker directory must be visible in skipped[]"
+  );
 });
 
 test("C26: --out-dir only excludes the resolved path, not same-named nested dirs", (t) => {

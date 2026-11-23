@@ -70,8 +70,10 @@ directory configured if the member should be served on its own.
 ## Rules
 
 - **Defaults, not member configs.** A member may contain a `snapshot.config.ts`, and a config can run
-  code. A workspace is a set of repositories the caller named, not one they configured, so members
-  are generated on the defaults. Run the member directly if its config should apply.
+  code. A workspace is a set of repositories the caller named, not one they configured, so member
+  config files are ignored. The flags the caller passed to the workspace run (budget, compression,
+  scope, artifact selection, discovery) are still applied to every member. Run the member directly
+  if its own config should apply.
 - **A failure is reported, not skipped.** A missing member prints its name and the run exits `1`
   after writing the members that succeeded, so a partial workspace is never mistaken for a complete
   one.

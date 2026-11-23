@@ -364,7 +364,7 @@ function skeletonisePemLine(
   // comma/plus escape. The middle is the key material. The earlier implementation preserved
   // scattered punctuation from the base64 body, which produced output that was not a subsequence
   // of the source and made health's redaction-aware fidelity check fail.
-  const leading = /^[ \t]*(?:(?:#|\/\/|;)[ \t]*)?(?:[bBrRuUfF]{1,2})?[\"'`]?/.exec(line)?.[0] ?? "";
+  const leading = /^[ \t]*(?:(?:#|\/\/|;|\*)[ \t]*)?(?:[bBrRuUfF]{1,2})?[\"'`]?/.exec(line)?.[0] ?? "";
   const rest = line.slice(leading.length);
   const trailing = /(?:\\[nrt])?[\"'`]?[ \t]*(?:[,;+])?[ \t]*$/.exec(rest)?.[0] ?? "";
   if (leading.length + trailing.length >= line.length) return { text: line, quote: 0 };
@@ -523,6 +523,16 @@ export function scanAndRedactSecrets(
       const spans: Span[] = [];
       const matchedRules = new Set<string>();
       const context: LineContext = {};
+      const markerRanges: Array<[number, number]> = [];
+      for (const marker of [REDACTION_MARKER, PEM_REDACTION_MARKER]) {
+        let at = line.indexOf(marker);
+        while (at >= 0) {
+          markerRanges.push([at, at + marker.length]);
+          at = line.indexOf(marker, at + marker.length);
+        }
+      }
+      const insideMarker = (position: number): boolean =>
+        markerRanges.some(([start, end]) => position >= start && position < end);
 
       for (const { rule, pattern, valueGroup } of compiled) {
         pattern.lastIndex = 0;
@@ -540,6 +550,11 @@ export function scanAndRedactSecrets(
           const candidate = group
             ? line.slice(group[0], group[1])
             : line.slice(match.index, match.index + match[0].length);
+          // The audit re-scans emitted text. A rule anchored to a credential name will happily
+          // match the prefix of our own marker ("[REDACTED:"); that is not a new secret, and
+          // masking it corrupts the marker. Ignore matches that begin inside a marker span, but
+          // keep scanning a real value written beside one.
+          if (insideMarker(group ? group[0] : match.index)) continue;
           if (isPlaceholderValue(candidate)) continue;
           // In a source file an unquoted right-hand side is an expression — an identifier, a member
           // access, a ternary branch, an object-literal property. Only text inside a string literal
@@ -929,6 +944,11 @@ function redactDockerfileEnv(
     const match = DOCKERFILE_ENV.exec(line);
     if (match === null) continue;
     if (!CREDENTIAL_KEY_TAIL.test(match[4] ?? "")) continue;
+    const value = (match[6] ?? "").trim();
+    // The audit re-scans emitted text with the same rules. Pass 2 already masked this line, so
+    // matching its own marker again is a false positive that turns every Dockerfile into a
+    // critical health failure. Placeholders and variable references are not secrets either.
+    if (isMarkerLine(value) || isPlaceholderValue(value) || /^\$[({A-Za-z_]/.test(value)) continue;
     const separator = match[5] ?? "";
     // `ENV KEY=value` and `ARG KEY=value` are the modern spelling. The generic rules skipped a
     // value containing `<` or `|`, which is a valid Docker value and a valid password.

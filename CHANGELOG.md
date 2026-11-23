@@ -30,6 +30,25 @@ deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 si
 
 ---
 
+## 0.20.11
+
+**A second, deeper review found that several guards were true in one path but not its twin. This pass closes those edge cases and makes every omission visible.**
+
+- A repository-controlled `.codebase-snapshot` marker can no longer erase a subtree from both `files[]` and `skipped[]`. Only the configured output/staging paths are silent; any other complete marker is recorded with reason `tool-output` and not treated as source.
+- Dockerfile `ENV`/`ARG` redaction is idempotent: health no longer re-finds its own marker, and placeholder or `$VAR` values are exempt.
+- The quoted-credential bound and the unquoted assignment bounds were removed entirely, so a long value under a credential-shaped key has no length cliff at which every rule stops matching.
+- Unterminated PEM keys are detected through comment prefixes, quoted array elements and escaped `\n` sequences, not only bare indented body lines.
+- `unsafeRegExpReason` charges alternation branches, so a chain of unquantified groups such as `(\w|\S|.)` repeated is refused instead of backtracking on the event loop. Glob wildcard chains are capped at four.
+- `generate --workspace` now resolves the caller's generation flags for every member instead of silently dropping budgets, compression, scoping and report options.
+- `validate` agrees with `generate --skip-artifacts parts`: a navigation link to a deliberately absent part is expected, not drift.
+- MCP HTTP rate limiting counts JSON-RPC messages, not HTTP envelopes; a batched `initialize` is rejected unless it is alone, and a one-message batch mints an `mcp-session-id`.
+- `snapshot_symbol` bounds `lines`/`maxFiles`/`maxReferences` and caps the whole response, clearing the duplicated structured bodies when clipped.
+- `snapshot_validate` honors explicit `false` overrides for compression, scope, artifacts and other boolean settings instead of falling back to the recorded manifest.
+- Path containment checks now use a segment boundary, so a legitimate file such as `..notes.ts` is inside the repository and replays under `health --deep`.
+- `health --all-members` reads `WORKSPACE.json` through the confined reader, refuses a symlinked member or index, and never echoes parser snippets.
+- `serve` accepts only HTTP(S) loopback origins, drops evicted clone roots, and records the repository root for a nested `outDir` so `GET /api/health` audits the right tree.
+- Diff and log reports choose an adaptive code fence, and `snapshot_history` parses it, so a commit subject containing backticks cannot break the report.
+
 ## 0.20.10
 
 **Security hardening from a three-pass audit: snapshot confinement, redaction, validation, MCP protocol and serve boundaries. Every finding was reproduced before its fix, and each class has a regression test.**

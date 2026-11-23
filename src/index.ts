@@ -2562,7 +2562,14 @@ export function generateSnapshot(
       .map((directory) =>
         path.relative(config.cwd, path.resolve(config.cwd, directory)).replace(/\\/g, "/")
       )
-      .filter((relative) => relative.length > 0 && !relative.startsWith("..")),
+      .filter(
+        (relative) =>
+          relative.length > 0 &&
+          relative !== ".." &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !relative.startsWith("../") &&
+          !path.isAbsolute(relative)
+      ),
     // A staged path can be absent from the working tree while its index blob exists. Discovery
     // lists the working tree, so those paths would never reach the scan at all.
     ...(stagedPaths.size > 0 ? { extraPaths: [...stagedPaths] } : {}),

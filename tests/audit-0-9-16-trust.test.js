@@ -78,13 +78,27 @@ test("FS-01 a marker that only has the right name is not ownership", (t) => {
     `an incomplete marker must not hide the file it omits: ${JSON.stringify(partial.files)}`
   );
 
-  // The same directory with a marker that accounts for what it holds is this tool's output.
+  // A complete marker is a repository-controlled claim. Do not let it erase the subtree from both
+  // lists: record the omission. Only the configured output path is silent bookkeeping.
   write(dir, "snapshot/.codebase-snapshot", validMarker(dir, ["manifest.json", "notes.ts"]));
   const owned = collectFiles(dir, {});
   assert.equal(
     owned.files.some((file) => file.startsWith("snapshot/")),
     false,
-    `a real marker must exclude the directory: ${JSON.stringify(owned.files)}`
+    "a complete marker is still treated as a prior tool output"
+  );
+  assert.ok(
+    owned.skipped.some(
+      (record) => record.path === "snapshot" && record.reason === "tool-output"
+    ),
+    `the marker directory must be visible in skipped[]: ${JSON.stringify(owned.skipped)}`
+  );
+  // Only the configured output/staging path is silent bookkeeping.
+  const reserved = collectFiles(dir, { toolOwnedPaths: ["snapshot"] });
+  assert.equal(
+    reserved.files.some((file) => file.startsWith("snapshot/")),
+    false,
+    "the configured output path is still excluded silently"
   );
 });
 

@@ -335,7 +335,8 @@ Reasons, and what each one means:
 | `reason` | The file was dropped because |
 | :--- | :--- |
 | `excluded` | It matched your own `excludePatterns`, or fell outside a non-empty `include` allow-list. |
-| `default-ignore` | A built-in rule caught it, the preset's ecosystem ignores did (`node_modules`, `__pycache__`, `target`, …), or it sat inside an output directory. |
+| `default-ignore` | A built-in rule caught it, or the preset's ecosystem ignores did (`node_modules`, `__pycache__`, `target`, …). |
+| `tool-output` | The path sits under a directory carrying a complete .codebase-snapshot marker. It is a prior snapshot, recorded rather than silently dropped; the configured outDir/tmpDir for this run is silent bookkeeping and never appears here. |
 | `sensitive-file` | Its name is credential-bearing (`.env`, `*.pem`, `.npmrc`, …). |
 | `sensitive-path` | The path itself matched a secret rule. The file is skipped and the path is masked in every artifact. |
 | `binary` | It is not text: it holds a NUL byte outside a UTF-16 stream, or more than 1% control characters (a 4 KB blob of `0x07` is valid UTF-8 but is not text). `detail` carries the size and, when there is one to give, the reason: the control-byte count (`Size: 13 B; 5 control byte(s)`), or the offset of a NUL found past the 8 MB head scan (`Size: 9000010 B; NUL byte at offset 9000000`). A NUL inside the head scan is caught by the cheap extension-and-prefix check, so its `detail` is the size alone. |

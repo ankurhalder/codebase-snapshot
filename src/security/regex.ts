@@ -52,7 +52,8 @@ export function unsafeRegExpReason(source: string): string | null {
   let repetitions = 0;
   let repetitionProduct = 1;
   let optionalQuantifiers = 0;
-  const groups: Array<{ quantified: boolean; alternation: boolean }> = [];
+  let topLevelBranches = 1;
+  const groups: Array<{ quantified: boolean; alternation: boolean; branches: number }> = [];
 
   /** Counts one optional atom and enforces the branch budget. */
   const countOptional = (): string | null => {
@@ -91,7 +92,7 @@ export function unsafeRegExpReason(source: string): string | null {
       continue;
     }
     if (char === "(") {
-      groups.push({ quantified: false, alternation: false });
+      groups.push({ quantified: false, alternation: false, branches: 1 });
       continue;
     }
     if (char === ")") {
@@ -108,6 +109,14 @@ export function unsafeRegExpReason(source: string): string | null {
         // safe and must not be rejected.
         group.quantified = true;
       }
+      // An unquantified alternation is still a branch point. `(\w|\S|.)` repeated sequentially
+      // has no `*`, `+` or `{n}`, so the quantifier checks saw a linear pattern while V8
+      // explored three choices at every group. Charge the branch product even without a
+      // quantifier.
+      repetitionProduct *= group.branches;
+      if (repetitionProduct > MAX_REPETITION_PRODUCT) {
+        return "the pattern's alternations multiply beyond the search budget";
+      }
       // A child's flags belong to every enclosing group. Without this, `((.|.))+` looked like
       // an unquantified outer group holding a harmless inner one, and the outer `+` passed.
       const parent = groups[groups.length - 1];
@@ -119,7 +128,12 @@ export function unsafeRegExpReason(source: string): string | null {
     }
     if (char === "|") {
       const group = groups[groups.length - 1];
-      if (group !== undefined) group.alternation = true;
+      if (group !== undefined) {
+        group.alternation = true;
+        group.branches += 1;
+      } else {
+        topLevelBranches += 1;
+      }
       continue;
     }
     if (char === "?") {
@@ -182,6 +196,10 @@ export function unsafeRegExpReason(source: string): string | null {
     }
   }
 
+  repetitionProduct *= topLevelBranches;
+  if (repetitionProduct > MAX_REPETITION_PRODUCT) {
+    return "the pattern's alternations multiply beyond the search budget";
+  }
   if (unbounded > 1) {
     return "the pattern has more than one unbounded repetition";
   }

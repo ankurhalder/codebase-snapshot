@@ -54,9 +54,13 @@ const { parentPort, workerData } = require("node:worker_threads");
       return;
     }
     if (workerData.task === "explain") {
+      // Do not revive functions from their source: preset layer/kind helpers capture prefixes,
+      // suffixes and needles, so a re-evaluated arrow loses those bindings and throws. The
+      // workspace already records the source config and CLI options for exactly this reload.
+      const config = mod.resolveConfig(workerData.sourceConfig, workerData.cliOptions, workerData.root);
       parentPort.postMessage({
         ok: true,
-        result: mod.explainPath(reviveConfig(workerData.config), workerData.path),
+        result: mod.explainPath(config, workerData.path),
       });
       return;
     }
@@ -74,7 +78,13 @@ export type AnalysisTask =
   | { task: "validate"; config: unknown }
   | { task: "health"; options: unknown }
   | { task: "review"; config: unknown; options: unknown }
-  | { task: "explain"; config: unknown; path: string };
+  | {
+      task: "explain";
+      root: string;
+      sourceConfig: unknown;
+      cliOptions: unknown;
+      path: string;
+    };
 
 export type AnalysisResult =
   | { ok: true; result: unknown }

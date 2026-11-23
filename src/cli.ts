@@ -12,6 +12,7 @@ import {
   resolveConfig,
 } from "./config.js";
 import { runInit } from "./wizard/init.js";
+import { readConfinedText } from "./security/confine.js";
 import {
   firstRunMessage,
   hasPriorSnapshot,
@@ -1015,7 +1016,15 @@ function splitList(value: string | undefined): string[] | undefined {
 function displayOutPath(cwd: string, outDir: string, ...segments: string[]): string {
   const absolute = path.resolve(cwd, outDir, ...segments);
   const relative = path.relative(cwd, absolute);
-  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) return relative;
+  if (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !relative.startsWith("../") &&
+    !path.isAbsolute(relative)
+  ) {
+    return relative;
+  }
   return absolute;
 }
 
@@ -2128,14 +2137,26 @@ async function runCommand(argv: string[]): Promise<number> {
       }
       let index: { members?: Array<{ name?: string; path?: string }> };
       try {
-        index = JSON.parse(fs.readFileSync(indexPath, "utf8")) as typeof index;
-      } catch (error) {
-        return fail(invocation.format, `Could not read ${indexPath}: ${(error as Error).message}`);
+        const indexRead = readConfinedText(outRoot, "WORKSPACE.json");
+        if (!indexRead.ok) {
+          return fail(invocation.format, "Could not read WORKSPACE.json: " + indexRead.message);
+        }
+        index = JSON.parse(indexRead.text) as typeof index;
+      } catch {
+        // Never echo the parser's snippet: a symlinked or crafted index could make it quote host
+        // bytes. The failure itself is enough for the operator.
+        return fail(invocation.format, "WORKSPACE.json is not valid JSON.");
       }
       const rows: Array<{ name: string; score: number; counts: { pass: number; warn: number; fail: number }; failed: string[]; error?: string }> = [];
       const insidePath = (parent: string, child: string): boolean => {
         const relative = path.relative(parent, child);
-        return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+        return (
+          relative === "" ||
+          (relative !== ".." &&
+            !relative.startsWith(`..${path.sep}`) &&
+            !relative.startsWith("../") &&
+            !path.isAbsolute(relative))
+        );
       };
       for (const member of index.members ?? []) {
         const name = member.name ?? "?";
@@ -2147,7 +2168,7 @@ async function runCommand(argv: string[]): Promise<number> {
         if (
           name.length === 0 ||
           path.isAbsolute(name) ||
-          name.split("/").includes("..") ||
+          name.split(/[\\/]/).includes("..") ||
           !insidePath(outRoot, snapshotDir) ||
           path.isAbsolute(repoPath) ||
           repoPath.split(/[\\/]/).includes("..") ||
@@ -2162,6 +2183,34 @@ async function runCommand(argv: string[]): Promise<number> {
           });
           continue;
         }
+        // The lexical check above is not enough: a member directory or the snapshot itself may
+        // be a symlink that resolves outside the workspace. Canonicalise both before any read.
+        let canonicalSnapshot = snapshotDir;
+        let canonicalRepo = repoDir;
+        try {
+          const outRootReal = fs.realpathSync(outRoot);
+          const cwdReal = fs.realpathSync(resolved.cwd);
+          canonicalSnapshot = fs.realpathSync(snapshotDir);
+          canonicalRepo = fs.existsSync(repoDir) ? fs.realpathSync(repoDir) : repoDir;
+          if (
+            !insidePath(outRootReal, canonicalSnapshot) ||
+            !insidePath(cwdReal, canonicalRepo)
+          ) {
+            rows.push({
+              name,
+              score: 0,
+              counts: { pass: 0, warn: 0, fail: 1 },
+              failed: [],
+              error: "the workspace index names a path outside the workspace",
+            });
+            continue;
+          }
+        } catch {
+          // A missing member snapshot is reported by the ordinary "no snapshot" row below. A
+          // path that cannot be canonicalised is never audited through its lexical alias.
+          canonicalSnapshot = snapshotDir;
+          canonicalRepo = repoDir;
+        }
         if (!fs.existsSync(path.join(snapshotDir, "manifest.json"))) {
           rows.push({ name, score: 0, counts: { pass: 0, warn: 0, fail: 1 }, failed: [], error: "no snapshot at " + snapshotDir });
           continue;
@@ -2170,7 +2219,7 @@ async function runCommand(argv: string[]): Promise<number> {
         // config made a member's own token shape invisible to `health --all-members`.
         let memberSecretRules = resolved.customSecretRules ?? [];
         try {
-          const memberLoaded = await loadConfigFileDetailed(repoDir, {
+          const memberLoaded = await loadConfigFileDetailed(canonicalRepo, {
             allowExecutableConfig: false,
           });
           if (memberLoaded.errors.length === 0) {
@@ -2182,8 +2231,8 @@ async function runCommand(argv: string[]): Promise<number> {
           // the root rules still apply and the audit does not disappear.
         }
         const report = auditSnapshot({
-          snapshotDir,
-          repoDir,
+          snapshotDir: canonicalSnapshot,
+          repoDir: canonicalRepo,
           ...(memberSecretRules.length === 0 ? {} : { secretRules: memberSecretRules }),
           ...(invocation.deep === true ? { deep: true } : {}),
         });
@@ -2405,7 +2454,10 @@ async function runCommand(argv: string[]): Promise<number> {
     const outRootRelative = path.relative(outRoot, workspaceCwd);
     if (
       outRootRelative === "" ||
-      (!outRootRelative.startsWith("..") && !path.isAbsolute(outRootRelative))
+      (outRootRelative !== ".." &&
+        !outRootRelative.startsWith(`..${path.sep}`) &&
+        !outRootRelative.startsWith("../") &&
+        !path.isAbsolute(outRootRelative))
     ) {
       return fail(
         invocation.format,
@@ -2456,12 +2508,20 @@ async function runCommand(argv: string[]): Promise<number> {
         continue;
       }
       try {
-        // Each member is generated on the defaults: a member may contain a config that runs code,
-        // and a workspace is a set of repositories the caller named, not one they configured.
-        const manifest = generateSnapshot(
-          { cwd: directory, outDir: path.join(outRoot, name) },
-          { dryRun: invocation.dryRun }
+        // Each member ignores its own repository config (a workspace is a set of repositories the
+        // caller named, not one they configured), but every flag the caller passed still applies.
+        // Building { cwd, outDir } here silently dropped budgets, compression, scoping and the
+        // other generation flags; resolve the same CLI options for each member instead.
+        const memberConfig = resolveConfig(
+          null,
+          {
+            ...generateCliOptions(invocation),
+            cwd: directory,
+            outDir: path.join(outRoot, name),
+          },
+          directory
         );
+        const manifest = generateSnapshot(memberConfig, { dryRun: invocation.dryRun });
         records.push({
           name,
           path: directory,
@@ -2596,7 +2656,11 @@ async function runCommand(argv: string[]): Promise<number> {
       }
       const relativeBase = path.relative(invocation.cwd, manifestPath).split(path.sep).join("/");
       const recordedBase =
-        relativeBase === "" || relativeBase.startsWith("..") || path.isAbsolute(relativeBase)
+        relativeBase === "" ||
+        relativeBase === ".." ||
+        relativeBase.startsWith(`..${path.sep}`) ||
+        relativeBase.startsWith("../") ||
+        path.isAbsolute(relativeBase)
           ? path.basename(manifestPath)
           : relativeBase;
       deltaBase = { manifest: base, path: recordedBase };

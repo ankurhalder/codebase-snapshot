@@ -77,6 +77,7 @@ const MAX_TEMPORARY_CLONES = 8;
 function isLoopback(origin: string): boolean {
   try {
     const url = new URL(origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
     return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
   } catch {
     return false;
@@ -131,6 +132,8 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
    * for what may be asked about.
    */
   const allowedRoots = [path.resolve(options.cwd)];
+  /** Snapshot directory -> repository root, recorded when a generation succeeds. */
+  const snapshotRepoRoots = new Map<string, string>();
   /**
    * Canonical path, or null when it does not exist.
    *
@@ -335,6 +338,14 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
                 const oldest = temporaryClones.values().next().value;
                 if (oldest === undefined) break;
                 temporaryClones.delete(oldest);
+                // The evicted tree is no longer an allowed root; leaving it in this array let a
+                // long-running server accumulate stale read capabilities for directories it had
+                // already deleted.
+                const rootIndex = allowedRoots.indexOf(oldest);
+                if (rootIndex >= 0) allowedRoots.splice(rootIndex, 1);
+                for (const [snapshot, repoRoot] of snapshotRepoRoots) {
+                  if (repoRoot === oldest) snapshotRepoRoots.delete(snapshot);
+                }
                 try {
                   fs.rmSync(oldest, { recursive: true, force: true });
                 } catch {
@@ -454,6 +465,10 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
               return;
             }
             const seconds = ((Date.now() - started) / 1000).toFixed(2);
+            snapshotRepoRoots.set(
+              canonical(snapshotDir) ?? path.resolve(snapshotDir),
+              path.resolve(target)
+            );
             // The audit runs on what was just written, so the page shows whether the artifact is
             // safe to hand over rather than only how big it is.
             const audit = await analysisInWorker({
@@ -514,7 +529,11 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         send(403, { error: "outside the served directory: " + target });
         return;
       }
-      const repoDir = path.dirname(target);
+      // A nested outDir (artifacts/snapshot) is not one level below the repository. Prefer the
+      // source root recorded by the successful generation; fall back to the served directory
+      // rather than inventing a parent from the snapshot depth.
+      const repoDir =
+        snapshotRepoRoots.get(canonical(target) ?? path.resolve(target)) ?? path.resolve(options.cwd);
       if (!insideAllowedRoots(repoDir)) {
         send(403, { error: "the repository root for this snapshot is outside the served directory" });
         return;

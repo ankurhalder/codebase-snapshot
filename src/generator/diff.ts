@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { isSensitivePath } from "../scanner/files.js";
 import { truncateToBytes } from "../partitioner/preview.js";
+import { fenceForText } from "../partitioner/chunker.js";
 import { scanAndRedactSecrets } from "../security/redact.js";
 import type { SecretRule } from "../types.js";
 
@@ -229,9 +230,10 @@ export function generateDiffReport(
           : scanAndRedactSecrets(rawSection, options.secretRules ?? [], sourcePath).redacted;
       const chunk = truncateToBytes(redactedSection, remaining);
       if (chunk.isTruncated) truncated = true;
+      const fence = fenceForText(chunk.content, 3);
       sections.push(
         "## " + title + " changes\n\nRun: git " + args.join(" ") + "\n\n" +
-          "```diff\n" + chunk.content + "\n```"
+          fence + "diff\n" + chunk.content + "\n" + fence
       );
       if (chunk.isTruncated) break;
     }
