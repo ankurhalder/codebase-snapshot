@@ -469,7 +469,7 @@ either.
 A credential assigned to a name inside a string is also masked — a connection string is a string:
 
 ```js
-const dsn = "password=MySuperSecret123;host=db.internal";
+const dsn = "password=<redacted-example>;host=db.internal";
 ```
 
 What is left alone is a credential *name* in a literal, with nothing assigned to it:

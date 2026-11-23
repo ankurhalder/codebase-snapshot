@@ -22,7 +22,10 @@
 version: 2
 secret:
   ignored_paths:
-    # Test suites: the engine's own vectors, inline in the tests that exercise them.
+    # Test suites: the engine's own vectors, inline in the tests that exercise them. Both
+    # forms are listed because GitGuardian's path matcher treats a root-level "tests"
+    # differently from a nested one.
+    - "tests/**"
     - "**/tests/**"
     - "**/package-lock.json"
     # Rule definitions and their worked examples: patterns, not credentials.
