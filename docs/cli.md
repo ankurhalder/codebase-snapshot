@@ -426,12 +426,12 @@ agent](agent.md).
 Ask the npm registry whether a newer release exists, and print the version it compared against:
 
 ```bash
-npx codebase-snapshot@0.20.12 update          # is this build current? print the answer
-npx codebase-snapshot@0.20.12 update --format json
+npx codebase-snapshot@0.20.13 update          # is this build current? print the answer
+npx codebase-snapshot@0.20.13 update --format json
 ```
 
 ```text
-You are on codebase-snapshot 0.20.12, and the registry publishes 0.20.12. No update is available.
+You are on codebase-snapshot 0.20.13, and the registry publishes 0.20.13. No update is available.
 ```
 
 Exit `0` when the installed version is current, `1` when a newer release exists, `2` when the
