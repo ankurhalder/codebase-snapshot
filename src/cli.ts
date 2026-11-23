@@ -264,8 +264,8 @@ Options:
                                 bar, calibration); merged at fixed slots
   --prompt-task <task>          audit | review | explain - which job the brief is for
   --skip-artifacts <names>      Comma-separated artifacts to omit
-                                (readme, manifest, parts, navigation,
-                                 projectTree, audit, monolith)
+                                (readme, prompt, manifest, parts, navigation,
+                                 projectTree, audit, diff, log, tokenTree, monolith)
   --only-artifacts <names>      Write *only* these artifacts
   --format <text|json>          CLI output format (default: text)
   --dry-run                     Compute the snapshot without writing anything

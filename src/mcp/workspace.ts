@@ -293,11 +293,9 @@ export async function openWorkspace(
       return { ok: false, message: '"outDir" must be a non-empty string.' };
     }
     const requested = overrides.outDir.trim();
-    // Confine the *argument*, not the configuration. A configured outDir is the project's own
-    // decision and a config may legitimately point one directory up; an outDir argument comes from
-    // a prompt, and a prompt must not be able to drop a snapshot tree anywhere the process can
-    // create one. Reads are already confined to the served directories by resolveRoot; this is the
-    // write half of that rule, so the two halves cannot disagree.
+    // Confine configured roots too: a config is repository input, not a capability. The server
+    // may serve a repository whose config points outside the root it was started for, so the
+    // same rule applies to an outDir argument and to the project's own outDir/tmpDir.
     const permitted = allowedRoots !== undefined && allowedRoots.length > 0 ? allowedRoots : [root];
     const resolved = resolveThroughExistingAncestor(path.resolve(root, requested));
     if (!permitted.some((allowed) => isInside(canonicalPath(allowed), resolved))) {

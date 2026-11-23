@@ -363,8 +363,21 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
       received += chunk.length;
       if (received > maxBody) {
         tooLarge = true;
-        request.destroy();
-        send(response, 413, { error: "request body too large", limit: maxBody }, cors);
+        // Stop buffering, but let the 413 reach the client before the socket is torn down.
+        // Destroying the request here reset the connection first and the documented 413 was
+        // never observed by a streaming client (it saw ECONNRESET).
+        chunks.length = 0;
+        request.pause();
+        send(response, 413, { error: "request body too large", limit: maxBody }, cors, {
+          connection: "close",
+        });
+        response.once("finish", () => {
+          try {
+            request.destroy();
+          } catch {
+            // Already gone.
+          }
+        });
         return;
       }
       chunks.push(chunk);
@@ -501,7 +514,10 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
       unauthorized(response, cors);
       return;
     }
-    if (request.method !== "POST" && rateLimited(request)) {
+    // Charge the HTTP envelope before reading the body. Charging after parsing let malformed
+    // JSON, an oversized body and an empty batch reach the parser without ever touching the
+    // window; [] added zero, so a client could send them forever.
+    if (rateLimited(request)) {
       tooMany(response, cors);
       return;
     }
@@ -530,13 +546,24 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): McpHttpHan
 
     readJsonBody(request, response, cors, (message) => {
       const batch = Array.isArray(message) ? message : [message];
+      // JSON-RPC 2.0 requires a batch to contain at least one request. Accepting [] with 202
+      // was also the zero-cost rate-limit path.
+      if (batch.length === 0) {
+        send(
+          response,
+          400,
+          { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: empty batch" } },
+          cors
+        );
+        return;
+      }
       if (batch.length > 100) {
         send(response, 400, { error: "JSON-RPC batch is limited to 100 messages" }, cors);
         return;
       }
-      // The rate limit is per JSON-RPC message, not per HTTP envelope. Charging one for a
-      // 100-message batch turned the documented 60-per-10s bound into 6,000 dispatches.
-      if (rateLimited(request, batch.length)) {
+      // The envelope was charged above. Charge the remaining JSON-RPC messages, so the
+      // documented 60-per-10s bound applies to dispatches rather than envelopes.
+      if (batch.length > 1 && rateLimited(request, batch.length - 1)) {
         tooMany(response, cors);
         return;
       }

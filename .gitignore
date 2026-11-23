@@ -12,13 +12,6 @@ coverage/
 # of measured search positions, and its whole value is being comparable over time.
 site/
 
-# Audit PoC scratch space. The verification scripts (audit/poc/*.mjs,
-# audit/verify/*.mjs) and the reports are tracked; the fixture trees they
-# generate, the copies of this project they clone, and captured command output
-# are regenerable and are deliberately not.
-audit/poc/*/
-audit/poc/*.txt
-
 # Scratch probes at the repository root. `git add -A` swept four of these into a
 # release because the author forgot they were there; they are throwaway harnesses,
 # not tests (the tests they produced live in tests/).

@@ -14,10 +14,8 @@
   "maxParts": 9,
   "include": [],
   "excludePatterns": [
-    "audit/**",
     "CHANGELOG.md",
     "tests/**",
-    "GOAL.md",
     "seo-log.jsonl",
     "llms.txt"
   ],

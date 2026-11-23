@@ -37,7 +37,8 @@ export interface RemoteSource {
 
 export type ParsedSource = { ok: true; source: RemoteSource } | { ok: false; message: string };
 
-const HOST_PATTERN = /^[a-z0-9.-]+$/i;
+// Host names, plus the bracketed IPv6 literal form WHATWG URL.hostname keeps.
+const HOST_PATTERN = /^(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])$/i;
 
 /** Parses a dotted-quad without trusting `Number` to reject leading signs or spaces. */
 function parseIPv4(value: string): number[] | null {
@@ -246,8 +247,10 @@ export function parseRemoteSource(input: string, options: { allowPrivate?: boole
 /** Every address a public host resolves to; refused when any is private. */
 export async function assertPublicHost(host: string, allowPrivate: boolean): Promise<void> {
   if (allowPrivate) return;
-  if (isPrivateHost(host)) throw new Error(host + " is a private address");
-  const addresses = await lookup(host, { all: true });
+  // WHATWG keeps the brackets on an IPv6 literal; dns.lookup takes the bare address.
+  const normalized = host.replace(/^\[|\]$/g, "");
+  if (isPrivateHost(normalized)) throw new Error(host + " is a private address");
+  const addresses = await lookup(normalized, { all: true });
   if (addresses.length === 0) throw new Error(host + " did not resolve");
   for (const address of addresses) {
     if (isPrivateHost(address.address)) {

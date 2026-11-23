@@ -49,14 +49,15 @@ A config file that exists but cannot be parsed is a **hard error** (exit `1`, no
 written). Silently ignoring it would produce a snapshot with none of your settings.
 
 A `.ts` config needs Node ≥ 22.6 **and** an ES-module project, because Node applies the
-package's `type` field to a `.ts` file. `codebase-snapshot init` picks the right filename for
-the project — `.ts` when both conditions hold, `.mjs` otherwise — and writes a plain object
-with no imports so it loads even when the package is only used through `npx`.
+package's `type` field to a `.ts` file. `codebase-snapshot init` writes `snapshot.config.json`
+for a new project: data only, no imports, and accepted by `mcp` and `serve` without executing
+repository code. An executable `.ts`/`.js`/`.mjs` config is something you create yourself and
+can use with the CLI; those surfaces refuse to run it.
 
-The snippets below show an `export default { … }` object for brevity. `init` writes it as
-`const config = { … }; export default config;` because the anonymous form is reported by
-`import/no-anonymous-default-export`, which `eslint-config-next` enables by default — both load
-identically, so use whichever keeps your linter quiet.
+The snippets below show an `export default { … }` object because that is the executable form.
+A JSON config uses the same keys without the export wrapper. Both load identically for the CLI.
+For an executable config, prefer `const config = { … }; export default config;` over the
+anonymous form, which `eslint-config-next` reports via `import/no-anonymous-default-export`.
 
 CLI flags override the config for a single run (`--max-part-bytes`, `--out-dir`, …).
 `--no-config` goes further and ignores every config file, so the run uses the built-in
@@ -674,13 +675,13 @@ npx codebase-snapshot init --preset go --max-part-bytes 200k \
     --include "cmd/**,internal/**" --exclude "**/*_test.go" --yes
 ```
 
-`--dry-run` prints the config and writes nothing. `--force` replaces an existing ES-module
-config (`.ts`, `.js`, `.mjs`) in place; without it, an existing config is left alone and the
-command exits `1`.
+`--dry-run` prints the config and writes nothing. A new configuration is
+`snapshot.config.json`, the data-only form MCP and serve accept. `--force` rewrites an existing
+configuration in place: a JSON-family file keeps JSON; an ES-module `.ts`, ESM `.js`, or `.mjs`
+file keeps its executable format. A CommonJS `.js` or `.cjs` file is refused, because this
+wizard cannot write that format, and a new file beside it would silently shadow the old one.
+Without `--force`, an existing config is left alone and the command exits `1`.
 
-It will not replace a JSON-family config — `snapshot.config.json`, `.snapshotrc`,
-`.snapshotrc.json`, or the `"snapshot"` key in `package.json` — because this wizard writes an
-ES-module file and a new file beside the old one would silently shadow it. Those cases exit `1`
-with a message naming the file to delete or rename. Note that this means `--force` writing
-`snapshot.config.ts` does shadow a `"snapshot"` key in `package.json`, since a dedicated config
-file always wins.
+A `"snapshot"` key in `package.json` is handled the same way: without `--force` the command
+exits `1` and names the key; with `--force` it writes `snapshot.config.json`, and that file then
+takes precedence over the key. The key itself is not edited.

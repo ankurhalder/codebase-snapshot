@@ -25,6 +25,31 @@ import { buildImportResolver, resolveSafeOutputDirs, resolveSpecifier, tsconfigP
 /** One search reads at most this many bytes of part text. */
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Largest part any content-returning tool will load into memory.
+ *
+ * snapshot_read, snapshot_context, snapshot_diff_context, snapshot_review and snapshot_answer
+ * used to call readFileSync without a size check. A hand-crafted or over-budget part then
+ * blocked the JSON-RPC event loop while it was split into lines.
+ */
+const MAX_PART_READ_BYTES = 16 * 1024 * 1024;
+
+/** True when reading this part would exceed the tool's memory budget. */
+function partTooLarge(partPath: string): boolean {
+  try {
+    return fs.statSync(partPath).size > MAX_PART_READ_BYTES;
+  } catch {
+    return false;
+  }
+}
+
+function partTooLargeReason(): string {
+  return (
+    "the part is larger than " + MAX_PART_READ_BYTES + " bytes; narrow the snapshot with " +
+    "maxPartBytes, or use snapshot_locate instead of reading the whole part"
+  );
+}
+
 /** Runs one repository-wide analysis off the JSON-RPC thread. */
 async function runAnalysis<T>(request: AnalysisTask): Promise<T> {
   const outcome = await analysisInWorker(request);
@@ -1210,6 +1235,10 @@ const reviewTool: ToolSpec = {
         missing.push(wantedPath + " (part missing)");
         continue;
       }
+      if (partTooLarge(partPath)) {
+        missing.push(wantedPath + " (" + partTooLargeReason() + ")");
+        continue;
+      }
       let section = null;
       try {
         section = findSection(parsePartSections(fs.readFileSync(partPath, "utf8")), file.relativePath);
@@ -1354,6 +1383,10 @@ const diffContextTool: ToolSpec = {
       const partPath = partPathFor(workspace, file.part);
       if (partPath === null) {
         missing.push(path + " (part missing)");
+        continue;
+      }
+      if (partTooLarge(partPath)) {
+        missing.push(path + " (" + partTooLargeReason() + ")");
         continue;
       }
       let section;
@@ -1682,6 +1715,10 @@ const contextTool: ToolSpec = {
         missing.push(file.relativePath + " (part missing)");
         continue;
       }
+      if (partTooLarge(partPath)) {
+        missing.push(file.relativePath + " (" + partTooLargeReason() + ")");
+        continue;
+      }
       if (!sectionsByPart.has(file.part)) {
         try {
           sectionsByPart.set(file.part, parsePartSections(fs.readFileSync(partPath, "utf8")));
@@ -1968,6 +2005,10 @@ const answerTool: ToolSpec = {
       const partPath = partPathFor(prepared.workspace, planned.part);
       if (partPath === null) {
         omitted.push({ path: planned.path, reason: "its part is not in the snapshot" });
+        continue;
+      }
+      if (partTooLarge(partPath)) {
+        omitted.push({ path: planned.path, reason: partTooLargeReason() });
         continue;
       }
       let partText = parts.get(partPath);
@@ -3120,6 +3161,9 @@ const readTool: ToolSpec = {
     }
 
     const partPath = partPathFor(workspace, entry.part);
+    if (partPath !== null && partTooLarge(partPath)) {
+      return failure(entry.part + ": " + partTooLargeReason() + ".");
+    }
     if (partPath === null) {
       return failure(
         `${entry.part} is not a part of this snapshot: its name leaves ${workspace.config.outDir}/parts. ` +

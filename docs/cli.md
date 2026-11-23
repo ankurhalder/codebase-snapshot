@@ -98,7 +98,7 @@ Exit `0` when the snapshot passes its own integrity check, `1` when it does not.
 
 ```
 📸 Generating snapshot for: /path/to/repo
-   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.11 (project dependency ^0.20.11)
+   Branch: main (fallback) | Part budget: 300 KB | Generator: 0.20.12 (project dependency ^0.20.12)
 
 ✅ Snapshot generated in 0.14s:
    - Tracked files: 121 included of 128 paths found — 7 skipped (default-ignore 5, binary 1, sensitive-file 1); every one is listed in snapshot/reports/audit.md
@@ -224,7 +224,7 @@ The whole first run in one command, with defaults and no prompts. This is the sa
 🚀 Setup for: /path/to/repo
 ✅ Created snapshot.config.json (preset: nextjs)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.11
+   Added devDependency: codebase-snapshot ^0.20.12
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ⏳ Installing dependencies…
 ✅ Installed dependencies (npm install, 2.1s)
@@ -276,7 +276,7 @@ It also has three side effects on files you own, and it says so when it does the
 ```
 ✅ Created snapshot.config.json (preset: node-lib)
    Added npm scripts: snapshot, snapshot:validate
-   Added devDependency: codebase-snapshot ^0.20.11
+   Added devDependency: codebase-snapshot ^0.20.12
    Added to .gitignore: /snapshot/, /snapshot.tmp/
 ```
 
@@ -309,10 +309,10 @@ file.
 Interactive by default; with `--yes` it accepts every default and never prompts, which is
 what agents and release checks should use.
 
-The filename adapts to the project: `.ts` only when the running Node can strip types
-(≥ 22.6) **and** the project is an ES module; otherwise `.mjs`, which loads everywhere. The
-generated file is a plain object with no imports, so it works even when the package is only
-run through `npx` and never installed.
+A new configuration is always `snapshot.config.json`, a plain JSON object with no imports. JSON
+is the shape `mcp` and `serve` accept without executing repository code; request an executable
+`.ts`/`.js`/`.mjs` file yourself only if you need function matchers. The file works even when
+the package is only run through `npx` and never installed.
 
 Related options: `--preset`, `--include`, `--exclude`, `--yes` and `--force`
 apply to `init` and `setup` only. `init` also accepts `--dry-run`, `--max-part-bytes`, `--out-dir`,
@@ -426,12 +426,12 @@ agent](agent.md).
 Ask the npm registry whether a newer release exists, and print the version it compared against:
 
 ```bash
-npx codebase-snapshot@0.20.9 update          # is 0.17.0 still current? print the answer
+npx codebase-snapshot@0.20.9 update          # is 0.20.12 current? print the answer
 npx codebase-snapshot@0.20.9 update --format json
 ```
 
 ```text
-↑ codebase-snapshot 0.18.0 is available — you have 0.17.0.
+↑ codebase-snapshot 0.20.12 is available — you have 0.20.9.
   npm install -g codebase-snapshot
 ```
 

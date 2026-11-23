@@ -21,8 +21,9 @@ tokens in full.
 
 - **Files** — entries in `manifest.files`, i.e. what the parts actually carry.
 - **Parts** — part files written. A budget/slice snapshot tends to be one part because it fits.
-- **Tokens** — `manifest.totals.estimatedTokens`, the same estimate the product reports. It is one
-  token per four bytes of emitted body, not a tokenizer count; every model tokenizes differently.
+- **Tokens** — `manifest.totals.estimatedTokens`, the structural estimate the product reports.
+  `estimateTokens` counts word runs, punctuation and newline runs; it is neither bytes/4 nor a
+  tokenizer count, and every model tokenizes differently.
 - **vs full** — token share of the full snapshot.
 - **Time** — wall clock for the whole `generate` process, including scan, parse, partition and write.
 
@@ -66,9 +67,10 @@ identical, which is what a deterministic scanner should do.
 
 Read it carefully:
 
-- **The ratio is not a contest.** Our estimate is one token per four bytes of emitted body; repomix
-  uses a tokenizer. Across nine repositories the two land within about plus or minus 30%, which is
-  what two reasonable estimates of the same text do.
+- **The ratio is not a contest.** Our manifest estimate weighs word runs, punctuation and
+  newlines; the byte-based budget planner uses one token per four bytes; repomix uses a tokenizer.
+  Across nine repositories the two land within about plus or minus 30%, which is what two
+  reasonable estimates of the same text do.
 - **minimatch is the exception, and it is a policy difference, not an estimate.** That repository
   carries five benchmark fixtures of 20 to 25 MB of JSON. repomix emits them (64.8M tokens); our
   large-file rule emits a bounded preview and records the omission, so the pack stays 319,879 tokens.
@@ -110,7 +112,8 @@ gitingest from PyPI, same machine:
 Read that honestly:
 
 - **repomix reports fewer tokens for a similar pack** (854k against our 1.03M, 83%). The cause is
-  the estimator, not the content: we count one token per four bytes, repomix uses a tokenizer.
+  the estimator, not the content: our manifest counts word runs, punctuation and newlines (the
+  budget planner uses bytes/4), while repomix uses a tokenizer.
   Our number is conservative, which is the right direction for a budget — a plan that fits
   1,027,911 tokens fits a tokenizer count of 854,178 far more often than the reverse.
 - **Our pack is smaller in bytes** (3.20 MB of file content against repomix's 3.39 MB of output,

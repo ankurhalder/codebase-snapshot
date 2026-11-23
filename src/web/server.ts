@@ -120,6 +120,9 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
   };
   /** Clones made by this process; removed when it closes, because the page can still be reading them. */
   const temporaryClones = new Set<string>();
+  /** Clone directories created but not yet returned by cloneRepository. */
+  const pendingClones = new Set<string>();
+  let closing = false;
   let generateJobs = 0;
 
   /**
@@ -267,8 +270,18 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
         received += chunk.length;
         if (received > MAX_BODY) {
           tooLarge = true;
-          request.destroy();
-          send(413, { error: "request body too large" });
+          // Let the 413 flush before the socket is closed. Destroying the request first made a
+          // streaming client see ECONNRESET and never the documented status.
+          chunks.length = 0;
+          request.pause();
+          send(413, { error: "request body too large" }, { connection: "close" });
+          response.once("finish", () => {
+            try {
+              request.destroy();
+            } catch {
+              // Already gone.
+            }
+          });
           return;
         }
         chunks.push(chunk);
@@ -326,12 +339,38 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
               if (parsed.source.kind === "https") {
                 await assertPublicHost(parsed.source.host, options.allowPrivate === true);
               }
-              const clone = await cloneRepository(parsed.source, {
-                dest: makeCloneDirectory(),
-                token: process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? null,
-                allowPrivate: options.allowPrivate === true,
-                log,
-              });
+              const cloneDirectory = makeCloneDirectory();
+              // Register the directory before the first await. Shutdown used to run while the
+              // clone was still in flight, see an empty temporaryClones set, and leave the tree
+              // behind when the clone finished after close().
+              pendingClones.add(cloneDirectory);
+              let clone;
+              try {
+                clone = await cloneRepository(parsed.source, {
+                  dest: cloneDirectory,
+                  token: process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? null,
+                  allowPrivate: options.allowPrivate === true,
+                  log,
+                });
+              } catch (error) {
+                pendingClones.delete(cloneDirectory);
+                try {
+                  fs.rmSync(cloneDirectory, { recursive: true, force: true });
+                } catch {
+                  // The clone failed; a leftover temp tree is not the reason to mask that.
+                }
+                throw error;
+              }
+              pendingClones.delete(cloneDirectory);
+              if (closing) {
+                try {
+                  fs.rmSync(clone.directory, { recursive: true, force: true });
+                } catch {
+                  // Shutdown is already in progress.
+                }
+                send(503, { error: "the server is shutting down" });
+                return;
+              }
               temporaryClones.add(clone.directory);
               allowedRoots.push(clone.directory);
               while (temporaryClones.size > MAX_TEMPORARY_CLONES) {
@@ -362,7 +401,17 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
             target = path.resolve(options.cwd, source);
             // The bearer token is not a filesystem capability. /api/generate accepted an
             // absolute path anywhere on the host and scanned it; the GET endpoints had the
-            // check, this one did not.
+            // check, this one did not. Answer 403-before-404 lexically, then 404 for a missing
+            // path, then 403 for a link that resolves outside: insideAllowedRoots() cannot
+            // resolve a missing path, so checking it first reported every typo as an escape.
+            if (!lexicallyInside(target)) {
+              send(403, { error: "outside the served directory: " + target });
+              return;
+            }
+            if (!fs.existsSync(target)) {
+              send(404, { error: "no such path: " + target });
+              return;
+            }
             if (!insideAllowedRoots(target)) {
               send(403, { error: "outside the served directory: " + target });
               return;
@@ -705,8 +754,15 @@ export async function startWebServer(options: ServeOptions): Promise<ServeHandle
     host,
     token,
     close: async () => {
+      closing = true;
       await mcp.close();
-      for (const directory of temporaryClones) {
+      // A clone already in flight is not yet in temporaryClones. Give it a bounded chance to
+      // settle so its own closing check can remove the tree; then remove whatever remains.
+      const deadline = Date.now() + 5_000;
+      while (pendingClones.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      for (const directory of [...pendingClones, ...temporaryClones]) {
         try {
           fs.rmSync(directory, { recursive: true, force: true });
         } catch {

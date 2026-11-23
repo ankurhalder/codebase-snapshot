@@ -114,7 +114,7 @@ to treat file content as data. This is a real, documented limitation, not a solv
 
 ## What changed since this review was written
 
-The review was written at 0.12.34. Between then and 0.17.0 the surfaces it covers grew; each
+The review was written at 0.12.34. Between then and 0.20.12 the surfaces it covers grew; each
 addition was reviewed with the same question — what new input arrives, and what does it reach?
 
 - **`GET /metrics`** (0.13.3) publishes counters with a fixed label set. Repo paths, tokens and
@@ -152,6 +152,12 @@ addition was reviewed with the same question — what new input arrives, and wha
   reach validation; `..notes.ts` is accepted at the segment boundary; `health --all-members`
   confines the index and members; `serve` rejects non-HTTP loopback origins and records nested
   repository roots; and report fences grow with their content.
+- **The 0.20.12 live verdict** executed the fourth audit's hypotheses against the built CLI: HTTP
+  envelopes are charged before parsing and empty batches are invalid; Dockerfile continuations
+  are masked before per-line rules; content tools refuse parts above 16 MiB; `serve` answers 404
+  for a missing local source and cleans an in-flight clone on close; IPv6 remote literals parse;
+  `**` counts as one wildcard and brace products are bounded; and the describe contract, tool
+  annotations and documentation statements were corrected where the source disagreed.
 
 The residual risks below are unchanged, including the two that are deliberate rather than solved.
 

@@ -104,10 +104,10 @@ before it uploads — there is no separate CI matrix to wait for.
 
 ## Versions
 
-**The line runs `0.12.x` to `0.17.0`, with literal sub-bumps.** Every change ships as its own
-version — `0.12.15`, `0.12.16`, … up to `0.12.99`, then `0.13.0` and the same ladder again. The
-number is not the promise; the changelog entry is. Never `1.0.0`. `sync-docs` keeps every marked
-surface at the same value, and `pack-check` fails when the lockfile disagrees.
+**The current line is `0.20.x`, with literal sub-bumps.** Every change ships as its own version —
+`0.20.12`, `0.20.13`, and so on. The number is not the promise; the changelog entry is. Never
+`1.0.0`. `sync-docs` keeps every marked surface at the same value, and `pack-check` fails when the
+lockfile disagrees.
 
 Tags are created for every version, and `main` carries every commit. **npm publication normally
 happens only at `x.y.0`** (`0.13.0`, `0.14.0`, …): the registry stays clean while the repository

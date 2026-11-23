@@ -28,7 +28,7 @@ If you want the most popular, most integrated tool: **use repomix.**
 | Size control | **Yes** — `maxPartBytes` is a per-part byte ceiling; a file that cannot fit one part becomes a head/tail preview listed in `incomplete[]` | `--split-output <size>` splits by output size, and `--token-budget <n>` exits non-zero above a token count |
 | Reproducible output | Parts are byte-identical across runs; a fingerprint covers them | Content is stable; no published determinism guarantee |
 | Staleness check | `validate` re-hashes the repository and exits non-zero on drift | Not a feature |
-| Remote repositories | No — operates on a local checkout | **Yes** — packs a GitHub URL directly |
+| Remote repositories | **Yes** — `--remote` clones an HTTPS URL (or `file://` with `--allow-private`); git is required | **Yes** — packs a GitHub URL directly |
 | MCP server | **Yes** — 26 tools over stdio, and it serves the validated snapshot rather than the working tree | **Yes** — packs a repository, including by URL |
 | Secret handling | 32 default rules, value-span masking, per-line audit table | Secretlint integration |
 | Language awareness | 25 presets, AST or structural summaries labelled by confidence | Tree-sitter parsing with a compression mode |
@@ -39,11 +39,12 @@ If you want the most popular, most integrated tool: **use repomix.**
 
 - **You want one file.** Pasting a single artifact into a chat is simpler than assembling parts, and
   repomix is built around that workflow.
-- **You need a remote URL.** `repomix --remote https://github.com/owner/repo` works without a clone.
-  This project has no equivalent.
-- **You want MCP against a remote URL.** repomix's server can pack a repository by URL. This one
-  serves a local checkout, and refuses to read outside it. Both ship a server; ours is narrower on
-  purpose, and it can tell the agent whether the snapshot it is reading is still current.
+- **You want a zero-install URL box.** repomix can pack a GitHub URL without a local checkout;
+  this project needs Node and git for `--remote`, and its browser page still runs locally.
+- **You want MCP to fetch a URL on demand.** repomix's server can pack a repository by URL. This
+  project's MCP server serves local roots and refuses to read outside them; remote fetching is a
+  CLI/page action (`--remote`), not a read tool. Both ship a server; ours is narrower on purpose,
+  and it can tell the agent whether the snapshot it is reading is still current.
 - **You want the ecosystem.** More stars, more tutorials, more people who have already hit your
   problem.
 - **Your limit is a token count, not a byte count.** `--token-budget <n>` fails the run when the

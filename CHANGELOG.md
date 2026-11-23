@@ -10,13 +10,14 @@ This package started its public life as `@ankurhalder/codebase-snapshot`, which 
 moved to the unscoped name and **restarted at 0.9.0**, so the numbers below are not a continuation of
 the old line — `0.9.0` is newer than `4.4.1`, not older.
 
-The line now runs **`0.12.x` to `0.17.0`, with literal sub-bumps**: every change ships as its
-own version, `0.12.15` through `0.12.99`, then `0.13.0` and the same ladder again. The number is not
-the promise; the entry below is. `1.0.0` is never released.
+The current line is **`0.20.x`, with literal sub-bumps**: every change ships as its own version,
+`0.20.12`, `0.20.13`, and so on. The number is not the promise; the entry below is. `1.0.0` is never
+released.
 
-GitHub carries a tag for every version and `main` carries every commit. **npm publication happens
-only at `x.y.0`** (`0.13.0`, `0.14.0`, …), so the registry stays clean while the repository keeps a
-complete, buildable history.
+GitHub carries a tag for every version and `main` carries every commit. For earlier lines, **npm
+publication happens only at `x.y.0`** (`0.13.0`, `0.14.0`, …). **The 0.20 line is the deliberate
+exception:** patches may be published and pinned, so the registry stays current without leaving
+0.20.
 
 Two versions exist on the registry that are not releases, and both are deprecated:
 
@@ -29,6 +30,20 @@ Deleting them requires account-level rights that the release pipeline does not h
 deprecated with an explanatory message instead. `latest` has pointed at 0.9.0 since it existed.
 
 ---
+
+## 0.20.12
+
+**Live execution of the fourth audit's hypotheses: every claim was reproduced against the built CLI before it was fixed, and each class has a regression test.**
+
+- MCP HTTP `POST /mcp` charges the envelope before reading the body. An empty batch is rejected with JSON-RPC `-32600` instead of an endless 202, malformed JSON and oversized bodies consume the rate window, and a batch is charged per JSON-RPC message. Oversized bodies flush the documented 413 before the socket closes.
+- Dockerfile/Containerfile `ENV` and `ARG` line continuations are masked as one value before the per-line rules run. Quoted literals and `KEY=` continuations are covered; `$VAR` references and placeholders stay readable, and a second scan is idempotent.
+- `snapshot_read`, `snapshot_context`, `snapshot_diff_context`, `snapshot_review` and `snapshot_answer` refuse parts above 16 MiB before `readFileSync`, instead of blocking the JSON-RPC event loop on a hand-crafted part.
+- `serve` answers 404 for a missing local source and 403 only for a path outside the served root. An in-flight remote clone is tracked before its first await and removed when the server closes.
+- IPv6 literals parse as `--remote` sources again, including `[::1]` with `--allow-private` and public literals; the DNS check strips the brackets before lookup.
+- A run of `*` characters counts as one wildcard expression, so `**/a/**/b/*` is accepted by git and walk discovery alike. Brace alternatives are multiplied across groups, so eight five-way groups are refused rather than compiled into 312,500 regex paths.
+- `describe` reports the real `diff`/`log`/`tokenTree` defaults and the real types for `--attachment-slots` and `--max-parts`; the `--skip-artifacts` summary lists every artifact.
+- Documentation now matches the code for the read-only tool count, configured `outDir` confinement, `init`'s JSON default and `--force`, remote support in the comparison pages, and the difference between the structural manifest token estimate and the byte-ratio budget estimate.
+- Removed the retired 0.10.1 audit tree and the stale `GOAL.md`/`ROADMAP.md` planning files, with their scanner and snapshot exclusions; the migration guide now covers 0.12.14 to 0.20.12.
 
 ## 0.20.11
 

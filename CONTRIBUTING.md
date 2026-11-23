@@ -45,7 +45,8 @@ Some test files carry headers like "4.0.9 regression cover". Those numbers belon
 and restarted at 0.9.0, so `4.x` is *older* than `0.9.x` (see the note at the top of
 `CHANGELOG.md`). A header names the audit that produced the fix, not the release it shipped in:
 those fixes were carried into the 0.9.x line as a batch, so the only way to date one is to find
-the behaviour in `audit/reports/`.
+the changelog and its regression test; the old audit report is not part of the repository any
+more.
 
 ## What makes a good change here
 

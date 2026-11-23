@@ -143,26 +143,26 @@ between them should not have to guess.
 | `snapshot_read` | A window of one file, as the snapshot contains it. | no |
 | `snapshot_explain` | Why is this path not in the snapshot? | no |
 
-Seven are declared `readOnlyHint`, which most clients use to run them without asking. Only
-`snapshot_generate` prompts.
+Twenty-five are declared `readOnlyHint`, which most clients use to run them without asking. Only
+`snapshot_generate` writes.
 
-All eight take `outDir`, so a snapshot generated into a directory other than the configured one is
+All 26 take `outDir`, so a snapshot generated into a directory other than the configured one is
 still reachable: pass the same value to the read side that you passed to `snapshot_generate`. Before
 that, only `snapshot_generate` honoured it and every other tool looked in the configured directory
 and reported "there is no snapshot manifest here".
 
 An `outDir` **tool argument** must resolve inside the repository the server serves: a prompt cannot
-drop a snapshot tree anywhere the process is able to write. The project's *configured* `outDir` is
-not confined the same way — that is the repository's own decision, and a config may legitimately
-point one directory up. If the argument escapes, the tool refuses and the message says to restart
-the server with `--cwd` pointing at the repository you want to write.
+drop a snapshot tree anywhere the process is able to write. The project's *configured* `outDir`
+and `tmpDir` are confined the same way. If either escapes, the tool refuses and the message says
+to move the directory inside the served root, or start the server with `--cwd` at the parent
+repository.
 
 `snapshot_plan`, `snapshot_generate`, `snapshot_validate` and `snapshot_explain` also take the
 **scope and compression** switches `generate` accepts: `maxPartTokens`, `skeleton`, `sarif`,
 `changedSince`, `staged` and `withDependents`. They have to: `manifest.config.digest` covers those
 settings, so a snapshot generated with `--skeleton` was not merely un-inspectable over MCP, it was
 reported as configuration drift on every `snapshot_validate`. Pass the same switches you generated
-with, exactly as you would on the command line. The four remaining tools do not take them, because
+with, exactly as you would on the command line. The other tools do not take them, because
 none of them re-derives the configuration and a flag that changes nothing is the command-line form
 of a silent fallback.
 

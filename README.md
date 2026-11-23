@@ -278,7 +278,7 @@ others.
 | [Benchmarks](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/benchmarks.md) | Reproducible token and time numbers for the three modes |
 | [Security review](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/security-review.md) | Threat model, controls, tests and residual risks |
 | [Deploy](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/deploy.md) | Container, compose and systemd, with the token requirement |
-| [Migrating](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/migration.md) | What changed from 0.12.14 to 0.17.0, and the two behaviour changes |
+| [Migrating](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/migration.md) | What changed from 0.12.14 to 0.20.12, and the behaviour changes that matter |
 | [Workspaces](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/workspace.md) | `--workspace`: one snapshot per member, plus the index |
 | [Token budget](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/budget.md) | `--budget-tokens`: whole files chosen to fit a limit, not torn to fit a part |
 | [The brief](https://github.com/ankurhalder/codebase-snapshot/blob/main/docs/brief.md) | The half of PROMPT.md only you can write, and what is refused |

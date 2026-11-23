@@ -85,7 +85,6 @@ construction, instead of asking a human to dismiss the same alert on every push:
 | Surface | Why it is excluded |
 | :--- | :--- |
 | `tests/**` | the fixtures assert that detection fires |
-| `audit/**` | verification reports quote the probes they describe |
 | `src/security/patterns.ts`, `src/security/redact.ts` | the rule definitions and their worked examples |
 | `package-lock.json` | integrity digests are not credentials |
 

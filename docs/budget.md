@@ -22,8 +22,9 @@ Every scanned file is scored once:
 | Cost | up to −40 | A cheap file that matters beats an expensive one that barely does. |
 
 Files are taken in score order while the running token estimate fits; a file that would exceed the
-budget is skipped whole, not cut. The estimate is one token per four bytes of emitted body — the
-same estimate the manifest reports.
+budget is skipped whole, not cut. This planner uses one token per four bytes of emitted body. The
+manifest's `estimatedTokens` is the structural `estimateTokens` result instead, so the two differ
+by construction and neither is a tokenizer count.
 
 ## What it records
 

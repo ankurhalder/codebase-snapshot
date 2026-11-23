@@ -527,14 +527,21 @@ export function globComplexityReason(glob: string): string | null {
   }
   let wildcards = 0;
   let braceGroups = 0;
-  let alternatives = 1;
   let braceDepth = 0;
+  let groupAlternatives = 1;
+  let alternativesProduct = 1;
   for (let index = 0; index < glob.length; index += 1) {
     const char = glob[index];
     if (char === "*" || char === "?") {
+      // A run of stars is one wildcard expression. Counting every character in "**" as a
+      // separate wildcard rejected ordinary cross-directory patterns such as
+      // **/a/**/b/* while adding no safety: the run compiles to one [^/]* or .* term.
+      if (char === "*") {
+        while (index + 1 < glob.length && glob[index + 1] === "*") index += 1;
+      }
       wildcards += 1;
       if (wildcards > MAX_GLOB_WILDCARDS) {
-        return `it chains more than ${MAX_GLOB_WILDCARDS} wildcard characters`;
+        return `it chains more than ${MAX_GLOB_WILDCARDS} wildcard expressions`;
       }
       continue;
     }
@@ -544,18 +551,23 @@ export function globComplexityReason(glob: string): string | null {
       if (braceGroups > MAX_GLOB_BRACE_GROUPS) {
         return `it chains more than ${MAX_GLOB_BRACE_GROUPS} brace groups`;
       }
+      if (braceDepth === 1) groupAlternatives = 1;
       continue;
     }
     if (char === "}" && braceDepth > 0) {
       braceDepth -= 1;
+      if (braceDepth === 0) {
+        // Alternatives multiply across groups; summing them let eight groups of five pass
+        // this guard and compile to 312,500 regex paths.
+        alternativesProduct *= groupAlternatives;
+        if (alternativesProduct > MAX_GLOB_ALTERNATIVES) {
+          return `it expands to more than ${MAX_GLOB_ALTERNATIVES} brace alternatives`;
+        }
+        groupAlternatives = 1;
+      }
       continue;
     }
-    if (char === "," && braceDepth === 1) {
-      alternatives += 1;
-      if (alternatives > MAX_GLOB_ALTERNATIVES) {
-        return `it expands to more than ${MAX_GLOB_ALTERNATIVES} brace alternatives`;
-      }
-    }
+    if (char === "," && braceDepth === 1) groupAlternatives += 1;
   }
   return null;
 }

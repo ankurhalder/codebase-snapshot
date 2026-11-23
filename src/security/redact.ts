@@ -505,6 +505,11 @@ export function scanAndRedactSecrets(
     }
   }
 
+  // Docker's line continuations must be seen before the per-line assignment rules: a rule that
+  // masks the value of ENV KEY=\ also removes the backslash that marks the next line as part of
+  // the same value, and the continuation then survives into the artifact.
+  redacted = redactDockerfileEnv(redacted, filePath, recordFinding);
+
   // Pass 2 — per-line rules, on segments that exclude the line terminators.
   const compiled: CompiledRule[] = rules.map(compiledRuleFor);
 
@@ -931,6 +936,14 @@ const DOCKERFILE_ENV =
  * not valid Docker — so only `ENV` is handled, and only in a Dockerfile: in a shell script
  * `env KEY value` is a command.
  */
+/** True when the physical line ends with Docker's unescaped continuation backslash. */
+function endsWithDockerContinuation(line: string): boolean {
+  const end = line.replace(/[ \t]+$/, "");
+  let count = 0;
+  while (count < end.length && end[end.length - 1 - count] === "\\") count += 1;
+  return count % 2 === 1;
+}
+
 function redactDockerfileEnv(
   text: string,
   filePath: string | undefined,
@@ -945,6 +958,28 @@ function redactDockerfileEnv(
     if (match === null) continue;
     if (!CREDENTIAL_KEY_TAIL.test(match[4] ?? "")) continue;
     const value = (match[6] ?? "").trim();
+    const continuationLines: number[] = [];
+    let combined = value.replace(/\\[ \t]*$/, "").trim();
+    let cursor = index;
+    let current = line;
+    while (endsWithDockerContinuation(current) && cursor + 2 < segments.length) {
+      cursor += 2;
+      continuationLines.push(cursor);
+      current = segments[cursor] ?? "";
+      combined += " " + current.replace(/\\[ \t]*$/, "").trim();
+    }
+    combined = combined.trim();
+    const keepContinuation = endsWithDockerContinuation(line);
+    // A marker from a previous pass, a placeholder, or a whole-value variable reference is not
+    // a literal secret. Checking the combined continuation value keeps $RUNTIME_SECRET and
+    // replace-me-with-real-key readable while masking the actual literal beside them.
+    if (
+      value.includes(REDACTION_MARKER) ||
+      isPlaceholderValue(combined) ||
+      /^\$[({A-Za-z_]/.test(combined)
+    ) {
+      continue;
+    }
     // The audit re-scans emitted text with the same rules. Pass 2 already masked this line, so
     // matching its own marker again is a false positive that turns every Dockerfile into a
     // critical health failure. Placeholders and variable references are not secrets either.
@@ -953,6 +988,12 @@ function redactDockerfileEnv(
     // `ENV KEY=value` and `ARG KEY=value` are the modern spelling. The generic rules skipped a
     // value containing `<` or `|`, which is a valid Docker value and a valid password.
     segments[index] = `${match[1]}${match[2]}${match[3]}${match[4]}${separator}${REDACTION_MARKER}`;
+    if (keepContinuation) segments[index] += " \\";
+    for (const at of continuationLines) {
+      const body = segments[at] ?? "";
+      const keep = endsWithDockerContinuation(body);
+      segments[at] = maskLineContent(body.replace(/\\[ \t]*$/, "")) + (keep ? " \\" : "");
+    }
     recordFinding(index / 2 + 1, ["dockerfile-env-secret"]);
   }
   return segments.join("");

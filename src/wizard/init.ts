@@ -882,9 +882,10 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
     !canWriteModuleConfig(present, options.cwd)
   ) {
     throw new Error(
-      `Refusing to replace ${present}: this wizard writes an ES-module config (.ts, .js, .mjs), and ` +
-        `${present} is a ${configFormatLabel(present)} configuration. Writing a new file beside it would ` +
-        `silently shadow it, so delete or rename ${present} yourself and re-run with --force.`
+      `Refusing to replace ${present}: this wizard writes a JSON config for a new repository, ` +
+        `and it can replace an existing .ts, ESM .js, or .mjs config in place. ${present} is a ` +
+        `${configFormatLabel(present)} configuration. Writing a new file beside it would silently ` +
+        `shadow it, so delete or rename ${present} yourself and re-run with --force.`
     );
   }
   if (packageJsonHasConfig(options.cwd) && !options.force && !reused) {

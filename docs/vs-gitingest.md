@@ -31,11 +31,11 @@ If you want to paste a repo into a chat right now: **use gitingest.**
 | Excluded-file accounting | Every skipped path recorded with a reason | Ignore rules applied |
 | Secret redaction | 32 default rules, value-span masking, audit table | Relies on ignore rules |
 | Runtime | Node.js | Python |
-| Repo URL input | No — needs a checkout | **Yes** |
+| Repo URL input | **Yes** — `generate --remote` (Node + git; `file://` needs `--allow-private`) | **Yes** — zero install |
 
 ## Where gitingest is the better choice
 
-- **You have not installed anything and do not want to.** Nothing here competes with a URL box.
+- **You have not installed anything and do not want to.** This tool needs Node and git, so a hosted URL box is still the shortest path.
 - **You want one digest, not parts.** If the destination is a chat window, one blob is the right
   shape.
 - **You are in Python.** `pip install gitingest` fits an existing pipeline without adding a Node

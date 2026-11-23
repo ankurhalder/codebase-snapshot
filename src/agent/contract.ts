@@ -69,7 +69,7 @@ export interface AgentContract {
      * magnitude.
      */
     type: "string" | "boolean" | "number";
-    default?: string | number | boolean;
+    default?: string | number | boolean | null;
     appliesTo: string;
     summary: string;
   }>;
@@ -128,6 +128,9 @@ const ARTIFACT_SUMMARY: Record<string, string> = {
   navigation: "reports/navigation.md: links between parts and layers.",
   projectTree: "reports/project-tree.md: the directory tree of included files.",
   audit: "reports/audit.md: secret findings, large files, parse diagnostics, git state.",
+  diff: "reports/diff.md: the uncommitted diff, when --include-diffs is on.",
+  log: "reports/log.md: the last commits, when --include-logs is on.",
+  tokenTree: "reports/tokens.md: per-file token estimates, when --token-tree is on.",
   monolith:
     "full-codebase.json and full-codebase.md: the whole repository in one file (off by default).",
 };
@@ -140,6 +143,9 @@ const ARTIFACT_DEFAULTS: Record<string, boolean> = {
   navigation: true,
   projectTree: true,
   audit: true,
+  diff: false,
+  log: false,
+  tokenTree: false,
   monolith: false,
 };
 
@@ -502,7 +508,7 @@ export function buildAgentContract(): AgentContract {
       {
         flag: "--attachment-slots",
         type: "number",
-        default: "10",
+        default: 10,
         appliesTo: optionAppliesTo("attachment-slots"),
         summary:
           "Files the destination accepts in one message (0 = no limit). PROMPT.md plans the " +
@@ -533,7 +539,7 @@ export function buildAgentContract(): AgentContract {
       {
         flag: "--max-parts",
         type: "number",
-        default: "unset",
+        default: null,
         appliesTo: optionAppliesTo("max-parts"),
         summary:
           "Experimental: grow the per-part budget until the snapshot has at most this many parts. " +
@@ -545,7 +551,7 @@ export function buildAgentContract(): AgentContract {
         type: "string",
         default: "unset",
         appliesTo: optionAppliesTo("skip-artifacts"),
-        summary: "Comma-separated artifacts to omit (readme, manifest, parts, navigation, projectTree, audit, monolith).",
+        summary: "Comma-separated artifacts to omit (readme, prompt, manifest, parts, navigation, projectTree, audit, diff, log, tokenTree, monolith).",
       },
       {
         flag: "--only-artifacts",

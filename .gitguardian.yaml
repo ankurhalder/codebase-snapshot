@@ -24,8 +24,6 @@ secret:
   ignored_paths:
     # Test suites: the engine's own vectors, inline in the tests that exercise them.
     - "**/tests/**"
-    # The verification reports quote the probes they describe, including the synthetic values.
-    - "**/audit/**"
     - "**/package-lock.json"
     # Rule definitions and their worked examples: patterns, not credentials.
     - "**/src/security/patterns.ts"
