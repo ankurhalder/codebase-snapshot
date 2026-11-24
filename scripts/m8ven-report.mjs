@@ -66,11 +66,15 @@ try {
 
 if (process.argv.includes("--json")) {
   console.log(JSON.stringify(data, null, 2));
-  process.exit(0);
-}
+  // Do not call process.exit() here: on Windows a large stdout write can still be pending and
+  // process.exit aborts the pipe with a libuv assertion. Setting the code lets Node flush and exit.
+  process.exitCode = 0;
+} else {
 
 console.log("M8ven Tool Trust: " + (data.grade ?? "?") + " · " + (data.verdict ?? "?") + " · depth " + (data.depth ?? "?"));
 if (data.score !== undefined) console.log("score: " + data.score);
+if (data.verdict_reason) console.log("verdict reason: " + data.verdict_reason);
+if (data.sub_scores) console.log("sub-scores: " + JSON.stringify(data.sub_scores));
 if (data.trust_grade && data.trust_grade !== data.grade) console.log("trust grade: " + data.trust_grade);
 if (data.verified !== undefined) console.log("verified: " + data.verified);
 if (data.listing_url) console.log("listing: " + data.listing_url);
@@ -98,3 +102,4 @@ if (data.cves) console.log("\ncves: " + JSON.stringify(data.cves));
 if (data.live_introspection) console.log("\nlive introspection: " + JSON.stringify(data.live_introspection, null, 2));
 
 if (Object.keys(data).length === 0) console.log("(empty response)");
+}
