@@ -35,6 +35,7 @@ jobs:
         if: ${{ steps.metadata.outputs.update-type != 'version-update:semver-major' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
@@ -52,8 +53,31 @@ jobs:
               ;;
           esac
 
-          if ! gh pr checks "$PR_NUMBER" --watch --fail-fast; then
-            echo "Checks are not green; leaving the PR open."
+          # Do not use gh pr checks --watch: this job's own auto-merge check is in the same list,
+          # so it would wait for itself until the job timeout. Poll the named checks instead.
+          expected=("verify (18)" "verify (20)" "verify (22)" "mcp-windows-smoke")
+          ready=0
+          for attempt in $(seq 1 90); do
+            checks="$(gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow || true)"
+            if printf '%s' "$checks" | jq -e 'any(.[]; .name != "auto-merge" and (.bucket == "fail" or .bucket == "cancel"))' >/dev/null; then
+              echo "A non-auto-merge check failed; leaving the PR open."
+              exit 0
+            fi
+            ready=1
+            for name in "${expected[@]}"; do
+              bucket="$(printf '%s' "$checks" | jq -r --arg name "$name" '[.[] | select(.name == $name)][0].bucket // "missing"')"
+              if [ "$bucket" != "pass" ]; then
+                ready=0
+              fi
+            done
+            if [ "$ready" -eq 1 ]; then
+              break
+            fi
+            sleep 20
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "The expected checks did not finish green in time; leaving the PR open."
             exit 0
           fi
 
