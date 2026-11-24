@@ -14,6 +14,7 @@
     <a href="https://nodejs.org"><img alt="node: 18 or newer" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg"></a>
     <a href="https://ankurhalder.github.io/codebase-snapshot/"><img alt="documentation" src="https://img.shields.io/badge/docs-read-1a7f37"></a>
     <a href="https://m8ven.ai/mcp/ankurhalder-codebase-snapshot-9hzkhs?s=readme"><img alt="M8ven Live: continuously verified" src="https://m8ven.ai/badge/mcp/ankurhalder-codebase-snapshot-9hzkhs?variant=verified"></a>
+    <a href="https://glama.ai/mcp/servers/ankurhalder/codebase-snapshot"><img alt="Glama MCP server score" src="https://glama.ai/mcp/servers/ankurhalder/codebase-snapshot/badges/score.svg"></a>
   </p>
 </div>
 
